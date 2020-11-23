@@ -416,6 +416,14 @@ where
     W: CompressedWord + Into<F> + AsPrimitive<usize>,
     usize: AsPrimitive<W>,
 {
+    struct Slot<F, W> {
+        original_index: usize,
+        prob: F,
+        weight: W,
+        win: F,
+        loss: F,
+    }
+
     assert!(!pmf.is_empty());
     assert!(pmf.len() <= W::max_value().as_());
     if pmf.len() == 1 {
@@ -431,10 +439,10 @@ where
     let free_weight_float: F = free_weight.into();
     let scale = free_weight_float / pmf.iter().cloned().sum::<F>();
 
-    let mut indices_probs_weights_wins_losses = pmf
+    let mut slots = pmf
         .iter()
         .enumerate()
-        .map(|(index, &prob)| {
+        .map(|(original_index, &prob)| {
             let current_free_weight = (prob * scale).as_();
             remaining_free_weight = remaining_free_weight - current_free_weight;
             let weight = current_free_weight + W::one();
@@ -449,43 +457,40 @@ where
                 -prob * (-F::one() / weight.into()).ln_1p()
             };
 
-            (index, prob, weight, win, loss)
+            Slot {
+                original_index,
+                prob,
+                weight,
+                win,
+                loss,
+            }
         })
         .collect::<Vec<_>>();
 
     // Distribute remaining weight evenly among symbols with highest wins.
     while remaining_free_weight != W::zero() {
-        indices_probs_weights_wins_losses
-            .sort_by(|&(_, _, _, win1, _), &(_, _, _, win2, _)| win2.partial_cmp(&win1).unwrap());
-        let batch_size = std::cmp::min(
-            remaining_free_weight.as_(),
-            indices_probs_weights_wins_losses.len(),
-        );
-        for (_, prob, weight, win, loss) in &mut indices_probs_weights_wins_losses[..batch_size] {
-            *weight = *weight + W::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
-            *win = *prob * (F::one() / (*weight).into()).ln_1p();
-            *loss = -*prob * (-F::one() / (*weight).into()).ln_1p();
+        slots.sort_by(|a, b| b.win.partial_cmp(&a.win).unwrap());
+        let batch_size = std::cmp::min(remaining_free_weight.as_(), slots.len());
+        for slot in &mut slots[..batch_size] {
+            slot.weight = slot.weight + W::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
+            slot.win = slot.prob * (F::one() / (slot.weight).into()).ln_1p();
+            slot.loss = -slot.prob * (-F::one() / (slot.weight).into()).ln_1p();
         }
         remaining_free_weight = remaining_free_weight - batch_size.as_();
     }
 
     loop {
         // Find element where increasing weight would incur the biggest win.
-        let (buyer_index, &(_, _, _, buyer_win, _)) = indices_probs_weights_wins_losses
+        let (buyer_index, &Slot { win: buyer_win, .. }) = slots
             .iter()
             .enumerate()
-            .max_by(|(_, (_, _, _, win1, _)), (_, (_, _, _, win2, _))| {
-                win1.partial_cmp(win2).unwrap()
-            })
+            .max_by(|(_, a), (_, b)| a.win.partial_cmp(&b.win).unwrap())
             .unwrap();
-        let (seller_index, (_, seller_prob, seller_weight, seller_win, seller_loss)) =
-            indices_probs_weights_wins_losses
-                .iter_mut()
-                .enumerate()
-                .min_by(|(_, (_, _, _, _, loss1)), (_, (_, _, _, _, loss2))| {
-                    loss1.partial_cmp(loss2).unwrap()
-                })
-                .unwrap();
+        let (seller_index, seller) = slots
+            .iter_mut()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.loss.partial_cmp(&b.loss).unwrap())
+            .unwrap();
 
         if buyer_index == seller_index {
             // This can only happen due to rounding errors. In this case, we can't expect
@@ -493,32 +498,28 @@ where
             break;
         }
 
-        if buyer_win <= *seller_loss {
+        if buyer_win <= seller.loss {
             // We've found the optimal solution.
             break;
         }
 
-        *seller_weight = *seller_weight - W::one();
-        *seller_win = *seller_prob * (F::one() / (*seller_weight).into()).ln_1p();
-        *seller_loss = if *seller_weight == W::one() {
+        seller.weight = seller.weight - W::one();
+        seller.win = seller.prob * (F::one() / (seller.weight).into()).ln_1p();
+        seller.loss = if seller.weight == W::one() {
             F::infinity()
         } else {
-            -*seller_prob * (-F::one() / (*seller_weight).into()).ln_1p()
+            -seller.prob * (-F::one() / (seller.weight).into()).ln_1p()
         };
 
-        let (_, buyer_prob, buyer_weight, buyer_win, buyer_loss) =
-            &mut indices_probs_weights_wins_losses[buyer_index];
-        *buyer_weight = *buyer_weight + W::one();
-        *buyer_win = *buyer_prob * (F::one() / (*buyer_weight).into()).ln_1p();
-        *buyer_loss = -*buyer_prob * (-F::one() / (*buyer_weight).into()).ln_1p();
+        let buyer = &mut slots[buyer_index];
+        buyer.weight = buyer.weight + W::one();
+        buyer.win = buyer.prob * (F::one() / (buyer.weight).into()).ln_1p();
+        buyer.loss = -buyer.prob * (-F::one() / (buyer.weight).into()).ln_1p();
     }
 
-    indices_probs_weights_wins_losses.sort_by_key(|&(index, _, _, _, _)| index);
+    slots.sort_by_key(|slot| slot.original_index);
 
-    indices_probs_weights_wins_losses
-        .into_iter()
-        .map(|(_, _, weight, _, _)| weight)
-        .collect()
+    slots.into_iter().map(|slot| slot.weight).collect()
 }
 
 #[cfg(test)]
