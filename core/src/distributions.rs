@@ -49,8 +49,8 @@ where
 /// let continuous_distribution2 = Normal::new(-1.4, 2.7).unwrap();
 /// let discrete_distribution2 = quantizer.quantize(continuous_distribution2);
 ///
-/// // Use the discrete distributions with an `AnsCoder`.
-/// let mut coder = ans::AnsCoder::<u32>::new();
+/// // Use the discrete distributions with an `Coder`.
+/// let mut coder = ans::Coder::<u32>::new();
 /// coder.push_symbol(4, discrete_distribution1);
 /// coder.push_symbol(-3, discrete_distribution2);
 /// ```

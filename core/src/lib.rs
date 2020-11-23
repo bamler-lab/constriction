@@ -50,14 +50,14 @@ unsafe impl CompressedWord for u64 {
     type State = u128;
 }
 
-pub struct AnsCoder<W: CompressedWord> {
+pub struct Coder<W: CompressedWord> {
     buf: Vec<W>,
     state: W::State,
 }
 
 #[non_exhaustive]
 #[derive(Debug)]
-pub enum AnsCoderError {
+pub enum CoderError {
     InvalidCompressedData,
     InvalidSymbol,
     DistributionsYieldedTooManyItems,
@@ -65,9 +65,9 @@ pub enum AnsCoderError {
     InvalidDistribution,
 }
 
-type Result<T> = std::result::Result<T, AnsCoderError>;
+type Result<T> = std::result::Result<T, CoderError>;
 
-impl<W: CompressedWord> AnsCoder<W> {
+impl<W: CompressedWord> Coder<W> {
     /// Creates an Empty ANS coder.
     ///
     /// This is usually the starting point if you want to *compress` data.
@@ -75,7 +75,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::AnsCoder::<u32>::new();
+    /// let mut coder = ans::Coder::<u32>::new();
     ///
     /// // ... push some symbols on the coder ...
     ///
@@ -119,7 +119,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     /// [`push_iid_symbols`](#method.push_iid_symbols) instead. See examples there.
     ///
     /// This method is called `push_symbol` rather than `encode_symbol` to highlight
-    /// the fact that the `AnsCoder` is a stack: the last symbol `pushed` onto the
+    /// the fact that the `Coder` is a stack: the last symbol `pushed` onto the
     /// stack will be the first symbol that [`pop_symbol`](#method.pop_symbol) will
     /// retrieve.
     pub fn push_symbol<S>(
@@ -129,7 +129,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     ) -> Result<()> {
         let (left_sided_cumulative, probability) = distribution
             .left_cumulative_and_probability(symbol)
-            .map_err(|()| AnsCoderError::InvalidSymbol)?;
+            .map_err(|()| CoderError::InvalidSymbol)?;
         if self.state >= W::compose_state(W::zero(), probability) {
             let (low, high) = W::split_state(self.state);
             self.buf.push(low);
@@ -138,7 +138,7 @@ impl<W: CompressedWord> AnsCoder<W> {
         let prefix = self
             .state
             .checked_div(&W::State::from(probability))
-            .ok_or(AnsCoderError::InvalidSymbol)?;
+            .ok_or(CoderError::InvalidSymbol)?;
         let suffix =
             W::State::from(left_sided_cumulative) + self.state % W::State::from(probability);
         self.state = (prefix << W::bits()) | suffix;
@@ -153,7 +153,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     /// [`pop_iid_symbols`](#method.pop_iid_symbols) instead.
     ///
     /// This method is called `pop_symbol` rather than `decode_symbol` to highlight
-    /// the fact that the `AnsCoder` is a stack: `pop_symbol` will return the *last*
+    /// the fact that the `Coder` is a stack: `pop_symbol` will return the *last*
     /// symbol that was previously encoded via [`push_symbol`](#method.push_symbol).
     ///
     /// Note that this method cannot fail. It will still produce symbols even if the
@@ -188,7 +188,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     /// ```
     /// use statrs::distribution::Normal;
     ///
-    /// let mut coder = ans::AnsCoder::<u32>::new();
+    /// let mut coder = ans::Coder::<u32>::new();
     /// let quantizer = ans::distributions::LeakyQuantizer::new(-20..=20);
     /// let symbols = vec![5, -1, -3, 4];
     /// let means_and_stds = vec![(3.2, 1.9), (5.7, 8.2), (-1.4, 2.1), (2.6, 5.3)];
@@ -251,7 +251,7 @@ impl<W: CompressedWord> AnsCoder<W> {
                 if symbols_ptr == symbols_start {
                     symbols.set_len(len);
                     std::mem::drop(symbols);
-                    return Err(AnsCoderError::DistributionsYieldedTooManyItems);
+                    return Err(CoderError::DistributionsYieldedTooManyItems);
                 }
 
                 symbols_ptr = symbols_ptr.offset(-1);
@@ -264,7 +264,7 @@ impl<W: CompressedWord> AnsCoder<W> {
                     symbols_ptr.drop_in_place();
                     symbols_ptr = symbols_ptr.offset(1);
                 }
-                return Err(AnsCoderError::DistributionsYieldedTooFewItems);
+                return Err(CoderError::DistributionsYieldedTooFewItems);
             }
 
             symbols.set_len(len);
@@ -281,7 +281,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::AnsCoder::<u32>::new();
+    /// let mut coder = ans::Coder::<u32>::new();
     /// let symbols = vec![5, -1, -3, 4];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution =
@@ -320,7 +320,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     }
 
     /// Discards all compressed data and resets the coder to the same state as
-    /// [`AnsCoder::new`](#method.new).
+    /// [`Coder::new`](#method.new).
     pub fn clear(&mut self) {
         self.buf.clear();
         self.state = W::State::zero();
@@ -330,7 +330,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     ///
     /// This method returns `true` if no data is left for decoding. This means that
     /// the coder is in the same state as it would be after being constructed with
-    /// [`AnsCoder::new`](#method.new) or after calling [`clear`](#method.clear).
+    /// [`Coder::new`](#method.new) or after calling [`clear`](#method.clear).
     ///
     /// Note that you can still pop symbols off an empty coder, but this is only
     /// useful in rare edge cases, see documentation of
@@ -341,7 +341,7 @@ impl<W: CompressedWord> AnsCoder<W> {
 
     /// Returns a view into the full compressed data currently on the stack.
     ///
-    /// Due to the way how an `AnsCoder` works internally, the compressed data is
+    /// Due to the way how an `Coder` works internally, the compressed data is
     /// split up into a `bulk` and a `head` part. This method returns these two
     /// parts as a tuple `(bulk, head)`.
     ///
@@ -381,7 +381,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::AnsCoder::<u32>::new();
+    /// let mut coder = ans::Coder::<u32>::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![5, -1, -3, 4];
@@ -419,7 +419,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::AnsCoder::<u32>::new();
+    /// let mut coder = ans::Coder::<u32>::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![5, -1, -3, 4];
@@ -434,7 +434,7 @@ impl<W: CompressedWord> AnsCoder<W> {
     /// // ... write `compressed` to a file and then read it back later ...
     ///
     /// // Create a new coder with the same state and use it for decompression.
-    /// let mut coder = ans::AnsCoder::with_compressed_data(compressed);
+    /// let mut coder = ans::Coder::with_compressed_data(compressed);
     /// let reconstructed = coder.pop_iid_symbols(4, &distribution).unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// assert!(coder.is_empty())
@@ -495,19 +495,19 @@ impl<W: CompressedWord> AnsCoder<W> {
 }
 
 /// Provides temporary read-only access to the compressed data wrapped in an
-/// [`AnsCoder`].
+/// [`Coder`].
 ///
-/// Dereferences to `&[W]`. See [`AnsCoder::to_compressed`] for an example.
+/// Dereferences to `&[W]`. See [`Coder::to_compressed`] for an example.
 ///
-/// [`AnsCoder`]: struct.AnsCoder.html
-/// [`AnsCoder::to_compressed`]: struct.AnsCoder.html#method.to_compressed
+/// [`Coder`]: struct.Coder.html
+/// [`Coder::to_compressed`]: struct.Coder.html#method.to_compressed
 pub struct CoderGuard<'a, W: CompressedWord> {
-    inner: &'a mut AnsCoder<W>,
+    inner: &'a mut Coder<W>,
     num_appended: usize,
 }
 
 impl<'a, W: CompressedWord> CoderGuard<'a, W> {
-    fn new(coder: &'a mut AnsCoder<W>) -> Self {
+    fn new(coder: &'a mut Coder<W>) -> Self {
         let num_appended = coder.flush_state();
         Self {
             inner: coder,
@@ -544,18 +544,18 @@ mod tests {
 
     #[test]
     fn compress_none() {
-        let coder1 = AnsCoder::<u32>::new();
+        let coder1 = Coder::<u32>::new();
         assert!(coder1.is_empty());
         let compressed = coder1.into_compressed();
         assert!(compressed.is_empty());
 
-        let coder2 = AnsCoder::<u32>::with_compressed_data(compressed);
+        let coder2 = Coder::<u32>::with_compressed_data(compressed);
         assert!(coder2.is_empty());
     }
 
     #[test]
     fn compress_one() {
-        let mut coder = AnsCoder::<u32>::new();
+        let mut coder = Coder::<u32>::new();
         let quantizer = LeakyQuantizer::new(-127..=127);
         let distribution = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
@@ -564,7 +564,7 @@ mod tests {
         // Test if import/export of compressed data works.
         let compressed = coder.into_compressed();
         assert_eq!(compressed.len(), 1);
-        let mut coder = AnsCoder::with_compressed_data(compressed);
+        let mut coder = Coder::with_compressed_data(compressed);
 
         assert_eq!(coder.pop_symbol(&distribution), 2);
 
@@ -609,7 +609,7 @@ mod tests {
             symbols_categorical.push(symbol);
         }
 
-        let mut coder = AnsCoder::new();
+        let mut coder = Coder::new();
 
         coder
             .push_iid_symbols(symbols_categorical.iter().cloned(), &categorical)
@@ -628,7 +628,7 @@ mod tests {
 
         // Test if import/export of compressed data works.
         let compressed = coder.into_compressed();
-        let mut coder = AnsCoder::with_compressed_data(compressed);
+        let mut coder = Coder::with_compressed_data(compressed);
 
         let reconstructed_gaussian = coder
             .pop_symbols(
