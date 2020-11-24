@@ -1,2 +1,32 @@
-[workspace]
-members = ["core", "python-bindings"]
+[package]
+authors = ["Robert Bamler <robert.bamler@gmail.com>"]
+edition = "2018"
+name = "ans"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+name = "ans"
+
+[features]
+default = []
+
+# Use feature `pybindings` to compile the python extension module that provides
+# access to this library from python. This feature is turned off by default
+# because it causes problems with `cargo test`. To turn it on, run:
+#   cargo build --release --features pybindings
+pybindings = ["ndarray", "numpy", "pyo3"]
+
+[dependencies]
+num = "0.3.1"
+statrs = "0.13"
+
+ndarray = {version = "0.13", optional = true}
+numpy = {version = "0.12", optional = true}
+pyo3 = {version = "0.12.3", features = ["extension-module"], optional = true}
+
+[dev-dependencies]
+rand = "0.7.3"
+rand_xoshiro = "0.4"

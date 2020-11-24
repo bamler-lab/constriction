@@ -1,3 +1,6 @@
+#[cfg(feature = "pybindings")]
+pub mod pybindings;
+
 pub mod distributions;
 
 use std::ops::Deref;

@@ -2,7 +2,7 @@ use numpy::{PyArray1, PyReadonlyArray1};
 
 use pyo3::prelude::*;
 
-use ans::distributions::{Categorical, LeakyQuantizer};
+use super::distributions::{Categorical, LeakyQuantizer};
 use statrs::distribution::Normal;
 
 #[pymodule]
@@ -44,7 +44,7 @@ type W = u32;
 #[pyclass]
 #[text_signature = "(compressed)"]
 pub struct Coder {
-    inner: ans::Coder<W>,
+    inner: super::Coder<W>,
 }
 
 #[pymethods]
@@ -55,9 +55,9 @@ impl Coder {
         let inner = if let Some(compressed) = compressed {
             let mut compressed_vec = Vec::new();
             compressed_vec.extend_from_slice(compressed.as_slice().unwrap());
-            ans::Coder::with_compressed_data(compressed_vec)
+            super::Coder::with_compressed_data(compressed_vec)
         } else {
-            ans::Coder::new()
+            super::Coder::new()
         };
 
         Self { inner }
