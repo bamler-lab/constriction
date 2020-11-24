@@ -114,9 +114,7 @@ impl Coder {
     ///     compressed.tofile(file)
     /// ```
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> &'p PyArray1<u32> {
-        let mut compressed = Vec::new();
-        compressed.extend_from_slice(&*self.inner.to_compressed());
-        PyArray1::from_vec(py, compressed)
+        PyArray1::from_iter(py, self.inner.to_compressed().iter().cloned())
     }
 
     /// Encodes a sequence of symbols using (leaky) Gaussian entropy models.
@@ -156,10 +154,11 @@ impl Coder {
         self.inner
             .push_symbols(
                 symbols
-                    .iter()
+                    .as_slice()
                     .unwrap()
-                    .zip(means.iter().unwrap())
-                    .zip(stds.iter().unwrap())
+                    .iter()
+                    .zip(means.as_slice().unwrap().iter())
+                    .zip(stds.as_slice().unwrap().iter())
                     .map(|((&symbol, &mean), &std)| {
                         (symbol, quantizer.quantize(Normal::new(mean, std).unwrap()))
                     }),
@@ -217,19 +216,16 @@ impl Coder {
         py: Python<'p>,
     ) -> &'p PyArray1<i32> {
         let quantizer = LeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
-        let symbols = self
-            .inner
-            .pop_symbols(
-                means
-                    .as_slice()
-                    .unwrap()
-                    .iter()
-                    .zip(stds.as_slice().unwrap().iter())
-                    .map(|(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())),
-            )
-            .unwrap();
+        let symbols_iter = self.inner.pop_symbols(
+            means
+                .as_slice()
+                .unwrap()
+                .iter()
+                .zip(stds.as_slice().unwrap().iter())
+                .map(|(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())),
+        );
 
-        PyArray1::from_vec(py, symbols)
+        PyArray1::from_iter(py, symbols_iter)
 
         // TODO: use PyArray1::from_iter instead.
         // --> reverse order in `push_symbols` rather than `pop_symbols`
@@ -263,7 +259,7 @@ impl Coder {
             min_supported_symbol,
         );
         self.inner
-            .push_iid_symbols(symbols.iter().unwrap().cloned(), &distribution)
+            .push_iid_symbols(symbols.as_slice().unwrap().iter().cloned(), &distribution)
             .unwrap();
     }
 
@@ -288,7 +284,6 @@ impl Coder {
             probabilities.as_slice().unwrap(),
             min_supported_symbol,
         );
-        let symbols = self.inner.pop_iid_symbols(amt, &distribution).unwrap();
-        PyArray1::from_vec(py, symbols)
+        PyArray1::from_iter(py, self.inner.pop_iid_symbols(amt, &distribution))
     }
 }

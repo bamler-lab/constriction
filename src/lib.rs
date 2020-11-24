@@ -125,6 +125,15 @@ impl<W: CompressedWord> Coder<W> {
     /// the fact that the `Coder` is a stack: the last symbol `pushed` onto the
     /// stack will be the first symbol that [`pop_symbol`](#method.pop_symbol) will
     /// retrieve.
+    ///
+    /// Returns [`Err(InvalidSymbol)`](enum.CoderError.html#variant.InvalidSymbol)
+    /// if `symbol` has zero probability under the entropy model `distribution`.
+    /// This error can usually be avoided by using a "leaky" distribution, i.e., a
+    /// distribution that assign a nonzero probability to all symbols within a
+    /// finite domain. Leaky distributions can be constructed with, e.g., a
+    /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
+    /// [`Categorical::from_continuous_probabilities`](
+    /// distributions/struct.Categorical.html#method.from_continuous_probabilities).
     pub fn push_symbol<S>(
         &mut self,
         symbol: S,
@@ -149,7 +158,7 @@ impl<W: CompressedWord> Coder<W> {
         Ok(())
     }
 
-    /// Decodes a single symbol and pops it off compressed data.
+    /// Decodes a single symbol and pops it off the compressed data.
     ///
     /// This is a low level method. You usually probably want to call a batch method
     /// like [`pop_symbols`](#method.pop_symbols) or
@@ -179,12 +188,20 @@ impl<W: CompressedWord> Coder<W> {
         symbol
     }
 
-    /// Encodes a sequence of symbols, each with its own entropy model.
+    /// Encodes multiple symbols with individual entropy models in reverse order.
     ///
-    /// The implementation of this method is kind of trivial and could instead be
-    /// written out at the call site. The main reason why this method exists is for
-    /// symmetry with [`pop_symbols`] (whose implementation is not so trivial
-    /// because it has to reverse order).
+    /// The symbols are encoded in reverse order so that calling [`pop_symbols`]
+    /// retrieves them in forward order (since the ANS coder is a stack).
+    ///
+    /// Returns [`Err(InvalidSymbol)`](enum.CoderError.html#variant.InvalidSymbol)
+    /// if one of the symbols has zero probability under its entropy model.
+    /// In this case, a part of the symbols may have already been pushed on the
+    /// coder. This error can usually be avoided by using "leaky" distributions,
+    /// i.e., distributions that assign a nonzero probability to all symbols within
+    /// a finite domain. Leaky distributions can be constructed with, e.g., a
+    /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
+    /// [`Categorical::from_continuous_probabilities`](
+    /// distributions/struct.Categorical.html#method.from_continuous_probabilities).
     ///
     /// # Example
     ///
@@ -205,7 +222,7 @@ impl<W: CompressedWord> Coder<W> {
     /// coder.push_symbols(symbols.iter().cloned().zip(entropy_models.clone()));
     ///
     /// // Decode the encoded data.
-    /// let reconstructed = coder.pop_symbols(entropy_models).unwrap();
+    /// let reconstructed = coder.pop_symbols(entropy_models).collect::<Vec<_>>();
     ///
     /// assert_eq!(symbols, reconstructed);
     /// assert!(coder.is_empty());
@@ -214,72 +231,47 @@ impl<W: CompressedWord> Coder<W> {
     /// [`pop_symbols`]: #method.pop_symbols
     pub fn push_symbols<S, D: DiscreteDistribution<S, W>>(
         &mut self,
-        symbols_and_distributions: impl Iterator<Item = (S, D)>,
+        symbols_and_distributions: impl Iterator<Item = (S, D)> + DoubleEndedIterator,
     ) -> Result<()> {
-        for (symbol, distribution) in symbols_and_distributions {
+        for (symbol, distribution) in symbols_and_distributions.rev() {
             self.push_symbol(symbol, distribution)?;
         }
 
         Ok(())
     }
 
-    /// Decodes a sequence of symbols in reverse order.
+    /// Decodes a sequence of symbols.
     ///
-    /// This method is the inverse of [`push_symbols`]. The method takes care of
-    /// reversing the order of the provided `distributions` and of the decoded
-    /// symbols, thus abstracting away the fact that the underlying entropy coder is
-    /// a stack. This means that you can call `pop_symbols` with the same sequence
-    /// of distributions that was used in [`push_symbols`] and you will get back the
-    /// original sequence of symbols in the original order (see example below).
+    /// This method is the inverse of [`push_symbols`]. See example there.
     ///
-    /// # Example
+    /// # TODO
     ///
-    /// See [`push_symbols`]
+    /// Once specialization is stable, return an `impl ExactSizeIterator` if
+    /// `distribution` implements `ExactSizeIterator` (same for
+    /// [`pop_iid_symbols`](#method.pop_iid_symbols)).
     ///
     /// [`push_symbols`]: #method.push_symbols
-    pub fn pop_symbols<S, D: DiscreteDistribution<S, W>>(
-        &mut self,
-        distributions: impl Iterator<Item = D> + ExactSizeIterator + DoubleEndedIterator,
-    ) -> Result<Vec<S>> {
-        let len = distributions.len();
-        let mut symbols = Vec::<S>::with_capacity(len);
-
-        // SAFETY: we check in each iteration that array accesses are within bounds,
-        // and we check at the end that all memory has been initialized.
-        unsafe {
-            let symbols_start = symbols.as_mut_ptr();
-            let mut symbols_ptr = symbols_start.add(len);
-
-            for distribution in distributions.rev() {
-                if symbols_ptr == symbols_start {
-                    symbols.set_len(len);
-                    std::mem::drop(symbols);
-                    return Err(CoderError::DistributionsYieldedTooManyItems);
-                }
-
-                symbols_ptr = symbols_ptr.offset(-1);
-                symbols_ptr.write(self.pop_symbol(distribution));
-            }
-
-            if symbols_ptr != symbols_start {
-                let symbols_end = symbols_start.add(len);
-                while symbols_ptr != symbols_end {
-                    symbols_ptr.drop_in_place();
-                    symbols_ptr = symbols_ptr.offset(1);
-                }
-                return Err(CoderError::DistributionsYieldedTooFewItems);
-            }
-
-            symbols.set_len(len);
-        }
-
-        Ok(symbols)
+    pub fn pop_symbols<'s, S, D: DiscreteDistribution<S, W>>(
+        &'s mut self,
+        distributions: impl Iterator<Item = D> + 's,
+    ) -> impl Iterator<Item = S> + 's {
+        distributions.map(move |distribution| self.pop_symbol(distribution))
     }
 
     /// Encodes a sequence of symbols using a fixed entropy model.
     ///
     /// This is a convenience wrapper around [`push_symbols`] and the inverse of
     /// [`pop_iid_symbols`].
+    ///
+    /// Returns [`Err(InvalidSymbol)`](enum.CoderError.html#variant.InvalidSymbol)
+    /// if one of the symbols has zero probability under its entropy model.
+    /// In this case, a part of the symbols may have already been pushed on the
+    /// coder. This error can usually be avoided by using "leaky" distributions,
+    /// i.e., distributions that assign a nonzero probability to all symbols within
+    /// a finite domain. Leaky distributions can be constructed with, e.g., a
+    /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
+    /// [`Categorical::from_continuous_probabilities`](
+    /// distributions/struct.Categorical.html#method.from_continuous_probabilities).
     ///
     /// # Example
     ///
@@ -291,7 +283,7 @@ impl<W: CompressedWord> Coder<W> {
     ///     ans::distributions::Categorical::from_continuous_probabilities(&probabilities, -3);
     ///
     /// coder.push_iid_symbols(symbols.iter().cloned(), &distribution).unwrap();
-    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).unwrap();
+    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
     ///
     /// assert_eq!(symbols, reconstructed);
     /// assert!(coder.is_empty());
@@ -301,7 +293,7 @@ impl<W: CompressedWord> Coder<W> {
     /// [`pop_iid_symbols`]: #method.pop_iid_symbols
     pub fn push_iid_symbols<S>(
         &mut self,
-        symbols: impl Iterator<Item = S>,
+        symbols: impl Iterator<Item = S> + DoubleEndedIterator,
         distribution: &impl DiscreteDistribution<S, W>,
     ) -> Result<()> {
         self.push_symbols(symbols.map(|symbol| (symbol, distribution)))
@@ -314,12 +306,12 @@ impl<W: CompressedWord> Coder<W> {
     ///
     /// [`pop_symbols`]: #method.pop_symbols
     /// [`push_iid_symbols`]: #method.push_iid_symbols
-    pub fn pop_iid_symbols<S>(
-        &mut self,
+    pub fn pop_iid_symbols<'c, S: 'c>(
+        &'c mut self,
         amt: usize,
-        distribution: &impl DiscreteDistribution<S, W>,
-    ) -> Result<Vec<S>> {
-        self.pop_symbols((0..amt).map(|_| distribution))
+        distribution: &'c impl DiscreteDistribution<S, W>,
+    ) -> impl Iterator<Item = S> + 'c {
+        self.pop_symbols((0..amt).map(move |_| distribution))
     }
 
     /// Discards all compressed data and resets the coder to the same state as
@@ -402,7 +394,7 @@ impl<W: CompressedWord> Coder<W> {
     /// std::mem::drop(compressed);
     ///
     /// // Now `coder` can be used again.
-    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).unwrap();
+    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
     /// assert_eq!(reconstructed, symbols);
     /// ```
     pub fn to_compressed(&mut self) -> CoderGuard<W> {
@@ -438,7 +430,7 @@ impl<W: CompressedWord> Coder<W> {
     ///
     /// // Create a new coder with the same state and use it for decompression.
     /// let mut coder = ans::Coder::with_compressed_data(compressed);
-    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).unwrap();
+    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
     /// assert_eq!(reconstructed, symbols);
     /// assert!(coder.is_empty())
     /// ```
@@ -587,9 +579,9 @@ mod tests {
             let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
             let quantile = (rng.next_u32() as f64 + 0.5) / (1u64 << 32) as f64;
             let dist = Normal::new(mean, std_dev).unwrap();
-            let symbol = std::cmp::min(
+            let symbol = std::cmp::max(
                 -127,
-                std::cmp::max(127, (dist.inverse_cdf(quantile) + 0.5) as i32),
+                std::cmp::min(127, (dist.inverse_cdf(quantile) + 0.5) as i32),
             );
 
             symbols_gaussian.push(symbol);
@@ -640,8 +632,9 @@ mod tests {
                     .zip(&stds)
                     .map(|(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())),
             )
-            .unwrap();
-        let reconstructed_categorical = coder.pop_iid_symbols(AMT, &categorical).unwrap();
+            .collect::<Vec<_>>();
+        let reconstructed_categorical =
+            coder.pop_iid_symbols(AMT, &categorical).collect::<Vec<_>>();
 
         assert!(coder.is_empty());
 
