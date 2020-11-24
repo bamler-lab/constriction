@@ -1,0 +1,19 @@
+[package]
+authors = ["Robert Bamler <robert.bamler@gmail.com>"]
+edition = "2018"
+name = "ans-python-bindings"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["cdylib"]
+name = "ans"
+
+[dependencies]
+ans = {path = "../core"}
+
+ndarray = "0.13"
+numpy = "0.12"
+pyo3 = {version = "0.12.3", features = ["extension-module"]}
+statrs = "0.13"
