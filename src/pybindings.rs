@@ -50,16 +50,14 @@ pub struct Coder {
 impl Coder {
     /// Constructs a new entropy coder, optionally passing initial compressed data.
     #[new]
-    pub fn new(compressed: Option<PyReadonlyArray1<u32>>) -> Self {
+    pub fn new(compressed: Option<PyReadonlyArray1<u32>>) -> PyResult<Self> {
         let inner = if let Some(compressed) = compressed {
-            let mut compressed_vec = Vec::new();
-            compressed_vec.extend_from_slice(compressed.as_slice().unwrap());
-            super::Coder::with_compressed_data(compressed_vec)
+            super::Coder::with_compressed_data(compressed.to_vec()?)
         } else {
             super::Coder::new()
         };
 
-        Self { inner }
+        Ok(Self { inner })
     }
 
     /// Resets the coder for compression.
@@ -70,13 +68,11 @@ impl Coder {
     }
 
     /// The current size of the compressed data, in `np.uint32` words.
-    #[getter]
     pub fn num_words(&self) -> usize {
         self.inner.num_words()
     }
 
     /// The current size of the compressed data, in bits.
-    #[getter]
     pub fn num_bits(&self) -> usize {
         self.inner.num_bits()
     }
@@ -148,21 +144,24 @@ impl Coder {
         max_supported_symbol: i32,
         means: PyReadonlyArray1<f64>,
         stds: PyReadonlyArray1<f64>,
-    ) {
+    ) -> PyResult<()> {
+        let (symbols, means, stds) = (symbols.as_slice()?, means.as_slice()?, stds.as_slice()?);
+        if symbols.len() != means.len() || symbols.len() != stds.len() {
+            return Err(pyo3::exceptions::PyAttributeError::new_err(
+                "`symbols`, `means`, and `stds` must all have the same length.",
+            ));
+        }
+
         let quantizer = LeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
         self.inner
-            .push_symbols(
-                symbols
-                    .as_slice()
-                    .unwrap()
-                    .iter()
-                    .zip(means.as_slice().unwrap().iter())
-                    .zip(stds.as_slice().unwrap().iter())
-                    .map(|((&symbol, &mean), &std)| {
-                        (symbol, quantizer.quantize(Normal::new(mean, std).unwrap()))
-                    }),
-            )
-            .unwrap();
+            .try_push_symbols(symbols.iter().zip(means.iter()).zip(stds.iter()).map(
+                |((&symbol, &mean), &std)| {
+                    Normal::new(mean, std)
+                        .map(|distribution| (symbol, quantizer.quantize(distribution)))
+                },
+            ))?;
+
+        Ok(())
     }
 
     /// Decodes a sequence of symbols *in reverse order* using (leaky) Gaussian entropy
@@ -213,22 +212,22 @@ impl Coder {
         means: PyReadonlyArray1<f64>,
         stds: PyReadonlyArray1<f64>,
         py: Python<'p>,
-    ) -> &'p PyArray1<i32> {
+    ) -> PyResult<&'p PyArray1<i32>> {
+        if means.len() != stds.len() {
+            return Err(pyo3::exceptions::PyAttributeError::new_err(
+                "`means`, and `stds` must have the same length.",
+            ));
+        }
+
         let quantizer = LeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
-        let symbols_iter = self.inner.pop_symbols(
-            means
-                .as_slice()
-                .unwrap()
-                .iter()
-                .zip(stds.as_slice().unwrap().iter())
-                .map(|(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())),
-        );
+        let symbols = self
+            .inner
+            .try_pop_symbols(means.iter()?.zip(stds.iter()?).map(|(&mean, &std)| {
+                Normal::new(mean, std).map(|distribution| quantizer.quantize(distribution))
+            }))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        PyArray1::from_iter(py, symbols_iter)
-
-        // TODO: use PyArray1::from_iter instead.
-        // --> reverse order in `push_symbols` rather than `pop_symbols`
-        //     (which is much easier to do anyway)
+        Ok(PyArray1::from_vec(py, symbols))
     }
 
     /// Encodes a sequence of symbols using a fixed categorical distribution.
@@ -252,14 +251,21 @@ impl Coder {
         symbols: PyReadonlyArray1<i32>,
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<f64>,
-    ) {
+    ) -> PyResult<()> {
         let distribution = Categorical::from_floating_point_probabilities(
-            probabilities.as_slice().unwrap(),
+            probabilities.as_slice()?,
             min_supported_symbol,
-        );
+        )
+        .map_err(|()| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Probability distribution is either degenerate or not normalizable.",
+            )
+        })?;
+
         self.inner
-            .push_iid_symbols(symbols.as_slice().unwrap().iter().cloned(), &distribution)
-            .unwrap();
+            .push_iid_symbols(symbols.as_slice()?.iter().cloned(), &distribution)?;
+
+        Ok(())
     }
 
     /// Decodes a sequence of categorically distributed symbols *in reverse order*.
@@ -278,11 +284,33 @@ impl Coder {
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<f64>,
         py: Python<'p>,
-    ) -> &'p PyArray1<i32> {
+    ) -> PyResult<&'p PyArray1<i32>> {
         let distribution = Categorical::from_floating_point_probabilities(
-            probabilities.as_slice().unwrap(),
+            probabilities.as_slice()?,
             min_supported_symbol,
-        );
-        PyArray1::from_iter(py, self.inner.pop_iid_symbols(amt, &distribution))
+        )
+        .map_err(|()| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Probability distribution is either degenerate or not normalizable.",
+            )
+        })?;
+
+        Ok(PyArray1::from_iter(
+            py,
+            self.inner.pop_iid_symbols(amt, &distribution),
+        ))
+    }
+}
+
+impl From<super::CoderError> for PyErr {
+    fn from(err: super::CoderError) -> Self {
+        match err {
+            crate::CoderError::ImpossibleSymbol => pyo3::exceptions::PyKeyError::new_err(
+                "Tried to encode symbol that has zero probability under entropy model.",
+            ),
+            crate::CoderError::IterationError(_) => pyo3::exceptions::PyValueError::new_err(
+                "Invalid parameters for probability distribution.",
+            ),
+        }
     }
 }

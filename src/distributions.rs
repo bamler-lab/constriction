@@ -8,29 +8,33 @@ use std::{marker::PhantomData, ops::RangeInclusive};
 
 use super::CompressedWord;
 
-pub trait DiscreteDistribution<S, W>
+pub trait DiscreteDistribution<W>
 where
     W: CompressedWord,
 {
+    type Symbol;
+
     /// Returns `Ok((left_sided_cumulative, probability))` of the bin for the
     /// provided `symbol` if the symbol has nonzero probability.
-    fn left_cumulative_and_probability(&self, symbol: S) -> Result<(W, W), ()>;
+    fn left_cumulative_and_probability(&self, symbol: Self::Symbol) -> Result<(W, W), ()>;
 
     /// Returns `(symbol, left_sided_cumulative, probability)` of the unique bin
     /// that satisfies `left_sided_cumulative <= quantile < right_sided_cumulative`.
-    fn quantile_function(&self, quantile: W) -> (S, W, W);
+    fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W);
 }
 
-impl<S, W, D> DiscreteDistribution<S, W> for &D
+impl<W, D> DiscreteDistribution<W> for &D
 where
     W: CompressedWord,
-    D: DiscreteDistribution<S, W>,
+    D: DiscreteDistribution<W>,
 {
-    fn left_cumulative_and_probability(&self, symbol: S) -> Result<(W, W), ()> {
+    type Symbol = D::Symbol;
+
+    fn left_cumulative_and_probability(&self, symbol: Self::Symbol) -> Result<(W, W), ()> {
         (*self).left_cumulative_and_probability(symbol)
     }
 
-    fn quantile_function(&self, quantile: W) -> (S, W, W) {
+    fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W) {
         (*self).quantile_function(quantile)
     }
 }
@@ -125,14 +129,16 @@ pub struct QuantizedDistribution<'a, F, S, W, CD> {
     quantizer: &'a LeakyQuantizer<W, S, F>,
 }
 
-impl<'a, F, S, W, CD> DiscreteDistribution<S, W> for QuantizedDistribution<'a, F, S, W, CD>
+impl<'a, F, S, W, CD> DiscreteDistribution<W> for QuantizedDistribution<'a, F, S, W, CD>
 where
     S: PrimInt + AsPrimitive<W> + Into<F> + WrappingSub,
     F: Float + AsPrimitive<S> + AsPrimitive<W>,
     W: CompressedWord + Into<F>,
     CD: Univariate<F, F> + InverseCDF<F>,
 {
-    fn left_cumulative_and_probability(&self, symbol: S) -> Result<(W, W), ()> {
+    type Symbol = S;
+
+    fn left_cumulative_and_probability(&self, symbol: Self::Symbol) -> Result<(W, W), ()> {
         let half = F::one() / (F::one() + F::one());
 
         let min_symbol = *self.quantizer.domain.start();
@@ -170,7 +176,7 @@ where
         Ok((left_sided_cumulative, probability))
     }
 
-    fn quantile_function(&self, quantile: W) -> (S, W, W) {
+    fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W) {
         let half = F::one() / (F::one() + F::one());
         let denominator = W::max_value().into() + F::one();
 
@@ -179,7 +185,7 @@ where
         let free_weight = self.quantizer.free_weight;
 
         // Make an initial guess for the inverse of the leaky CDF.
-        let mut symbol: S = self
+        let mut symbol: Self::Symbol = self
             .inner
             .inverse_cdf((quantile.into() + half) / denominator)
             .as_();
@@ -200,7 +206,7 @@ where
 
         let right_sided_cumulative = if left_sided_cumulative > quantile {
             // Our initial guess for `symbol` was too high. Reduce it until we're good.
-            symbol = symbol - S::one();
+            symbol = symbol - Self::Symbol::one();
             let mut right_sided_cumulative = left_sided_cumulative;
             loop {
                 if symbol == min_symbol {
@@ -214,7 +220,7 @@ where
                     break;
                 } else {
                     right_sided_cumulative = left_sided_cumulative;
-                    symbol = symbol - S::one();
+                    symbol = symbol - Self::Symbol::one();
                 }
             }
 
@@ -237,7 +243,7 @@ where
                 }
 
                 left_sided_cumulative = right_sided_cumulative;
-                symbol = symbol + S::one();
+                symbol = symbol + Self::Symbol::one();
             }
         };
 
@@ -289,23 +295,30 @@ where
     /// entropy from the provided (floating point) to the resulting (fixed point)
     /// probabilities subject to the above three constraints.
     ///
-    /// # Panics
+    /// # Error handling
     ///
-    /// If the provided probability distribution cannot be normalized, either
-    /// because `probabilities` is of length zero, or because one of its entries is
-    /// negative with a nonzero magnitude, or because the sum of its elements is
-    /// zero, infinite, or NaN.
+    /// Returns an error if the provided probability distribution cannot be
+    /// normalized, either because `probabilities` is of length zero, or because one
+    /// of its entries is negative with a nonzero magnitude, or because the sum of
+    /// its elements is zero, infinite, or NaN.
+    ///
+    /// Also returns an error if the probability distribution is degenerate, i.e.,
+    /// if `probabilities` has only a single element, because degenerate probability
+    /// distributions cannot be represented currently.
     pub fn from_floating_point_probabilities<F>(
         probabilities: &[F],
         min_supported_symbol: S,
-    ) -> Self
+    ) -> Result<Self, ()>
     where
         F: Float + AsPrimitive<W> + std::iter::Sum<F>,
         W: CompressedWord + Into<F> + AsPrimitive<usize>,
         usize: AsPrimitive<W>,
     {
-        let probabilities = optimal_weights(probabilities);
-        Self::from_fixed_point_probabilities(&probabilities, min_supported_symbol)
+        let probabilities = optimal_weights(probabilities)?;
+        Ok(Self::from_fixed_point_probabilities(
+            &probabilities,
+            min_supported_symbol,
+        ))
     }
 
     /// Constructs a distribution with a PMF given in fixed point arithmetic.
@@ -410,18 +423,24 @@ where
     }
 }
 
-impl<S, W> DiscreteDistribution<S, W> for Categorical<S, W>
+impl<S, W> DiscreteDistribution<W> for Categorical<S, W>
 where
     S: PrimInt + AsPrimitive<usize>,
     W: CompressedWord,
 {
-    fn left_cumulative_and_probability(&self, symbol: S) -> Result<(W, W), ()> {
-        assert!(symbol >= self.min_symbol);
+    type Symbol = S;
+
+    fn left_cumulative_and_probability(&self, symbol: Self::Symbol) -> Result<(W, W), ()> {
+        if symbol < self.min_symbol {
+            return Err(());
+        }
         let index: usize = (symbol - self.min_symbol).as_();
 
         let (cdf, next_cdf) = unsafe {
-            // SAFETY: the assertion ensures we're not out of bounds.
-            assert!(index as usize + 1 < self.cdf.len());
+            // SAFETY: we perform a single check if index is within bounds.
+            if index as usize + 1 >= self.cdf.len() {
+                return Err(());
+            }
             (
                 *self.cdf.get_unchecked(index as usize),
                 *self.cdf.get_unchecked(index as usize + 1),
@@ -458,7 +477,7 @@ where
         let next_cdf = unsafe { *self.cdf.get_unchecked(right) };
 
         (
-            self.min_symbol + S::from(left).unwrap(),
+            self.min_symbol + Self::Symbol::from(left).unwrap(),
             cdf,
             next_cdf.wrapping_sub(&cdf),
         )
@@ -492,7 +511,7 @@ where
 /// # TODO
 ///
 /// Implement non-leaky variant of this
-fn optimal_weights<F, W>(pmf: &[F]) -> Vec<W>
+fn optimal_weights<F, W>(pmf: &[F]) -> Result<Vec<W>, ()>
 where
     F: Float + AsPrimitive<W> + std::iter::Sum<F>,
     W: CompressedWord + Into<F> + AsPrimitive<usize>,
@@ -506,12 +525,8 @@ where
         loss: F,
     }
 
-    assert!(!pmf.is_empty());
-    assert!(pmf.len() <= W::max_value().as_());
-    if pmf.len() == 1 {
-        // The algorithm below doesn't work on degenerate distributions, so we treat
-        // them as a special case.
-        return vec![W::zero()];
+    if pmf.len() < 2 || pmf.len() > W::max_value().as_() {
+        return Err(());
     }
 
     // Start by assigning each symbol weight 1 and then distributing no more than
@@ -520,14 +535,18 @@ where
     let mut remaining_free_weight = free_weight;
     let free_weight_float: F = free_weight.into();
     let normalization = pmf.iter().cloned().sum::<F>();
-    assert!(normalization.is_normal() && normalization.is_sign_positive());
+    if !normalization.is_normal() || !normalization.is_sign_positive() {
+        return Err(());
+    }
     let scale = free_weight_float / normalization;
 
     let mut slots = pmf
         .iter()
         .enumerate()
         .map(|(original_index, &prob)| {
-            assert!(prob >= F::zero());
+            if prob < F::zero() {
+                return Err(());
+            }
             let current_free_weight = (prob * scale).as_();
             remaining_free_weight = remaining_free_weight - current_free_weight;
             let weight = current_free_weight + W::one();
@@ -542,15 +561,15 @@ where
                 -prob * (-F::one() / weight.into()).ln_1p()
             };
 
-            Slot {
+            Ok(Slot {
                 original_index,
                 prob,
                 weight,
                 win,
                 loss,
-            }
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
 
     // Distribute remaining weight evenly among symbols with highest wins.
     while remaining_free_weight != W::zero() {
@@ -604,7 +623,7 @@ where
 
     slots.sort_by_key(|slot| slot.original_index);
 
-    slots.into_iter().map(|slot| slot.weight).collect()
+    Ok(slots.into_iter().map(|slot| slot.weight).collect())
 }
 
 #[cfg(test)]
@@ -639,7 +658,7 @@ mod tests {
         assert_eq!(hist.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let weights: Vec<u32> = optimal_weights(&probabilities);
+        let weights: Vec<u32> = optimal_weights(&probabilities).unwrap();
 
         assert_eq!(&weights[..], &hist[..]);
     }
@@ -654,7 +673,7 @@ mod tests {
         assert_ne!(hist.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let weights: Vec<u32> = optimal_weights(&probabilities);
+        let weights: Vec<u32> = optimal_weights(&probabilities).unwrap();
 
         assert_eq!(weights.len(), hist.len());
         assert_eq!(weights.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
@@ -689,12 +708,13 @@ mod tests {
         ];
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
-        let distribution = Categorical::from_floating_point_probabilities(&probabilities, -127);
+        let distribution =
+            Categorical::from_floating_point_probabilities(&probabilities, -127).unwrap();
         test_discrete_distribution(distribution, -127..-90);
     }
 
     fn test_discrete_distribution(
-        distribution: impl DiscreteDistribution<i32, u32>,
+        distribution: impl DiscreteDistribution<u32, Symbol = i32>,
         domain: std::ops::Range<i32>,
     ) {
         let mut sum = 0;
