@@ -3,8 +3,6 @@ pub mod pybindings;
 
 pub mod distributions;
 
-use std::ops::Deref;
-
 use distributions::DiscreteDistribution;
 use num::{
     cast::AsPrimitive,
@@ -53,22 +51,26 @@ unsafe impl CompressedWord for u64 {
     type State = u128;
 }
 
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum CoderError {
+    /// Tried to encode a symbol with zero probability under the used entropy model.
+    ///
+    /// This error can usually be avoided by using a "leaky" distribution, i.e., a
+    /// distribution that assigns a nonzero probability to all symbols within a
+    /// finite domain. Leaky distributions can be constructed with, e.g., a
+    /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
+    /// [`Categorical::from_floating_point_probabilities`](
+    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
+    InvalidSymbol,
+}
+
+type Result<T> = std::result::Result<T, CoderError>;
+
 pub struct Coder<W: CompressedWord> {
     buf: Vec<W>,
     state: W::State,
 }
-
-#[non_exhaustive]
-#[derive(Debug)]
-pub enum CoderError {
-    InvalidCompressedData,
-    InvalidSymbol,
-    DistributionsYieldedTooManyItems,
-    DistributionsYieldedTooFewItems,
-    InvalidDistribution,
-}
-
-type Result<T> = std::result::Result<T, CoderError>;
 
 impl<W: CompressedWord> Coder<W> {
     /// Creates an Empty ANS coder.
@@ -129,11 +131,11 @@ impl<W: CompressedWord> Coder<W> {
     /// Returns [`Err(InvalidSymbol)`](enum.CoderError.html#variant.InvalidSymbol)
     /// if `symbol` has zero probability under the entropy model `distribution`.
     /// This error can usually be avoided by using a "leaky" distribution, i.e., a
-    /// distribution that assign a nonzero probability to all symbols within a
+    /// distribution that assigns a nonzero probability to all symbols within a
     /// finite domain. Leaky distributions can be constructed with, e.g., a
     /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
-    /// [`Categorical::from_continuous_probabilities`](
-    /// distributions/struct.Categorical.html#method.from_continuous_probabilities).
+    /// [`Categorical::from_floating_point_probabilities`](
+    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
     pub fn push_symbol<S>(
         &mut self,
         symbol: S,
@@ -200,8 +202,8 @@ impl<W: CompressedWord> Coder<W> {
     /// i.e., distributions that assign a nonzero probability to all symbols within
     /// a finite domain. Leaky distributions can be constructed with, e.g., a
     /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
-    /// [`Categorical::from_continuous_probabilities`](
-    /// distributions/struct.Categorical.html#method.from_continuous_probabilities).
+    /// [`Categorical::from_floating_point_probabilities`](
+    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
     ///
     /// # Example
     ///
@@ -270,8 +272,8 @@ impl<W: CompressedWord> Coder<W> {
     /// i.e., distributions that assign a nonzero probability to all symbols within
     /// a finite domain. Leaky distributions can be constructed with, e.g., a
     /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
-    /// [`Categorical::from_continuous_probabilities`](
-    /// distributions/struct.Categorical.html#method.from_continuous_probabilities).
+    /// [`Categorical::from_floating_point_probabilities`](
+    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
     ///
     /// # Example
     ///
@@ -280,7 +282,7 @@ impl<W: CompressedWord> Coder<W> {
     /// let symbols = vec![5, -1, -3, 4];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution =
-    ///     ans::distributions::Categorical::from_continuous_probabilities(&probabilities, -3);
+    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities, -3);
     ///
     /// coder.push_iid_symbols(symbols.iter().cloned(), &distribution).unwrap();
     /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
@@ -382,7 +384,7 @@ impl<W: CompressedWord> Coder<W> {
     /// let symbols = vec![5, -1, -3, 4];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution =
-    ///     ans::distributions::Categorical::from_continuous_probabilities(&probabilities, -3);
+    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities, -3);
     /// coder.push_iid_symbols(symbols.iter().cloned(), &distribution).unwrap();
     ///
     /// // Inspect the compressed data.
@@ -420,7 +422,7 @@ impl<W: CompressedWord> Coder<W> {
     /// let symbols = vec![5, -1, -3, 4];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution =
-    ///     ans::distributions::Categorical::from_continuous_probabilities(&probabilities, -3);
+    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities, -3);
     /// coder.push_iid_symbols(symbols.iter().cloned(), &distribution).unwrap();
     ///
     /// // Get the compressed data, consuming the coder.
@@ -520,7 +522,7 @@ impl<'a, W: CompressedWord> Drop for CoderGuard<'a, W> {
     }
 }
 
-impl<'a, W: CompressedWord> Deref for CoderGuard<'a, W> {
+impl<'a, W: CompressedWord> std::ops::Deref for CoderGuard<'a, W> {
     type Target = [W];
 
     fn deref(&self) -> &Self::Target {
@@ -596,7 +598,7 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            Categorical::from_continuous_probabilities(&categorical_probabilities, -127);
+            Categorical::from_floating_point_probabilities(&categorical_probabilities, -127);
         let mut symbols_categorical = Vec::with_capacity(AMT);
         for _ in 0..AMT {
             let quantile = rng.next_u32();

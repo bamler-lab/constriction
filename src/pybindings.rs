@@ -1,5 +1,4 @@
 use numpy::{PyArray1, PyReadonlyArray1};
-
 use pyo3::prelude::*;
 
 use super::distributions::{Categorical, LeakyQuantizer};
@@ -254,7 +253,7 @@ impl Coder {
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<f64>,
     ) {
-        let distribution = Categorical::from_continuous_probabilities(
+        let distribution = Categorical::from_floating_point_probabilities(
             probabilities.as_slice().unwrap(),
             min_supported_symbol,
         );
@@ -280,7 +279,7 @@ impl Coder {
         probabilities: PyReadonlyArray1<f64>,
         py: Python<'p>,
     ) -> &'p PyArray1<i32> {
-        let distribution = Categorical::from_continuous_probabilities(
+        let distribution = Categorical::from_floating_point_probabilities(
             probabilities.as_slice().unwrap(),
             min_supported_symbol,
         );

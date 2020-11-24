@@ -1,4 +1,8 @@
-use num::{cast::AsPrimitive, traits::WrappingSub, Float, PrimInt};
+use num::{
+    cast::AsPrimitive,
+    traits::{WrappingAdd, WrappingSub},
+    Float, PrimInt,
+};
 use statrs::distribution::{InverseCDF, Univariate};
 use std::{marker::PhantomData, ops::RangeInclusive};
 
@@ -255,23 +259,7 @@ where
     S: PrimInt + AsPrimitive<usize>,
     W: CompressedWord,
 {
-    pub fn new(probabilities: &[W], min_symbol: S) -> Self {
-        let cdf = std::iter::once(&W::zero())
-            .chain(probabilities)
-            .scan(W::zero(), |accum, prob| {
-                // This should only wrap around at last entry if `super::FREQUENCY_BITS == 32`.
-                *accum = accum.wrapping_add(prob);
-                Some(*accum)
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-
-        assert!(cdf.last() == Some(&W::zero()));
-
-        Self { min_symbol, cdf }
-    }
-
-    /// Construct a categorical distribution whose PMF approximates given probabilities.
+    /// Constructs a leaky distribution whose PMF approximates given probabilities.
     ///
     /// The returned distribution will be defined on the domain ranging from
     /// `min_supported_symbol` (inclusively) to
@@ -281,30 +269,119 @@ where
     /// has to be nonzero. The provided probabilities do not necessarily need to add
     /// up to one. The resulting distribution will explicitly get normalized and an
     /// overall scaling of all entries of `probabilities` does not affect the
-    /// result.
+    /// result (up to effects due to rounding errors).
     ///
     /// The probability mass function of the returned distribution will approximate
-    /// the provided probabilities as well as possible subject to the following
+    /// the provided probabilities as well as possible, subject to the following
     /// constraints:
-    /// - probabilities are represented in fixed point arithmetic, which introduces
-    ///   rounding errors;
+    /// - probabilities are represented in fixed point arithmetic with `W::bits()`
+    ///   bits of precision, which typically introduces rounding errors;
     /// - despite the possibility of rounding errors, the returned probability
     ///   distribution will be exactly normalized; and
     /// - each symbol in the domain defined above gets assigned a strictly nonzero
     ///   probability, even if the provided probability for the symbol was below the
-    ///   threshold that can be resolved in fixed point arithmetic.
+    ///   threshold that can be resolved in fixed point arithmetic. We refer to this
+    ///   property as the resulting distribution being "leaky". This probability
+    ///   ensures that all symbols within the domain can be encoded when this
+    ///   distribution is used as an entropy model.
     ///
     /// More precisely, the resulting probability distribution minimizes the cross
     /// entropy from the provided (floating point) to the resulting (fixed point)
     /// probabilities subject to the above three constraints.
-    pub fn from_continuous_probabilities<F>(probabilities: &[F], min_supported_symbol: S) -> Self
+    ///
+    /// # Panics
+    ///
+    /// If the provided probability distribution cannot be normalized, either
+    /// because `probabilities` is of length zero, or because one of its entries is
+    /// negative with a nonzero magnitude, or because the sum of its elements is
+    /// zero, infinite, or NaN.
+    pub fn from_floating_point_probabilities<F>(
+        probabilities: &[F],
+        min_supported_symbol: S,
+    ) -> Self
     where
         F: Float + AsPrimitive<W> + std::iter::Sum<F>,
         W: CompressedWord + Into<F> + AsPrimitive<usize>,
         usize: AsPrimitive<W>,
     {
         let probabilities = optimal_weights(probabilities);
-        Self::new(&probabilities, min_supported_symbol)
+        Self::from_fixed_point_probabilities(&probabilities, min_supported_symbol)
+    }
+
+    /// Constructs a distribution with a PMF given in fixed point arithmetic.
+    ///
+    /// This is a low level method that allows, e.g,. reconstructing a probability
+    /// distribution previously exported with [`get_fixed_point_probabilities`].
+    /// The more common way to construct a `Categorical` distribution is via
+    /// [`from_floating_point_probabilities`].
+    ///
+    /// The entries of `probabilities` have to sum up to `W::max_value() + 1`
+    /// (logically).
+    ///
+    /// # Panics
+    ///
+    /// If `probabilities` is not properly normalized (including if it is empty).
+    ///
+    /// [`get_fixed_point_probabilities`]: #method.get_fixed_point_probabilities
+    /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
+    pub fn from_fixed_point_probabilities(probabilities: &[W], min_symbol: S) -> Self {
+        let mut laps: usize = 0;
+
+        let cdf = std::iter::once(&W::zero())
+            .chain(probabilities)
+            .scan(W::zero(), |accum, prob| {
+                let new_accum = accum.wrapping_add(prob);
+                laps += (new_accum < *accum) as usize; // branchless check if we have wrapped around
+                *accum = new_accum;
+                Some(new_accum)
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
+        assert_eq!(laps, 1);
+        assert!(cdf.last() == Some(&W::zero()));
+
+        Self { cdf, min_symbol }
+    }
+
+    /// Returns the underlying probability mass function in fixed point arithmetic.
+    ///
+    /// This method may be used together with [`domain`](#method.domain) to export
+    /// the distribution into a format that will be stable across minor version
+    /// changes of this library. The distribution can then be reconstructed via
+    /// [`from_fixed_point_probabilities`](#method.from_fixed_point_probabilities).
+    ///
+    /// The entries of the returned `Vec` add up to `W::max_value() + 1`
+    /// (logically).
+    pub fn get_fixed_point_probabilities(&self) -> Vec<W> {
+        self.cdf
+            .iter()
+            .skip(1)
+            .scan(W::zero(), |previous, &current| {
+                let probability = current.wrapping_sub(previous);
+                *previous = current;
+                Some(probability)
+            })
+            .collect()
+    }
+
+    /// Returns the domain of the distribution as an inclusive range.
+    ///
+    /// Note that some symbols within this domain may still have zero probability
+    /// unless the probability distribution is "leaky" (use
+    /// [`from_floating_point_probabilities`](
+    /// #method.from_floating_point_probabilities) to construct a *leaky*
+    /// categorical distribution).
+    pub fn domain(&self) -> RangeInclusive<S>
+    where
+        S: WrappingAdd + WrappingSub,
+        usize: AsPrimitive<S>,
+    {
+        let max_symbol = self
+            .min_symbol
+            .wrapping_add(&self.cdf.len().as_())
+            .wrapping_sub(&2usize.as_());
+        self.min_symbol..=max_symbol
     }
 
     /// Returns the entropy in units of bits (i.e., base 2).
@@ -317,10 +394,15 @@ where
             .cdf
             .iter()
             .skip(1)
-            .scan(W::zero(), |last, &cdf| {
-                let prob = cdf.wrapping_sub(last).into();
-                *last = cdf;
-                Some(prob * prob.log2())
+            .scan(W::zero(), |previous, &cdf| {
+                let prob = cdf.wrapping_sub(previous);
+                *previous = cdf;
+                Some(if prob.is_zero() {
+                    F::zero()
+                } else {
+                    let prob = prob.into();
+                    prob * prob.log2()
+                })
             })
             .sum::<F>();
 
@@ -437,12 +519,15 @@ where
     let free_weight = W::zero().wrapping_sub(&pmf.len().as_());
     let mut remaining_free_weight = free_weight;
     let free_weight_float: F = free_weight.into();
-    let scale = free_weight_float / pmf.iter().cloned().sum::<F>();
+    let normalization = pmf.iter().cloned().sum::<F>();
+    assert!(normalization.is_normal() && normalization.is_sign_positive());
+    let scale = free_weight_float / normalization;
 
     let mut slots = pmf
         .iter()
         .enumerate()
         .map(|(original_index, &prob)| {
+            assert!(prob >= F::zero());
             let current_free_weight = (prob * scale).as_();
             remaining_free_weight = remaining_free_weight - current_free_weight;
             let weight = current_free_weight + W::one();
@@ -588,10 +673,10 @@ mod tests {
         // TODO: replace the following with
         // `assert!(weights_and_hist.iter().map(|&(_, x)| x).is_sorted())`
         // when `is_sorted` becomes stable.
-        let mut last = 0;
+        let mut previous = 0;
         for (_, hist) in weights_and_hist {
-            assert!(hist >= last);
-            last = hist;
+            assert!(hist >= previous);
+            previous = hist;
         }
     }
 
@@ -604,7 +689,7 @@ mod tests {
         ];
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
-        let distribution = Categorical::from_continuous_probabilities(&probabilities, -127);
+        let distribution = Categorical::from_floating_point_probabilities(&probabilities, -127);
         test_discrete_distribution(distribution, -127..-90);
     }
 
