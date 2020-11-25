@@ -448,10 +448,10 @@ impl<W: CompressedWord> Coder<W> {
     ///
     /// ```
     /// let mut coder = ans::Coder::<u32>::new();
-    /// let symbols = vec![5, -1, -3, 4];
+    /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution =
-    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities, -3).unwrap();
+    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities).unwrap();
     ///
     /// coder.push_iid_symbols(symbols.iter().cloned(), &distribution).unwrap();
     /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
@@ -551,10 +551,10 @@ impl<W: CompressedWord> Coder<W> {
     /// let mut coder = ans::Coder::<u32>::new();
     ///
     /// // Push some data on the coder.
-    /// let symbols = vec![5, -1, -3, 4];
+    /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution =
-    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities, -3)
+    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities)
     ///         .unwrap();
     /// coder.push_iid_symbols(symbols.iter().cloned(), &distribution).unwrap();
     ///
@@ -590,10 +590,10 @@ impl<W: CompressedWord> Coder<W> {
     /// let mut coder = ans::Coder::<u32>::new();
     ///
     /// // Push some data on the coder.
-    /// let symbols = vec![5, -1, -3, 4];
+    /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution =
-    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities, -3)
+    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities)
     ///         .unwrap();
     /// coder.push_iid_symbols(symbols.iter().cloned(), &distribution).unwrap();
     ///
@@ -770,8 +770,7 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            Categorical::from_floating_point_probabilities(&categorical_probabilities, -127)
-                .unwrap();
+            Categorical::from_floating_point_probabilities(&categorical_probabilities).unwrap();
         let mut symbols_categorical = Vec::with_capacity(AMT);
         for _ in 0..AMT {
             let quantile = rng.next_u32();

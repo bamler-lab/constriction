@@ -254,7 +254,6 @@ impl Coder {
     ) -> PyResult<()> {
         let distribution = Categorical::from_floating_point_probabilities(
             probabilities.as_slice()?,
-            min_supported_symbol,
         )
         .map_err(|()| {
             pyo3::exceptions::PyValueError::new_err(
@@ -262,8 +261,13 @@ impl Coder {
             )
         })?;
 
-        self.inner
-            .push_iid_symbols(symbols.as_slice()?.iter().cloned(), &distribution)?;
+        self.inner.push_iid_symbols(
+            symbols
+                .as_slice()?
+                .iter()
+                .map(|s| s.wrapping_sub(min_supported_symbol) as usize),
+            &distribution,
+        )?;
 
         Ok(())
     }
@@ -287,7 +291,6 @@ impl Coder {
     ) -> PyResult<&'p PyArray1<i32>> {
         let distribution = Categorical::from_floating_point_probabilities(
             probabilities.as_slice()?,
-            min_supported_symbol,
         )
         .map_err(|()| {
             pyo3::exceptions::PyValueError::new_err(
@@ -297,7 +300,9 @@ impl Coder {
 
         Ok(PyArray1::from_iter(
             py,
-            self.inner.pop_iid_symbols(amt, &distribution),
+            self.inner
+                .pop_iid_symbols(amt, &distribution)
+                .map(|s| (s as i32).wrapping_add(min_supported_symbol)),
         ))
     }
 }

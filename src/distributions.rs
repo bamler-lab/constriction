@@ -1,8 +1,4 @@
-use num::{
-    cast::AsPrimitive,
-    traits::{WrappingAdd, WrappingSub},
-    Float, PrimInt,
-};
+use num::{cast::AsPrimitive, traits::WrappingSub, Float, PrimInt};
 use statrs::distribution::{InverseCDF, Univariate};
 use std::{marker::PhantomData, ops::RangeInclusive};
 
@@ -255,16 +251,11 @@ where
     }
 }
 
-pub struct Categorical<S, W> {
+pub struct Categorical<W> {
     cdf: Box<[W]>,
-    min_symbol: S,
 }
 
-impl<S, W> Categorical<S, W>
-where
-    S: PrimInt + AsPrimitive<usize>,
-    W: CompressedWord,
-{
+impl<W: CompressedWord> Categorical<W> {
     /// Constructs a leaky distribution whose PMF approximates given probabilities.
     ///
     /// The returned distribution will be defined on the domain ranging from
@@ -295,7 +286,7 @@ where
     /// entropy from the provided (floating point) to the resulting (fixed point)
     /// probabilities subject to the above three constraints.
     ///
-    /// # Error handling
+    /// # Error Handling
     ///
     /// Returns an error if the provided probability distribution cannot be
     /// normalized, either because `probabilities` is of length zero, or because one
@@ -305,20 +296,14 @@ where
     /// Also returns an error if the probability distribution is degenerate, i.e.,
     /// if `probabilities` has only a single element, because degenerate probability
     /// distributions cannot be represented currently.
-    pub fn from_floating_point_probabilities<F>(
-        probabilities: &[F],
-        min_supported_symbol: S,
-    ) -> Result<Self, ()>
+    pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: Float + AsPrimitive<W> + std::iter::Sum<F>,
         W: CompressedWord + Into<F> + AsPrimitive<usize>,
         usize: AsPrimitive<W>,
     {
         let probabilities = optimal_weights(probabilities)?;
-        Ok(Self::from_fixed_point_probabilities(
-            &probabilities,
-            min_supported_symbol,
-        ))
+        Ok(Self::from_fixed_point_probabilities(&probabilities))
     }
 
     /// Constructs a distribution with a PMF given in fixed point arithmetic.
@@ -337,7 +322,7 @@ where
     ///
     /// [`get_fixed_point_probabilities`]: #method.get_fixed_point_probabilities
     /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
-    pub fn from_fixed_point_probabilities(probabilities: &[W], min_symbol: S) -> Self {
+    pub fn from_fixed_point_probabilities(probabilities: &[W]) -> Self {
         let mut laps: usize = 0;
 
         let cdf = std::iter::once(&W::zero())
@@ -354,7 +339,7 @@ where
         assert_eq!(laps, 1);
         assert!(cdf.last() == Some(&W::zero()));
 
-        Self { cdf, min_symbol }
+        Self { cdf }
     }
 
     /// Returns the underlying probability mass function in fixed point arithmetic.
@@ -378,23 +363,20 @@ where
             .collect()
     }
 
-    /// Returns the domain of the distribution as an inclusive range.
+    /// Returns the size of the domain of the distribution
     ///
-    /// Note that some symbols within this domain may still have zero probability
+    /// The distribution is defined on symbols ranging from 0 (inclusively) to the
+    /// value returned by this method (exclusively). Any symbol larger or equal than
+    /// the value returned by this method is guaranteed to have zero probability
+    /// under the distribution.
+    ///
+    /// Note that symbols within the above domain may also have zero probability
     /// unless the probability distribution is "leaky" (use
     /// [`from_floating_point_probabilities`](
     /// #method.from_floating_point_probabilities) to construct a *leaky*
     /// categorical distribution).
-    pub fn domain(&self) -> RangeInclusive<S>
-    where
-        S: WrappingAdd + WrappingSub,
-        usize: AsPrimitive<S>,
-    {
-        let max_symbol = self
-            .min_symbol
-            .wrapping_add(&self.cdf.len().as_())
-            .wrapping_sub(&2usize.as_());
-        self.min_symbol..=max_symbol
+    pub fn domain_size(&self) -> usize {
+        self.cdf.len() - 1
     }
 
     /// Returns the entropy in units of bits (i.e., base 2).
@@ -423,18 +405,11 @@ where
     }
 }
 
-impl<S, W> DiscreteDistribution<W> for Categorical<S, W>
-where
-    S: PrimInt + AsPrimitive<usize>,
-    W: CompressedWord,
-{
-    type Symbol = S;
+impl<W: CompressedWord> DiscreteDistribution<W> for Categorical<W> {
+    type Symbol = usize;
 
     fn left_cumulative_and_probability(&self, symbol: Self::Symbol) -> Result<(W, W), ()> {
-        if symbol < self.min_symbol {
-            return Err(());
-        }
-        let index: usize = (symbol - self.min_symbol).as_();
+        let index: usize = symbol;
 
         let (cdf, next_cdf) = unsafe {
             // SAFETY: we perform a single check if index is within bounds.
@@ -450,7 +425,7 @@ where
         Ok((cdf, next_cdf.wrapping_sub(&cdf)))
     }
 
-    fn quantile_function(&self, quantile: W) -> (S, W, W) {
+    fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W) {
         let mut left = 0; // Smallest possible index.
         let mut right = self.cdf.len() - 1; // One above largest possible index.
 
@@ -476,11 +451,7 @@ where
         let cdf = unsafe { *self.cdf.get_unchecked(left) };
         let next_cdf = unsafe { *self.cdf.get_unchecked(right) };
 
-        (
-            self.min_symbol + Self::Symbol::from(left).unwrap(),
-            cdf,
-            next_cdf.wrapping_sub(&cdf),
-        )
+        (left, cdf, next_cdf.wrapping_sub(&cdf))
     }
 }
 
@@ -708,15 +679,17 @@ mod tests {
         ];
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
-        let distribution =
-            Categorical::from_floating_point_probabilities(&probabilities, -127).unwrap();
-        test_discrete_distribution(distribution, -127..-90);
+        let distribution = Categorical::from_floating_point_probabilities(&probabilities).unwrap();
+        test_discrete_distribution(distribution, 0..probabilities.len());
     }
 
-    fn test_discrete_distribution(
-        distribution: impl DiscreteDistribution<u32, Symbol = i32>,
-        domain: std::ops::Range<i32>,
-    ) {
+    fn test_discrete_distribution<D: DiscreteDistribution<u32>>(
+        distribution: D,
+        domain: std::ops::Range<D::Symbol>,
+    ) where
+        D::Symbol: Copy + std::fmt::Debug + PartialEq,
+        std::ops::Range<D::Symbol>: Iterator<Item = D::Symbol>,
+    {
         let mut sum = 0;
 
         for symbol in domain {
