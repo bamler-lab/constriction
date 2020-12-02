@@ -1,0 +1,29 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cargo",
+			"command": "doc",
+			"args": [
+				"--all-features"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "doc",
+			"label": "rust: cargo doc --all-features"
+		},
+		{
+			"type": "cargo",
+			"command": "build",
+			"args": [
+				"--all-features"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "rust: cargo build --all-features"
+		}
+	]
+}
