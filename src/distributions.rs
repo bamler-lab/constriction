@@ -1,3 +1,10 @@
+//! Probability distributions that can be used as entropy models for compression.
+//!
+//! See documentation of [`Coder`] for an example how to use these distributions for
+//! data compression or decompression.
+//!
+//! [`Coder`]: crate::Coder
+
 use num::{cast::AsPrimitive, traits::WrappingSub, Float, PrimInt};
 use statrs::distribution::{InverseCDF, Univariate};
 use std::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::RangeInclusive};

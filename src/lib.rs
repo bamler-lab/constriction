@@ -1,13 +1,145 @@
-//! Low-level entropy coding utilities using [range Asymmetric Numeral Systems (rANS)]
+//! Entropy coding primitives in Rust for Rust and/or Python.
 //!
-//! The main entry point to this crate is the type [`Coder`].
+//! This crate provides high-performance generic lossless compression primitives.
+//! Its main intended use case is for building more specialized lossless or lossy
+//! compression methods on top of these primitives. For this reason, the library can
+//! be used both as a standard Rust crate that one can include in other rust
+//! projects, or one can (optionally) compile this crate as a [Python extension
+//! module] (using `cargo build --release --feature pybindings`). This allows users
+//! to quickly experiment in Python with different compression methods that build on
+//! top of the primitives provided by this library. Once a promising compression
+//! method has been developed, one can implement an optimized version of the method
+//! in Rust building on the same entropy coding primitives provided by this crate.
 //!
-//! # TODO
+//! # Usage
 //!
-//! Move some documentation from [`Coder`] here.
+//! Rust users will likely want to start by encoding some data with a [`Coder`].
+//!
+//! Python users will likely want to install this library via `pip install
+//! streamcode`, then `import streamcode` in their project and construct a
+//! `streamcode.Coder`.
+//!
+//! # A Primer on Entropy Coding
+//!
+//! Entropy coding is an approach to lossless compression that employs a
+//! probabilistic model over the encoded data. This so called *entropy model* allows
+//! an entropy coding algorithm to assign short codewords to data it will likely
+//! see, at the cost of mapping unlikely data to longer codewords. The module
+//! [`distributions`] provides tools to construct entropy models that you can use
+//! with a [`Coder`] or a [`SeekableDecoder`].
+//!
+//! The information theoretically optimal (i.e., lowest possible) *expected* bitrate
+//! for entropy coding lies within one bit of the [cross entropy] of the employed
+//! entropy model relative to the true distribution of the encoded data. To achieve
+//! this optimal expected bitrate, an optimal entropy coder has to map each possible
+//! data point to a compressed bitstring whose length is the [information content]
+//! of the data under the entropy model (rounded up to the nearest integer).
+//!
+//! The entropy coders provided by this library are *asymptotically optimal* in the
+//! sense that they employ approximations to optimize for runtime performance, but
+//! these approximations can be adjusted via generic parameters to get arbitrarily
+//! close to the information theoretically optimal compression performance (in the
+//! limit of large data). The documentation of `Coder` has a [section discussing the
+//! involved tradeoffs](struct.Coder.html#guidance-for-choosing-w-and-precision).
+//!
+//! ## Streaming Entropy Coding
+//!
+//! The entropy coders provided in this library support what is called "streaming
+//! entropy coding" over a sequence of symbols. This provides better compression
+//! performance (lower bitrates) on large data than well-known alternative methods
+//! such as [Huffman coding], which do not support streaming entropy coding.
+//!
+//! To understand the problem that streaming entropy coding solves, one has to look
+//! at practical applications of entropy coding. Data compression is only useful if
+//! one a large amount of data, typically represented as a long sequence of
+//! *symbols* (such as a long sequence of characters when compressing a text
+//! document). Conceptually, the entropy model is then a probability distribution
+//! over the entire sequence of symbols (e.g, a probability distribution over all
+//! possible text documents). In practice, however, dealing with probability
+//! distributions over large amounts of data is difficult, and one therefore
+//! typically factorizes the entropy model into individual models for each symbol
+//! (such a factorization still allows for [modeling correlations](
+//! #encoding-correlated-data) as discussed below).
+//!
+//! Such a factorization of the entropy model would lead to a significant overhead
+//! (in bitrate) in some of the original entropy coding algorithms such as [Huffman
+//! coding]. This is because Huffman coding compresses each symbol into its
+//! individual bitstring. The compressed representation of the entire message is
+//! then formed by concatenating the compressed bitstrings of each symbol (the
+//! bitstrings are formed in a way that makes delimiters unnecessary). This has an
+//! important drawback: each symbol contributes an integer number of bits to the
+//! compressed data, even if its [information content] is not an integer number,
+//! which is the common case (the information content of a symbol is the symbol's
+//! contribution to the length of the compressed bitstring in an *optimal* entropy
+//! coder). For example, consider the problem of compressing a sequence of one
+//! million symbols, where the average information content of each symbol is
+//! 0.1&nbsp;bits (this is a realistic scenario for neural compression methods).
+//! While the information content of the entire message is only 1,000,000 × 0.1 =
+//! 100,000&nbsp;bits, Huffman coding would need at least one full bit for each
+//! symbol, resulting in a compressed bitstring that is at least ten times longer.
+//!
+//! The entropy coders provided by this library do not suffer from this overhead
+//! because they support *streaming* entropy coding, which amortizes over the
+//! information content of several symbols. In the above example, this library would
+//! produce a compressed bitstring that is closer to 100,000&nbsp;bits in length
+//! (the remaining overhead depends on details in the choice of entropy coder used,
+//! which generally trades off compression performance against runtime and memory
+//! performance). This amortization over symbols means that one can no longer map
+//! each symbol to a span of bits in the compressed bitstring. Therefore, jumping
+//! ("seeking") to a given position in the compressed bitstring in a
+//! [`SeekableDecoder`] requires providing some small additional information aside
+//! from the jump address. The additional information can be thought of as the
+//! fractional (i.e., sub-bit) part of the jump address
+//!
+//! # Encoding Correlated Data
+//!
+//! The above mentioned factorization of the entropy model into individual models
+//! for each encoded symbol may seem more restrictive than it actually is. It is not
+//! to be confused with a "fully factorized" model, which is not required here. The
+//! entropy model can still model correlations between different symbols in a
+//! message.
+//!
+//! The most straight-forward way to encode correlations is by choosing the entropy
+//! model of each symbol conditionally on other symbols ("autoregressive" entropy
+//! models), as described in the example below. Another way to encode correlations
+//! is via hierarchical probabilistic models and the bits-back algorithm, which can
+//! naturally be implemented on top of a stack-based entropy coder such as the rANS
+//! coder provided by this library.
+//!
+//! For an example of an autoregressive entropy model, consider the task of
+//! compressing a message that consists of a sequence of three symbols
+//! `[s1, s2, s3]`. The full entropy model for this message is a probability
+//! distribution `p(s1, s2, s3)`. Such a distribution can, at least in principle,
+//! always be factorized as `p(s1, s2, s3) = p1(s1) * p2(s2 | s1) *
+//! p3(s3 | s1, s2)`. Here, `p1`, `p2`, and `p3` are entropy models for the
+//! individual symbols `s1`, `s2`, and `s3`, respectively. In this notation, the bar
+//! "`|`" separates the symbol on the left, which is the one that the given entropy
+//! model describes, from the symbols on the right, which one must already know if
+//! one wants to construct the entropy model.
+//!
+//! During encoding, we know the entire message `[s1, s2, s3]`, and so we can
+//! construct all three entropy models `p1`, `p2`, and `p3`. We then use these
+//! entropy models to encode the symbols `s1`, `s2`, and `s3` (in reverse order if a
+//! stack-based entropy coding algorithm such as rANS is used). When decoding the
+//! compressed bitstring, we do not know the symbols `s1`, `s2`, and `s3` upfront,
+//! so we initially cannot construct `p2` or `p3`. But the entropy model `p1` of the
+//! first symbol does not depend on any other symbols, so we can use it to decode
+//! the first symbol `s1`. Using this decoded symbol, we can construct the entropy
+//! model `p2` and use it to decode the second symbol `s2`. Finally, we use both
+//! decoded symbols `s1` and `s2` to construct the entropy model `p3` and we decode
+//! `s3`.
+//!
+//! This technique of autoregressive models can be scaled up to build very
+//! expressive entropy models over complex data types. This is outside the scope of
+//! this library, which only provides the primitive building blocks for constructing
+//! [`distributions`] over individual symbols and for encoding and decoding data.
 //!
 //! [range Asymmetric Numeral Systems (rANS)]:
 //! https://en.wikipedia.org/wiki/Asymmetric_numeral_systems#Range_variants_(rANS)_and_streaming
+//! [python extension module]: https://docs.python.org/3/extending/extending.html
+//! [cross entropy]: https://en.wikipedia.org/wiki/Cross_entropy
+//! [information content]: https://en.wikipedia.org/wiki/Information_content
+//! [Huffman coding]: https://en.wikipedia.org/wiki/Huffman_coding
 
 #![feature(min_const_generics)]
 #![warn(missing_docs, rust_2018_idioms, missing_debug_implementations)]
@@ -15,19 +147,9 @@
 #[cfg(feature = "pybindings")]
 pub mod pybindings;
 
-/// Probability distributions that can be used as entropy models for compression.
-///
-///
-///
-/// # Example
-///
-/// See documentation of [`Coder`] for an example how to use these distributions for
-/// data compression or decompression.
-///
-/// [`Coder`]: crate::Coder
 pub mod distributions;
 
-use std::{borrow::Borrow, error::Error, fmt::Debug};
+use std::{borrow::Borrow, error::Error, fmt::Debug, ops::Deref};
 
 use distributions::DiscreteDistribution;
 use num::{
@@ -42,7 +164,7 @@ use num::{
 /// also used to represent probabilities in fixed point arithmetic in a
 /// [`DiscreteDistribution`].
 ///
-/// The documentation of [`Coder`] has a [section that describes the meaning of the
+/// The documentation of `Coder` has a [section that describes the meaning of the
 /// compressed word type `W`](
 /// struct.Coder.html#generic-parameters-compressed-word-type-w-and-precision).
 pub unsafe trait CompressedWord:
@@ -171,7 +293,8 @@ type Result<T> = std::result::Result<T, CoderError>;
 /// precision used in entropy models. See [below](
 /// #generic-parameters-compressed-word-type-w-and-precision) for details on these
 /// parameters. If you're unsure about the choice of `W` and `PRECISION` then use
-/// the type alias [`DefaultCoder`], which sets sane defaults.
+/// the type alias [`DefaultCoder`], which makes sane choices for typical
+/// applications.
 ///
 /// The `Coder` uses an entropy coding algorithm called [range Asymmetric
 /// Numeral Systems (rANS)]. This means that it operates as a stack, i.e., a "last
@@ -190,6 +313,7 @@ type Result<T> = std::result::Result<T, CoderError>;
 /// // Bring in external crate `statrs` to use its probability distributions as entropy models.
 /// use statrs::distribution::Normal;
 ///
+/// // `DefaultCoder` is a type alias to `Coder` with sane generic parameters.
 /// let mut coder = ans::DefaultCoder::new();
 /// let quantizer = ans::distributions::LeakyQuantizer::new(-100..=100);
 /// let entropy_model = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
@@ -239,11 +363,11 @@ type Result<T> = std::result::Result<T, CoderError>;
 ///   `1 <= PRECISION <= 32`).
 ///
 ///   Since the smallest representable probability is `(1/2)^PRECISION`, the largest
-///   possible (finite) information content of a single symbol is `PRECISION` bits.
-///   Thus, pushing a single symbol onto the `Coder` increases the "filling level"
-///   of the `Coder`'s internal state by at most `PRECISION` bits. Since `PRECISION`
-///   is at most the bitlength of `W`, the procedure of transferring one `W` from
-///   the internal state to the buffer described in the list item above is
+///   possible (finite) [information content of a single symbol is `PRECISION`
+///   bits. Thus, pushing a single symbol onto the `Coder` increases the "filling
+///   level" of the `Coder`'s internal state by at most `PRECISION` bits. Since
+///   `PRECISION` is at most the bitlength of `W`, the procedure of transferring one
+///   `W` from the internal state to the buffer described in the list item above is
 ///   guaranteed to free up enough internal state to encode at least one additional
 ///   symbol.
 ///
@@ -275,14 +399,14 @@ type Result<T> = std::result::Result<T, CoderError>;
 ///     internal state. This constant  overhead is usually negligible unless you
 ///     want to compress a very small amount of data.
 ///   - the choice of `W` may have some effect on runtime performance since
-///     operations on larger types may be more expensive (remember that the `Coder` 
-///     operates on a state of twice the size as `W`, i.e., if `W = u64` then the 
+///     operations on larger types may be more expensive (remember that the `Coder`
+///     operates on a state of twice the size as `W`, i.e., if `W = u64` then the
 ///     coder will operate on a `u128`, which may be slow on some hardware). On the
-///     other hand, this overhead should not be used as an argument for setting `W` 
+///     other hand, this overhead should not be used as an argument for setting `W`
 ///     to a very small type like `u8` or `u16` since common computing architectures
-///     are usually not really faster on very small registers, and a very small `W` 
+///     are usually not really faster on very small registers, and a very small `W`
 ///     type will lead to more frequent transfers between the internal state and the
-///     growable buffer, which requires potentially expensive branching and memory 
+///     growable buffer, which requires potentially expensive branching and memory
 ///     lookups.
 /// - Finally, the "slack" between `PRECISION` and the size of `W` has an influence
 ///   on the bitrate. It is usually *not* a good idea to set `PRECISION` to the
@@ -300,87 +424,32 @@ type Result<T> = std::result::Result<T, CoderError>;
 ///
 /// The type alias [`DefaultCoder`] was chose with the above considerations in mind.
 ///
-/// # Entropy Models and Streaming Entropy Coding
-///
-/// Entropy coding is an approach to lossless compression that employs a
-/// probabilistic model over the encoded data. This so called *entropy model* allows
-/// an entropy coding algorithm to assign short codewords to data it will likely
-/// see, at the cost of mapping unlikely data to longer codewords. The module
-/// [`distributions`] provides tools to construct entropy models that you can use
-/// with a `Coder`.
-///
-/// This `Coder` (as well as [`SeekableDecoder`]) models data as a sequence of
-/// "symbols" of arbitrary (possibly even heterogeneous) types. Each symbol is
-/// associated with its own entropy model (see [below](#encoding-correlated-data)
-/// for ways to model correlations between symbols). However, in contrast to, e.g.,
-/// [Huffman  Coding], rANS coding provides streaming entropy coding where the
-/// compressed file size is amortized over the entire sequence of symbols. This
-/// provides better (lower) bitrates, in particular for entropy models where the
-/// [entropy] of each individual symbol is small, possibly below 1 bit. Huffman
-/// coding encodes each symbol independently into a bitstring of integer length, and
-/// it concatenates these individual bitstrings to the full compressed message. This
-/// leads to an overhead since the contribution of each symbol to the length of the
-/// compressed message is the symbol's [information content] *rounded up* to the
-/// nearest integer number of bits. By contrast, streaming entropy coding with rANS,
-/// as implemented in this `Coder`, amortizes over the (typically fractional)
-/// information content of all symbols so that the effective contribution of each
-/// symbol to the length of the compressed message is closer to the actual
-/// information content of the symbol (*not* rounded up to the nearest integer).
-///
 /// # Consistency Between Encoding and Decoding
 ///
-/// As described above, each symbol can be encoded and decoded with its own entropy
-/// model. If your goal is to reconstruct the originally encoded symbols during
-/// decoding, then you must employ the same sequence of entropy models (in reversed
-/// order) during encoding and decoding. However, this is not required in general.
-/// It is perfectly legal to push symbols on the `Coder` using some entropy models,
-/// and then pop off symbols using different entropy models. The popped off symbols
-/// will then in general be different from the original symbols, but will be
-/// generated in a deterministic way. If there is no deterministic relation between
-/// the entropy models used for pushing and popping, and if there is still
-/// compressed  data left at the end (i.e., if [`is_empty`] returns false), then the
-/// popped off symbols are approximately distributed as independent samples from the
-/// entropy models provided when popping them off the coder. Such random samples,
-/// which consume parts of the compressed data, are useful in the bits-back
-/// algorithm.
+/// As elaborated in the [crate documentation](index.html#streaming-entropy-coding),
+/// encoding and decoding operates on a sequence of symbols. Each symbol can be
+/// encoded and decoded with its own entropy model (the symbols can even have
+/// heterogeneous types). If your goal is to reconstruct the originally encoded
+/// symbols during decoding, then you must employ the same sequence of entropy
+/// models (in reversed order) during encoding and decoding.
 ///
-/// # Encoding Correlated Data
-///
-/// While the `Coder` expects an individual entropy model for each symbol as
-/// described above, the caller can still encode correlations between symbols. The
-/// most straight-forward way to encode correlations is by choosing the entropy
-/// model of each symbol conditionally on other symbols, as described in the example
-/// below. Another way to encode correlations is via hierarchical probabilistic
-/// models and the bits-back algorithm, which can naturally be implemented on top of
-/// a stack-based entropy coder such as the rANS algorithm used by this `Coder`.
-///
-/// As an example for correlations via conditional entropy models, consider a
-/// message that consists of a sequence of three symbols `[s1, s2, s3]`. The full
-/// entropy model for this message is a probability distribution `p(s1, s2, s3)`.
-/// Such a distribution can, at least in principle, always be factorized as
-/// `p(s1, s2, s3) = p1(s1) * p2(s2 | s1) * p3(s3 | s1, s2)`. Here, `p1`, `p2`, and
-/// `p3` are entropy models for the individual symbols `s1`, `s2`, and `s3`,
-/// respectively. In this notation, the bar "`|`" separates the symbol on the left,
-/// which is the one that the given entropy model describes, from the symbols on the
-/// right, which one must already know if one  wants to construct the entropy model.
-/// During encoding, we know the entire message `[s1, s2, s3]`, and so we can
-/// construct all three entropy models `p1`, `p2`, and `p3`. We then use these
-/// entropy models to encode ("push on the stack") the symbols `s1`, `s2`, and `s3`
-/// *in reverse order* (the method [`push_symbols`] automatically reverses the order
-/// of the provided symbols). When decoding the compressed message, we do not know
-/// the symbols `s1`, `s2`, and `s3` upfront, so we initially cannot construct `p2`
-/// or `p3`. But the entropy model `p1` of the first symbol does not depend on any
-/// other symbols, so we can use it to decode ("pop off") the first symbol `s1`.
-/// Using this decoded symbol, we can construct the entropy model `p2` and use it to
-/// decode ("pop off") the second symbol `s2`. Finally, we use both decoded symbols
-/// `s1` and `s2` to construct the entropy model `p3` and we decode `s3`.
+/// However, using the same entropy models for encoding and decoding is not a
+/// *general* requirement. It is perfectly legal to push (encode) symbols on the
+/// `Coder` using some entropy models, and then pop off (decode) symbols using
+/// different entropy models. The popped off symbols will then in general be
+/// different from the original symbols, but will be generated in a deterministic
+/// way. If there is no deterministic relation between the entropy models used for
+/// pushing and popping, and if there is still compressed data left at the end
+/// (i.e., if [`is_empty`] returns false), then the popped off symbols are
+/// approximately distributed as independent samples from the respective entropy
+/// models. Such random samples, which consume parts of the compressed data, are
+/// useful in the bits-back algorithm.
 ///
 /// [range Asymmetric Numeral Systems (rANS)]:
 /// https://en.wikipedia.org/wiki/Asymmetric_numeral_systems#Range_variants_(rANS)_and_streaming
 /// [`push_symbols`]: #method.push_symbols
 /// [`push_iid_symbols`]: #method.push_iid_symbols
 /// [`distributions`]: distributions/index.html
-/// [Huffman Coding]: https://en.wikipedia.org/wiki/Huffman_coding
 /// [entropy]: https://en.wikipedia.org/wiki/Entropy_(information_theory)
 /// [information content]: https://en.wikipedia.org/wiki/Information_content
 /// [`push_symbols`]: #method.push_symbols
@@ -395,7 +464,7 @@ pub struct Coder<W: CompressedWord, const PRECISION: usize> {
 ///
 /// This type alias sets the compressed word type `W` and the fixed point
 /// `PRECISION` to sane values for many typical use cases. The documentation of
-/// [`Coder`] has a [section describing the tradeoffs](
+/// `Coder` has a [section describing the tradeoffs](
 /// struct.Coder.html#generic-parameters-compressed-word-type-w-and-precision)
 /// that were considered in the choice of these parameters.
 pub type DefaultCoder = Coder<u32, 24>;
@@ -843,6 +912,46 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
         self.buf.is_empty() && self.state == W::State::zero()
     }
 
+    /// Consumes the coder and returns the compressed data.
+    ///
+    /// The returned data can be used to recreate a coder with the same state
+    /// (e.g., for decoding) by passing it to
+    /// [`with_compressed_data`](#method.with_compressed_data).
+    ///
+    /// If you don't want to consume the coder, consider calling
+    /// [`get_compressed`](#method.get_compressed),
+    /// [`as_compressed_raw`](#method.as_compressed_raw), or
+    /// [`iter_compressed`](#method.iter_compressed) instead.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let mut coder = ans::DefaultCoder::new();
+    ///
+    /// // Push some data on the coder.
+    /// let symbols = vec![8, 2, 0, 7];
+    /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
+    /// let distribution =
+    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities)
+    ///         .unwrap();
+    /// coder.push_iid_symbols(&symbols, &distribution).unwrap();
+    ///
+    /// // Get the compressed data, consuming the coder.
+    /// let compressed = coder.into_compressed();
+    ///
+    /// // ... write `compressed` to a file and then read it back later ...
+    ///
+    /// // Create a new coder with the same state and use it for decompression.
+    /// let mut coder = ans::DefaultCoder::with_compressed_data(compressed);
+    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
+    /// assert_eq!(reconstructed, symbols);
+    /// assert!(coder.is_empty())
+    /// ```
+    pub fn into_compressed(mut self) -> Vec<W> {
+        Self::state_len(self.state, |w| self.buf.push(w));
+        self.buf
+    }
+
     /// Returns a view into the full compressed data currently on the stack.
     ///
     /// This is a low level method that provides a view into the current compressed
@@ -959,46 +1068,6 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
         CompressedIter::new(self)
     }
 
-    /// Consumes the coder and returns the compressed data.
-    ///
-    /// The returned data can be used to recreate a coder with the same state
-    /// (e.g., for decoding) by passing it to
-    /// [`with_compressed_data`](#method.with_compressed_data).
-    ///
-    /// If you don't want to consume the coder, consider calling
-    /// [`get_compressed`](#method.get_compressed),
-    /// [`as_compressed_raw`](#method.as_compressed_raw), or
-    /// [`iter_compressed`](#method.iter_compressed) instead.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let mut coder = ans::DefaultCoder::new();
-    ///
-    /// // Push some data on the coder.
-    /// let symbols = vec![8, 2, 0, 7];
-    /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let distribution =
-    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities)
-    ///         .unwrap();
-    /// coder.push_iid_symbols(&symbols, &distribution).unwrap();
-    ///
-    /// // Get the compressed data, consuming the coder.
-    /// let compressed = coder.into_compressed();
-    ///
-    /// // ... write `compressed` to a file and then read it back later ...
-    ///
-    /// // Create a new coder with the same state and use it for decompression.
-    /// let mut coder = ans::DefaultCoder::with_compressed_data(compressed);
-    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
-    /// assert_eq!(reconstructed, symbols);
-    /// assert!(coder.is_empty())
-    /// ```
-    pub fn into_compressed(mut self) -> Vec<W> {
-        Self::state_len(self.state, |w| self.buf.push(w));
-        self.buf
-    }
-
     /// Returns the number of compressed words on the stack.
     ///
     /// This includes a constant overhead of between one and two words unless the
@@ -1083,9 +1152,7 @@ impl<'a, W: CompressedWord, const PRECISION: usize> Drop for CoderGuard<'a, W, P
     }
 }
 
-impl<'a, W: CompressedWord, const PRECISION: usize> std::ops::Deref
-    for CoderGuard<'a, W, PRECISION>
-{
+impl<'a, W: CompressedWord, const PRECISION: usize> Deref for CoderGuard<'a, W, PRECISION> {
     type Target = [W];
 
     fn deref(&self) -> &Self::Target {
