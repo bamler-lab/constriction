@@ -75,13 +75,6 @@ fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-/// The type of compressed words.
-///
-/// The rust library is generic over this type. For the python bindings, we'll
-/// probably eventually want to provide coders for different word sizes in one
-/// binary but we're not there yet.
-type W = u32;
-
 /// An entropy coder based on [Asymmetric Numeral Systems (ANS)].
 ///
 /// This is a wrapper around the Rust type [`ans::Coder<u32>`](crate::Coder)
@@ -166,7 +159,7 @@ type W = u32;
 #[text_signature = "(compressed)"]
 #[derive(Debug)]
 pub struct Coder {
-    inner: super::Coder<W>,
+    inner: super::DefaultCoder,
 }
 
 #[pymethods]

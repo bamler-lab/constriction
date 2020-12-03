@@ -9,6 +9,7 @@
 //! [range Asymmetric Numeral Systems (rANS)]:
 //! https://en.wikipedia.org/wiki/Asymmetric_numeral_systems#Range_variants_(rANS)_and_streaming
 
+#![feature(min_const_generics)]
 #![warn(missing_docs, rust_2018_idioms, missing_debug_implementations)]
 
 #[cfg(feature = "pybindings")]
@@ -35,9 +36,15 @@ use num::{
     CheckedDiv, PrimInt, Unsigned, Zero,
 };
 
-/// A trait for the smallest unit of compressed data in a [`Coder`]
+/// A trait for the smallest unit of compressed data in a [`Coder`].
 ///
-/// [`Coder`]: struct.Coder.html
+/// This is the trait for the compressed data type `W` in a [`Coder`], and it is
+/// also used to represent probabilities in fixed point arithmetic in a
+/// [`DiscreteDistribution`].
+///
+/// The documentation of [`Coder`] has a [section that describes the meaning of the
+/// compressed word type `W`](
+/// struct.Coder.html#generic-parameters-compressed-word-type-w-and-precision).
 pub unsafe trait CompressedWord:
     PrimInt + Unsigned + WrappingSub + WrappingAdd + 'static
 {
@@ -159,13 +166,20 @@ type Result<T> = std::result::Result<T, CoderError>;
 /// Entropy coder for both encoding and decoding on a stack
 ///
 /// This is is a very general entropy coder that provides both encoding and
-/// decoding. The coder uses an entropy coding algorithm called [range Asymmetric
-/// Numeral Systems (rANS)], which means that it operates as a stack, i.e., a "last
+/// decoding, and that is generic over a type `W` that defines the smallest unit of
+/// compressed data, and a constant `PRECISION` that defines the fixed point
+/// precision used in entropy models. See [below](
+/// #generic-parameters-compressed-word-type-w-and-precision) for details on these
+/// parameters. If you're unsure about the choice of `W` and `PRECISION` then use
+/// the type alias [`DefaultCoder`], which sets sane defaults.
+///
+/// The `Coder` uses an entropy coding algorithm called [range Asymmetric
+/// Numeral Systems (rANS)]. This means that it operates as a stack, i.e., a "last
 /// in first out" data structure: encoding "pushes symbols on" the stack and
 /// decoding "pops symbols off" the stack in reverse order. In contrast to
 /// [`SeekableDecoder`], decoding with a `Coder` *consumes* the compressed data for
 /// the decoded symbols. This means that encoding and decoding can be interleaved
-/// arbitrarily, thus growing and shrinking the stack along the way.
+/// arbitrarily, thus growing and shrinking the stack of compressed data as you go.
 ///
 /// # Example
 ///
@@ -173,56 +187,118 @@ type Result<T> = std::result::Result<T, CoderError>;
 /// [`push_symbols`] or [`push_iid_symbols`].
 ///
 /// ```
+/// // Bring in external crate `statrs` to use its probability distributions as entropy models.
 /// use statrs::distribution::Normal;
 ///
-/// let mut coder = ans::Coder::<u32>::new();
+/// let mut coder = ans::DefaultCoder::new();
 /// let quantizer = ans::distributions::LeakyQuantizer::new(-100..=100);
 /// let entropy_model = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
 ///
 /// let symbols = vec![-10, 4, 0, 3];
-/// coder.push_iid_symbols(symbols.iter(), &entropy_model);
+/// coder.push_iid_symbols(&symbols, &entropy_model);
 /// println!("Encoded into {} bits: {:?}", coder.num_bits(), &*coder.get_compressed());
 ///
-/// // Above, `push_iid_symbols` encoded the symbols in reverse order (see documentation).
-/// // So popping them off now will yield the same symbols in non-reversed order.
+/// // The call to `push_iid_symbols` above encoded the symbols in reverse order (see
+/// // documentation). So popping them off now will yield the same symbols in original order.
 /// let reconstructed = coder.pop_iid_symbols(4, &entropy_model).collect::<Vec<_>>();
 /// assert_eq!(reconstructed, symbols);
 /// ```
 ///
-/// # Compressed Word Type `W`
+/// # Generic Parameters: Compressed Word Type `W` and `PRECISION`
 ///
-/// The `Coder` is generic over a type `W`, which is a [`CompressedWord`]. It is
-/// typically a primitive unsigned integer type. **If you're unsure, use `W = u32`
-/// as a default choice** unless your entropy models are lookup tables that operate
-/// on the entire `W` space (in which case a smaller type like `u16` or even `u8`
-/// may be more appropriate to reduce the memory footprint).
+/// The `Coder` is generic over a type `W`, which is a [`CompressedWord`], and over
+/// a constant `PRECISION` of type `usize`. **If you're unsure how to set these
+/// parameters, consider using the type alias [`DefaultCoder`], which uses sane
+/// default values.**
 ///
-/// In more detail, the choice of the compressed word type`W` has several
-/// consequences:
+/// ## Meaning of `W` and `PRECISION`
 ///
-/// - It influences the accuracy with which entropy models used for encoding or
-///   decoding can represent probabilities. This accuracy in turn has an influence
-///   on:
-///   - the runtime and memory efficiency of the entropy models; larger `W` types
-///     may lead to more expensive entropy models, but it depends on the type of
-///     entropy model.
-///   - how well the models can represent the true distribution of the data; small
-///     `W` types therefore lead to some *relative* overhead over the theoretically
-///     optimal bitrate for entropy coding (i.e., an overhead that is roughly
-///     proportional to the number of encoded symbols).
-/// - Besides, the choice of `W` influences the *absolute* (i.e., constant) overhead
-///   in bitrate over the theoretically possible lowest bitrate for entropy coding.
-///   This constant overhead is between one and two words of type `W`. Thus, larger
-///   `W` types such as `u32` lead to a slightly larger constant overhead, but the
-///   constant overhead is typically negligible unless one is compressing a very
-///   short message.
-/// - Finally, the choice of `W` may have a minor influence on the run-time
-///   efficiency of the coder itself. On the one hand, the coder operates most of
-///   the time on a state of twice the size as `W`, suggesting higher cost for large
-///   `W` types. On the other hand, very small `W` types will require the coder to
-///   flush its state more often. In practice, however, the actual entropy coding
-///   part is unlikely to be the computational bottleneck unless one uses entropy
-///   models that are heavily optimized for speed (such as lookup tables).
+/// If you need finer control over the entropy coder, and [`DefaultCoder`] does not
+/// fit your needs, then here are the details about the parameters `W` and
+/// `PRECISION`:
+///
+/// - `W` is the smallest "chunk" of compressed data. It is usually a primitive
+///   unsigned integer type, such as `u32` or `u16`. The type `W` is also used to
+///   represent probabilities in fixed-point arithmetic in any
+///   [`DiscreteDistribution`] that can be employed as an entropy model for this
+///   `Coder` (however, when representing probabilities, only use the lowest
+///   `PRECISION` bits of a `W` are ever used).
+///
+///   The `Coder` operates on an internal state whose size is twice as large as `W`.
+///   When encoding data, the `Coder` keeps filling up this internal state with
+///   compressed data until it is about to overflow. Just before the internal state
+///   would overflow, the coder chops off half of it and pushes one "compressed
+///   word" of type `W` onto a dynamically growable and shrinkable buffer of `W`s.
+///   Once all data is encoded, the encoder chops the final internal state into two
+///   `W`s, pushes them onto the buffer, and returns the buffer as the compressed
+///   data (see method [`into_compressed`]).
+///
+/// - `PRECISION` defines the number of bits that the entropy models use for
+///   fixed-point representation of probabilities. `PRECISION` must be positive and
+///   no larger than the bitlength of `W` (e.g., if `W` is `u32` then we must have
+///   `1 <= PRECISION <= 32`).
+///
+///   Since the smallest representable probability is `(1/2)^PRECISION`, the largest
+///   possible (finite) information content of a single symbol is `PRECISION` bits.
+///   Thus, pushing a single symbol onto the `Coder` increases the "filling level"
+///   of the `Coder`'s internal state by at most `PRECISION` bits. Since `PRECISION`
+///   is at most the bitlength of `W`, the procedure of transferring one `W` from
+///   the internal state to the buffer described in the list item above is
+///   guaranteed to free up enough internal state to encode at least one additional
+///   symbol.
+///
+/// ## Guidance for Choosing `W` and `PRECISION`
+///
+/// If you choose `W` and `PRECISION` manually (rather than using a
+/// [`DefaultCoder`]), then your choice should take into account the following
+/// considerations:
+///
+/// - Set `PRECISION` to a high enough value so that you can approximate your
+///   entropy models sufficiently well. If you have a very precise entropy model of
+///   your data in your mind, then choosing a low `PRECISION` won't allow you to
+///   represent this entropy model very accurately, thus leading to a mismatch
+///   between the used entropy model and the true distribution of the encoded data.
+///   This will lead to a *linear* overhead in bitrate (i.e., an overhead that is
+///   proportional to the number of encoded symbols).
+/// - Depending on the entropy models used, a high `PRECISION` may be more expensive
+///   in terms of runtime and memory requirements. If this is a concern, then don't
+///   set `PRECISION` too high. In particular, a [`LookupDistribution`] allocates  
+///   memory on the order of `O(2^PRECISION)`, i.e., *exponential* in `PRECISION`.
+/// - Since `W` must be at least `PRECISION` bits in size, a high `PRECISION` means
+///   that you will have to use a larger `W` type. This has several consequences:
+///   - it affects the size of the internal state of the coder; this is relevant if
+///     you want to store many different internal states, e.g., as a jump table for
+///     a [`SeekableDecoder`].
+///   - it leads to a small *constant* overhead in bitrate: since the `Coder`
+///     operates on an internal  state of two `W`s, it has a constant bitrate
+///     overhead between zero and two `W`s depending on the filling level of the
+///     internal state. This constant  overhead is usually negligible unless you
+///     want to compress a very small amount of data.
+///   - the choice of `W` may have some effect on runtime performance since
+///     operations on larger types may be more expensive (remember that the `Coder` 
+///     operates on a state of twice the size as `W`, i.e., if `W = u64` then the 
+///     coder will operate on a `u128`, which may be slow on some hardware). On the
+///     other hand, this overhead should not be used as an argument for setting `W` 
+///     to a very small type like `u8` or `u16` since common computing architectures
+///     are usually not really faster on very small registers, and a very small `W` 
+///     type will lead to more frequent transfers between the internal state and the
+///     growable buffer, which requires potentially expensive branching and memory 
+///     lookups.
+/// - Finally, the "slack" between `PRECISION` and the size of `W` has an influence
+///   on the bitrate. It is usually *not* a good idea to set `PRECISION` to the
+///   highest value allowed for a given `W` (e.g., setting `W = u32` and
+///   `PRECISION = 32` is *not* recommended). This is because, when encoding a
+///   symbol, the `Coder` expects there to be at least `PRECISION` bits of entropy
+///   in its internal state (conceptually, encoding a symbol `s` consists of
+///   consuming `PRECISION` bits of entropy followed by pushing
+///   `PRECISION + information_content(s)` bits of entropy onto the internal state).
+///   If `PRECISION` is set to the full size of `W` then there will be relatively
+///   frequent situations where the internal state contains less than `PRECISION`
+///   bits of entropy, leading to an overhead (this situation will typically arise
+///   after the `Coder` transferred a `W` from the internal state to the growable
+///   buffer).
+///
+/// The type alias [`DefaultCoder`] was chose with the above considerations in mind.
 ///
 /// # Entropy Models and Streaming Entropy Coding
 ///
@@ -309,12 +385,22 @@ type Result<T> = std::result::Result<T, CoderError>;
 /// [information content]: https://en.wikipedia.org/wiki/Information_content
 /// [`push_symbols`]: #method.push_symbols
 /// [`is_empty`]: #method.is_empty
-pub struct Coder<W: CompressedWord> {
+/// [`into_compressed`]: #method.into_compressed
+pub struct Coder<W: CompressedWord, const PRECISION: usize> {
     buf: Vec<W>,
     state: W::State,
 }
 
-impl<W: CompressedWord> Debug for Coder<W>
+/// Type alias for a [`Coder`] with sane parameters for typical use cases.
+///
+/// This type alias sets the compressed word type `W` and the fixed point
+/// `PRECISION` to sane values for many typical use cases. The documentation of
+/// [`Coder`] has a [section describing the tradeoffs](
+/// struct.Coder.html#generic-parameters-compressed-word-type-w-and-precision)
+/// that were considered in the choice of these parameters.
+pub type DefaultCoder = Coder<u32, 24>;
+
+impl<W: CompressedWord, const PRECISION: usize> Debug for Coder<W, PRECISION>
 where
     W: Debug,
 {
@@ -323,7 +409,7 @@ where
     }
 }
 
-impl<W: CompressedWord> Coder<W> {
+impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     /// Creates an empty ANS entropy coder.
     ///
     /// This is usually the starting point if you want to *compress* data.
@@ -331,7 +417,7 @@ impl<W: CompressedWord> Coder<W> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::Coder::<u32>::new();
+    /// let mut coder = ans::DefaultCoder::new();
     ///
     /// // ... push some symbols onto the coder ...
     ///
@@ -339,6 +425,11 @@ impl<W: CompressedWord> Coder<W> {
     /// let compressed = coder.into_compressed();
     /// ```
     pub fn new() -> Self {
+        // TODO: turn this assertion into the following trait bound on the struct once this
+        // is supported:
+        // [u8; (PRECISION > 0 && PRECISION <= 8 * size_of::<W>()) as usize]: From<[u8; 1]>
+        assert!(PRECISION > 0 && PRECISION <= W::bits());
+
         Self {
             buf: Vec::new(),
             state: W::State::zero(),
@@ -352,6 +443,8 @@ impl<W: CompressedWord> Coder<W> {
     /// However, it can also be used to append more symbols to an existing
     /// compressed stream of data.
     pub fn with_compressed_data(mut compressed: Vec<W>) -> Self {
+        assert!(PRECISION > 0 && PRECISION <= W::bits());
+
         let (low, high) = match compressed.len() {
             0 => (W::zero(), W::zero()),
             1 => (compressed.pop().unwrap(), W::zero()),
@@ -395,23 +488,22 @@ impl<W: CompressedWord> Coder<W> {
     pub fn push_symbol<S>(
         &mut self,
         symbol: impl Borrow<S>,
-        distribution: impl DiscreteDistribution<W, Symbol = S>,
+        distribution: impl DiscreteDistribution<W, PRECISION, Symbol = S>,
     ) -> Result<()> {
         let (left_sided_cumulative, probability) = distribution
             .left_cumulative_and_probability(symbol)
             .map_err(|()| CoderError::ImpossibleSymbol)?;
-        if self.state >= W::compose_state(W::zero(), probability) {
+        if self.state >> (2 * W::bits() - PRECISION) >= W::State::from(probability) {
             let (low, high) = W::split_state(self.state);
             self.buf.push(low);
-            self.state = W::State::from(high);
+            self.state = high.into();
         }
         let prefix = self
             .state
-            .checked_div(&W::State::from(probability))
+            .checked_div(&probability.into())
             .ok_or(CoderError::ImpossibleSymbol)?;
-        let suffix =
-            W::State::from(left_sided_cumulative) + self.state % W::State::from(probability);
-        self.state = (prefix << W::bits()) | suffix;
+        let suffix = W::State::from(left_sided_cumulative) + self.state % probability.into();
+        self.state = (prefix << PRECISION) | suffix;
 
         Ok(())
     }
@@ -431,11 +523,15 @@ impl<W: CompressedWord> Coder<W> {
     /// recover any previously encoded data and will generally have low entropy.
     /// Still, being able to pop off an arbitrary number of symbols can sometimes be
     /// useful in edge cases of, e.g., the bits-back algorithm.
-    pub fn pop_symbol<S>(&mut self, distribution: impl DiscreteDistribution<W, Symbol = S>) -> S {
-        let (low, high) = W::split_state(self.state);
-        let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(low);
-        self.state = W::State::from(probability) * W::State::from(high)
-            + W::State::from(low - left_sided_cumulative);
+    pub fn pop_symbol<S>(
+        &mut self,
+        distribution: impl DiscreteDistribution<W, PRECISION, Symbol = S>,
+    ) -> S {
+        let quantile = (self.state % (W::State::from(W::one()) << PRECISION)).as_();
+        let rest = self.state >> PRECISION;
+        let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
+        self.state =
+            W::State::from(probability) * rest + W::State::from(quantile - left_sided_cumulative);
 
         if self.state <= W::max_value().into() {
             if let Some(word) = self.buf.pop() {
@@ -475,7 +571,7 @@ impl<W: CompressedWord> Coder<W> {
     /// ```
     /// use statrs::distribution::Normal;
     ///
-    /// let mut coder = ans::Coder::<u32>::new();
+    /// let mut coder = ans::DefaultCoder::new();
     /// let quantizer = ans::distributions::LeakyQuantizer::new(-20..=20);
     /// let symbols = vec![5, -1, -3, 4];
     /// let means_and_stds = vec![(3.2, 1.9), (5.7, 8.2), (-1.4, 2.1), (2.6, 5.3)];
@@ -500,11 +596,12 @@ impl<W: CompressedWord> Coder<W> {
     /// [`try_push_symbols`]: #method.try_push_symbols
     pub fn push_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
     where
-        D: DiscreteDistribution<W>,
+        D: DiscreteDistribution<W, PRECISION>,
         S: Borrow<D::Symbol>,
-        I: Iterator<Item = (S, D)> + DoubleEndedIterator,
+        I: IntoIterator<Item = (S, D)>,
+        I::IntoIter: DoubleEndedIterator,
     {
-        for (symbol, distribution) in symbols_and_distributions.rev() {
+        for (symbol, distribution) in symbols_and_distributions.into_iter().rev() {
             self.push_symbol(symbol, distribution)?;
         }
 
@@ -526,7 +623,7 @@ impl<W: CompressedWord> Coder<W> {
     ///
     /// [`push_symbols`]: #method.push_symbols
     /// [`try_pop_symbols`]: #method.try_pop_symbols
-    pub fn pop_symbols<'s, S, D: DiscreteDistribution<W, Symbol = S>>(
+    pub fn pop_symbols<'s, S, D: DiscreteDistribution<W, PRECISION, Symbol = S>>(
         &'s mut self,
         distributions: impl Iterator<Item = D> + 's,
     ) -> impl Iterator<Item = S> + 's {
@@ -550,7 +647,7 @@ impl<W: CompressedWord> Coder<W> {
     /// ```
     /// use statrs::{distribution::Normal, StatsError};
     ///
-    /// let mut coder = ans::Coder::<u32>::new();
+    /// let mut coder = ans::DefaultCoder::new();
     /// let quantizer = ans::distributions::LeakyQuantizer::new(-10..=10);
     /// let symbols = vec![1, 2, 3];
     /// let means_and_stds = [
@@ -576,7 +673,7 @@ impl<W: CompressedWord> Coder<W> {
     pub fn try_push_symbols<E, D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
     where
         E: Error + 'static,
-        D: DiscreteDistribution<W>,
+        D: DiscreteDistribution<W, PRECISION>,
         S: Borrow<D::Symbol>,
         I: Iterator<Item = std::result::Result<(S, D), E>> + DoubleEndedIterator,
     {
@@ -609,7 +706,7 @@ impl<W: CompressedWord> Coder<W> {
     /// ```
     /// use statrs::{distribution::Normal, StatsError};
     ///
-    /// let mut coder = ans::Coder::<u32>::new();
+    /// let mut coder = ans::DefaultCoder::new();
     /// let quantizer = ans::distributions::LeakyQuantizer::new(-10..=10);
     /// let symbols = vec![1, 2, 3];
     /// let mut means_and_stds = [(1.1, 1.0), (2.2, 2.0), (3.3, 3.0)];
@@ -653,7 +750,7 @@ impl<W: CompressedWord> Coder<W> {
     ) -> impl Iterator<Item = Result<D::Symbol>> + 's
     where
         E: Error + 'static,
-        D: DiscreteDistribution<W>,
+        D: DiscreteDistribution<W, PRECISION>,
         I: Iterator<Item = std::result::Result<D, E>> + 's,
     {
         distributions.map(move |distribution| {
@@ -663,10 +760,12 @@ impl<W: CompressedWord> Coder<W> {
         })
     }
 
-    /// Encodes a sequence of symbols using a fixed entropy model.
+    /// Encodes a sequence of symbols in reverse order using a fixed entropy model.
     ///
     /// This is a convenience wrapper around [`push_symbols`], and the inverse of
-    /// [`pop_iid_symbols`].
+    /// [`pop_iid_symbols`]. The symbols are encoded in reverse order so that calling
+    /// [`pop_iid_symbols`] retrieves them in forward order (since the ANS coder is a
+    /// stack).
     ///
     /// The bound `S: Borrow<D::Symbol>` essentially means that the provided
     /// iterator `symbols` may yield symbols either by value or by reference.
@@ -683,13 +782,13 @@ impl<W: CompressedWord> Coder<W> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::Coder::<u32>::new();
+    /// let mut coder = ans::DefaultCoder::new();
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution =
     ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities).unwrap();
     ///
-    /// coder.push_iid_symbols(symbols.iter(), &distribution).unwrap();
+    /// coder.push_iid_symbols(&symbols, &distribution).unwrap();
     /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
     ///
     /// assert_eq!(symbols, reconstructed);
@@ -701,11 +800,12 @@ impl<W: CompressedWord> Coder<W> {
     /// [`Err(ImpossibleSymbol)`]: enum.CoderError.html#variant.ImpossibleSymbol
     pub fn push_iid_symbols<D, S, I>(&mut self, symbols: I, distribution: &D) -> Result<()>
     where
-        D: DiscreteDistribution<W>,
+        D: DiscreteDistribution<W, PRECISION>,
         S: Borrow<D::Symbol>,
-        I: Iterator<Item = S> + DoubleEndedIterator,
+        I: IntoIterator<Item = S>,
+        I::IntoIter: DoubleEndedIterator,
     {
-        self.push_symbols(symbols.map(|symbol| (symbol, distribution)))
+        self.push_symbols(symbols.into_iter().map(|symbol| (symbol, distribution)))
     }
 
     /// Decode a sequence of symbols using a fixed entropy model.
@@ -718,7 +818,7 @@ impl<W: CompressedWord> Coder<W> {
     pub fn pop_iid_symbols<'c, S: 'c>(
         &'c mut self,
         amt: usize,
-        distribution: &'c impl DiscreteDistribution<W, Symbol = S>,
+        distribution: &'c impl DiscreteDistribution<W, PRECISION, Symbol = S>,
     ) -> impl Iterator<Item = S> + 'c {
         self.pop_symbols((0..amt).map(move |_| distribution))
     }
@@ -758,6 +858,11 @@ impl<W: CompressedWord> Coder<W> {
     /// each encoded or decoded symbol while `bulk` changes only infrequently
     /// (whenever `head` overflows or underflows).
     ///
+    /// # TODO
+    ///
+    /// Should return `(&[W], W::State)` instead, since this will probably be used
+    /// by [`SeekableDecoder`].
+    ///
     /// [`get_compressed`]: #method.get_compressed
     /// [`into_compressed`]: #method.into_compressed
     /// [`iter_compressed`]: #method.iter_compressed
@@ -787,7 +892,7 @@ impl<W: CompressedWord> Coder<W> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::Coder::<u32>::new();
+    /// let mut coder = ans::DefaultCoder::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
@@ -795,7 +900,7 @@ impl<W: CompressedWord> Coder<W> {
     /// let distribution =
     ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities)
     ///         .unwrap();
-    /// coder.push_iid_symbols(symbols.iter(), &distribution).unwrap();
+    /// coder.push_iid_symbols(&symbols, &distribution).unwrap();
     ///
     /// // Inspect the compressed data.
     /// dbg!(coder.get_compressed());
@@ -809,7 +914,7 @@ impl<W: CompressedWord> Coder<W> {
     /// [`with_compressed_data`]: #method.with_compressed_data
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`into_compressed`]: #method.into_compressed
-    pub fn get_compressed(&mut self) -> CoderGuard<'_, W> {
+    pub fn get_compressed(&mut self) -> CoderGuard<'_, W, PRECISION> {
         CoderGuard::new(self)
     }
 
@@ -824,10 +929,11 @@ impl<W: CompressedWord> Coder<W> {
     /// use statrs::distribution::Normal;
     ///
     /// // Create a coder and encode some stuff.
-    /// let mut coder = ans::Coder::<u32>::new();
+    /// let mut coder = ans::DefaultCoder::new();
+    /// let symbols = vec![8, -12, 0, 7];
     /// let quantizer = ans::distributions::LeakyQuantizer::new(-100..=100);
     /// let distribution = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
-    /// coder.push_iid_symbols(-100..=100, &distribution);
+    /// coder.push_iid_symbols(&symbols, &distribution);
     ///
     /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
     /// let compressed_iter = coder.iter_compressed();
@@ -867,7 +973,7 @@ impl<W: CompressedWord> Coder<W> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::Coder::<u32>::new();
+    /// let mut coder = ans::DefaultCoder::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
@@ -875,7 +981,7 @@ impl<W: CompressedWord> Coder<W> {
     /// let distribution =
     ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities)
     ///         .unwrap();
-    /// coder.push_iid_symbols(symbols.iter(), &distribution).unwrap();
+    /// coder.push_iid_symbols(&symbols, &distribution).unwrap();
     ///
     /// // Get the compressed data, consuming the coder.
     /// let compressed = coder.into_compressed();
@@ -883,7 +989,7 @@ impl<W: CompressedWord> Coder<W> {
     /// // ... write `compressed` to a file and then read it back later ...
     ///
     /// // Create a new coder with the same state and use it for decompression.
-    /// let mut coder = ans::Coder::with_compressed_data(compressed);
+    /// let mut coder = ans::DefaultCoder::with_compressed_data(compressed);
     /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
     /// assert_eq!(reconstructed, symbols);
     /// assert!(coder.is_empty())
@@ -947,11 +1053,11 @@ impl<W: CompressedWord> Coder<W> {
 ///
 /// [`Coder`]: struct.Coder.html
 /// [`Coder::get_compressed`]: struct.Coder.html#method.get_compressed
-pub struct CoderGuard<'a, W: CompressedWord> {
-    inner: &'a mut Coder<W>,
+pub struct CoderGuard<'a, W: CompressedWord, const PRECISION: usize> {
+    inner: &'a mut Coder<W, PRECISION>,
 }
 
-impl<W: CompressedWord> Debug for CoderGuard<'_, W>
+impl<W: CompressedWord, const PRECISION: usize> Debug for CoderGuard<'_, W, PRECISION>
 where
     W: Debug,
 {
@@ -960,24 +1066,26 @@ where
     }
 }
 
-impl<'a, W: CompressedWord> CoderGuard<'a, W> {
-    fn new(coder: &'a mut Coder<W>) -> Self {
+impl<'a, W: CompressedWord, const PRECISION: usize> CoderGuard<'a, W, PRECISION> {
+    fn new(coder: &'a mut Coder<W, PRECISION>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
-        Coder::<W>::state_len(coder.state, |w| coder.buf.push(w));
+        Coder::<W, PRECISION>::state_len(coder.state, |w| coder.buf.push(w));
         Self { inner: coder }
     }
 }
 
-impl<'a, W: CompressedWord> Drop for CoderGuard<'a, W> {
+impl<'a, W: CompressedWord, const PRECISION: usize> Drop for CoderGuard<'a, W, PRECISION> {
     fn drop(&mut self) {
         // Revert what we did in `Self::new`.
-        Coder::<W>::state_len(self.inner.state, |_| {
+        Coder::<W, PRECISION>::state_len(self.inner.state, |_| {
             self.inner.buf.pop();
         });
     }
 }
 
-impl<'a, W: CompressedWord> std::ops::Deref for CoderGuard<'a, W> {
+impl<'a, W: CompressedWord, const PRECISION: usize> std::ops::Deref
+    for CoderGuard<'a, W, PRECISION>
+{
     type Target = [W];
 
     fn deref(&self) -> &Self::Target {
@@ -993,7 +1101,7 @@ struct CompressedIter<'a, W> {
 }
 
 impl<'a, W: CompressedWord> CompressedIter<'a, W> {
-    fn new(coder: &'a Coder<W>) -> Self {
+    fn new<const PRECISION: usize>(coder: &'a Coder<W, PRECISION>) -> Self {
         let (buf, head) = coder.as_compressed_raw();
 
         // This cannot overflow because `state_len` is at most 2 and even if `W` is `u8`
@@ -1001,7 +1109,7 @@ impl<'a, W: CompressedWord> CompressedIter<'a, W> {
         // are definitely 2 bytes worth of some other data floating around somewhere
         // (e.g., to hold the `buf` pointer itself as well as `head`, `index_front`, and
         // `index_back`).
-        let len = buf.len() + Coder::<W>::state_len(coder.state, |_| ());
+        let len = buf.len() + Coder::<W, PRECISION>::state_len(coder.state, |_| ());
 
         Self {
             buf,
@@ -1090,18 +1198,18 @@ mod tests {
 
     #[test]
     fn compress_none() {
-        let coder1 = Coder::<u32>::new();
+        let coder1 = Coder::<u32, 32>::new();
         assert!(coder1.is_empty());
         let compressed = coder1.into_compressed();
         assert!(compressed.is_empty());
 
-        let coder2 = Coder::<u32>::with_compressed_data(compressed);
+        let coder2 = Coder::<u32, 32>::with_compressed_data(compressed);
         assert!(coder2.is_empty());
     }
 
     #[test]
     fn compress_one() {
-        let mut coder = Coder::<u32>::new();
+        let mut coder = Coder::<u32, 32>::new();
         let quantizer = LeakyQuantizer::new(-127..=127);
         let distribution = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
@@ -1110,7 +1218,7 @@ mod tests {
         // Test if import/export of compressed data works.
         let compressed = coder.into_compressed();
         assert_eq!(compressed.len(), 1);
-        let mut coder = Coder::with_compressed_data(compressed);
+        let mut coder = Coder::<_, 32>::with_compressed_data(compressed);
 
         assert_eq!(coder.pop_symbol(&distribution), 2);
 
@@ -1118,7 +1226,43 @@ mod tests {
     }
 
     #[test]
-    fn compress_many() {
+    fn compress_many_u32_32() {
+        compress_many::<u32, 32>();
+    }
+
+    #[test]
+    fn compress_many_u32_24() {
+        compress_many::<u32, 24>();
+    }
+
+    #[test]
+    fn compress_many_u32_16() {
+        compress_many::<u32, 16>();
+    }
+
+    #[test]
+    fn compress_many_u32_8() {
+        compress_many::<u32, 8>();
+    }
+
+    #[test]
+    fn compress_many_u16_16() {
+        compress_many::<u16, 16>();
+    }
+
+    #[test]
+    fn compress_many_u16_8() {
+        compress_many::<u16, 8>();
+    }
+
+    fn compress_many<W: CompressedWord, const PRECISION: usize>()
+    where
+        u32: AsPrimitive<W>,
+        W: Into<f64> + AsPrimitive<usize>,
+        usize: AsPrimitive<W>,
+        f64: AsPrimitive<W>,
+        i32: AsPrimitive<W>,
+    {
         const AMT: usize = 1000;
         let mut symbols_gaussian = Vec::with_capacity(AMT);
         let mut means = Vec::with_capacity(AMT);
@@ -1149,16 +1293,17 @@ mod tests {
         let categorical =
             Categorical::from_floating_point_probabilities(&categorical_probabilities).unwrap();
         let mut symbols_categorical = Vec::with_capacity(AMT);
+        let max_probability = W::max_value() >> (W::bits() - PRECISION);
         for _ in 0..AMT {
-            let quantile = rng.next_u32();
+            let quantile = rng.next_u32().as_() & max_probability;
             let symbol = categorical.quantile_function(quantile).0;
             symbols_categorical.push(symbol);
         }
 
-        let mut coder = Coder::new();
+        let mut coder = Coder::<_, PRECISION>::new();
 
         coder
-            .push_iid_symbols(symbols_categorical.iter(), &categorical)
+            .push_iid_symbols(&symbols_categorical, &categorical)
             .unwrap();
         dbg!(coder.num_bits(), AMT as f64 * categorical.entropy::<f64>());
 
@@ -1174,7 +1319,7 @@ mod tests {
 
         // Test if import/export of compressed data works.
         let compressed = coder.into_compressed();
-        let mut coder = Coder::with_compressed_data(compressed);
+        let mut coder = Coder::<_, PRECISION>::with_compressed_data(compressed);
 
         let reconstructed_gaussian = coder
             .pop_symbols(

@@ -12,7 +12,7 @@ use super::CompressedWord;
 ///
 /// [`Coder`]: crate::Coder
 /// [`SeekableDecoder`]: crate::SeekableDecoder
-pub trait DiscreteDistribution<W>
+pub trait DiscreteDistribution<W, const PRECISION: usize>
 where
     W: CompressedWord,
 {
@@ -42,10 +42,10 @@ where
     fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W);
 }
 
-impl<W, D> DiscreteDistribution<W> for &D
+impl<W, D, const PRECISION: usize> DiscreteDistribution<W, PRECISION> for &D
 where
     W: CompressedWord,
-    D: DiscreteDistribution<W>,
+    D: DiscreteDistribution<W, PRECISION>,
 {
     type Symbol = D::Symbol;
 
@@ -72,7 +72,7 @@ where
 /// defined over the integer type `S` (which is typically something like `i32`) by
 /// rounding all values to the closest integer. The resulting
 /// [`LeakilyQuantizedDistribution`]s can be used for entropy coding with a
-/// [`Coder`] or a [`SeekableDecoder`] because they implement 
+/// [`Coder`] or a [`SeekableDecoder`] because they implement
 /// [`DiscreteDistribution`].
 ///
 /// This quantizer is a "leaky" quantizer. This means that the constructor [`new`]
@@ -99,7 +99,7 @@ where
 /// let discrete_distribution2 = quantizer.quantize(continuous_distribution2);
 ///
 /// // Use the discrete distributions with an `Coder`.
-/// let mut coder = ans::Coder::<u32>::new();
+/// let mut coder = ans::Coder::<u32, 32>::new();
 /// coder.push_symbol(4, discrete_distribution1);
 /// coder.push_symbol(-3, discrete_distribution2);
 /// ```
@@ -113,13 +113,13 @@ where
 /// [`SeekableDecoder`]: crate::SeekableDecoder
 /// [`new`]: #method.new
 #[derive(Debug)]
-pub struct LeakyQuantizer<W, S, F> {
+pub struct LeakyQuantizer<W, S, F, const PRECISION: usize> {
     domain: RangeInclusive<S>,
     free_weight: F,
     phantom: PhantomData<W>,
 }
 
-impl<W, S, F> LeakyQuantizer<W, S, F>
+impl<W, S, F, const PRECISION: usize> LeakyQuantizer<W, S, F, PRECISION>
 where
     W: CompressedWord + Into<F>,
     S: PrimInt + AsPrimitive<W> + WrappingSub,
@@ -135,11 +135,18 @@ where
     ///
     /// [`quantize`]: #method.quantize
     pub fn new(domain: RangeInclusive<S>) -> Self {
-        assert!(domain.end() >= domain.start());
-        let domain_size_minus_one = domain.end().wrapping_sub(&domain.start()).as_();
-        assert!(domain_size_minus_one <= W::max_value());
+        assert!(PRECISION > 0 && PRECISION <= W::bits());
 
-        let free_weight = (W::max_value() - domain_size_minus_one).into();
+        // We don't support degenerate probability distributions (i.e., distributions that
+        // place all probability mass on a single symbol).
+        assert!(domain.end() > domain.start());
+
+        let domain_size_minus_one = domain.end().wrapping_sub(&domain.start()).as_();
+        let max_probability = W::max_value() >> (W::bits() - PRECISION);
+        let free_weight = max_probability
+            .checked_sub(&domain_size_minus_one)
+            .expect("The domain is too large to assign a nonzero probability to each element.")
+            .into();
 
         Self {
             domain,
@@ -153,7 +160,10 @@ where
     /// Note that this method takes `self` only by reference, i.e., you can reuse
     /// the same `Quantizer` to quantize arbitrarily many distributions. For an
     /// example, see [struct level documentation](struct.LeakyQuantizer.html).
-    pub fn quantize<CD>(&self, distribution: CD) -> LeakilyQuantizedDistribution<'_, F, S, W, CD>
+    pub fn quantize<CD>(
+        &self,
+        distribution: CD,
+    ) -> LeakilyQuantizedDistribution<'_, F, S, W, CD, PRECISION>
     where
         CD: Univariate<F, F> + InverseCDF<F>,
     {
@@ -170,12 +180,13 @@ where
 /// Such a `LeakilyQuantizedDistribution` can be created with a [`LeakyQuantizer`].
 /// It can be used for entropy coding since it implements [`DiscreteDistribution`].
 #[derive(Debug)]
-pub struct LeakilyQuantizedDistribution<'a, F, S, W, CD> {
+pub struct LeakilyQuantizedDistribution<'a, F, S, W, CD, const PRECISION: usize> {
     inner: CD,
-    quantizer: &'a LeakyQuantizer<W, S, F>,
+    quantizer: &'a LeakyQuantizer<W, S, F, PRECISION>,
 }
 
-impl<'a, F, S, W, CD> DiscreteDistribution<W> for LeakilyQuantizedDistribution<'a, F, S, W, CD>
+impl<'a, F, S, W, CD, const PRECISION: usize> DiscreteDistribution<W, PRECISION>
+    for LeakilyQuantizedDistribution<'a, F, S, W, CD, PRECISION>
 where
     S: PrimInt + AsPrimitive<W> + Into<F> + WrappingSub,
     F: Float + AsPrimitive<S> + AsPrimitive<W>,
@@ -212,7 +223,8 @@ where
             // calculation in the `else` branch may lead to a lower total probability
             // because we're cutting off the right tail of the distribution and we're
             // rounding down.
-            W::zero()
+            let max_probability = W::max_value() >> (W::bits() - PRECISION);
+            max_probability.wrapping_add(&W::one())
         } else {
             let non_leaky: W =
                 (free_weight * self.inner.cdf((*symbol.borrow()).into() + half)).as_();
@@ -225,8 +237,13 @@ where
     }
 
     fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W) {
+        let max_probability = W::max_value() >> (W::bits() - PRECISION);
+        // This check should usually compile away in inlined and verifiably correct usages
+        // of this method.
+        assert!(quantile <= max_probability);
+
         let half = F::one() / (F::one() + F::one());
-        let denominator = W::max_value().into() + F::one();
+        let inverse_denominator = F::one() / (max_probability.into() + F::one());
 
         let min_symbol = *self.quantizer.domain.start();
         let max_symbol = *self.quantizer.domain.end();
@@ -235,7 +252,7 @@ where
         // Make an initial guess for the inverse of the leaky CDF.
         let mut symbol: Self::Symbol = self
             .inner
-            .inverse_cdf((quantile.into() + half) / denominator)
+            .inverse_cdf((quantile.into() + half) * inverse_denominator)
             .as_();
 
         let mut left_sided_cumulative = if symbol <= min_symbol {
@@ -254,38 +271,34 @@ where
 
         let right_sided_cumulative = if left_sided_cumulative > quantile {
             // Our initial guess for `symbol` was too high. Reduce it until we're good.
-            symbol = symbol - Self::Symbol::one();
-            let mut right_sided_cumulative = left_sided_cumulative;
             loop {
+                let right_sided_cumulative = left_sided_cumulative;
+                symbol = symbol - Self::Symbol::one();
+
                 if symbol == min_symbol {
                     left_sided_cumulative = W::zero();
-                    break;
+                    break right_sided_cumulative;
                 }
 
                 let non_leaky: W = (free_weight * self.inner.cdf(symbol.into() - half)).as_();
                 left_sided_cumulative = non_leaky + symbol.wrapping_sub(&min_symbol).as_();
                 if left_sided_cumulative <= quantile {
-                    break;
-                } else {
-                    right_sided_cumulative = left_sided_cumulative;
-                    symbol = symbol - Self::Symbol::one();
+                    break right_sided_cumulative;
                 }
             }
-
-            right_sided_cumulative
         } else {
             // Our initial guess for `symbol` was either exactly right or too low.
             // Check validity of the right sided cumulative. If it isn't valid,
             // keep increasing `symbol` until it is.
             loop {
                 if symbol == max_symbol {
-                    break W::zero();
+                    let max_probability = W::max_value() >> (W::bits() - PRECISION);
+                    break max_probability.wrapping_add(&W::one());
                 }
 
-                // FIXME: .as_() is wrong here. Wrong target + must be able to overflow
                 let non_leaky: W = (free_weight * self.inner.cdf(symbol.into() + half)).as_();
                 let right_sided_cumulative =
-                    (non_leaky + symbol.wrapping_sub(&min_symbol).as_()).wrapping_add(&W::one());
+                    non_leaky + symbol.wrapping_sub(&min_symbol).as_() + W::one();
                 if right_sided_cumulative > quantile {
                     break right_sided_cumulative;
                 }
@@ -311,11 +324,17 @@ where
 /// [`DiscreteDistribution<W>`]: trait.DiscreteDistribution.html
 /// [`Coder<W>`]: crate::Coder
 /// [`SeekableDecoder<W>`]: crate::SeekableDecoder
-pub struct Categorical<W> {
-    cdf: Box<[W]>,
+pub struct Categorical<W, const PRECISION: usize> {
+    /// Invariants:
+    /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
+    ///   this may be relaxed in the future)
+    /// - `cdf[0] == 0`
+    /// - `cdf` is monotonically nondecreasing except that it may wrap around only at
+    ///   the very last entry (this happens iff `PRECISION == W::bits()`).
+    cdf: Vec<W>,
 }
 
-impl<W> Debug for Categorical<W>
+impl<W, const PRECISION: usize> Debug for Categorical<W, PRECISION>
 where
     W: CompressedWord + Debug,
 {
@@ -326,7 +345,7 @@ where
     }
 }
 
-impl<W: CompressedWord> Categorical<W> {
+impl<W: CompressedWord, const PRECISION: usize> Categorical<W, PRECISION> {
     /// Constructs a leaky distribution whose PMF approximates given probabilities.
     ///
     /// The returned distribution will be defined for symbols of type `usize` from
@@ -342,12 +361,13 @@ impl<W: CompressedWord> Categorical<W> {
     /// The probability mass function of the returned distribution will approximate
     /// the provided probabilities as well as possible, subject to the following
     /// constraints:
-    /// - probabilities are represented in fixed point arithmetic with `W::bits()`
-    ///   bits of precision, which typically introduces rounding errors;
+    /// - probabilities are represented in fixed point arithmetic, where the const
+    ///   generic parameter `PRECISION` controls the number of bits of precision.
+    ///   This typically introduces rounding errors;
     /// - despite the possibility of rounding errors, the returned probability
     ///   distribution will be exactly normalized; and
     /// - each symbol in the domain defined above gets assigned a strictly nonzero
-    ///   probability, even if the provided probability for the symbol was zero or
+    ///   probability, even if the provided probability for the symbol is zero or
     ///   below the threshold that can be resolved in fixed point arithmetic with
     ///   type `W`. We refer to this property as the resulting distribution being
     ///   "leaky". This probability ensures that all symbols within the domain can
@@ -367,6 +387,9 @@ impl<W: CompressedWord> Categorical<W> {
     /// Also returns an error if the probability distribution is degenerate, i.e.,
     /// if `probabilities` has only a single element, because degenerate probability
     /// distributions currently cannot be represented.
+    ///
+    /// TODO: should also return an error if domain is too large to support leaky
+    /// distribution
     pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: Float + std::iter::Sum<F> + Into<f64>,
@@ -374,8 +397,120 @@ impl<W: CompressedWord> Categorical<W> {
         f64: AsPrimitive<W>,
         usize: AsPrimitive<W>,
     {
-        let probabilities = optimal_weights(probabilities)?;
-        Ok(Self::from_fixed_point_probabilities(&probabilities))
+        struct Slot<W> {
+            original_index: usize,
+            prob: f64,
+            weight: W,
+            win: f64,
+            loss: f64,
+        }
+
+        assert!(PRECISION > 0 && PRECISION <= W::bits());
+
+        if probabilities.len() < 2 || probabilities.len() > W::max_value().as_() {
+            return Err(());
+        }
+
+        // Start by assigning each symbol weight 1 and then distributing no more than
+        // the remaining weight approximately evenly across all symbols.
+        let max_probability = W::max_value() >> (W::bits() - PRECISION);
+        let mut remaining_free_weight = max_probability
+            .wrapping_add(&W::one())
+            .wrapping_sub(&probabilities.len().as_());
+        let normalization = probabilities.iter().map(|&x| x.into()).sum::<f64>();
+        if !normalization.is_normal() || !normalization.is_sign_positive() {
+            return Err(());
+        }
+        let scale = remaining_free_weight.into() / normalization;
+
+        let mut slots = probabilities
+            .iter()
+            .enumerate()
+            .map(|(original_index, &prob)| {
+                if prob < F::zero() {
+                    return Err(());
+                }
+                let prob: f64 = prob.into();
+                let current_free_weight = (prob * scale).as_();
+                remaining_free_weight = remaining_free_weight - current_free_weight;
+                let weight = current_free_weight + W::one();
+
+                // How much the cross entropy would decrease when increasing the weight by one.
+                let win = prob * (1.0f64 / weight.into()).ln_1p();
+
+                // How much the cross entropy would increase when decreasing the weight by one.
+                let loss = if weight == W::one() {
+                    f64::infinity()
+                } else {
+                    -prob * (-1.0f64 / weight.into()).ln_1p()
+                };
+
+                Ok(Slot {
+                    original_index,
+                    prob,
+                    weight,
+                    win,
+                    loss,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Distribute remaining weight evenly among symbols with highest wins.
+        while remaining_free_weight != W::zero() {
+            slots.sort_by(|a, b| b.win.partial_cmp(&a.win).unwrap());
+            let batch_size = std::cmp::min(remaining_free_weight.as_(), slots.len());
+            for slot in &mut slots[..batch_size] {
+                slot.weight = slot.weight + W::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
+                slot.win = slot.prob * (1.0f64 / slot.weight.into()).ln_1p();
+                slot.loss = -slot.prob * (-1.0f64 / slot.weight.into()).ln_1p();
+            }
+            remaining_free_weight = remaining_free_weight - batch_size.as_();
+        }
+
+        loop {
+            // Find slot where increasing its weight by one would incur the biggest win.
+            let (buyer_index, &Slot { win: buyer_win, .. }) = slots
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.win.partial_cmp(&b.win).unwrap())
+                .unwrap();
+            // Find slot where decreasing its weight by one would incur the smallest loss.
+            let (seller_index, seller) = slots
+                .iter_mut()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| a.loss.partial_cmp(&b.loss).unwrap())
+                .unwrap();
+
+            if buyer_index == seller_index {
+                // This can only happen due to rounding errors. In this case, we can't expect
+                // to be able to improve further.
+                break;
+            }
+
+            if buyer_win <= seller.loss {
+                // We've found the optimal solution.
+                break;
+            }
+
+            seller.weight = seller.weight - W::one();
+            seller.win = seller.prob * (1.0f64 / seller.weight.into()).ln_1p();
+            seller.loss = if seller.weight == W::one() {
+                f64::infinity()
+            } else {
+                -seller.prob * (-1.0f64 / seller.weight.into()).ln_1p()
+            };
+
+            let buyer = &mut slots[buyer_index];
+            buyer.weight = buyer.weight + W::one();
+            buyer.win = buyer.prob * (1.0f64 / buyer.weight.into()).ln_1p();
+            buyer.loss = -buyer.prob * (-1.0f64 / buyer.weight.into()).ln_1p();
+        }
+
+        slots.sort_by_key(|slot| slot.original_index);
+
+        Ok(Self::from_fixed_point_probabilities(
+            slots.into_iter().map(|slot| slot.weight),
+        ))
     }
 
     /// Constructs a distribution with a PMF given in fixed point arithmetic.
@@ -385,31 +520,102 @@ impl<W: CompressedWord> Categorical<W> {
     /// more common way to construct a `Categorical` distribution is via
     /// [`from_floating_point_probabilities`].
     ///
-    /// The entries of `probabilities` have to sum up to `W::max_value() + 1`
-    /// (logically).
+    /// The entries of `probabilities` have to (logically) sum up to `1 << PRECISION`,
+    /// where `PRECISION` is a const generic parameter on the `Categorical`
+    /// distribution.
     ///
     /// # Panics
     ///
     /// If `probabilities` is not properly normalized (including if it is empty).
     ///
+    /// # Examples
+    ///
+    /// The provided probabilities have to sum up to `1 << PRECISION`:
+    ///
+    /// ```
+    /// let probabilities = vec![1u32 << 21, 1 << 22, 1 << 22, 1 << 22, 1 << 21];
+    /// // `probabilities` sums up to `1 << PRECISION` as required:
+    /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
+    ///
+    /// let distribution =
+    ///     ans::distributions::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
+    /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
+    /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
+    /// ```
+    ///
+    /// If `PRECISION` is set to the maximum value supported by the `CompressedWord`
+    /// type `W`, then the provided probabilities still have to *logically* sum up to
+    /// `1 << PRECISION` (i.e., the summation has to wrap around exactly once):
+    ///
+    /// ```
+    /// let probabilities = vec![1u32 << 29, 1 << 30, 1 << 30, 1 << 30, 1 << 29];
+    /// // `probabilities` sums up to `1 << 32` (logically), i.e., it wraps around once.
+    /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
+    ///
+    /// let distribution =
+    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
+    /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
+    /// ```
+    ///
+    /// Wrapping around twice panics:
+    ///
+    /// ```should_panic
+    /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
+    /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
+    /// let distribution = // PANICS
+    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// ```
+    ///
+    /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
+    ///
+    /// ```should_panic
+    /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
+    /// let distribution = // PANICS
+    ///     ans::distributions::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
+    /// ```
+    ///
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
     /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
-    pub fn from_fixed_point_probabilities(probabilities: &[W]) -> Self {
+    pub fn from_fixed_point_probabilities<I>(probabilities: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Borrow<W>,
+    {
+        assert!(PRECISION > 0 && PRECISION <= W::bits());
+
         let mut laps: usize = 0;
+        let mut accum = W::zero();
+        let mut fingerprint = W::zero();
 
-        let cdf = std::iter::once(&W::zero())
-            .chain(probabilities)
-            .scan(W::zero(), |accum, prob| {
-                let new_accum = accum.wrapping_add(prob);
-                laps += (new_accum < *accum) as usize; // branchless check if we have wrapped around
-                *accum = new_accum;
-                Some(new_accum)
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
+        let mut cdf = std::iter::once(W::zero())
+            .chain(probabilities.into_iter().map(|prob| {
+                let old_accum = accum;
+                accum = accum.wrapping_add(prob.borrow());
+                laps += (accum < old_accum) as usize; // branchless check if we've wrapped around
+                fingerprint = fingerprint | *prob.borrow(); // branchless check for degenerateness
+                accum
+            }))
+            .collect::<Vec<_>>();
 
-        assert_eq!(laps, 1);
-        assert!(cdf.last() == Some(&W::zero()));
+        if PRECISION == W::bits() {
+            assert_eq!(laps, 1);
+            assert!(cdf.last() == Some(&W::zero()));
+
+            // Truncate trailing zero probabilities to ensure that `cdf` is monotonically
+            // nondecreasing except at the very last entry.
+            let (last, _) = cdf
+                .iter()
+                .enumerate()
+                .rfind(|(_, &x)| x != W::zero())
+                .unwrap();
+            cdf.resize(last + 2, W::zero()); // Should never make cdf larger.
+        } else {
+            assert_eq!(laps, 0);
+            let expected_last = W::one() << PRECISION;
+            assert!(fingerprint != expected_last);
+            assert!(cdf.last() == Some(&expected_last));
+        }
 
         Self { cdf }
     }
@@ -434,7 +640,7 @@ impl<W: CompressedWord> Categorical<W> {
     /// ```
     /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32>::from_floating_point_probabilities(
+    ///     ans::distributions::Categorical::<u32, 32>::from_floating_point_probabilities(
     ///         &probabilities
     ///     )
     ///     .unwrap();
@@ -466,18 +672,26 @@ impl<W: CompressedWord> Categorical<W> {
     /// exact same distribution (although using [`fixed_point_probabilities`] and
     /// [`from_fixed_point_probabilities`] would be cheaper for this purpose).
     ///
+    /// The trait bound `W: Into<F>` is a conservative bound. In reality, whether or not
+    /// the conversion can be guaranteed to be lossless depends on the const generic
+    /// parameter `PRECISION`. However, there is currently no way to express the more
+    /// precise bound based on `PRECISION` as a compile time check, so the method
+    /// currently conservatively assumes `PRECISION` has the highest value allowed for
+    /// type `W`.
+    ///
     /// Note that the returned floating point probabilities will likely be slightly
     /// different than the ones you may have used to construct the
     /// `CategoricalDistribution` in [`from_floating_point_probabilities`]. This is because
-    /// probabilities are internally represented in fixed-point arithmetic `W`, and
-    /// because of the constraint that each bin has a strictly nonzero probability.
+    /// probabilities are internally represented in fixed-point arithmetic with `PRECISION`
+    /// bits, and because of the constraint that each bin has a strictly nonzero
+    /// probability.
     ///
     /// # Example
     ///
     /// ```
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32>::from_fixed_point_probabilities(&probabilities);
+    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -495,7 +709,7 @@ impl<W: CompressedWord> Categorical<W> {
         W: Into<F>,
     {
         let half = F::one() / (F::one() + F::one());
-        let scale = half / (W::one() << (W::bits() - 1)).into();
+        let scale = half / (W::one() << (PRECISION - 1)).into();
         self.fixed_point_probabilities()
             .map(move |x| scale * x.into())
     }
@@ -515,7 +729,7 @@ impl<W: CompressedWord> Categorical<W> {
     /// ```compile_fail
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32>::from_fixed_point_probabilities(&probabilities);
+    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f32>>();
     /// //                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Compiler error: trait bound not satisfied
@@ -528,7 +742,7 @@ impl<W: CompressedWord> Categorical<W> {
     /// ```
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32>::from_fixed_point_probabilities(&probabilities);
+    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = distribution.floating_point_probabilities_lossy().collect::<Vec<f32>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -542,10 +756,10 @@ impl<W: CompressedWord> Categorical<W> {
         F: Float + 'static,
         W: AsPrimitive<F>,
     {
-        let half = F::one() / (F::one() + F::one());
-        let scale = half / (W::one() << (W::bits() - 1)).as_();
+        let half_denominator: F = (W::one() << (PRECISION - 1)).as_();
+        let denominator = half_denominator + half_denominator;
         self.fixed_point_probabilities()
-            .map(move |x| scale * x.as_())
+            .map(move |x| x.as_() / denominator)
     }
 
     /// Returns the size of the domain of the distribution
@@ -586,11 +800,14 @@ impl<W: CompressedWord> Categorical<W> {
             })
             .sum::<F>();
 
-        F::from(W::bits()).unwrap() - entropy_scaled / (W::max_value().into() + F::one())
+        let max_probability = W::max_value() >> (W::bits() - PRECISION);
+        F::from(PRECISION).unwrap() - entropy_scaled / (max_probability.into() + F::one())
     }
 }
 
-impl<W: CompressedWord> DiscreteDistribution<W> for Categorical<W> {
+impl<W: CompressedWord, const PRECISION: usize> DiscreteDistribution<W, PRECISION>
+    for Categorical<W, PRECISION>
+{
     type Symbol = usize;
 
     fn left_cumulative_and_probability(&self, symbol: impl Borrow<usize>) -> Result<(W, W), ()> {
@@ -611,21 +828,35 @@ impl<W: CompressedWord> DiscreteDistribution<W> for Categorical<W> {
     }
 
     fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W) {
+        let max_probability = W::max_value() >> (W::bits() - PRECISION);
+        // This check should usually compile away in inlined and verifiably correct usages
+        // of this method.
+        assert!(quantile <= max_probability);
+
         let mut left = 0; // Smallest possible index.
         let mut right = self.cdf.len() - 1; // One above largest possible index.
 
         // Binary search for the last entry of `self.cdf` that is <= quantile,
-        // exploiting the fact that `self.cdf[0] == 0` and
-        // `*self.cdf.last().unwrap() == 1 << super::FREQUENCY_BITS` and
-        // the assumption that `quantile < 1 << super::FREQUENCY_BITS`.
+        // exploiting the following facts:
+        // - `self.cdf.len() >= 2` (therefore, `left < right` initially)
+        // - `self.cdf[0] == 0`
+        // - `quantile <= max_probability`
+        // - `*self.cdf.last().unwrap() == max_probability.wrapping_add(1)`
+        // - `self.cdf` is monotonically nondecreasing except that it may wrap around
+        //   only at the very last entry (this happens iff `PRECISION == W::bits()`).
+        //
+        // The loop maintains the following two invariants:
+        // (1) `0 <= left <= mid < right < self.cdf.len()`
+        // (2) `cdf[left] <= cdf[mid]`
+        // (3) `cdf[mid] <= cdf[right]` unless `right == cdf.len() - 1`
         while left + 1 != right {
             let mid = (left + right) / 2;
 
-            // SAFETY: the loop maintains the invariants
-            // `0 <= left <= mid < right < self.cdf.len()` and
-            // `cdf[left] <= cdf[mid] <= cdf[right]`.
+            // SAFETY: safe by invariant (1)
             let pivot = unsafe { *self.cdf.get_unchecked(mid) };
             if pivot <= quantile {
+                // Since `mid < right` and wrapping can occur only at the last entry,
+                // `pivot` has not yet wrapped around
                 left = mid;
             } else {
                 right = mid;
@@ -638,154 +869,6 @@ impl<W: CompressedWord> DiscreteDistribution<W> for Categorical<W> {
 
         (left, cdf, next_cdf.wrapping_sub(&cdf))
     }
-}
-
-/// Finds optimal fixed-point approximation of a floating-point PMF.
-///
-/// The function arguments specify a (not necessarily normalized) probability
-/// mass function (PMF) over `padding_left + pmf.len() + padding_right` symbols
-/// that has `padding_left` zeros, followed by the probabilities in `pmf`,
-/// followed by `padding_right` zeros. All entries of `pmf` must be nonnegative,
-/// and `pmf` must have at least length 2.
-///
-/// The function returns the optimal approximation of this probability
-/// distribution that is possible within fixed point arithmetic, subject to the
-/// constraint that all returned probabilities are nonzero.
-///
-/// More precisely, the returned `Vec<W>` satisfies the following constraints:
-/// - It has `padding_left + pmf.len() + padding_right` entries.
-/// - All entries are nonzero (i.e., positive, since they're `W`s).
-/// - The entries add up to `1 << super::FREQUENCY_BITS` (ignoring wrapping).
-/// - Up to the above three constraints and an overall scaling by
-///   `1 << super::FREQUENCY_BITS`, the returned vector optimally approximates
-///   the provided probability distribution by minimizing the cross entropy:
-///   `cross_entropy = - sum_i[padded_pmf[i] * log(returned[i])]`,
-///   where `padded_pmf` is the provided `pmf` padded with `padding_left` and
-///   `padding_right` zeros to the left and right, respectively, and `returned`
-///   is the return value.
-///
-/// # TODO
-///
-/// - Implement non-leaky variant of this
-/// - The internal calculations are currently with `f64` precision. This probably
-///   doesn't make much sense if `W` is `u16`, but I don't want to introduce a type
-///   parameter for this (which will have to be exposed in the public API) unless we
-///   can set a default value for it (possibly conditional on W).
-fn optimal_weights<F, W>(pmf: &[F]) -> Result<Vec<W>, ()>
-where
-    F: Float + std::iter::Sum<F> + Into<f64>,
-    W: CompressedWord + Into<f64> + AsPrimitive<usize>,
-    f64: AsPrimitive<W>,
-    usize: AsPrimitive<W>,
-{
-    struct Slot<W> {
-        original_index: usize,
-        prob: f64,
-        weight: W,
-        win: f64,
-        loss: f64,
-    }
-
-    if pmf.len() < 2 || pmf.len() > W::max_value().as_() {
-        return Err(());
-    }
-
-    // Start by assigning each symbol weight 1 and then distributing no more than
-    // the remaining weight approximately evenly across all symbols.
-    let free_weight = W::zero().wrapping_sub(&pmf.len().as_());
-    let mut remaining_free_weight = free_weight;
-    let free_weight_float: f64 = free_weight.into();
-    let normalization = pmf.iter().map(|&x| x.into()).sum::<f64>();
-    if !normalization.is_normal() || !normalization.is_sign_positive() {
-        return Err(());
-    }
-    let scale = free_weight_float / normalization;
-
-    let mut slots = pmf
-        .iter()
-        .enumerate()
-        .map(|(original_index, &prob)| {
-            if prob < F::zero() {
-                return Err(());
-            }
-            let prob: f64 = prob.into();
-            let current_free_weight = (prob * scale).as_();
-            remaining_free_weight = remaining_free_weight - current_free_weight;
-            let weight = current_free_weight + W::one();
-
-            // How much the cross entropy would decrease when increasing the weight by one.
-            let win = prob * (1.0f64 / weight.into()).ln_1p();
-
-            // How much the cross entropy would increase when decreasing the weight by one.
-            let loss = if weight == W::one() {
-                f64::infinity()
-            } else {
-                -prob * (-1.0f64 / weight.into()).ln_1p()
-            };
-
-            Ok(Slot {
-                original_index,
-                prob,
-                weight,
-                win,
-                loss,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Distribute remaining weight evenly among symbols with highest wins.
-    while remaining_free_weight != W::zero() {
-        slots.sort_by(|a, b| b.win.partial_cmp(&a.win).unwrap());
-        let batch_size = std::cmp::min(remaining_free_weight.as_(), slots.len());
-        for slot in &mut slots[..batch_size] {
-            slot.weight = slot.weight + W::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
-            slot.win = slot.prob * (1.0f64 / slot.weight.into()).ln_1p();
-            slot.loss = -slot.prob * (-1.0f64 / slot.weight.into()).ln_1p();
-        }
-        remaining_free_weight = remaining_free_weight - batch_size.as_();
-    }
-
-    loop {
-        // Find element where increasing weight would incur the biggest win.
-        let (buyer_index, &Slot { win: buyer_win, .. }) = slots
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.win.partial_cmp(&b.win).unwrap())
-            .unwrap();
-        let (seller_index, seller) = slots
-            .iter_mut()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| a.loss.partial_cmp(&b.loss).unwrap())
-            .unwrap();
-
-        if buyer_index == seller_index {
-            // This can only happen due to rounding errors. In this case, we can't expect
-            // to be able to improve further.
-            break;
-        }
-
-        if buyer_win <= seller.loss {
-            // We've found the optimal solution.
-            break;
-        }
-
-        seller.weight = seller.weight - W::one();
-        seller.win = seller.prob * (1.0f64 / seller.weight.into()).ln_1p();
-        seller.loss = if seller.weight == W::one() {
-            f64::infinity()
-        } else {
-            -seller.prob * (-1.0f64 / seller.weight.into()).ln_1p()
-        };
-
-        let buyer = &mut slots[buyer_index];
-        buyer.weight = buyer.weight + W::one();
-        buyer.win = buyer.prob * (1.0f64 / buyer.weight.into()).ln_1p();
-        buyer.loss = -buyer.prob * (-1.0f64 / buyer.weight.into()).ln_1p();
-    }
-
-    slots.sort_by_key(|slot| slot.original_index);
-
-    Ok(slots.into_iter().map(|slot| slot.weight).collect())
 }
 
 #[cfg(test)]
@@ -820,7 +903,9 @@ mod tests {
         assert_eq!(hist.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let weights: Vec<u32> = optimal_weights(&probabilities).unwrap();
+        let categorical =
+            Categorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+        let weights: Vec<u32> = categorical.fixed_point_probabilities().collect();
 
         assert_eq!(&weights[..], &hist[..]);
     }
@@ -835,7 +920,9 @@ mod tests {
         assert_ne!(hist.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let weights: Vec<u32> = optimal_weights(&probabilities).unwrap();
+        let categorical =
+            Categorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+        let weights: Vec<u32> = categorical.fixed_point_probabilities().collect();
 
         assert_eq!(weights.len(), hist.len());
         assert_eq!(weights.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
@@ -874,7 +961,7 @@ mod tests {
         test_discrete_distribution(distribution, 0..probabilities.len());
     }
 
-    fn test_discrete_distribution<D: DiscreteDistribution<u32>>(
+    fn test_discrete_distribution<D: DiscreteDistribution<u32, 32>>(
         distribution: D,
         domain: std::ops::Range<D::Symbol>,
     ) where
