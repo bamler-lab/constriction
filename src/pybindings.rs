@@ -48,7 +48,7 @@
 //!    ...: means = np.array([2.3, -1.7, 0.1, 2.2], dtype = np.float64)
 //!    ...: stds = np.array([1.1, 5.3, 3.8, 1.4], dtype = np.float64)
 //!
-//! In [4]: coder.push_gaussian_symbols(
+//! In [4]: coder.encode_gaussian_symbols_reverse(
 //!    ...:     symbols, min_supported_symbol, max_supported_symbol, means, stds)
 //!
 //! In [5]: print(f"Compressed size (including constant overhead): {coder.num_bits()} bits")
@@ -57,7 +57,7 @@
 //! In [6]: coder.get_compressed()
 //! Out[6]: array([2372401017,        101], dtype=uint32)
 //!
-//! In [7]: coder.pop_gaussian_symbols(min_supported_symbol, max_supported_symbol, means, stds)
+//! In [7]: coder.decode_gaussian_symbols(min_supported_symbol, max_supported_symbol, means, stds)
 //! Out[7]: array([ 2, -1,  0,  2], dtype=int32)
 //!
 //! In [8]: assert coder.is_empty()
@@ -65,6 +65,8 @@
 
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
+
+use crate::Decode;
 
 use super::distributions::{Categorical, LeakyQuantizer};
 use statrs::distribution::Normal;
@@ -82,9 +84,9 @@ fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 ///
 /// Note that this entropy coder is a stack (a "last in first out" data
 /// structure). You can push symbols on the stack using the methods
-/// `push_gaussian_symbols` or `push_iid_categorical_symbols`, and then pop
-/// them off *in reverse order* using the methods `pop_gaussian_symbols` or
-/// `pop_iid_categorical_symbols`, respectively.
+/// `encode_gaussian_symbols_reverse` or `encode_iid_categorical_symbols_reverse`, and then pop
+/// them off *in reverse order* using the methods `decode_gaussian_symbols` or
+/// `decode_iid_categorical_symbols`, respectively.
 ///
 /// To copy out the compressed data that is currently on the stack, call
 /// `get_compressed`. You would typically want write this to a binary file in some
@@ -111,7 +113,7 @@ fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 /// means = np.array([2.3, -1.7, 0.1, 2.2], dtype = np.float64)
 /// stds = np.array([1.1, 5.3, 3.8, 1.4], dtype = np.float64)
 ///
-/// coder.push_gaussian_symbols(
+/// coder.encode_gaussian_symbols_reverse(
 ///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
 ///
 /// print(f"Compressed size (including constant overhead): {coder.num_bits()} bits")
@@ -141,7 +143,7 @@ fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 /// means = np.array([2.3, -1.7, 0.1, 2.2], dtype = np.float64)
 /// stds = np.array([1.1, 5.3, 3.8, 1.4], dtype = np.float64)
 ///
-/// reconstructed = coder.pop_gaussian_symbols(
+/// reconstructed = coder.decode_gaussian_symbols(
 ///     min_supported_symbol, max_supported_symbol, means, stds)
 /// assert coder.is_empty()
 /// ```
@@ -233,7 +235,7 @@ impl Coder {
     /// The provided numpy arrays `symbols`, `means`, and `stds` must all have the
     /// same size.
     ///
-    /// See method `pop_gaussian_symbols` for a usage example.
+    /// See method `decode_gaussian_symbols` for a usage example.
     ///
     /// Arguments:
     /// min_supported_symbol -- lower bound of the domain for argument `symbols`
@@ -253,7 +255,7 @@ impl Coder {
     ///     All entries must be strictly positive (i.e., nonzero and nonnegative)
     ///     and finite.
     #[text_signature = "(symbols, min_supported_symbol, max_supported_symbol, means, stds)"]
-    pub fn push_gaussian_symbols(
+    pub fn encode_gaussian_symbols_reverse(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
         min_supported_symbol: i32,
@@ -268,14 +270,18 @@ impl Coder {
             ));
         }
 
-        let quantizer = LeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
-        self.inner
-            .try_push_symbols(symbols.iter().zip(means.iter()).zip(stds.iter()).map(
-                |((&symbol, &mean), &std)| {
+        let quantizer =
+            LeakyQuantizer::<_, _, _, 24>::new(min_supported_symbol..=max_supported_symbol);
+        self.inner.try_encode_symbols_reverse(
+            symbols
+                .iter()
+                .zip(means.iter())
+                .zip(stds.iter())
+                .map(|((&symbol, &mean), &std)| {
                     Normal::new(mean, std)
                         .map(|distribution| (symbol, quantizer.quantize(distribution)))
-                },
-            ))?;
+                }),
+        )?;
 
         Ok(())
     }
@@ -300,10 +306,10 @@ impl Coder {
     /// stds = np.array([3.2, 1.3, 1.9], dtype=np.float64)
     ///
     /// # Push symbols on the stack:
-    /// coder.push_gaussian_symbols(symbols, -10, 10, means, stds, True)
+    /// coder.encode_gaussian_symbols_reverse(symbols, -10, 10, means, stds, True)
     ///
     /// # Pop symbols off the stack in reverse order:
-    /// coder.pop_gaussian_symbols(-10, 10, means, stds, decoded, True)
+    /// coder.decode_gaussian_symbols(-10, 10, means, stds, decoded, True)
     ///
     /// # Verify that the decoded symbols match the encoded ones.
     /// assert np.all(symbols == decoded)
@@ -321,7 +327,7 @@ impl Coder {
     /// stds -- the standard deviations of the Gaussian entropy models for each
     ///     symbol. Must be a contiguous one-dimensional numpy array with dtype
     ///     `float64` and with the exact same length as the argument `symbols_out`.
-    pub fn pop_gaussian_symbols<'p>(
+    pub fn decode_gaussian_symbols<'p>(
         &mut self,
         min_supported_symbol: i32,
         max_supported_symbol: i32,
@@ -335,10 +341,11 @@ impl Coder {
             ));
         }
 
-        let quantizer = LeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
+        let quantizer =
+            LeakyQuantizer::<_, _, _, 24>::new(min_supported_symbol..=max_supported_symbol);
         let symbols = self
             .inner
-            .try_pop_symbols(means.iter()?.zip(stds.iter()?).map(|(&mean, &std)| {
+            .try_decode_symbols(means.iter()?.zip(stds.iter()?).map(|(&mean, &std)| {
                 Normal::new(mean, std).map(|distribution| quantizer.quantize(distribution))
             }))
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -348,7 +355,7 @@ impl Coder {
 
     /// Encodes a sequence of symbols using a fixed categorical distribution.
     ///
-    /// This method is analogous to the method `push_gaussian_symbols` except that
+    /// This method is analogous to the method `encode_gaussian_symbols_reverse` except that
     /// - all symbols are encoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian distribution.
     ///
@@ -362,22 +369,21 @@ impl Coder {
     ///   (as far as this is possible within the internally used fixed point
     ///   accuracy). The provided probabilities do not need to be normalized (i.e.,
     ///   the do not need to add up to one) but they must all be nonnegative.
-    pub fn push_iid_categorical_symbols(
+    pub fn encode_iid_categorical_symbols_reverse(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
-        let distribution = Categorical::from_floating_point_probabilities(
-            probabilities.as_slice()?,
-        )
-        .map_err(|()| {
-            pyo3::exceptions::PyValueError::new_err(
-                "Probability distribution is either degenerate or not normalizable.",
-            )
-        })?;
+        let distribution =
+            Categorical::<_, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
+                .map_err(|()| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Probability distribution is either degenerate or not normalizable.",
+                    )
+                })?;
 
-        self.inner.push_iid_symbols(
+        self.inner.encode_iid_symbols_reverse(
             symbols
                 .as_slice()?
                 .iter()
@@ -390,34 +396,33 @@ impl Coder {
 
     /// Decodes a sequence of categorically distributed symbols *in reverse order*.
     ///
-    /// This method is analogous to the method `pop_gaussian_symbols` except that
+    /// This method is analogous to the method `decode_gaussian_symbols` except that
     /// - all symbols are decoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian distribution.
     ///
-    /// See documentation of `push_iid_categorical_symbols` for details of the
-    /// categorical entropy model. See documentation of `pop_gaussian_symbols` for a
+    /// See documentation of `encode_iid_categorical_symbols_reverse` for details of the
+    /// categorical entropy model. See documentation of `decode_gaussian_symbols` for a
     /// discussion of the reverse order of decoding, and for a related usage
     /// example.
-    pub fn pop_iid_categorical_symbols<'p>(
+    pub fn decode_iid_categorical_symbols<'p>(
         &mut self,
         amt: usize,
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<'_, f64>,
         py: Python<'p>,
     ) -> PyResult<&'p PyArray1<i32>> {
-        let distribution = Categorical::from_floating_point_probabilities(
-            probabilities.as_slice()?,
-        )
-        .map_err(|()| {
-            pyo3::exceptions::PyValueError::new_err(
-                "Probability distribution is either degenerate or not normalizable.",
-            )
-        })?;
+        let distribution =
+            Categorical::<_, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
+                .map_err(|()| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Probability distribution is either degenerate or not normalizable.",
+                    )
+                })?;
 
         Ok(PyArray1::from_iter(
             py,
             self.inner
-                .pop_iid_symbols(amt, &distribution)
+                .decode_iid_symbols(amt, &distribution)
                 .map(|s| (s as i32).wrapping_add(min_supported_symbol)),
         ))
     }

@@ -13,22 +13,22 @@ use super::CompressedWord;
 
 /// A trait for probability distributions that can be used as entropy models.
 ///
-/// The type parameter `W` controls the fixed-point precision at which probabilities
+/// The type parameter `Self::Word` controls the fixed-point precision at which probabilities
 /// are represented. The type system enforces that this matches the type of
 /// compressed words of the [`Coder`] or [`SeekableDecoder`].
 ///
 /// [`Coder`]: crate::Coder
 /// [`SeekableDecoder`]: crate::SeekableDecoder
-pub trait DiscreteDistribution<W, const PRECISION: usize>
-where
-    W: CompressedWord,
-{
+pub trait DiscreteDistribution {
+    type Word: CompressedWord;
+    const PRECISION: usize;
+
     /// The type of data over which the probability distribution is defined.
     ///
     /// When the `DiscreteDistribution` is used as an entropy model, this is the
     /// type of an item of the *uncompressed* data. Note that a [`Coder`] can encode
     /// several symbols with different entropy models, and each entropy model may
-    /// have a different `Symbol` type. Only the type parameter `W` (which controls
+    /// have a different `Symbol` type. Only the type parameter `Self::Word` (which controls
     /// the fixed-point precision of the entropy models) must be the same across all
     /// entropy models used with a given `Coder` (and this is enforced by the
     /// compiler).
@@ -42,28 +42,26 @@ where
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Self::Symbol>,
-    ) -> Result<(W, W), ()>;
+    ) -> Result<(Self::Word, Self::Word), ()>;
 
     /// Returns `(symbol, left_sided_cumulative, probability)` of the unique bin
     /// that satisfies `left_sided_cumulative <= quantile < right_sided_cumulative`.
-    fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W);
+    fn quantile_function(&self, quantile: Self::Word) -> (Self::Symbol, Self::Word, Self::Word);
 }
 
-impl<W, D, const PRECISION: usize> DiscreteDistribution<W, PRECISION> for &D
-where
-    W: CompressedWord,
-    D: DiscreteDistribution<W, PRECISION>,
-{
+impl<D: DiscreteDistribution> DiscreteDistribution for &D {
+    type Word = D::Word;
+    const PRECISION: usize = D::PRECISION;
     type Symbol = D::Symbol;
 
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Self::Symbol>,
-    ) -> Result<(W, W), ()> {
+    ) -> Result<(Self::Word, Self::Word), ()> {
         (*self).left_cumulative_and_probability(symbol)
     }
 
-    fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W) {
+    fn quantile_function(&self, quantile: Self::Word) -> (Self::Symbol, Self::Word, Self::Word) {
         (*self).quantile_function(quantile)
     }
 }
@@ -92,23 +90,23 @@ where
 /// # Example
 ///
 /// ```
-/// use statrs::distribution::Normal;
+/// use ans::{distributions::LeakyQuantizer, Coder, Encode};
 ///
 /// // Get a quantizer that supports integer symbols from -5 to 20, inclusively.
-/// let quantizer = ans::distributions::LeakyQuantizer::new(-5..=20);
+/// let quantizer = LeakyQuantizer::<_, _, _, 24>::new(-5..=20);
 ///
 /// // Quantize a normal distribution with mean 8.3 and standard deviation 4.1.
-/// let continuous_distribution1 = Normal::new(8.3, 4.1).unwrap();
+/// let continuous_distribution1 = statrs::distribution::Normal::new(8.3, 4.1).unwrap();
 /// let discrete_distribution1 = quantizer.quantize(continuous_distribution1);
 ///
 /// // You can reuse the same quantizer for more than one distribution.
-/// let continuous_distribution2 = Normal::new(-1.4, 2.7).unwrap();
+/// let continuous_distribution2 = statrs::distribution::Normal::new(-1.4, 2.7).unwrap();
 /// let discrete_distribution2 = quantizer.quantize(continuous_distribution2);
 ///
-/// // Use the discrete distributions with an `Coder`.
-/// let mut coder = ans::Coder::<u32, 32>::new();
-/// coder.push_symbol(4, discrete_distribution1);
-/// coder.push_symbol(-3, discrete_distribution2);
+/// // Use the discrete distributions with a `Coder`.
+/// let mut coder = Coder::<u32>::new();
+/// coder.encode_symbol(4, discrete_distribution1);
+/// coder.encode_symbol(-3, discrete_distribution2);
 /// ```
 ///
 /// # TODO
@@ -192,7 +190,7 @@ pub struct LeakilyQuantizedDistribution<'a, F, S, W, CD, const PRECISION: usize>
     quantizer: &'a LeakyQuantizer<W, S, F, PRECISION>,
 }
 
-impl<'a, F, S, W, CD, const PRECISION: usize> DiscreteDistribution<W, PRECISION>
+impl<'a, F, S, W, CD, const PRECISION: usize> DiscreteDistribution
     for LeakilyQuantizedDistribution<'a, F, S, W, CD, PRECISION>
 where
     S: PrimInt + AsPrimitive<W> + Into<F> + WrappingSub,
@@ -200,9 +198,14 @@ where
     W: CompressedWord + Into<F>,
     CD: Univariate<F, F> + InverseCDF<F>,
 {
+    type Word = W;
+    const PRECISION: usize = PRECISION;
     type Symbol = S;
 
-    fn left_cumulative_and_probability(&self, symbol: impl Borrow<S>) -> Result<(W, W), ()> {
+    fn left_cumulative_and_probability(
+        &self,
+        symbol: impl Borrow<S>,
+    ) -> Result<(Self::Word, Self::Word), ()> {
         let half = F::one() / (F::one() + F::one());
 
         let min_symbol = *self.quantizer.domain.start();
@@ -218,9 +221,9 @@ where
         let left_sided_cumulative = if symbol.borrow() == &min_symbol {
             // Corner case: only makes a difference if we're cutting off a fairly significant
             // left tail of the distribution.
-            W::zero()
+            Self::Word::zero()
         } else {
-            let non_leaky: W =
+            let non_leaky: Self::Word =
                 (free_weight * self.inner.cdf((*symbol.borrow()).into() - half)).as_();
             non_leaky + slack
         };
@@ -230,12 +233,12 @@ where
             // calculation in the `else` branch may lead to a lower total probability
             // because we're cutting off the right tail of the distribution and we're
             // rounding down.
-            let max_probability = W::max_value() >> (W::bits() - PRECISION);
-            max_probability.wrapping_add(&W::one())
+            let max_probability = Self::Word::max_value() >> (Self::Word::bits() - PRECISION);
+            max_probability.wrapping_add(&Self::Word::one())
         } else {
-            let non_leaky: W =
+            let non_leaky: Self::Word =
                 (free_weight * self.inner.cdf((*symbol.borrow()).into() + half)).as_();
-            non_leaky + slack + W::one()
+            non_leaky + slack + Self::Word::one()
         };
 
         let probability = right_sided_cumulative.wrapping_sub(&left_sided_cumulative);
@@ -243,8 +246,8 @@ where
         Ok((left_sided_cumulative, probability))
     }
 
-    fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W) {
-        let max_probability = W::max_value() >> (W::bits() - PRECISION);
+    fn quantile_function(&self, quantile: Self::Word) -> (Self::Symbol, Self::Word, Self::Word) {
+        let max_probability = Self::Word::max_value() >> (Self::Word::bits() - PRECISION);
         // This check should usually compile away in inlined and verifiably correct usages
         // of this method.
         assert!(quantile <= max_probability);
@@ -265,14 +268,14 @@ where
         let mut left_sided_cumulative = if symbol <= min_symbol {
             // Corner case: we're in the left cut off tail of the distribution.
             symbol = min_symbol;
-            W::zero()
+            Self::Word::zero()
         } else {
             if symbol > max_symbol {
                 // Corner case: we're in the right cut off tail of the distribution.
                 symbol = max_symbol;
             }
 
-            let non_leaky: W = (free_weight * self.inner.cdf(symbol.into() - half)).as_();
+            let non_leaky: Self::Word = (free_weight * self.inner.cdf(symbol.into() - half)).as_();
             non_leaky + symbol.wrapping_sub(&min_symbol).as_()
         };
 
@@ -283,11 +286,12 @@ where
                 symbol = symbol - Self::Symbol::one();
 
                 if symbol == min_symbol {
-                    left_sided_cumulative = W::zero();
+                    left_sided_cumulative = Self::Word::zero();
                     break right_sided_cumulative;
                 }
 
-                let non_leaky: W = (free_weight * self.inner.cdf(symbol.into() - half)).as_();
+                let non_leaky: Self::Word =
+                    (free_weight * self.inner.cdf(symbol.into() - half)).as_();
                 left_sided_cumulative = non_leaky + symbol.wrapping_sub(&min_symbol).as_();
                 if left_sided_cumulative <= quantile {
                     break right_sided_cumulative;
@@ -299,13 +303,15 @@ where
             // keep increasing `symbol` until it is.
             loop {
                 if symbol == max_symbol {
-                    let max_probability = W::max_value() >> (W::bits() - PRECISION);
-                    break max_probability.wrapping_add(&W::one());
+                    let max_probability =
+                        Self::Word::max_value() >> (Self::Word::bits() - PRECISION);
+                    break max_probability.wrapping_add(&Self::Word::one());
                 }
 
-                let non_leaky: W = (free_weight * self.inner.cdf(symbol.into() + half)).as_();
+                let non_leaky: Self::Word =
+                    (free_weight * self.inner.cdf(symbol.into() + half)).as_();
                 let right_sided_cumulative =
-                    non_leaky + symbol.wrapping_sub(&min_symbol).as_() + W::one();
+                    non_leaky + symbol.wrapping_sub(&min_symbol).as_() + Self::Word::one();
                 if right_sided_cumulative > quantile {
                     break right_sided_cumulative;
                 }
@@ -325,12 +331,12 @@ where
 
 /// A categorical distribution over a finite number of bins.
 ///
-/// This distribution implements [`DiscreteDistribution<W>`], which means that it
-/// can be used for entropy coding with a [`Coder<W>`] or [`SeekableDecoder<W>`].
+/// This distribution implements [`DiscreteDistribution<Self::Word>`], which means that it
+/// can be used for entropy coding with a [`Coder<Self::Word>`] or [`SeekableDecoder<Self::Word>`].
 ///
-/// [`DiscreteDistribution<W>`]: trait.DiscreteDistribution.html
-/// [`Coder<W>`]: crate::Coder
-/// [`SeekableDecoder<W>`]: crate::SeekableDecoder
+/// [`DiscreteDistribution<Self::Word>`]: trait.DiscreteDistribution.html
+/// [`Coder<Self::Word>`]: crate::Coder
+/// [`SeekableDecoder<Self::Word>`]: crate::SeekableDecoder
 pub struct Categorical<W, const PRECISION: usize> {
     /// Invariants:
     /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
@@ -812,12 +818,15 @@ impl<W: CompressedWord, const PRECISION: usize> Categorical<W, PRECISION> {
     }
 }
 
-impl<W: CompressedWord, const PRECISION: usize> DiscreteDistribution<W, PRECISION>
-    for Categorical<W, PRECISION>
-{
+impl<W: CompressedWord, const PRECISION: usize> DiscreteDistribution for Categorical<W, PRECISION> {
+    type Word = W;
+    const PRECISION: usize = PRECISION;
     type Symbol = usize;
 
-    fn left_cumulative_and_probability(&self, symbol: impl Borrow<usize>) -> Result<(W, W), ()> {
+    fn left_cumulative_and_probability(
+        &self,
+        symbol: impl Borrow<usize>,
+    ) -> Result<(Self::Word, Self::Word), ()> {
         let index: usize = *symbol.borrow();
 
         let (cdf, next_cdf) = unsafe {
@@ -834,8 +843,8 @@ impl<W: CompressedWord, const PRECISION: usize> DiscreteDistribution<W, PRECISIO
         Ok((cdf, next_cdf.wrapping_sub(&cdf)))
     }
 
-    fn quantile_function(&self, quantile: W) -> (Self::Symbol, W, W) {
-        let max_probability = W::max_value() >> (W::bits() - PRECISION);
+    fn quantile_function(&self, quantile: Self::Word) -> (Self::Symbol, Self::Word, Self::Word) {
+        let max_probability = Self::Word::max_value() >> (Self::Word::bits() - PRECISION);
         // This check should usually compile away in inlined and verifiably correct usages
         // of this method.
         assert!(quantile <= max_probability);
@@ -850,7 +859,7 @@ impl<W: CompressedWord, const PRECISION: usize> DiscreteDistribution<W, PRECISIO
         // - `quantile <= max_probability`
         // - `*self.cdf.last().unwrap() == max_probability.wrapping_add(1)`
         // - `self.cdf` is monotonically nondecreasing except that it may wrap around
-        //   only at the very last entry (this happens iff `PRECISION == W::bits()`).
+        //   only at the very last entry (this happens iff `PRECISION == Self::Word::bits()`).
         //
         // The loop maintains the following two invariants:
         // (1) `0 <= left <= mid < right < self.cdf.len()`
@@ -886,7 +895,7 @@ mod tests {
 
     #[test]
     fn leaky_quantized_normal() {
-        let quantizer = LeakyQuantizer::new(-127..=127);
+        let quantizer = LeakyQuantizer::<_, _, _, 32>::new(-127..=127);
 
         for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
             for &mean in &[-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0] {
@@ -964,11 +973,12 @@ mod tests {
         ];
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
-        let distribution = Categorical::from_floating_point_probabilities(&probabilities).unwrap();
+        let distribution =
+            Categorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
         test_discrete_distribution(distribution, 0..probabilities.len());
     }
 
-    fn test_discrete_distribution<D: DiscreteDistribution<u32, 32>>(
+    fn test_discrete_distribution<D: DiscreteDistribution<Word = u32>>(
         distribution: D,
         domain: std::ops::Range<D::Symbol>,
     ) where

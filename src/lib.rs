@@ -158,6 +158,215 @@ use num::{
     CheckedDiv, PrimInt, Unsigned, Zero,
 };
 
+pub trait Encode {
+    type Word: CompressedWord;
+
+    fn encode_symbol<S, D: DiscreteDistribution<Word = Self::Word, Symbol = S>>(
+        &mut self,
+        symbol: impl Borrow<S>,
+        distribution: D,
+    ) -> Result<()>;
+
+    fn encode_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
+    where
+        D: DiscreteDistribution<Word = Self::Word>,
+        S: Borrow<D::Symbol>,
+        I: IntoIterator<Item = (S, D)>,
+    {
+        for (symbol, distribution) in symbols_and_distributions.into_iter() {
+            self.encode_symbol(symbol, distribution)?;
+        }
+
+        Ok(())
+    }
+
+    fn try_encode_symbols<E, D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
+    where
+        E: Error + 'static,
+        D: DiscreteDistribution<Word = Self::Word>,
+        S: Borrow<D::Symbol>,
+        I: IntoIterator<Item = std::result::Result<(S, D), E>>,
+    {
+        for symbol_and_distribution in symbols_and_distributions.into_iter() {
+            let (symbol, distribution) =
+                symbol_and_distribution.map_err(|err| CoderError::IterationError(Box::new(err)))?;
+            self.encode_symbol(symbol, distribution)?;
+        }
+
+        Ok(())
+    }
+
+    fn encode_iid_symbols<D, S, I>(&mut self, symbols: I, distribution: &D) -> Result<()>
+    where
+        D: DiscreteDistribution<Word = Self::Word>,
+        I: IntoIterator<Item = S>,
+        S: Borrow<D::Symbol>,
+        I::IntoIter: DoubleEndedIterator,
+    {
+        self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, distribution)))
+    }
+}
+
+pub trait Decode {
+    type Word: CompressedWord;
+
+    fn decode_symbol<D>(&mut self, distribution: D) -> D::Symbol
+    where
+        D: DiscreteDistribution<Word = Self::Word>;
+
+    /// TODO: This would be much nicer to denote as
+    /// `fn decode_symbols(...) -> impl Iterator`
+    /// but existential return types are currently not allowed in trait methods.
+    fn decode_symbols<'s, I>(&'s mut self, distributions: I) -> DecodeSymbols<'s, Self, I>
+    where
+        I: Iterator + 's,
+        I::Item: DiscreteDistribution<Word = Self::Word>,
+    {
+        DecodeSymbols {
+            decoder: self,
+            distributions,
+        }
+    }
+
+    fn try_decode_symbols<'s, E, D, I>(
+        &'s mut self,
+        distributions: I,
+    ) -> TryDecodeSymbols<'s, Self, I>
+    where
+        E: Error + 'static,
+        D: DiscreteDistribution<Word = Self::Word>,
+        I: Iterator<Item = std::result::Result<D, E>> + 's,
+    {
+        TryDecodeSymbols {
+            decoder: self,
+            distributions,
+        }
+    }
+
+    /// Decode a sequence of symbols using a fixed entropy model.
+    ///
+    /// This is a convenience wrapper around [`decode_symbols`], and the inverse of
+    /// [`encode_iid_symbols`]. See example in the latter.
+    ///
+    /// [`decode_symbols`]: #method.decode_symbols
+    /// [`encode_iid_symbols`]: #method.encode_iid_symbols
+    fn decode_iid_symbols<'s, D>(
+        &'s mut self,
+        amt: usize,
+        distribution: &'s D,
+    ) -> DecodeIidSymbols<'s, Self, D>
+    where
+        D: DiscreteDistribution<Word = Self::Word>,
+    {
+        DecodeIidSymbols {
+            decoder: self,
+            distribution,
+            amt,
+        }
+    }
+}
+
+pub trait Seek {}
+
+pub struct DecodeSymbols<'a, Decoder: ?Sized, I> {
+    decoder: &'a mut Decoder,
+    distributions: I,
+}
+
+impl<'a, Decoder: Decode, I: Iterator> Iterator for DecodeSymbols<'a, Decoder, I>
+where
+    I::Item: DiscreteDistribution<Word = Decoder::Word>,
+{
+    type Item = <I::Item as DiscreteDistribution>::Symbol;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.distributions
+            .next()
+            .map(|distribution| self.decoder.decode_symbol(distribution))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.distributions.size_hint()
+    }
+}
+
+impl<'a, Decoder: Decode, I: Iterator> ExactSizeIterator for DecodeSymbols<'a, Decoder, I>
+where
+    I::Item: DiscreteDistribution<Word = Decoder::Word>,
+    I: ExactSizeIterator,
+{
+}
+
+pub struct TryDecodeSymbols<'a, Decoder: ?Sized, I> {
+    decoder: &'a mut Decoder,
+    distributions: I,
+}
+
+impl<'a, Decoder: Decode, I, E, D> Iterator for TryDecodeSymbols<'a, Decoder, I>
+where
+    I: Iterator<Item = std::result::Result<D, E>>,
+    D: DiscreteDistribution<Word = Decoder::Word>,
+    E: std::error::Error + 'static,
+{
+    type Item = Result<D::Symbol>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.distributions
+            .next()
+            .map(|distribution| match distribution {
+                Ok(distribution) => Ok(self.decoder.decode_symbol(distribution)),
+                Err(err) => Err(CoderError::IterationError(Box::new(err))),
+            })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        // We don't terminate when we encounter an error, so the size doesn't change.
+        self.distributions.size_hint()
+    }
+}
+
+impl<'a, Decoder: Decode, I, E, D> ExactSizeIterator for TryDecodeSymbols<'a, Decoder, I>
+where
+    I: Iterator<Item = std::result::Result<D, E>> + ExactSizeIterator,
+    D: DiscreteDistribution<Word = Decoder::Word>,
+    E: std::error::Error + 'static,
+{
+}
+
+pub struct DecodeIidSymbols<'a, Decoder: ?Sized, D> {
+    decoder: &'a mut Decoder,
+    distribution: &'a D,
+    amt: usize,
+}
+
+impl<'a, Decoder, D> Iterator for DecodeIidSymbols<'a, Decoder, D>
+where
+    Decoder: Decode,
+    D: DiscreteDistribution<Word = Decoder::Word>,
+{
+    type Item = D::Symbol;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.amt != 0 {
+            self.amt -= 1;
+            Some(self.decoder.decode_symbol(self.distribution))
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.amt, Some(self.amt))
+    }
+}
+
+impl<'a, Decoder, D> ExactSizeIterator for DecodeIidSymbols<'a, Decoder, D>
+where
+    Decoder: Decode,
+    D: DiscreteDistribution<Word = Decoder::Word>,
+{
+}
+
 /// A trait for the smallest unit of compressed data in a [`Coder`].
 ///
 /// This is the trait for the compressed data type `W` in a [`Coder`], and it is
@@ -307,24 +516,23 @@ type Result<T> = std::result::Result<T, CoderError>;
 /// # Example
 ///
 /// The following shows a basic usage example. For more examples, see
-/// [`push_symbols`] or [`push_iid_symbols`].
+/// [`encode_symbols`] or [`encode_iid_symbols`].
 ///
 /// ```
-/// // Bring in external crate `statrs` to use its probability distributions as entropy models.
-/// use statrs::distribution::Normal;
+/// use ans::{distributions::LeakyQuantizer, Coder, Decode};
 ///
 /// // `DefaultCoder` is a type alias to `Coder` with sane generic parameters.
-/// let mut coder = ans::DefaultCoder::new();
-/// let quantizer = ans::distributions::LeakyQuantizer::new(-100..=100);
-/// let entropy_model = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
+/// let mut coder = Coder::<u32>::new();
+/// let quantizer = LeakyQuantizer::<_, _, _, 24>::new(-100..=100);
+/// let entropy_model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
 ///
 /// let symbols = vec![-10, 4, 0, 3];
-/// coder.push_iid_symbols(&symbols, &entropy_model);
+/// coder.encode_iid_symbols_reverse(&symbols, &entropy_model);
 /// println!("Encoded into {} bits: {:?}", coder.num_bits(), &*coder.get_compressed());
 ///
-/// // The call to `push_iid_symbols` above encoded the symbols in reverse order (see
+/// // The call to `encode_iid_symbols` above encoded the symbols in reverse order (see
 /// // documentation). So popping them off now will yield the same symbols in original order.
-/// let reconstructed = coder.pop_iid_symbols(4, &entropy_model).collect::<Vec<_>>();
+/// let reconstructed = coder.decode_iid_symbols(4, &entropy_model).collect::<Vec<_>>();
 /// assert_eq!(reconstructed, symbols);
 /// ```
 ///
@@ -447,15 +655,15 @@ type Result<T> = std::result::Result<T, CoderError>;
 ///
 /// [range Asymmetric Numeral Systems (rANS)]:
 /// https://en.wikipedia.org/wiki/Asymmetric_numeral_systems#Range_variants_(rANS)_and_streaming
-/// [`push_symbols`]: #method.push_symbols
-/// [`push_iid_symbols`]: #method.push_iid_symbols
+/// [`encode_symbols`]: #method.encode_symbols
+/// [`encode_iid_symbols`]: #method.encode_iid_symbols
 /// [`distributions`]: distributions/index.html
 /// [entropy]: https://en.wikipedia.org/wiki/Entropy_(information_theory)
 /// [information content]: https://en.wikipedia.org/wiki/Information_content
-/// [`push_symbols`]: #method.push_symbols
+/// [`encode_symbols`]: #method.encode_symbols
 /// [`is_empty`]: #method.is_empty
 /// [`into_compressed`]: #method.into_compressed
-pub struct Coder<W: CompressedWord, const PRECISION: usize> {
+pub struct Coder<W: CompressedWord> {
     buf: Vec<W>,
     state: W::State,
 }
@@ -467,9 +675,9 @@ pub struct Coder<W: CompressedWord, const PRECISION: usize> {
 /// `Coder` has a [section describing the tradeoffs](
 /// struct.Coder.html#generic-parameters-compressed-word-type-w-and-precision)
 /// that were considered in the choice of these parameters.
-pub type DefaultCoder = Coder<u32, 24>;
+pub type DefaultCoder = Coder<u32>;
 
-impl<W: CompressedWord, const PRECISION: usize> Debug for Coder<W, PRECISION>
+impl<W: CompressedWord> Debug for Coder<W>
 where
     W: Debug,
 {
@@ -478,7 +686,7 @@ where
     }
 }
 
-impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
+impl<W: CompressedWord> Coder<W> {
     /// Creates an empty ANS entropy coder.
     ///
     /// This is usually the starting point if you want to *compress* data.
@@ -494,11 +702,6 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     /// let compressed = coder.into_compressed();
     /// ```
     pub fn new() -> Self {
-        // TODO: turn this assertion into the following trait bound on the struct once this
-        // is supported:
-        // [u8; (PRECISION > 0 && PRECISION <= 8 * size_of::<W>()) as usize]: From<[u8; 1]>
-        assert!(PRECISION > 0 && PRECISION <= W::bits());
-
         Self {
             buf: Vec::new(),
             state: W::State::zero(),
@@ -512,8 +715,6 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     /// However, it can also be used to append more symbols to an existing
     /// compressed stream of data.
     pub fn with_compressed_data(mut compressed: Vec<W>) -> Self {
-        assert!(PRECISION > 0 && PRECISION <= W::bits());
-
         let (low, high) = match compressed.len() {
             0 => (W::zero(), W::zero()),
             1 => (compressed.pop().unwrap(), W::zero()),
@@ -530,366 +731,36 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
         }
     }
 
-    /// Encodes a single symbol and appends it to the compressed data.
-    ///
-    /// This is a low level method. You probably usually want to call a batch method
-    /// like [`push_symbols`](#method.push_symbols) or
-    /// [`push_iid_symbols`](#method.push_iid_symbols) instead. See examples there.
-    ///
-    /// The bound `impl Borrow<S>` on argument `symbol` essentially means that you
-    /// can provide the symbol either by value or by reference.
-    ///
-    /// This method is called `push_symbol` rather than `encode_symbol` to stress
-    /// the fact that the `Coder` is a stack: the last symbol *pushed onto* the
-    /// stack will be the first symbol that [`pop_symbol`](#method.pop_symbol) will
-    /// *pop off* the stack.
-    ///
-    /// Returns [`Err(ImpossibleSymbol)`] if `symbol` has zero probability under the
-    /// entropy model `distribution`. This error can usually be avoided by using a
-    /// "leaky" distribution, i.e., a distribution that assigns a nonzero
-    /// probability to all symbols within a finite domain. Leaky distributions can
-    /// be constructed with, e.g., a
-    /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
-    /// [`Categorical::from_floating_point_probabilities`](
-    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
-    ///
-    /// [`Err(ImpossibleSymbol)`]: enum.CoderError.html#variant.ImpossibleSymbol
-    pub fn push_symbol<S>(
-        &mut self,
-        symbol: impl Borrow<S>,
-        distribution: impl DiscreteDistribution<W, PRECISION, Symbol = S>,
-    ) -> Result<()> {
-        let (left_sided_cumulative, probability) = distribution
-            .left_cumulative_and_probability(symbol)
-            .map_err(|()| CoderError::ImpossibleSymbol)?;
-        if self.state >> (2 * W::bits() - PRECISION) >= W::State::from(probability) {
-            let (low, high) = W::split_state(self.state);
-            self.buf.push(low);
-            self.state = high.into();
-        }
-        let prefix = self
-            .state
-            .checked_div(&probability.into())
-            .ok_or(CoderError::ImpossibleSymbol)?;
-        let suffix = W::State::from(left_sided_cumulative) + self.state % probability.into();
-        self.state = (prefix << PRECISION) | suffix;
-
-        Ok(())
-    }
-
-    /// Decodes a single symbol and pops it off the compressed data.
-    ///
-    /// This is a low level method. You usually probably want to call a batch method
-    /// like [`pop_symbols`](#method.pop_symbols) or
-    /// [`pop_iid_symbols`](#method.pop_iid_symbols) instead.
-    ///
-    /// This method is called `pop_symbol` rather than `decode_symbol` to stress the
-    /// fact that the `Coder` is a stack: `pop_symbol` will return the *last* symbol
-    /// that was previously encoded via [`push_symbol`](#method.push_symbol).
-    ///
-    /// Note that this method cannot fail. It will still produce symbols in a
-    /// deterministic way even if the coder is empty, but such symbols will not
-    /// recover any previously encoded data and will generally have low entropy.
-    /// Still, being able to pop off an arbitrary number of symbols can sometimes be
-    /// useful in edge cases of, e.g., the bits-back algorithm.
-    pub fn pop_symbol<S>(
-        &mut self,
-        distribution: impl DiscreteDistribution<W, PRECISION, Symbol = S>,
-    ) -> S {
-        let quantile = (self.state % (W::State::from(W::one()) << PRECISION)).as_();
-        let rest = self.state >> PRECISION;
-        let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
-        self.state =
-            W::State::from(probability) * rest + W::State::from(quantile - left_sided_cumulative);
-
-        if self.state <= W::max_value().into() {
-            if let Some(word) = self.buf.pop() {
-                self.state = (self.state << W::bits()) | W::State::from(word);
-            }
-        }
-
-        symbol
-    }
-
-    /// Encodes multiple symbols with individual entropy models in reverse order.
-    ///
-    /// The symbols are encoded in reverse order so that calling [`pop_symbols`]
-    /// retrieves them in forward order (since the ANS coder is a stack).
-    ///
-    /// The provided iterator `symbols_and_distributions` must yield pairs of
-    /// symbols and their entropy models. The bound `S: Borrow<D::Symbol>`
-    /// essentially means that the iterator may yield symbols either by value or by
-    /// reference.
-    ///
-    /// Returns [`Err(ImpossibleSymbol)`] if one of the symbols has zero probability
-    /// under its entropy model.  In this case, some of the symbols may have already
-    /// been pushed onto the coder. This error can usually be avoided by using
-    /// "leaky" distributions, i.e., distributions that assign a nonzero probability
-    /// to all symbols within a finite domain. Leaky distributions can be
-    /// constructed with, e.g., a  
-    /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
-    /// [`Categorical::from_floating_point_probabilities`](
-    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
-    ///
-    /// If the the iteration over symbols and their distributions itself can fail
-    /// (e.g., because of an invalid parameterization of a distribution), consider
-    /// using [`try_push_symbols`] instead.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use statrs::distribution::Normal;
-    ///
-    /// let mut coder = ans::DefaultCoder::new();
-    /// let quantizer = ans::distributions::LeakyQuantizer::new(-20..=20);
-    /// let symbols = vec![5, -1, -3, 4];
-    /// let means_and_stds = vec![(3.2, 1.9), (5.7, 8.2), (-1.4, 2.1), (2.6, 5.3)];
-    ///
-    /// // Create entropy models lazily to reduce memory overhead.
-    /// let entropy_models = means_and_stds
-    ///     .iter()
-    ///     .map(|&(mean, std)| quantizer.quantize(Normal::new(mean, std).unwrap()));
-    ///
-    /// // Encode the sequence of symbols.
-    /// coder.push_symbols(symbols.iter().zip(entropy_models.clone()));
-    ///
-    /// // Decode the encoded data.
-    /// let reconstructed = coder.pop_symbols(entropy_models).collect::<Vec<_>>();
-    ///
-    /// assert_eq!(symbols, reconstructed);
-    /// assert!(coder.is_empty());
-    /// ```
-    ///
-    /// [`pop_symbols`]: #method.pop_symbols
-    /// [`Err(ImpossibleSymbol)`]: enum.CoderError.html#variant.ImpossibleSymbol
-    /// [`try_push_symbols`]: #method.try_push_symbols
-    pub fn push_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
+    pub fn encode_symbols_reverse<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
     where
-        D: DiscreteDistribution<W, PRECISION>,
+        D: DiscreteDistribution<Word = W>,
         S: Borrow<D::Symbol>,
         I: IntoIterator<Item = (S, D)>,
         I::IntoIter: DoubleEndedIterator,
     {
-        for (symbol, distribution) in symbols_and_distributions.into_iter().rev() {
-            self.push_symbol(symbol, distribution)?;
-        }
-
-        Ok(())
+        self.encode_symbols(symbols_and_distributions.into_iter().rev())
     }
 
-    /// Decodes a sequence of symbols.
-    ///
-    /// This method is the inverse of [`push_symbols`]. See example there.
-    ///
-    /// If the iterator `distributions` can fail, consider using [`try_pop_symbols`]
-    /// instead.
-    ///
-    /// # TODO
-    ///
-    /// Once specialization is stable, return an `impl ExactSizeIterator` if
-    /// `distribution` implements `ExactSizeIterator` (same for
-    /// [`pop_iid_symbols`](#method.pop_iid_symbols) and for [`try_pop_symbols`]).
-    ///
-    /// [`push_symbols`]: #method.push_symbols
-    /// [`try_pop_symbols`]: #method.try_pop_symbols
-    pub fn pop_symbols<'s, S, D: DiscreteDistribution<W, PRECISION, Symbol = S>>(
-        &'s mut self,
-        distributions: impl Iterator<Item = D> + 's,
-    ) -> impl Iterator<Item = S> + 's {
-        distributions.map(move |distribution| self.pop_symbol(distribution))
-    }
-
-    /// Like [`push_symbols`] but for fallible input.
-    ///
-    /// Returns:
-    /// - `Ok(())` if no error occurred (same as in [`push_symbols`]);
-    /// - [`Err(ImpossibleSymbol)`] if one tries to push a symbol that has probability
-    ///   zero under its entropy model (same as in [`push_symbols`]);
-    /// - [`Err(IterationError(source))`] if `symbols_and_distribution` yields
-    ///   `Err(source)` (this is the only difference to [`push_symbols`]).
-    ///
-    /// In the event of an error, iteration over `symbols_and_distributions`
-    /// terminates.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use statrs::{distribution::Normal, StatsError};
-    ///
-    /// let mut coder = ans::DefaultCoder::new();
-    /// let quantizer = ans::distributions::LeakyQuantizer::new(-10..=10);
-    /// let symbols = vec![1, 2, 3];
-    /// let means_and_stds = [
-    ///     (1.1, 1.0),
-    ///     (2.2, -2.0), // <-- Negative standard deviation: this will fail.
-    ///     (3.3, 3.0),
-    /// ];
-    ///
-    /// let result = coder.try_push_symbols(symbols.iter().zip(&means_and_stds).map(
-    ///     |(&symbol, &(mean, std))| {
-    ///         Normal::new(mean, std)
-    ///             .map(|distribution| (symbol, quantizer.quantize(distribution)))
-    ///     },
-    /// ));
-    ///
-    /// assert!(result.is_err()); // <-- Verify that it did indeed fail.
-    /// dbg!(result);
-    /// ```
-    ///
-    /// [`push_symbols`]: #method.push_symbols
-    /// [`Err(ImpossibleSymbol)`]: enum.CoderError.html#variant.ImpossibleSymbol
-    /// [`Err(IterationError(source))`]: enum.CoderError.html#variant.IterationError
-    pub fn try_push_symbols<E, D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
+    pub fn try_encode_symbols_reverse<E, D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
     where
         E: Error + 'static,
-        D: DiscreteDistribution<W, PRECISION>,
+        D: DiscreteDistribution<Word = W>,
         S: Borrow<D::Symbol>,
-        I: Iterator<Item = std::result::Result<(S, D), E>> + DoubleEndedIterator,
-    {
-        for symbol_and_distribution in symbols_and_distributions.rev() {
-            let (symbol, distribution) =
-                symbol_and_distribution.map_err(|err| CoderError::IterationError(Box::new(err)))?;
-            self.push_symbol(symbol, distribution)?;
-        }
-
-        Ok(())
-    }
-
-    /// Like [`pop_symbols`] but for fallible input.
-    ///
-    /// Forwards any errors that occur in the iteration of `distributions` and pops
-    /// symbols only for items where `distributions` yields `Ok(_)`. Forwarded
-    /// errors `e` will be wrapped as [`CoderError::IterationError(e)`].
-    ///
-    /// Note that the returned iterator does *not* terminate after yielding its
-    /// first error. But you will very likely want to terminate iteration yourself
-    /// after the first error: even if `distributions` yields any valid
-    /// distributions after the first error, the coder will likely be in an
-    /// unexpected (yet technically valid) state since it skipped decoding of the
-    /// symbol with the erroneous distribution. A simple way to terminate after the
-    /// first error is by `.collect`ing the iterator returned by this method into a
-    /// `Result<Vec<_>, _>`, see example below.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use statrs::{distribution::Normal, StatsError};
-    ///
-    /// let mut coder = ans::DefaultCoder::new();
-    /// let quantizer = ans::distributions::LeakyQuantizer::new(-10..=10);
-    /// let symbols = vec![1, 2, 3];
-    /// let mut means_and_stds = [(1.1, 1.0), (2.2, 2.0), (3.3, 3.0)];
-    ///
-    /// coder.try_push_symbols(symbols.iter().zip(&means_and_stds).map(
-    ///     |(&symbol, &(mean, std))| {
-    ///         Normal::new(mean, std)
-    ///             .map(|distribution| (symbol, quantizer.quantize(distribution)))
-    ///     },
-    /// )).unwrap(); // <-- We don't expect any errors so far.
-    ///
-    /// means_and_stds[1].1 = -2.0; // <-- Negative standard deviation: this will fail.
-    ///
-    /// let decoded = coder
-    ///     .try_pop_symbols(means_and_stds.iter().map(|&(mean, std)| {
-    ///         Normal::new(mean, std).map(|distribution| quantizer.quantize(distribution))
-    ///     }))
-    ///     .collect::<Result<Vec<_>, _>>(); // <-- Short-circuit the fallible iterator.
-    ///
-    /// assert!(decoded.is_err()); // <-- Verify that it did indeed fail.
-    /// dbg!(decoded);
-    /// assert!(!coder.is_empty()); // <-- Therefore, there's still some data left on the coder.
-    ///
-    /// means_and_stds[1].1 = 2.0; // <-- Fixed it. We should be able to decode the remaining data now.
-    ///
-    /// let remaining_decoded = coder
-    ///     .try_pop_symbols(means_and_stds[1..].iter().map(|&(mean, std)| {
-    ///         Normal::new(mean, std).map(|distribution| quantizer.quantize(distribution))
-    ///     }))
-    ///     .collect::<Result<Vec<_>, _>>();
-    ///
-    /// assert_eq!(remaining_decoded.unwrap(), &symbols[1..]); // <-- Verify remaining data.
-    /// assert!(coder.is_empty());
-    /// ```
-    ///
-    /// [`pop_symbols`]: #method.pop_symbols
-    /// [`CoderError::IterationError(e)`]: enum.CoderError.html#variant.IterationError
-    pub fn try_pop_symbols<'s, E, D, I>(
-        &'s mut self,
-        distributions: I,
-    ) -> impl Iterator<Item = Result<D::Symbol>> + 's
-    where
-        E: Error + 'static,
-        D: DiscreteDistribution<W, PRECISION>,
-        I: Iterator<Item = std::result::Result<D, E>> + 's,
-    {
-        distributions.map(move |distribution| {
-            let distribution =
-                distribution.map_err(|err| CoderError::IterationError(Box::new(err)))?;
-            Ok(self.pop_symbol(distribution))
-        })
-    }
-
-    /// Encodes a sequence of symbols in reverse order using a fixed entropy model.
-    ///
-    /// This is a convenience wrapper around [`push_symbols`], and the inverse of
-    /// [`pop_iid_symbols`]. The symbols are encoded in reverse order so that calling
-    /// [`pop_iid_symbols`] retrieves them in forward order (since the ANS coder is a
-    /// stack).
-    ///
-    /// The bound `S: Borrow<D::Symbol>` essentially means that the provided
-    /// iterator `symbols` may yield symbols either by value or by reference.
-    ///
-    /// Returns [`Err(ImpossibleSymbol)`] if one of the symbols has zero probability
-    /// under its entropy model. In this case, some of the symbols may have already
-    /// been pushed on the coder. This error can usually be avoided by using "leaky"
-    /// distributions, i.e., distributions that assign a nonzero probability to all
-    /// symbols within a finite domain. Leaky distributions can be constructed with,
-    /// e.g., a [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
-    /// [`Categorical::from_floating_point_probabilities`](
-    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let mut coder = ans::DefaultCoder::new();
-    /// let symbols = vec![8, 2, 0, 7];
-    /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let distribution =
-    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities).unwrap();
-    ///
-    /// coder.push_iid_symbols(&symbols, &distribution).unwrap();
-    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
-    ///
-    /// assert_eq!(symbols, reconstructed);
-    /// assert!(coder.is_empty());
-    /// ```
-    ///
-    /// [`push_symbols`]: #method.push_symbols
-    /// [`pop_iid_symbols`]: #method.pop_iid_symbols
-    /// [`Err(ImpossibleSymbol)`]: enum.CoderError.html#variant.ImpossibleSymbol
-    pub fn push_iid_symbols<D, S, I>(&mut self, symbols: I, distribution: &D) -> Result<()>
-    where
-        D: DiscreteDistribution<W, PRECISION>,
-        S: Borrow<D::Symbol>,
-        I: IntoIterator<Item = S>,
+        I: IntoIterator<Item = std::result::Result<(S, D), E>>,
         I::IntoIter: DoubleEndedIterator,
     {
-        self.push_symbols(symbols.into_iter().map(|symbol| (symbol, distribution)))
+        self.try_encode_symbols(symbols_and_distributions.into_iter().rev())
     }
 
-    /// Decode a sequence of symbols using a fixed entropy model.
-    ///
-    /// This is a convenience wrapper around [`pop_symbols`], and the inverse of
-    /// [`push_iid_symbols`]. See example in the latter.
-    ///
-    /// [`pop_symbols`]: #method.pop_symbols
-    /// [`push_iid_symbols`]: #method.push_iid_symbols
-    pub fn pop_iid_symbols<'c, S: 'c>(
-        &'c mut self,
-        amt: usize,
-        distribution: &'c impl DiscreteDistribution<W, PRECISION, Symbol = S>,
-    ) -> impl Iterator<Item = S> + 'c {
-        self.pop_symbols((0..amt).map(move |_| distribution))
+    pub fn encode_iid_symbols_reverse<D, S, I>(&mut self, symbols: I, distribution: &D) -> Result<()>
+    where
+        D: DiscreteDistribution<Word = W>,
+        I: IntoIterator<Item = S>,
+        S: Borrow<D::Symbol>,
+        I::IntoIter: DoubleEndedIterator,
+        I::IntoIter: DoubleEndedIterator,
+    {
+        self.encode_iid_symbols(symbols.into_iter().rev(), distribution)
     }
 
     /// Discards all compressed data and resets the coder to the same state as
@@ -907,7 +778,7 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     ///
     /// Note that you can still pop symbols off an empty coder, but this is only
     /// useful in rare edge cases, see documentation of
-    /// [`pop_symbol`](#method.pop_symbol).
+    /// [`decode_symbol`](#method.decode_symbol).
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty() && self.state == W::State::zero()
     }
@@ -926,15 +797,16 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::DefaultCoder::new();
+    /// use ans::{distributions::Categorical, Coder, Decode};
+    ///
+    /// let mut coder = Coder::<u32>::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let distribution =
-    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities)
-    ///         .unwrap();
-    /// coder.push_iid_symbols(&symbols, &distribution).unwrap();
+    /// let distribution = Categorical::<_, 24>::from_floating_point_probabilities(&probabilities)
+    ///     .unwrap();
+    /// coder.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
     ///
     /// // Get the compressed data, consuming the coder.
     /// let compressed = coder.into_compressed();
@@ -943,7 +815,7 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     ///
     /// // Create a new coder with the same state and use it for decompression.
     /// let mut coder = ans::DefaultCoder::with_compressed_data(compressed);
-    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
+    /// let reconstructed = coder.decode_iid_symbols(4, &distribution).collect::<Vec<_>>();
     /// assert_eq!(reconstructed, symbols);
     /// assert!(coder.is_empty())
     /// ```
@@ -1001,21 +873,22 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::DefaultCoder::new();
+    /// use ans::{distributions::Categorical, Coder, Decode};
+    ///
+    /// let mut coder = Coder::<u32>::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let distribution =
-    ///     ans::distributions::Categorical::from_floating_point_probabilities(&probabilities)
-    ///         .unwrap();
-    /// coder.push_iid_symbols(&symbols, &distribution).unwrap();
+    /// let distribution = Categorical::<_, 24>::from_floating_point_probabilities(&probabilities)
+    ///     .unwrap();
+    /// coder.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
     ///
     /// // Inspect the compressed data.
     /// dbg!(coder.get_compressed());
     ///
     /// // We can still use the coder afterwards.
-    /// let reconstructed = coder.pop_iid_symbols(4, &distribution).collect::<Vec<_>>();
+    /// let reconstructed = coder.decode_iid_symbols(4, &distribution).collect::<Vec<_>>();
     /// assert_eq!(reconstructed, symbols);
     /// ```
     ///
@@ -1023,7 +896,7 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     /// [`with_compressed_data`]: #method.with_compressed_data
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`into_compressed`]: #method.into_compressed
-    pub fn get_compressed(&mut self) -> CoderGuard<'_, W, PRECISION> {
+    pub fn get_compressed(&mut self) -> CoderGuard<'_, W> {
         CoderGuard::new(self)
     }
 
@@ -1035,14 +908,15 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     /// # Example
     ///
     /// ```
-    /// use statrs::distribution::Normal;
+    /// use ans::{distributions::{Categorical, LeakyQuantizer}, Coder, Encode};
     ///
     /// // Create a coder and encode some stuff.
-    /// let mut coder = ans::DefaultCoder::new();
+    /// let mut coder = Coder::<u32>::new();
     /// let symbols = vec![8, -12, 0, 7];
-    /// let quantizer = ans::distributions::LeakyQuantizer::new(-100..=100);
-    /// let distribution = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
-    /// coder.push_iid_symbols(&symbols, &distribution);
+    /// let quantizer = LeakyQuantizer::<_, _, _, 24>::new(-100..=100);
+    /// let distribution =
+    ///     quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
+    /// coder.encode_iid_symbols(&symbols, &distribution);
     ///
     /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
     /// let compressed_iter = coder.iter_compressed();
@@ -1066,6 +940,11 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
         &self,
     ) -> impl Iterator<Item = W> + ExactSizeIterator + DoubleEndedIterator + '_ {
         CompressedIter::new(self)
+    }
+
+    /// TODO
+    pub fn seekable_decoder(&self) -> SeekableDecoder<'_, W> {
+        SeekableDecoder::from(self)
     }
 
     /// Returns the number of compressed words on the stack.
@@ -1115,6 +994,97 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
     }
 }
 
+impl<W: CompressedWord> Encode for Coder<W> {
+    type Word = W;
+
+    /// Encodes a single symbol and appends it to the compressed data.
+    ///
+    /// This is a low level method. You probably usually want to call a batch method
+    /// like [`encode_symbols`](#method.encode_symbols) or
+    /// [`encode_iid_symbols`](#method.encode_iid_symbols) instead. See examples there.
+    ///
+    /// The bound `impl Borrow<S>` on argument `symbol` essentially means that you
+    /// can provide the symbol either by value or by reference.
+    ///
+    /// This method is called `encode_symbol` rather than `encode_symbol` to stress
+    /// the fact that the `Coder` is a stack: the last symbol *pushed onto* the
+    /// stack will be the first symbol that [`decode_symbol`](#method.decode_symbol) will
+    /// *pop off* the stack.
+    ///
+    /// Returns [`Err(ImpossibleSymbol)`] if `symbol` has zero probability under the
+    /// entropy model `distribution`. This error can usually be avoided by using a
+    /// "leaky" distribution, i.e., a distribution that assigns a nonzero
+    /// probability to all symbols within a finite domain. Leaky distributions can
+    /// be constructed with, e.g., a
+    /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
+    /// [`Categorical::from_floating_point_probabilities`](
+    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
+    ///
+    /// [`Err(ImpossibleSymbol)`]: enum.CoderError.html#variant.ImpossibleSymbol
+    fn encode_symbol<S, D: DiscreteDistribution<Word = Self::Word, Symbol = S>>(
+        &mut self,
+        symbol: impl Borrow<S>,
+        distribution: D,
+    ) -> Result<()> {
+        let (left_sided_cumulative, probability) = distribution
+            .left_cumulative_and_probability(symbol)
+            .map_err(|()| CoderError::ImpossibleSymbol)?;
+
+        if self.state >> (2 * W::bits() - D::PRECISION) >= W::State::from(probability) {
+            let (low, high) = W::split_state(self.state);
+            self.buf.push(low);
+            self.state = high.into();
+        }
+
+        let prefix = self
+            .state
+            .checked_div(&probability.into())
+            .ok_or(CoderError::ImpossibleSymbol)?;
+        let suffix = W::State::from(left_sided_cumulative) + self.state % probability.into();
+        self.state = (prefix << D::PRECISION) | suffix;
+
+        Ok(())
+    }
+}
+
+impl<W: CompressedWord> Decode for Coder<W> {
+    type Word = W;
+
+    /// Decodes a single symbol and pops it off the compressed data.
+    ///
+    /// This is a low level method. You usually probably want to call a batch method
+    /// like [`decode_symbols`](#method.decode_symbols) or
+    /// [`decode_iid_symbols`](#method.decode_iid_symbols) instead.
+    ///
+    /// This method is called `decode_symbol` rather than `decode_symbol` to stress the
+    /// fact that the `Coder` is a stack: `decode_symbol` will return the *last* symbol
+    /// that was previously encoded via [`encode_symbol`](#method.encode_symbol).
+    ///
+    /// Note that this method cannot fail. It will still produce symbols in a
+    /// deterministic way even if the coder is empty, but such symbols will not
+    /// recover any previously encoded data and will generally have low entropy.
+    /// Still, being able to pop off an arbitrary number of symbols can sometimes be
+    /// useful in edge cases of, e.g., the bits-back algorithm.
+    fn decode_symbol<D>(&mut self, distribution: D) -> D::Symbol
+    where
+        D: DiscreteDistribution<Word = Self::Word>,
+    {
+        let quantile = (self.state % (W::State::from(W::one()) << D::PRECISION)).as_();
+        let rest = self.state >> D::PRECISION;
+        let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
+        self.state =
+            W::State::from(probability) * rest + W::State::from(quantile - left_sided_cumulative);
+
+        if self.state <= W::max_value().into() {
+            if let Some(word) = self.buf.pop() {
+                self.state = (self.state << W::bits()) | W::State::from(word);
+            }
+        }
+
+        symbol
+    }
+}
+
 /// Provides temporary read-only access to the compressed data wrapped in a
 /// [`Coder`].
 ///
@@ -1122,11 +1092,11 @@ impl<W: CompressedWord, const PRECISION: usize> Coder<W, PRECISION> {
 ///
 /// [`Coder`]: struct.Coder.html
 /// [`Coder::get_compressed`]: struct.Coder.html#method.get_compressed
-pub struct CoderGuard<'a, W: CompressedWord, const PRECISION: usize> {
-    inner: &'a mut Coder<W, PRECISION>,
+pub struct CoderGuard<'a, W: CompressedWord> {
+    inner: &'a mut Coder<W>,
 }
 
-impl<W: CompressedWord, const PRECISION: usize> Debug for CoderGuard<'_, W, PRECISION>
+impl<W: CompressedWord> Debug for CoderGuard<'_, W>
 where
     W: Debug,
 {
@@ -1135,24 +1105,24 @@ where
     }
 }
 
-impl<'a, W: CompressedWord, const PRECISION: usize> CoderGuard<'a, W, PRECISION> {
-    fn new(coder: &'a mut Coder<W, PRECISION>) -> Self {
+impl<'a, W: CompressedWord> CoderGuard<'a, W> {
+    fn new(coder: &'a mut Coder<W>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
-        Coder::<W, PRECISION>::state_len(coder.state, |w| coder.buf.push(w));
+        Coder::<W>::state_len(coder.state, |w| coder.buf.push(w));
         Self { inner: coder }
     }
 }
 
-impl<'a, W: CompressedWord, const PRECISION: usize> Drop for CoderGuard<'a, W, PRECISION> {
+impl<'a, W: CompressedWord> Drop for CoderGuard<'a, W> {
     fn drop(&mut self) {
         // Revert what we did in `Self::new`.
-        Coder::<W, PRECISION>::state_len(self.inner.state, |_| {
+        Coder::<W>::state_len(self.inner.state, |_| {
             self.inner.buf.pop();
         });
     }
 }
 
-impl<'a, W: CompressedWord, const PRECISION: usize> Deref for CoderGuard<'a, W, PRECISION> {
+impl<'a, W: CompressedWord> Deref for CoderGuard<'a, W> {
     type Target = [W];
 
     fn deref(&self) -> &Self::Target {
@@ -1168,7 +1138,7 @@ struct CompressedIter<'a, W> {
 }
 
 impl<'a, W: CompressedWord> CompressedIter<'a, W> {
-    fn new<const PRECISION: usize>(coder: &'a Coder<W, PRECISION>) -> Self {
+    fn new(coder: &'a Coder<W>) -> Self {
         let (buf, head) = coder.as_compressed_raw();
 
         // This cannot overflow because `state_len` is at most 2 and even if `W` is `u8`
@@ -1176,7 +1146,7 @@ impl<'a, W: CompressedWord> CompressedIter<'a, W> {
         // are definitely 2 bytes worth of some other data floating around somewhere
         // (e.g., to hold the `buf` pointer itself as well as `head`, `index_front`, and
         // `index_back`).
-        let len = buf.len() + Coder::<W, PRECISION>::state_len(coder.state, |_| ());
+        let len = buf.len() + Coder::<W>::state_len(coder.state, |_| ());
 
         Self {
             buf,
@@ -1254,6 +1224,67 @@ impl<W: CompressedWord> DoubleEndedIterator for CompressedIter<'_, W> {
     }
 }
 
+/// TODO
+///
+/// We'll probably need a trait `SeekableDecoder` that works across entropy coding
+/// algorithms.
+pub struct SeekableDecoder<'data, W: CompressedWord> {
+    // Holds only the bulk of the compressed data, not the initial decoder state.
+    data: &'data [W],
+
+    // Points one behind the next compressed word that will be read.
+    // Thus, `pos == 0` means no more compressed words can be read.
+    pos: usize,
+    state: W::State,
+}
+
+impl<'data, W: CompressedWord> SeekableDecoder<'data, W> {
+    pub fn new(compressed: &'data [W]) -> Self {
+        let mut iter = compressed.iter().rev();
+        let (low, high, pos) = if let Some(&first) = iter.next() {
+            if let Some(&second) = iter.next() {
+                (second, first, compressed.len() - 2)
+            } else {
+                (first, W::zero(), 0)
+            }
+        } else {
+            (W::zero(), W::zero(), 0)
+        };
+
+        let state = W::compose_state(low, high);
+
+        Self {
+            data: &compressed[..pos],
+            pos,
+            state,
+        }
+    }
+
+    pub fn from_raw(bulk: &'data [W], state: W::State) -> Self {
+        Self {
+            data: bulk,
+            pos: bulk.len(),
+            state,
+        }
+    }
+
+    pub fn pos(&self) -> (usize, W::State) {
+        (self.pos, self.state)
+    }
+
+    pub fn seek(&mut self, pos: usize, state: W::State) {
+        assert!(pos <= self.data.len());
+        self.pos = pos;
+        self.state = state;
+    }
+}
+
+impl<'data, W: CompressedWord> From<&'data Coder<W>> for SeekableDecoder<'data, W> {
+    fn from(coder: &'data Coder<W>) -> Self {
+        SeekableDecoder::from_raw(&coder.buf, coder.state)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::distributions::{Categorical, DiscreteDistribution, LeakyQuantizer};
@@ -1265,29 +1296,29 @@ mod tests {
 
     #[test]
     fn compress_none() {
-        let coder1 = Coder::<u32, 32>::new();
+        let coder1 = DefaultCoder::new();
         assert!(coder1.is_empty());
         let compressed = coder1.into_compressed();
         assert!(compressed.is_empty());
 
-        let coder2 = Coder::<u32, 32>::with_compressed_data(compressed);
+        let coder2 = DefaultCoder::with_compressed_data(compressed);
         assert!(coder2.is_empty());
     }
 
     #[test]
     fn compress_one() {
-        let mut coder = Coder::<u32, 32>::new();
-        let quantizer = LeakyQuantizer::new(-127..=127);
+        let mut coder = DefaultCoder::new();
+        let quantizer = LeakyQuantizer::<_, _, _, 24>::new(-127..=127);
         let distribution = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
-        coder.push_symbol(2, &distribution).unwrap();
+        coder.encode_symbol(2, &distribution).unwrap();
 
         // Test if import/export of compressed data works.
         let compressed = coder.into_compressed();
         assert_eq!(compressed.len(), 1);
-        let mut coder = Coder::<_, 32>::with_compressed_data(compressed);
+        let mut coder = Coder::with_compressed_data(compressed);
 
-        assert_eq!(coder.pop_symbol(&distribution), 2);
+        assert_eq!(coder.decode_symbol(&distribution), 2);
 
         assert!(coder.is_empty());
     }
@@ -1322,10 +1353,10 @@ mod tests {
         compress_many::<u16, 8>();
     }
 
-    fn compress_many<W: CompressedWord, const PRECISION: usize>()
+    fn compress_many<W, const PRECISION: usize>()
     where
         u32: AsPrimitive<W>,
-        W: Into<f64> + AsPrimitive<usize>,
+        W: CompressedWord + Into<f64> + AsPrimitive<usize>,
         usize: AsPrimitive<W>,
         f64: AsPrimitive<W>,
         i32: AsPrimitive<W>,
@@ -1357,8 +1388,10 @@ mod tests {
             347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540, 39258, 27988, 54269,
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let categorical =
-            Categorical::from_floating_point_probabilities(&categorical_probabilities).unwrap();
+        let categorical = Categorical::<_, PRECISION>::from_floating_point_probabilities(
+            &categorical_probabilities,
+        )
+        .unwrap();
         let mut symbols_categorical = Vec::with_capacity(AMT);
         let max_probability = W::max_value() >> (W::bits() - PRECISION);
         for _ in 0..AMT {
@@ -1367,16 +1400,16 @@ mod tests {
             symbols_categorical.push(symbol);
         }
 
-        let mut coder = Coder::<_, PRECISION>::new();
+        let mut coder = Coder::new();
 
         coder
-            .push_iid_symbols(&symbols_categorical, &categorical)
+            .encode_iid_symbols_reverse(&symbols_categorical, &categorical)
             .unwrap();
         dbg!(coder.num_bits(), AMT as f64 * categorical.entropy::<f64>());
 
-        let quantizer = LeakyQuantizer::new(-127..=127);
+        let quantizer = LeakyQuantizer::<_, _, _, PRECISION>::new(-127..=127);
         coder
-            .push_symbols(symbols_gaussian.iter().zip(&means).zip(&stds).map(
+            .encode_symbols_reverse(symbols_gaussian.iter().zip(&means).zip(&stds).map(
                 |((&symbol, &mean), &std)| {
                     (symbol, quantizer.quantize(Normal::new(mean, std).unwrap()))
                 },
@@ -1386,18 +1419,19 @@ mod tests {
 
         // Test if import/export of compressed data works.
         let compressed = coder.into_compressed();
-        let mut coder = Coder::<_, PRECISION>::with_compressed_data(compressed);
+        let mut coder = Coder::with_compressed_data(compressed);
 
         let reconstructed_gaussian = coder
-            .pop_symbols(
+            .decode_symbols(
                 means
                     .iter()
                     .zip(&stds)
                     .map(|(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())),
             )
             .collect::<Vec<_>>();
-        let reconstructed_categorical =
-            coder.pop_iid_symbols(AMT, &categorical).collect::<Vec<_>>();
+        let reconstructed_categorical = coder
+            .decode_iid_symbols(AMT, &categorical)
+            .collect::<Vec<_>>();
 
         assert!(coder.is_empty());
 
