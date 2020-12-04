@@ -162,8 +162,6 @@ use num::{
 pub trait Code {
     type State: Clone;
     type CompressedWord: BitArray;
-
-    fn state(&self) -> &Self::State;
 }
 
 pub trait Encode: Code {
@@ -171,6 +169,28 @@ pub trait Encode: Code {
     where
         D: DiscreteDistribution<Symbol = S>,
         D::Probability: Into<Self::CompressedWord>;
+
+    /// Returns the current internal state of the encoder.
+    ///
+    /// This method is usually used together with [`set_encoder_state`](
+    /// #tymethod.set_encoder_state) or with with [`SeekEncode::seek`].
+    ///
+    /// If the type also implements [`Decode`], then this method and
+    /// [`Decode::decoder_state`] may or may not return the same state. For example, in
+    /// a [`stack::Coder`], both `encoder_state` and `decoder_state` return the same
+    /// state. By contrast, a in [`queue::Coder`], the methods `encoder_state` and
+    /// `decoder_state` return different states since encoding and decoding operate on
+    /// opposite ends of the queue.
+    fn encoder_state(&self) -> &Self::State;
+
+    /// Sets the internal state of the encoder without changing its position in the
+    /// compressed data.
+    ///
+    /// This is a low level primitive that is typically only useful if you then also
+    /// redirect the emitted compressed data to a new place. If the type operates on
+    /// in-memory compressed data then you will likely want to use [`SeekEncode::seek`]
+    /// instead of `set_encoder_state`.
+    fn set_encoder_state(&mut self, state: Self::State);
 
     fn encode_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
     where
@@ -215,14 +235,34 @@ pub trait Encode: Code {
     }
 }
 
-pub trait Decode {
-    type CompressedWord: BitArray;
-
+pub trait Decode: Code {
     fn decode_symbol<D>(&mut self, distribution: D) -> D::Symbol
     where
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>;
+
+    /// Returns the current internal state of the decoder.
+    ///
+    /// This method is usually used together with [`set_decoder_state`](
+    /// #tymethod.set_decoder_state) or with with [`SeekDecode::seek`].
+    ///
+    /// If the type also implements [`Encode`], then this method and
+    /// [`Encode::encoder_state`] may or may not return the same state. For example, in
+    /// a [`stack::Coder`], both `encoder_state` and `decoder_state` return the same
+    /// state. By contrast, a in [`queue::Coder`], the methods `encoder_state` and
+    /// `decoder_state` return different states since encoding and decoding operate on
+    /// opposite ends of the queue.
+    fn decoder_state(&self) -> &Self::State;
+
+    /// Sets the internal state of the decoder without changing the position in the
+    /// compressed data.
+    ///
+    /// This is a low level primitive that is typically only useful if you then also
+    /// adjust the underlying compressed data stream accordingly. If the type operates
+    /// on in-memory compressed data then you will likely want to use
+    /// [`SeekDecode::seek`] instead of `set_decoder_state`.
+    fn set_decoder_state(&mut self, state: Self::State);
 
     /// TODO: This would be much nicer to denote as
     /// `fn decode_symbols(...) -> impl Iterator`

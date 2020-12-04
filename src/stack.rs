@@ -487,7 +487,7 @@ where
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`num_bits`]: #method.num_bits
     pub fn num_words(&self) -> usize {
-        self.buf.len() + self.state.chunks_truncated().len() // TODO: this should fail
+        self.buf.len() + self.state.chunks_truncated::<CompressedWord>().len()
     }
 
     /// Returns the size of the current stack of compressed data in bits.
@@ -509,10 +509,6 @@ where
 {
     type State = State;
     type CompressedWord = CompressedWord;
-
-    fn state(&self) -> &Self::State {
-        &self.state
-    }
 }
 
 impl<CompressedWord, State> Encode for Coder<CompressedWord, State>
@@ -568,6 +564,14 @@ where
 
         Ok(())
     }
+
+    fn encoder_state(&self) -> &Self::State {
+        &self.state
+    }
+
+    fn set_encoder_state(&mut self, state: Self::State) {
+        self.state = state;
+    }
 }
 
 impl<CompressedWord, State> Decode for Coder<CompressedWord, State>
@@ -575,8 +579,6 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type CompressedWord = CompressedWord;
-
     /// Decodes a single symbol and pops it off the compressed data.
     ///
     /// This is a low level method. You usually probably want to call a batch method
@@ -611,6 +613,14 @@ where
         }
 
         symbol
+    }
+
+    fn decoder_state(&self) -> &Self::State {
+        &self.state
+    }
+
+    fn set_decoder_state(&mut self, state: Self::State) {
+        self.state = state;
     }
 }
 
