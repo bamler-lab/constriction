@@ -161,7 +161,7 @@ fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 #[text_signature = "(compressed)"]
 #[derive(Debug)]
 pub struct Coder {
-    inner: super::DefaultCoder,
+    inner: crate::stack::DefaultCoder,
 }
 
 #[pymethods]
@@ -170,9 +170,9 @@ impl Coder {
     #[new]
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = if let Some(compressed) = compressed {
-            super::Coder::with_compressed_data(compressed.to_vec()?)
+            crate::stack::Coder::with_compressed_data(compressed.to_vec()?)
         } else {
-            super::Coder::new()
+            crate::stack::Coder::new()
         };
 
         Ok(Self { inner })
@@ -428,8 +428,8 @@ impl Coder {
     }
 }
 
-impl From<super::CoderError> for PyErr {
-    fn from(err: super::CoderError) -> Self {
+impl From<crate::stack::CoderError> for PyErr {
+    fn from(err: crate::stack::CoderError) -> Self {
         match err {
             crate::CoderError::ImpossibleSymbol => pyo3::exceptions::PyKeyError::new_err(
                 "Tried to encode symbol that has zero probability under entropy model.",

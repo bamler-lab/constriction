@@ -90,7 +90,7 @@ impl<D: DiscreteDistribution> DiscreteDistribution for &D {
 /// # Example
 ///
 /// ```
-/// use ans::{distributions::LeakyQuantizer, Coder, Encode};
+/// use ans::{distributions::LeakyQuantizer, stack::Coder, Encode};
 ///
 /// // Get a quantizer that supports integer symbols from -5 to 20, inclusively.
 /// let quantizer = LeakyQuantizer::<_, _, _, 24>::new(-5..=20);
