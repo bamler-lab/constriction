@@ -150,7 +150,7 @@ pub mod pybindings;
 pub mod distributions;
 pub mod stack;
 
-use std::{borrow::Borrow, error::Error, fmt::Debug};
+use std::{borrow::Borrow, error::Error, fmt::Debug, marker::PhantomData};
 
 use distributions::DiscreteDistribution;
 use num::{
@@ -159,18 +159,23 @@ use num::{
     PrimInt, Unsigned,
 };
 
-pub trait Encode {
-    type Word: CompressedWord;
+pub trait Code {
+    type State: Clone;
+    type CompressedWord: BitArray;
 
-    fn encode_symbol<S, D: DiscreteDistribution<Word = Self::Word, Symbol = S>>(
-        &mut self,
-        symbol: impl Borrow<S>,
-        distribution: D,
-    ) -> Result<()>;
+    fn state(&self) -> &Self::State;
+}
+
+pub trait Encode: Code {
+    fn encode_symbol<S, D>(&mut self, symbol: impl Borrow<S>, distribution: D) -> Result<()>
+    where
+        D: DiscreteDistribution<Symbol = S>,
+        D::Probability: Into<Self::CompressedWord>;
 
     fn encode_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
     where
-        D: DiscreteDistribution<Word = Self::Word>,
+        D: DiscreteDistribution,
+        D::Probability: Into<Self::CompressedWord>,
         S: Borrow<D::Symbol>,
         I: IntoIterator<Item = (S, D)>,
     {
@@ -184,7 +189,8 @@ pub trait Encode {
     fn try_encode_symbols<E, D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
     where
         E: Error + 'static,
-        D: DiscreteDistribution<Word = Self::Word>,
+        D: DiscreteDistribution,
+        D::Probability: Into<Self::CompressedWord>,
         S: Borrow<D::Symbol>,
         I: IntoIterator<Item = std::result::Result<(S, D), E>>,
     {
@@ -199,7 +205,8 @@ pub trait Encode {
 
     fn encode_iid_symbols<D, S, I>(&mut self, symbols: I, distribution: &D) -> Result<()>
     where
-        D: DiscreteDistribution<Word = Self::Word>,
+        D: DiscreteDistribution,
+        D::Probability: Into<Self::CompressedWord>,
         I: IntoIterator<Item = S>,
         S: Borrow<D::Symbol>,
         I::IntoIter: DoubleEndedIterator,
@@ -209,11 +216,13 @@ pub trait Encode {
 }
 
 pub trait Decode {
-    type Word: CompressedWord;
+    type CompressedWord: BitArray;
 
     fn decode_symbol<D>(&mut self, distribution: D) -> D::Symbol
     where
-        D: DiscreteDistribution<Word = Self::Word>;
+        D: DiscreteDistribution,
+        D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>;
 
     /// TODO: This would be much nicer to denote as
     /// `fn decode_symbols(...) -> impl Iterator`
@@ -221,7 +230,9 @@ pub trait Decode {
     fn decode_symbols<'s, I>(&'s mut self, distributions: I) -> DecodeSymbols<'s, Self, I>
     where
         I: Iterator + 's,
-        I::Item: DiscreteDistribution<Word = Self::Word>,
+        I::Item: DiscreteDistribution,
+        <I::Item as DiscreteDistribution>::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<<I::Item as DiscreteDistribution>::Probability>,
     {
         DecodeSymbols {
             decoder: self,
@@ -235,7 +246,9 @@ pub trait Decode {
     ) -> TryDecodeSymbols<'s, Self, I>
     where
         E: Error + 'static,
-        D: DiscreteDistribution<Word = Self::Word>,
+        D: DiscreteDistribution,
+        D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>,
         I: Iterator<Item = std::result::Result<D, E>> + 's,
     {
         TryDecodeSymbols {
@@ -257,7 +270,8 @@ pub trait Decode {
         distribution: &'s D,
     ) -> DecodeIidSymbols<'s, Self, D>
     where
-        D: DiscreteDistribution<Word = Self::Word>,
+        D: DiscreteDistribution,
+        D::Probability: Into<Self::CompressedWord>,
     {
         DecodeIidSymbols {
             decoder: self,
@@ -267,7 +281,13 @@ pub trait Decode {
     }
 }
 
-pub trait Seek {}
+pub trait Pos {
+    fn pos(&self) -> usize;
+}
+
+pub trait Seek: Code {
+    fn seek(&mut self, pos: usize, state: &Self::State) -> Result<()>;
+}
 
 pub struct DecodeSymbols<'a, Decoder: ?Sized, I> {
     decoder: &'a mut Decoder,
@@ -276,7 +296,9 @@ pub struct DecodeSymbols<'a, Decoder: ?Sized, I> {
 
 impl<'a, Decoder: Decode, I: Iterator> Iterator for DecodeSymbols<'a, Decoder, I>
 where
-    I::Item: DiscreteDistribution<Word = Decoder::Word>,
+    I::Item: DiscreteDistribution,
+    <I::Item as DiscreteDistribution>::Probability: Into<Decoder::CompressedWord>,
+    Decoder::CompressedWord: AsPrimitive<<I::Item as DiscreteDistribution>::Probability>,
 {
     type Item = <I::Item as DiscreteDistribution>::Symbol;
 
@@ -293,7 +315,9 @@ where
 
 impl<'a, Decoder: Decode, I: Iterator> ExactSizeIterator for DecodeSymbols<'a, Decoder, I>
 where
-    I::Item: DiscreteDistribution<Word = Decoder::Word>,
+    I::Item: DiscreteDistribution,
+    <I::Item as DiscreteDistribution>::Probability: Into<Decoder::CompressedWord>,
+    Decoder::CompressedWord: AsPrimitive<<I::Item as DiscreteDistribution>::Probability>,
     I: ExactSizeIterator,
 {
 }
@@ -306,7 +330,9 @@ pub struct TryDecodeSymbols<'a, Decoder: ?Sized, I> {
 impl<'a, Decoder: Decode, I, E, D> Iterator for TryDecodeSymbols<'a, Decoder, I>
 where
     I: Iterator<Item = std::result::Result<D, E>>,
-    D: DiscreteDistribution<Word = Decoder::Word>,
+    D: DiscreteDistribution,
+    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::CompressedWord: AsPrimitive<D::Probability>,
     E: std::error::Error + 'static,
 {
     type Item = Result<D::Symbol>;
@@ -329,7 +355,9 @@ where
 impl<'a, Decoder: Decode, I, E, D> ExactSizeIterator for TryDecodeSymbols<'a, Decoder, I>
 where
     I: Iterator<Item = std::result::Result<D, E>> + ExactSizeIterator,
-    D: DiscreteDistribution<Word = Decoder::Word>,
+    D: DiscreteDistribution,
+    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::CompressedWord: AsPrimitive<D::Probability>,
     E: std::error::Error + 'static,
 {
 }
@@ -343,7 +371,9 @@ pub struct DecodeIidSymbols<'a, Decoder: ?Sized, D> {
 impl<'a, Decoder, D> Iterator for DecodeIidSymbols<'a, Decoder, D>
 where
     Decoder: Decode,
-    D: DiscreteDistribution<Word = Decoder::Word>,
+    D: DiscreteDistribution,
+    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::CompressedWord: AsPrimitive<D::Probability>,
 {
     type Item = D::Symbol;
 
@@ -364,92 +394,131 @@ where
 impl<'a, Decoder, D> ExactSizeIterator for DecodeIidSymbols<'a, Decoder, D>
 where
     Decoder: Decode,
-    D: DiscreteDistribution<Word = Decoder::Word>,
+    D: DiscreteDistribution,
+    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::CompressedWord: AsPrimitive<D::Probability>,
 {
 }
 
-/// A trait for the smallest unit of compressed data in a [`Coder`].
+/// A trait for bit strings of fixed (and usually small) length.
 ///
-/// This is the trait for the compressed data type `W` in a [`Coder`], and it is
-/// also used to represent probabilities in fixed point arithmetic in a
-/// [`DiscreteDistribution`].
+/// Short fixed-length bit strings are fundamental building blocks of efficient
+/// entropy coding algorithms. They are currently used for the following purposes:
+/// - to represent the smallest unit of compressed data (see
+///   [`Code::CompressedWord`]);
+/// - to represent probabilities in fixed point arithmetic (see
+///   [`DiscreteDistribution::Probability`]); and
+/// - the internal state of entropy coders (see [`Code::State`]) is typically
+///   comprised of one or more `BitArray`s, although this is not a requirement.
 ///
-/// The documentation of `Coder` has a [section that describes the meaning of the
-/// compressed word type `W`](
-/// struct.Coder.html#generic-parameters-compressed-word-type-w-and-precision).
-pub unsafe trait CompressedWord:
-    PrimInt + Unsigned + WrappingSub + WrappingAdd + 'static
+/// This trait is implemented on all primitive unsigned integer types. There is
+/// usually no reason to implement it on custom types since coders will assume, for
+/// performance considerations, that `BitArray`s can be represented and manipulated
+/// efficiently in hardware.
+///
+/// # Safety
+///
+/// This trait is marked `unsafe` so that entropy coders may rely on the assumption
+/// that all `BitArray`s have precisely the same behavior as builtin unsigned
+/// integer types, and that [`BitArray::BITS has the correct value.
+pub unsafe trait BitArray:
+    PrimInt + Unsigned + WrappingAdd + WrappingSub + Debug + 'static
 {
-    /// The type that holds the current head of the [`Coder`].
-    ///
-    /// Must be twice as large as `Self`, so that [`split_state`] can split it into two
-    /// words.
-    ///
-    /// [`Coder`]: struct.Coder.html
-    /// [`split_state`]: #method.split_state
-    type State: PrimInt + From<Self> + AsPrimitive<Self>;
-
-    /// Returns the number of compressed bits in a `CompressedWord`.
+    /// The (fixed) length of the `BitArray` in bits.
     ///
     /// Defaults to `8 * std::mem::size_of::<Self>()`, which is suitable for all
     /// primitive unsigned integers.
     ///
-    /// This should really be a `const fn`, except that these aren't allowed on trait
-    /// methods yet.
-    fn bits() -> usize {
-        8 * std::mem::size_of::<Self>()
+    /// This could arguably be called `LEN` instead, but that may be confusing since
+    /// "lengths" are typically not measured in bits in the Rust ecosystem.
+    const BITS: usize = 8 * std::mem::size_of::<Self>();
+
+    /// Iterates from least significant to most significant bits in chunks and
+    /// terminates early as soon as all following chunks would be zero.
+    ///
+    /// This method is the inverse of [`from_chunks`](#method.from_chunks) except
+    /// that the two iterate in reverse direction with respect to each other.
+    fn chunks_truncated<Chunk>(&self) -> BitArrayChunks<Self, Chunk>
+    where
+        Chunk: BitArray + Into<Self>,
+        Self: AsPrimitive<Chunk>,
+    {
+        BitArrayChunks {
+            data: *self,
+            phantom: PhantomData,
+        }
     }
 
-    /// Splits `state` into two `CompressedWord`s and returns `(low, high)`.
+    /// Constructs a `BitArray` from an iterator over chunks of bits that starts at
+    /// the most significant chunk.
     ///
-    /// Here, `low` holds the least significant bits and `high` the most significant
-    /// bits of `state`. Inverse of [`compose_state`](#method.compose_state).
+    /// Terminates iteration as soon as either the provided iterator terminates or
+    /// enough chunks have been read to specify all bits.
     ///
-    /// # Example
+    /// This method is the inverse of [`chunks_truncated`](#method.chunks_truncated)
+    /// except that the two iterate in reverse direction with respect to each other.
     ///
-    /// ```
-    /// use ans::CompressedWord;
+    /// # Panics
     ///
-    /// let state: u64 = 0x0123_4567_89ab_cdef;
-    /// let (low, high) = u32::split_state(state);
-    /// assert_eq!(low, 0x89ab_cdef);
-    /// assert_eq!(high, 0x0123_4567);
+    /// Panics if `Self::BITS` is not an integer multiple of `Chunks::BITS`.
     ///
-    /// let reconstructed = u32::compose_state(low, high);
-    /// assert_eq!(reconstructed, state);
-    /// ```
-    fn split_state(state: Self::State) -> (Self, Self) {
-        let high = (state >> Self::bits()).as_();
-        let low = state.as_();
-        (low, high)
-    }
+    /// TODO: this will be turned into a compile time bound as soon as that's possible.
+    fn from_chunks<Chunk>(chunks: impl IntoIterator<Item = Chunk>) -> Self
+    where
+        Chunk: BitArray + Into<Self>,
+    {
+        assert_eq!(Self::BITS % Chunk::BITS, 0);
 
-    /// Composes a `State` from two compressed words.
-    ///
-    /// Here, `low` holds the least significant bits and `high` the most significant
-    /// bits of the returned `State`. See [`split_state`] for an example.
-    ///
-    /// [`split_state`]: #method.split_state
-    fn compose_state(low: Self, high: Self) -> Self::State {
-        (Self::State::from(high) << Self::bits()) | Self::State::from(low)
+        let mut result = Self::zero();
+        for chunk in chunks.into_iter().take(Self::BITS / Chunk::BITS) {
+            result = (result << Chunk::BITS) | chunk.into();
+        }
+        result
     }
 }
 
-unsafe impl CompressedWord for u8 {
-    type State = u16;
+/// Iterator returned by [`BitArray::chunks_truncated`].
+pub struct BitArrayChunks<Data, Chunk> {
+    data: Data,
+    phantom: PhantomData<Chunk>,
 }
 
-unsafe impl CompressedWord for u16 {
-    type State = u32;
+impl<Data, Chunk> Iterator for BitArrayChunks<Data, Chunk>
+where
+    Data: BitArray + AsPrimitive<Chunk>,
+    Chunk: BitArray,
+{
+    type Item = Chunk;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.data != Data::zero() {
+            let item = self.data.as_();
+            self.data = self.data >> Chunk::BITS;
+            Some(item)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = (Data::BITS - self.data.leading_zeros() as usize + Chunk::BITS - 1) / Chunk::BITS;
+        (len, Some(len))
+    }
 }
 
-unsafe impl CompressedWord for u32 {
-    type State = u64;
+impl<Data, Chunk> ExactSizeIterator for BitArrayChunks<Data, Chunk>
+where
+    Data: BitArray + AsPrimitive<Chunk>,
+    Chunk: BitArray,
+{
 }
 
-unsafe impl CompressedWord for u64 {
-    type State = u128;
-}
+unsafe impl BitArray for u8 {}
+unsafe impl BitArray for u16 {}
+unsafe impl BitArray for u32 {}
+unsafe impl BitArray for u64 {}
+unsafe impl BitArray for u128 {}
+unsafe impl BitArray for usize {}
 
 /// Error type for [`ans::Coder`]
 ///

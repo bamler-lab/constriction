@@ -271,7 +271,7 @@ impl Coder {
         }
 
         let quantizer =
-            LeakyQuantizer::<_, _, _, 24>::new(min_supported_symbol..=max_supported_symbol);
+            LeakyQuantizer::<_, _, u32, 24>::new(min_supported_symbol..=max_supported_symbol);
         self.inner.try_encode_symbols_reverse(
             symbols
                 .iter()
@@ -342,7 +342,7 @@ impl Coder {
         }
 
         let quantizer =
-            LeakyQuantizer::<_, _, _, 24>::new(min_supported_symbol..=max_supported_symbol);
+            LeakyQuantizer::<_, _, u32, 24>::new(min_supported_symbol..=max_supported_symbol);
         let symbols = self
             .inner
             .try_decode_symbols(means.iter()?.zip(stds.iter()?).map(|(&mean, &std)| {
@@ -376,7 +376,7 @@ impl Coder {
         probabilities: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
         let distribution =
-            Categorical::<_, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
+            Categorical::<u32, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
                 .map_err(|()| {
                     pyo3::exceptions::PyValueError::new_err(
                         "Probability distribution is either degenerate or not normalizable.",
@@ -412,7 +412,7 @@ impl Coder {
         py: Python<'p>,
     ) -> PyResult<&'p PyArray1<i32>> {
         let distribution =
-            Categorical::<_, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
+            Categorical::<u32, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
                 .map_err(|()| {
                     pyo3::exceptions::PyValueError::new_err(
                         "Probability distribution is either degenerate or not normalizable.",
@@ -428,8 +428,8 @@ impl Coder {
     }
 }
 
-impl From<crate::stack::CoderError> for PyErr {
-    fn from(err: crate::stack::CoderError) -> Self {
+impl From<crate::CoderError> for PyErr {
+    fn from(err: crate::CoderError) -> Self {
         match err {
             crate::CoderError::ImpossibleSymbol => pyo3::exceptions::PyKeyError::new_err(
                 "Tried to encode symbol that has zero probability under entropy model.",
