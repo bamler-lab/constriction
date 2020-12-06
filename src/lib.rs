@@ -151,7 +151,7 @@ pub mod distributions;
 pub mod queue;
 pub mod stack;
 
-use std::{borrow::Borrow, error::Error, fmt::Debug, marker::PhantomData};
+use std::{borrow::Borrow, error::Error, fmt::Debug};
 
 use distributions::DiscreteDistribution;
 use num::{
@@ -161,8 +161,8 @@ use num::{
 };
 
 pub trait Code {
-    type State: Clone;
     type CompressedWord: BitArray;
+    type State: Clone;
 
     /// Returns the current internal state of the coder.
     ///
@@ -337,6 +337,16 @@ pub trait Decode: Code {
     }
 }
 
+pub trait IntoDecoder: Encode + Sized {
+    type IntoDecoder: From<Self>
+        + Code<CompressedWord = Self::CompressedWord, State = Self::State>
+        + Decode;
+
+    fn into_decoder(self) -> Self::IntoDecoder {
+        self.into()
+    }
+}
+
 pub trait Pos {
     fn pos(&self) -> usize;
 }
@@ -345,6 +355,7 @@ pub trait Seek: Code {
     fn seek(&mut self, pos: usize, state: &Self::State) -> Result<(), ()>;
 }
 
+#[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.
 pub struct DecodeSymbols<'a, Decoder: ?Sized, I> {
     decoder: &'a mut Decoder,
     distributions: I,
@@ -378,6 +389,7 @@ where
 {
 }
 
+#[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.
 pub struct TryDecodeSymbols<'a, Decoder: ?Sized, I> {
     decoder: &'a mut Decoder,
     distributions: I,
@@ -417,6 +429,7 @@ where
 {
 }
 
+#[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.
 pub struct DecodeIidSymbols<'a, Decoder: ?Sized, D> {
     decoder: &'a mut Decoder,
     distribution: &'a D,

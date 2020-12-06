@@ -1,10 +1,14 @@
+//! Encoding and infallible decoding on a stack ("last in first out")
+//!
+//!
+
 use std::{borrow::Borrow, error::Error, fmt::Debug, ops::Deref};
 
-use num::{cast::AsPrimitive, CheckedDiv, Zero};
+use num::cast::AsPrimitive;
 
 use super::{
     bit_array_from_chunks, bit_array_to_chunks_truncated, distributions::DiscreteDistribution,
-    BitArray, Code, Decode, Encode, EncodingError, TryCodingError,
+    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder, TryCodingError,
 };
 
 /// Entropy coder for both encoding and decoding on a stack
@@ -40,12 +44,15 @@ use super::{
 /// let entropy_model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
 ///
 /// let symbols = vec![-10, 4, 0, 3];
-/// coder.encode_iid_symbols_reverse(&symbols, &entropy_model);
+/// coder.encode_iid_symbols_reverse(&symbols, &entropy_model).unwrap();
 /// println!("Encoded into {} bits: {:?}", coder.num_bits(), &*coder.get_compressed());
 ///
 /// // The call to `encode_iid_symbols` above encoded the symbols in reverse order (see
 /// // documentation). So popping them off now will yield the same symbols in original order.
-/// let reconstructed = coder.decode_iid_symbols(4, &entropy_model).collect::<Vec<_>>();
+/// let reconstructed = coder
+///     .decode_iid_symbols(4, &entropy_model)
+///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
+///     .unwrap();
 /// assert_eq!(reconstructed, symbols);
 /// ```
 ///
@@ -197,6 +204,24 @@ where
     }
 }
 
+impl<CompressedWord, State> IntoDecoder for Coder<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    type IntoDecoder = Self;
+}
+
+impl<CompressedWord, State> Default for Coder<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<CompressedWord, State> Coder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
@@ -340,7 +365,10 @@ where
     ///
     /// // Create a new coder with the same state and use it for decompression:
     /// let mut coder = DefaultCoder::with_compressed_data(compressed);
-    /// let reconstructed = coder.decode_iid_symbols(4, &distribution).collect::<Vec<_>>();
+    /// let reconstructed = coder
+    ///     .decode_iid_symbols(4, &distribution)
+    ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
+    ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// assert!(coder.is_empty())
     /// ```
@@ -412,7 +440,10 @@ where
     /// dbg!(coder.get_compressed());
     ///
     /// // We can still use the coder afterwards.
-    /// let reconstructed = coder.decode_iid_symbols(4, &distribution).collect::<Vec<_>>();
+    /// let reconstructed = coder
+    ///     .decode_iid_symbols(4, &distribution)
+    ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
+    ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// ```
     ///
@@ -440,7 +471,7 @@ where
     /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
     /// let distribution =
     ///     quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
-    /// coder.encode_iid_symbols(&symbols, &distribution);
+    /// coder.encode_iid_symbols(&symbols, &distribution).unwrap();
     ///
     /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
     /// let compressed_iter = coder.iter_compressed();
@@ -464,11 +495,6 @@ where
         &self,
     ) -> impl Iterator<Item = CompressedWord> + ExactSizeIterator + DoubleEndedIterator + '_ {
         IterCompressed::new(self)
-    }
-
-    /// TODO
-    pub fn seekable_decoder(&self) -> SeekableDecoder<'_, CompressedWord, State> {
-        SeekableDecoder::from(self)
     }
 
     /// Returns the number of compressed words on the stack.
@@ -786,80 +812,15 @@ where
     }
 }
 
-/// TODO
-///
-/// We'll probably need a trait `SeekableDecoder` that works across entropy coding
-/// algorithms.
-pub struct SeekableDecoder<'data, CompressedWord: BitArray, State: BitArray> {
-    // Holds only the bulk of the compressed data, not the initial decoder state.
-    data: &'data [CompressedWord],
-
-    // Points one behind the next compressed word that will be read.
-    // Thus, `pos == 0` means no more compressed words can be read.
-    pos: usize,
-    state: State,
-}
-
-impl<'data, CompressedWord, State> SeekableDecoder<'data, CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    pub fn new(compressed: &'data [CompressedWord]) -> Self {
-        assert!(State::BITS >= 2 * CompressedWord::BITS);
-
-        let mut pos = compressed.len();
-        let state = bit_array_from_chunks(compressed.iter().rev().map(|word| {
-            pos -= 1;
-            *word
-        }));
-
-        Self {
-            data: &compressed[..pos],
-            pos,
-            state,
-        }
-    }
-
-    pub fn from_raw(bulk: &'data [CompressedWord], state: State) -> Self {
-        assert!(State::BITS >= 2 * CompressedWord::BITS);
-
-        Self {
-            data: bulk,
-            pos: bulk.len(),
-            state,
-        }
-    }
-
-    pub fn pos(&self) -> (usize, State) {
-        (self.pos, self.state)
-    }
-
-    pub fn seek(&mut self, pos: usize, state: State) {
-        assert!(pos <= self.data.len());
-        self.pos = pos;
-        self.state = state;
-    }
-}
-
-impl<'data, CompressedWord, State> From<&'data Coder<CompressedWord, State>>
-    for SeekableDecoder<'data, CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    fn from(coder: &'data Coder<CompressedWord, State>) -> Self {
-        SeekableDecoder::from_raw(&coder.buf, coder.state)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::distributions::{Categorical, DiscreteDistribution, LeakyQuantizer};
 
-    use rand_xoshiro::rand_core::{RngCore, SeedableRng};
-    use rand_xoshiro::Xoshiro256StarStar;
+    use rand_xoshiro::{
+        rand_core::{RngCore, SeedableRng},
+        Xoshiro256StarStar,
+    };
     use statrs::distribution::{InverseCDF, Normal};
 
     #[test]
@@ -992,7 +953,7 @@ mod tests {
             let dist = Normal::new(mean, std_dev).unwrap();
             let symbol = std::cmp::max(
                 -127,
-                std::cmp::min(127, (dist.inverse_cdf(quantile) + 0.5) as i32),
+                std::cmp::min(127, dist.inverse_cdf(quantile).round() as i32),
             );
 
             symbols_gaussian.push(symbol);
@@ -1046,11 +1007,11 @@ mod tests {
                     .zip(&stds)
                     .map(|(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())),
             )
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>, std::convert::Infallible>>()
             .unwrap();
         let reconstructed_categorical = coder
             .decode_iid_symbols(AMT, &categorical)
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>, std::convert::Infallible>>()
             .unwrap();
 
         assert!(coder.is_empty());

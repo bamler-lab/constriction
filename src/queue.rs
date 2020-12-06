@@ -1,12 +1,10 @@
 use std::{borrow::Borrow, error::Error, fmt::Debug, marker::PhantomData, ops::Deref};
 
-use num::{cast::AsPrimitive, CheckedDiv, Zero};
-
-use crate::{bit_array_from_chunks, bit_array_to_chunks_exact};
+use num::cast::AsPrimitive;
 
 use super::{
-    distributions::DiscreteDistribution, BitArray, Code, Decode, Encode, EncodingError,
-    TryCodingError,
+    bit_array_from_chunks, bit_array_to_chunks_exact, distributions::DiscreteDistribution,
+    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder,
 };
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
@@ -63,6 +61,16 @@ where
 
     fn state(&self) -> &Self::State {
         &self.state
+    }
+}
+
+impl<CompressedWord, State> Default for Encoder<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -211,12 +219,10 @@ where
         CoderGuard::new(self)
     }
 
-    fn decoder(&mut self) -> Decoder<CompressedWord, State, CoderGuard<'_, CompressedWord, State>> {
+    pub fn decoder(
+        &mut self, // TODO: document why we need mutable access (because encoder has to temporary flush its state)
+    ) -> Decoder<CompressedWord, State, CoderGuard<'_, CompressedWord, State>> {
         Decoder::new(self.get_compressed())
-    }
-
-    fn into_decoder(mut self) -> Decoder<CompressedWord, State, Vec<CompressedWord>> {
-        Decoder::new(self.into_compressed())
     }
 
     /// Iterates over the compressed data currently on the stack.
@@ -294,6 +300,14 @@ where
     pub fn num_bits(&self) -> usize {
         CompressedWord::BITS * self.num_words()
     }
+}
+
+impl<CompressedWord, State> IntoDecoder for Encoder<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    type IntoDecoder = Decoder<CompressedWord, State, Vec<CompressedWord>>;
 }
 
 impl<CompressedWord, State> Encode for Encoder<CompressedWord, State>
@@ -401,18 +415,65 @@ where
     }
 }
 
-#[derive(Debug)]
-pub enum DecodingError {
-    InvalidCompressedData,
-}
+impl<CompressedWord, State, Buf> Decoder<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]>,
+{
+    /// Creates an empty encoder for range coding.
+    pub fn new(compressed: Buf) -> Self {
+        assert!(State::BITS >= 2 * CompressedWord::BITS);
+        assert_eq!(State::BITS % CompressedWord::BITS, 0);
 
-impl std::fmt::Display for DecodingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Tried to decode invalid compressed data.")
+        let mut point = bit_array_from_chunks(compressed.as_ref().iter().cloned());
+
+        let pos = if compressed.as_ref().len() < State::BITS / CompressedWord::BITS {
+            // A very short compressed buffer was provided, and therefore `point` is still
+            // right-aligned. Shift it over so it's left-aligned and fill it up with ones
+            if compressed.as_ref().len() == 0 {
+                // Special case: an empty compressed stream is treated like one with a single
+                // `CompressedWord` of value zero.
+                point = State::max_value() >> CompressedWord::BITS
+            } else {
+                point = point << (State::BITS - compressed.as_ref().len() * CompressedWord::BITS)
+                    | State::max_value() >> compressed.as_ref().len() * CompressedWord::BITS;
+            }
+            compressed.as_ref().len()
+        } else {
+            State::BITS / CompressedWord::BITS
+        };
+
+        Self {
+            buf: compressed,
+            state: CoderState::default(),
+            pos,
+            point,
+        }
     }
 }
 
-impl Error for DecodingError {}
+impl<CompressedWord, State> From<Encoder<CompressedWord, State>>
+    for Decoder<CompressedWord, State, Vec<CompressedWord>>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn from(encoder: Encoder<CompressedWord, State>) -> Self {
+        Self::new(encoder.into_compressed())
+    }
+}
+
+impl<'encoder, CompressedWord, State> From<&'encoder mut Encoder<CompressedWord, State>>
+    for Decoder<CompressedWord, State, CoderGuard<'encoder, CompressedWord, State>>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn from(encoder: &'encoder mut Encoder<CompressedWord, State>) -> Self {
+        encoder.decoder()
+    }
+}
 
 impl<CompressedWord, State, Buf> Decode for Decoder<CompressedWord, State, Buf>
 where
@@ -499,43 +560,18 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Decoder<CompressedWord, State, Buf>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: AsRef<[CompressedWord]>,
-{
-    /// Creates an empty encoder for range coding.
-    pub fn new(compressed: Buf) -> Self {
-        assert!(State::BITS >= 2 * CompressedWord::BITS);
-        assert_eq!(State::BITS % CompressedWord::BITS, 0);
+#[derive(Debug)]
+pub enum DecodingError {
+    InvalidCompressedData,
+}
 
-        let mut point = bit_array_from_chunks(compressed.as_ref().iter().cloned());
-
-        let pos = if compressed.as_ref().len() < State::BITS / CompressedWord::BITS {
-            // A very short compressed buffer was provided, and therefore `point` is still
-            // right-aligned. Shift it over so it's left-aligned and fill it up with ones
-            if compressed.as_ref().len() == 0 {
-                // Special case: an empty compressed stream is treated like one with a single
-                // `CompressedWord` of value zero.
-                point = State::max_value() >> CompressedWord::BITS
-            } else {
-                point = point << (State::BITS - compressed.as_ref().len() * CompressedWord::BITS)
-                    | State::max_value() >> compressed.as_ref().len() * CompressedWord::BITS;
-            }
-            compressed.as_ref().len()
-        } else {
-            State::BITS / CompressedWord::BITS
-        };
-
-        Self {
-            buf: compressed,
-            state: CoderState::default(),
-            pos,
-            point,
-        }
+impl std::fmt::Display for DecodingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Tried to decode invalid compressed data.")
     }
 }
+
+impl Error for DecodingError {}
 
 /// Provides temporary read-only access to the compressed data wrapped in an
 /// [`Encoder`].
@@ -694,8 +730,10 @@ mod tests {
     use super::*;
     use crate::distributions::{Categorical, DiscreteDistribution, LeakyQuantizer};
 
-    use rand_xoshiro::rand_core::{RngCore, SeedableRng};
-    use rand_xoshiro::Xoshiro256StarStar;
+    use rand_xoshiro::{
+        rand_core::{RngCore, SeedableRng},
+        Xoshiro256StarStar,
+    };
     use statrs::distribution::{InverseCDF, Normal};
 
     #[test]
@@ -826,7 +864,7 @@ mod tests {
             let dist = Normal::new(mean, std_dev).unwrap();
             let symbol = std::cmp::max(
                 -127,
-                std::cmp::min(127, (dist.inverse_cdf(quantile) + 0.5) as i32),
+                std::cmp::min(127, dist.inverse_cdf(quantile).round() as i32),
             );
 
             symbols_gaussian.push(symbol);
