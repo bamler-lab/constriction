@@ -63,10 +63,12 @@
 //! In [8]: assert coder.is_empty()
 //! ```
 
+use std::error::Error;
+
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
-use crate::Decode;
+use crate::{Decode, EncodingError, TryCodingError};
 
 use super::distributions::{Categorical, LeakyQuantizer};
 use statrs::distribution::Normal;
@@ -423,22 +425,37 @@ impl Coder {
             py,
             self.inner
                 .decode_iid_symbols(amt, &distribution)
-                .map(|s| (s as i32).wrapping_add(min_supported_symbol)),
+                .map(|symbol| {
+                    let symbol = match symbol {
+                        Ok(symbol) => symbol,
+                        Err(never) => match never {},
+                    };
+                    (symbol as i32).wrapping_add(min_supported_symbol)
+                }),
         ))
     }
 }
 
-impl From<crate::CoderError> for PyErr {
-    fn from(err: crate::CoderError) -> Self {
+impl<CodingError: Error + Into<PyErr>, ModelError: Error>
+    From<TryCodingError<CodingError, ModelError>> for PyErr
+{
+    fn from(err: TryCodingError<CodingError, ModelError>) -> Self {
         match err {
-            crate::CoderError::ImpossibleSymbol => pyo3::exceptions::PyKeyError::new_err(
-                "Tried to encode symbol that has zero probability under entropy model.",
-            ),
-            crate::CoderError::IterationError(_) => pyo3::exceptions::PyValueError::new_err(
-                "Invalid parameters for probability distribution.",
-            ),
-            crate::CoderError::SeekError => {
-                todo!() // We don't call anything yet that can return a `SeekError`.
+            crate::TryCodingError::CodingError(err) => err.into(),
+            crate::TryCodingError::InvalidEntropyModel(err) => {
+                pyo3::exceptions::PyValueError::new_err(
+                    format!("Invalid parameters for entropy model: {}", err),
+                )
+            }
+        }
+    }
+}
+
+impl From<EncodingError> for PyErr {
+    fn from(err: EncodingError) -> Self {
+        match err {
+            EncodingError::ImpossibleSymbol => {
+                pyo3::exceptions::PyKeyError::new_err(err.to_string())
             }
         }
     }

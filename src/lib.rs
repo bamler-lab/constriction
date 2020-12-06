@@ -144,8 +144,8 @@
 #![feature(min_const_generics)]
 #![warn(missing_docs, rust_2018_idioms, missing_debug_implementations)]
 
-// #[cfg(feature = "pybindings")]
-// pub mod pybindings;
+#[cfg(feature = "pybindings")]
+pub mod pybindings;
 
 pub mod distributions;
 pub mod queue;
@@ -598,7 +598,7 @@ impl std::fmt::Display for EncodingError {
         match self {
             Self::ImpossibleSymbol => write!(
                 f,
-                "Tried to encode symbol with zero probability under entropy model."
+                "Tried to encode symbol that has zero probability under the used entropy model."
             ),
         }
     }
@@ -610,11 +610,14 @@ impl<CodingError: Error + 'static, ModelError: Error + 'static> std::fmt::Displa
     for TryCodingError<CodingError, ModelError>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Error while entropy coding multiple symbols: {}",
-            self.source().unwrap()
-        )
+        match self {
+            Self::InvalidEntropyModel(err) => {
+                write!(f, "Error while constructing entropy model or data: {}", err)
+            }
+            Self::CodingError(err) => {
+                write!(f, "Error while entropy coding: {}", err)
+            }
+        }
     }
 }
 
