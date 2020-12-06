@@ -509,6 +509,10 @@ where
 {
     type State = State;
     type CompressedWord = CompressedWord;
+
+    fn state(&self) -> &Self::State {
+        &self.state
+    }
 }
 
 impl<CompressedWord, State> Encode for Coder<CompressedWord, State>
@@ -568,10 +572,6 @@ where
 
         Ok(())
     }
-
-    fn encoder_state(&self) -> &Self::State {
-        &self.state
-    }
 }
 
 impl<CompressedWord, State> Decode for Coder<CompressedWord, State>
@@ -615,10 +615,6 @@ where
         }
 
         Ok(symbol)
-    }
-
-    fn decoder_state(&self) -> &Self::State {
-        &self.state
     }
 
     fn maybe_finished(&self) -> bool {

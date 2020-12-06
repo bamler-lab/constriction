@@ -60,6 +60,10 @@ where
 {
     type State = CoderState<CompressedWord, State>;
     type CompressedWord = CompressedWord;
+
+    fn state(&self) -> &Self::State {
+        &self.state
+    }
 }
 
 impl<CompressedWord, State> Encoder<CompressedWord, State>
@@ -343,10 +347,6 @@ where
 
         Ok(())
     }
-
-    fn encoder_state(&self) -> &Self::State {
-        &self.state
-    }
 }
 
 pub struct Decoder<'compressed, CompressedWord: BitArray, State: BitArray> {
@@ -382,6 +382,10 @@ where
 {
     type State = CoderState<CompressedWord, State>;
     type CompressedWord = CompressedWord;
+
+    fn state(&self) -> &Self::State {
+        &self.state
+    }
 }
 
 #[derive(Debug)]
@@ -472,10 +476,6 @@ where
         }
 
         Ok(symbol)
-    }
-
-    fn decoder_state(&self) -> &Self::State {
-        &self.state
     }
 
     fn maybe_finished(&self) -> bool {

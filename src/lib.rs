@@ -163,6 +163,11 @@ use num::{
 pub trait Code {
     type State: Clone;
     type CompressedWord: BitArray;
+
+    /// Returns the current internal state of the coder.
+    ///
+    /// This method is usually used together with [`Seek::seek`].
+    fn state(&self) -> &Self::State;
 }
 
 pub trait Encode: Code {
@@ -174,18 +179,6 @@ pub trait Encode: Code {
     where
         D: DiscreteDistribution<Symbol = S>,
         D::Probability: Into<Self::CompressedWord>;
-
-    /// Returns the current internal state of the encoder.
-    ///
-    /// This method is usually used together with [`SeekEncode::seek`].
-    ///
-    /// If the type also implements [`Decode`], then this method and
-    /// [`Decode::decoder_state`] may or may not return the same state. For example, in
-    /// a [`stack::Coder`], both `encoder_state` and `decoder_state` return the same
-    /// state. By contrast, a in [`queue::Coder`], the methods `encoder_state` and
-    /// `decoder_state` return different states since encoding and decoding operate on
-    /// opposite ends of the queue.
-    fn encoder_state(&self) -> &Self::State;
 
     fn encode_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<(), EncodingError>
     where
@@ -250,18 +243,6 @@ pub trait Decode: Code {
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>;
-
-    /// Returns the current internal state of the decoder.
-    ///
-    /// This method is usually used together with [`SeekDecode::seek`].
-    ///
-    /// If the type also implements [`Encode`], then this method and
-    /// [`Encode::encoder_state`] may or may not return the same state. For example, in
-    /// a [`stack::Coder`], both `encoder_state` and `decoder_state` return the same
-    /// state. By contrast, a in [`queue::Coder`], the methods `encoder_state` and
-    /// `decoder_state` return different states since encoding and decoding operate on
-    /// opposite ends of the queue.
-    fn decoder_state(&self) -> &Self::State;
 
     /// Check if all available data might have been decoded.
     ///
