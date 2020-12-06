@@ -126,7 +126,8 @@ impl<D: DiscreteDistribution> DiscreteDistribution for &D {
 /// [`new`]: #method.new
 #[derive(Debug)]
 pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
-    domain: RangeInclusive<Symbol>,
+    min_symbol_inclusive: Symbol,
+    max_symbol_inclusive: Symbol,
     free_weight: F,
     phantom: PhantomData<Probability>,
 }
@@ -146,6 +147,10 @@ where
     /// symbols within the `domain`. This is often a useful property for entropy coding
     /// because it ensures that all symbols within the `domain` can indeed be encoded.
     ///
+    /// This method takes a `RangeInclusive` because we want to be able to support,
+    /// e.g., probability distributions over the `Symbol` type `u8` with full
+    /// `domain = 0..=255`.
+    ///
     /// [`quantize`]: #method.quantize
     pub fn new(domain: RangeInclusive<Symbol>) -> Self {
         assert!(PRECISION > 0 && PRECISION <= Probability::BITS);
@@ -162,7 +167,8 @@ where
             .into();
 
         LeakyQuantizer {
-            domain,
+            min_symbol_inclusive: *domain.start(),
+            max_symbol_inclusive: *domain.end(),
             free_weight,
             phantom: PhantomData,
         }
@@ -224,17 +230,17 @@ where
     ) -> Result<(Self::Probability, Self::Probability), ()> {
         let half = F::one() / (F::one() + F::one());
 
-        let min_symbol = *self.quantizer.domain.start();
-        let max_symbol = *self.quantizer.domain.end();
+        let min_symbol_inclusive = self.quantizer.min_symbol_inclusive;
+        let max_symbol_inclusive = self.quantizer.max_symbol_inclusive;
         let free_weight = self.quantizer.free_weight;
 
-        if !self.quantizer.domain.contains(symbol.borrow()) {
+        if symbol.borrow() < &min_symbol_inclusive || symbol.borrow() > &max_symbol_inclusive {
             return Err(());
         };
-        let slack = symbol.borrow().wrapping_sub(&min_symbol).as_();
+        let slack = symbol.borrow().wrapping_sub(&min_symbol_inclusive).as_();
 
         // Round both cumulatives *independently* to fixed point precision.
-        let left_sided_cumulative = if symbol.borrow() == &min_symbol {
+        let left_sided_cumulative = if symbol.borrow() == &min_symbol_inclusive {
             // Corner case: only makes a difference if we're cutting off a fairly significant
             // left tail of the distribution.
             Self::Probability::zero()
@@ -244,7 +250,7 @@ where
             non_leaky + slack
         };
 
-        let right_sided_cumulative = if symbol.borrow() == &max_symbol {
+        let right_sided_cumulative = if symbol.borrow() == &max_symbol_inclusive {
             // Corner case: make sure that the probabilities add up to one. The generic
             // calculation in the `else` branch may lead to a lower total probability
             // because we're cutting off the right tail of the distribution and we're
@@ -276,8 +282,8 @@ where
         let half = F::one() / (F::one() + F::one());
         let inverse_denominator = F::one() / (max_probability.into() + F::one());
 
-        let min_symbol = *self.quantizer.domain.start();
-        let max_symbol = *self.quantizer.domain.end();
+        let min_symbol_inclusive = self.quantizer.min_symbol_inclusive;
+        let max_symbol_inclusive = self.quantizer.max_symbol_inclusive;
         let free_weight = self.quantizer.free_weight;
 
         // Make an initial guess for the inverse of the leaky CDF.
@@ -286,19 +292,19 @@ where
             .inverse_cdf((quantile.into() + half) * inverse_denominator)
             .as_();
 
-        let mut left_sided_cumulative = if symbol <= min_symbol {
+        let mut left_sided_cumulative = if symbol <= min_symbol_inclusive {
             // Corner case: we're in the left cut off tail of the distribution.
-            symbol = min_symbol;
+            symbol = min_symbol_inclusive;
             Self::Probability::zero()
         } else {
-            if symbol > max_symbol {
+            if symbol > max_symbol_inclusive {
                 // Corner case: we're in the right cut off tail of the distribution.
-                symbol = max_symbol;
+                symbol = max_symbol_inclusive;
             }
 
             let non_leaky: Self::Probability =
                 (free_weight * self.inner.cdf(symbol.into() - half)).as_();
-            non_leaky + symbol.wrapping_sub(&min_symbol).as_()
+            non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_()
         };
 
         let right_sided_cumulative = if left_sided_cumulative > quantile {
@@ -307,14 +313,15 @@ where
                 let right_sided_cumulative = left_sided_cumulative;
                 symbol = symbol - Self::Symbol::one();
 
-                if symbol == min_symbol {
+                if symbol == min_symbol_inclusive {
                     left_sided_cumulative = Self::Probability::zero();
                     break right_sided_cumulative;
                 }
 
                 let non_leaky: Self::Probability =
                     (free_weight * self.inner.cdf(symbol.into() - half)).as_();
-                left_sided_cumulative = non_leaky + symbol.wrapping_sub(&min_symbol).as_();
+                left_sided_cumulative =
+                    non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_();
                 if left_sided_cumulative <= quantile {
                     break right_sided_cumulative;
                 }
@@ -324,7 +331,7 @@ where
             // Check validity of the right sided cumulative. If it isn't valid,
             // keep increasing `symbol` until it is.
             loop {
-                if symbol == max_symbol {
+                if symbol == max_symbol_inclusive {
                     let max_probability = Self::Probability::max_value()
                         >> (Self::Probability::BITS - Self::PRECISION);
                     break max_probability.wrapping_add(&Self::Probability::one());
@@ -332,8 +339,9 @@ where
 
                 let non_leaky: Self::Probability =
                     (free_weight * self.inner.cdf(symbol.into() + half)).as_();
-                let right_sided_cumulative =
-                    non_leaky + symbol.wrapping_sub(&min_symbol).as_() + Self::Probability::one();
+                let right_sided_cumulative = non_leaky
+                    + symbol.wrapping_sub(&min_symbol_inclusive).as_()
+                    + Self::Probability::one();
                 if right_sided_cumulative > quantile {
                     break right_sided_cumulative;
                 }
