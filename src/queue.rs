@@ -211,6 +211,14 @@ where
         CoderGuard::new(self)
     }
 
+    fn decoder(&mut self) -> Decoder<CompressedWord, State, CoderGuard<'_, CompressedWord, State>> {
+        Decoder::new(self.get_compressed())
+    }
+
+    fn into_decoder(mut self) -> Decoder<CompressedWord, State, Vec<CompressedWord>> {
+        Decoder::new(self.into_compressed())
+    }
+
     /// Iterates over the compressed data currently on the stack.
     ///
     /// In contrast to [`get_compressed`] or [`into_compressed`], this method does
@@ -349,8 +357,8 @@ where
     }
 }
 
-pub struct Decoder<'compressed, CompressedWord: BitArray, State: BitArray> {
-    buf: &'compressed [CompressedWord],
+pub struct Decoder<CompressedWord: BitArray, State: BitArray, Buf: AsRef<[CompressedWord]>> {
+    buf: Buf,
 
     /// Points to the next word in `buf` to be read if `state` underflows.
     pos: usize,
@@ -361,24 +369,29 @@ pub struct Decoder<'compressed, CompressedWord: BitArray, State: BitArray> {
 }
 
 /// Type alias for a [`Decoder`] with sane parameters for typical use cases.
-pub type DefaultDecoder<'compressed> = Decoder<'compressed, u32, u64>;
+pub type DefaultDecoder<Buf> = Decoder<u32, u64, Buf>;
 
-impl<'compressed, CompressedWord, State> Debug for Decoder<'compressed, CompressedWord, State>
+impl<CompressedWord, State, Buf> Debug for Decoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list()
-            .entries(bit_array_to_chunks_exact(self.state.lower).chain(self.buf.iter().cloned()))
+            .entries(
+                bit_array_to_chunks_exact(self.state.lower)
+                    .chain(self.buf.as_ref().iter().cloned()),
+            )
             .finish()
     }
 }
 
-impl<'compressed, CompressedWord, State> Code for Decoder<'compressed, CompressedWord, State>
+impl<CompressedWord, State, Buf> Code for Decoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]>,
 {
     type State = CoderState<CompressedWord, State>;
     type CompressedWord = CompressedWord;
@@ -401,10 +414,11 @@ impl std::fmt::Display for DecodingError {
 
 impl Error for DecodingError {}
 
-impl<'compressed, CompressedWord, State> Decode for Decoder<'compressed, CompressedWord, State>
+impl<CompressedWord, State, Buf> Decode for Decoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]>,
 {
     type DecodingError = DecodingError;
 
@@ -467,7 +481,7 @@ where
 
             // Then update `point`, which restores invariant (*):
             self.point = self.point << CompressedWord::BITS;
-            if let Some(&word) = self.buf.get(self.pos) {
+            if let Some(&word) = self.buf.as_ref().get(self.pos) {
                 self.point = self.point | word.into();
                 self.pos += 1;
             } else {
@@ -479,36 +493,37 @@ where
     }
 
     fn maybe_finished(&self) -> bool {
-        self.pos == self.buf.len()
+        self.pos == self.buf.as_ref().len()
             && self.point.wrapping_sub(&self.state.lower)
                 < State::one() << (State::BITS - CompressedWord::BITS)
     }
 }
 
-impl<'compressed, CompressedWord, State> Decoder<'compressed, CompressedWord, State>
+impl<CompressedWord, State, Buf> Decoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]>,
 {
     /// Creates an empty encoder for range coding.
-    pub fn new(compressed: &'compressed [CompressedWord]) -> Self {
+    pub fn new(compressed: Buf) -> Self {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
         assert_eq!(State::BITS % CompressedWord::BITS, 0);
 
-        let mut point = bit_array_from_chunks(compressed.iter().cloned());
+        let mut point = bit_array_from_chunks(compressed.as_ref().iter().cloned());
 
-        let pos = if compressed.len() < State::BITS / CompressedWord::BITS {
+        let pos = if compressed.as_ref().len() < State::BITS / CompressedWord::BITS {
             // A very short compressed buffer was provided, and therefore `point` is still
             // right-aligned. Shift it over so it's left-aligned and fill it up with ones
-            if compressed.len() == 0 {
+            if compressed.as_ref().len() == 0 {
                 // Special case: an empty compressed stream is treated like one with a single
                 // `CompressedWord` of value zero.
                 point = State::max_value() >> CompressedWord::BITS
             } else {
-                point = point << (State::BITS - compressed.len() * CompressedWord::BITS)
-                    | State::max_value() >> compressed.len() * CompressedWord::BITS;
+                point = point << (State::BITS - compressed.as_ref().len() * CompressedWord::BITS)
+                    | State::max_value() >> compressed.as_ref().len() * CompressedWord::BITS;
             }
-            compressed.len()
+            compressed.as_ref().len()
         } else {
             State::BITS / CompressedWord::BITS
         };
@@ -552,13 +567,13 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn new(coder: &'a mut Encoder<CompressedWord, State>) -> Self {
+    fn new(encoder: &'a mut Encoder<CompressedWord, State>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
-        if !coder.is_empty() {
-            let high = (coder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            coder.buf.push(high);
+        if !encoder.is_empty() {
+            let high = (encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
+            encoder.buf.push(high);
         }
-        Self { inner: coder }
+        Self { inner: encoder }
     }
 }
 
@@ -581,6 +596,16 @@ where
 
     fn deref(&self) -> &Self::Target {
         &self.inner.buf
+    }
+}
+
+impl<'a, CompressedWord, State> AsRef<[CompressedWord]> for CoderGuard<'a, CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn as_ref(&self) -> &[CompressedWord] {
+        self
     }
 }
 
@@ -847,9 +872,7 @@ mod tests {
             .unwrap();
         dbg!(encoder.num_bits());
 
-        // Test if import/export of compressed data works.
-        let compressed = encoder.into_compressed();
-        let mut decoder = Decoder::<CompressedWord, State>::new(&compressed);
+        let mut decoder = encoder.into_decoder();
 
         let reconstructed_categorical = decoder
             .decode_iid_symbols(AMT, &categorical)
