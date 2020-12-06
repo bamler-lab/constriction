@@ -29,4 +29,5 @@ pyo3 = {version = "0.12.3", features = ["extension-module"], optional = true}
 
 [dev-dependencies]
 rand = "0.7.3"
+rand_pcg = "0.2"
 rand_xoshiro = "0.4"
