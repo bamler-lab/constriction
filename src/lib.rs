@@ -263,6 +263,42 @@ pub trait Decode: Code {
     /// opposite ends of the queue.
     fn decoder_state(&self) -> &Self::State;
 
+    /// Check if all available data might have been decoded.
+    ///
+    /// It is typically not be possible to tell when all compressed data has been
+    /// decoded. However, the converse can often (but not always) be detected with
+    /// certainty.
+    ///
+    /// If this method returns `false` then there is definitely still data left to be
+    /// decoded. If it returns `true` then the situation is unclear: there may or may
+    /// not be a few encoded symbols left. In either case, it is always legal to call
+    /// [`decode_symbol`]; it may just return a garbage (but deterministically
+    /// generated) symbol.
+    ///
+    /// This method is useful to check for data corruption. When you think you have
+    /// decoded all symbols and this method returns `false` then the compressed data
+    /// must have been corrupted. If it returns `true` then there is at least no reason
+    /// to suggest data corruption (but obviously also no conclusive prove that the data
+    /// is valid).
+    ///
+    /// # Implementation Guide
+    ///
+    /// This method should not have any side effects. If checking whether additional
+    /// compressed data is available could have side effects (such as in decoders that
+    /// operate on a fallible stream of compressed data), then this method should *not*
+    /// check if more compressed data is available and instead return a value based only
+    /// on the coder's internal state (i.e., return `true` iff terminating decoding at
+    /// this point would leave the decoder in a valid end state, regardless of whether
+    /// more compressed data might be available). By contrast, decoders that definitely
+    /// operate on in-memory compressed data should additionally check if more data is
+    /// available, and return `true` only if no additional compressed data is available
+    /// and the decoder is in a valid end state.
+    ///
+    /// When in doubt, return `true` as this is always technically correct.
+    ///
+    /// [`decode_symbol`](#method.decode_symbol).
+    fn maybe_finished(&self) -> bool;
+
     /// TODO: This would be much nicer to denote as
     /// `fn decode_symbols(...) -> impl Iterator`
     /// but existential return types are currently not allowed in trait methods.

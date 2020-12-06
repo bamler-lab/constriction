@@ -298,9 +298,8 @@ where
 
     /// Check if no data for decoding is left.
     ///
-    /// This method returns `true` if no data is left for decoding. This means that
-    /// the coder is in the same state as it would be after being constructed with
-    /// [`Coder::new`](#method.new) or after calling [`clear`](#method.clear).
+    /// Same as [`Decoder::maybe_finished`], just with a more suitable considering the
+    /// fact that this coder operates as a growable and shrinkable stack.
     ///
     /// Note that you can still pop symbols off an empty coder, but this is only
     /// useful in rare edge cases, see documentation of
@@ -327,19 +326,19 @@ where
     ///
     /// let mut coder = DefaultCoder::new();
     ///
-    /// // Push some data on the coder.
+    /// // Push some data on the coder:
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
     ///     .unwrap();
     /// coder.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
     ///
-    /// // Get the compressed data, consuming the coder.
+    /// // Get the compressed data, consuming the coder:
     /// let compressed = coder.into_compressed();
     ///
     /// // ... write `compressed` to a file and then read it back later ...
     ///
-    /// // Create a new coder with the same state and use it for decompression.
+    /// // Create a new coder with the same state and use it for decompression:
     /// let mut coder = DefaultCoder::with_compressed_data(compressed);
     /// let reconstructed = coder.decode_iid_symbols(4, &distribution).collect::<Vec<_>>();
     /// assert_eq!(reconstructed, symbols);
@@ -621,6 +620,10 @@ where
     fn decoder_state(&self) -> &Self::State {
         &self.state
     }
+
+    fn maybe_finished(&self) -> bool {
+        self.is_empty()
+    }
 }
 
 /// Provides temporary read-only access to the compressed data wrapped in a
@@ -876,53 +879,101 @@ mod tests {
 
     #[test]
     fn compress_one() {
-        let mut coder = DefaultCoder::new();
+        generic_compress_few(std::iter::once(5), 1)
+    }
+
+    #[test]
+    fn compress_two() {
+        generic_compress_few([2, 8].iter().cloned(), 1)
+    }
+
+    #[test]
+    fn compress_ten() {
+        generic_compress_few(0..10, 2)
+    }
+
+    #[test]
+    fn compress_twenty() {
+        generic_compress_few(-10..10, 4)
+    }
+
+    fn generic_compress_few<I>(symbols: I, expected_size: usize)
+    where
+        I: IntoIterator<Item = i32>,
+        I::IntoIter: Clone + DoubleEndedIterator,
+    {
+        let symbols = symbols.into_iter();
+
+        let mut encoder = DefaultCoder::new();
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
         let distribution = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
-        coder.encode_symbol(2, &distribution).unwrap();
+        // We don't reuse the same encoder for decoding because we want to test
+        // if exporting and re-importing of compressed data works.
+        encoder
+            .encode_iid_symbols(symbols.clone(), &distribution)
+            .unwrap();
+        let compressed = encoder.into_compressed();
+        assert_eq!(compressed.len(), expected_size);
 
-        // Test if import/export of compressed data works.
-        let compressed = coder.into_compressed();
-        assert_eq!(compressed.len(), 1);
-        let mut coder = DefaultCoder::with_compressed_data(compressed);
-
-        assert_eq!(coder.decode_symbol(&distribution), Ok(2));
-
-        assert!(coder.is_empty());
+        let mut decoder = DefaultCoder::with_compressed_data(compressed);
+        for symbol in symbols.rev() {
+            assert_eq!(decoder.decode_symbol(&distribution).unwrap(), symbol);
+        }
+        assert!(decoder.is_empty());
     }
 
     #[test]
-    fn compress_many_u32_32() {
-        compress_many::<u32, u64, u32, 32>();
+    fn compress_many_u32_u64_32() {
+        generic_compress_many::<u32, u64, u32, 32>();
     }
 
     #[test]
-    fn compress_many_u32_24() {
-        compress_many::<u32, u64, u32, 24>();
+    fn compress_many_u32_u64_24() {
+        generic_compress_many::<u32, u64, u32, 24>();
     }
 
     #[test]
-    fn compress_many_u32_16() {
-        compress_many::<u32, u64, u32, 16>();
+    fn compress_many_u32_u64_16() {
+        generic_compress_many::<u32, u64, u16, 16>();
     }
 
     #[test]
-    fn compress_many_u32_8() {
-        compress_many::<u32, u64, u32, 8>();
+    fn compress_many_u16_u64_16() {
+        generic_compress_many::<u16, u64, u16, 16>();
     }
 
     #[test]
-    fn compress_many_u16_16() {
-        compress_many::<u16, u32, u16, 16>();
+    fn compress_many_u32_u64_8() {
+        generic_compress_many::<u32, u64, u8, 8>();
     }
 
     #[test]
-    fn compress_many_u16_8() {
-        compress_many::<u16, u32, u16, 8>();
+    fn compress_many_u16_u64_8() {
+        generic_compress_many::<u16, u64, u8, 8>();
     }
 
-    fn compress_many<CompressedWord, State, Probability, const PRECISION: usize>()
+    #[test]
+    fn compress_many_u8_u64_8() {
+        generic_compress_many::<u8, u64, u8, 8>();
+    }
+
+    #[test]
+    fn compress_many_u16_u32_16() {
+        generic_compress_many::<u16, u32, u16, 16>();
+    }
+
+    #[test]
+    fn compress_many_u16_u32_8() {
+        generic_compress_many::<u16, u32, u8, 8>();
+    }
+
+    #[test]
+    fn compress_many_u8_u32_8() {
+        generic_compress_many::<u8, u32, u8, 8>();
+    }
+
+    fn generic_compress_many<CompressedWord, State, Probability, const PRECISION: usize>()
     where
         State: BitArray + AsPrimitive<CompressedWord>,
         CompressedWord: BitArray + Into<State> + AsPrimitive<Probability>,

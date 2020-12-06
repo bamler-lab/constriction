@@ -85,15 +85,7 @@ where
         self.state = CoderState::default();
     }
 
-    /// Check if no data for decoding is left.
-    ///
-    /// This method returns `true` if no data is left for decoding. This means that
-    /// the coder is in the same state as it would be after being constructed with
-    /// [`Coder::new`](#method.new) or after calling [`clear`](#method.clear).
-    ///
-    /// Note that you can still pop symbols off an empty coder, but this is only
-    /// useful in rare edge cases, see documentation of
-    /// [`decode_symbol`](#method.decode_symbol).
+    /// Check if no data has been encoded yet.
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty() && self.state.range == State::max_value()
     }
@@ -116,19 +108,19 @@ where
     ///
     /// let mut coder = DefaultCoder::new();
     ///
-    /// // Push some data on the coder.
+    /// // Push some data on the coder:
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
     ///     .unwrap();
     /// coder.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
     ///
-    /// // Get the compressed data, consuming the coder.
+    /// // Get the compressed data, consuming the coder:
     /// let compressed = coder.into_compressed();
     ///
     /// // ... write `compressed` to a file and then read it back later ...
     ///
-    /// // Create a new coder with the same state and use it for decompression.
+    /// // Create a new coder with the same state and use it for decompression:
     /// let mut coder = DefaultCoder::with_compressed_data(compressed);
     /// let reconstructed = coder.decode_iid_symbols(4, &distribution).collect::<Vec<_>>();
     /// assert_eq!(reconstructed, symbols);
@@ -297,13 +289,6 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    /// To encode a symbol, we do:
-    /// - if range <= W::max_value().into():
-    ///     - copy the most significant half of `lower` to a buffer
-    ///     - shift both `range` and `lower` to the left by `W::num_bits()`
-    /// - look up the symbol's `left_marginal` and `probability`
-    /// - set `lower = lower + left_marginal * (range >> PRECISION)`
-    /// - set `range = probability * (range >> PRECISION)
     fn encode_symbol<S, D>(
         &mut self,
         symbol: impl Borrow<S>,
@@ -492,6 +477,12 @@ where
     fn decoder_state(&self) -> &Self::State {
         &self.state
     }
+
+    fn maybe_finished(&self) -> bool {
+        self.pos == self.buf.len()
+            && self.point.wrapping_sub(&self.state.lower)
+                < State::one() << (State::BITS - CompressedWord::BITS)
+    }
 }
 
 impl<'compressed, CompressedWord, State> Decoder<'compressed, CompressedWord, State>
@@ -528,29 +519,6 @@ where
             pos,
             point,
         }
-    }
-
-    /// Check if all available data might have been decoded.
-    ///
-    /// It is in general not possible to tell when all compressed data has been decoded.
-    /// However, the converse can often (but not always) be detected with certainty.
-    ///
-    /// If this method returns `false` then there is definitely still data left to be
-    /// decoded. If it returns `true` then the situation is unclear: there may or may not
-    /// be a few encoded symbols left. In either case, it is always legal to call
-    /// [`decode_symbol`]; it may just return a garbage (but deterministically generated)
-    /// symbol.
-    ///
-    /// This method is useful to check for data corruption. When you think you have decoded
-    /// all symbols and this method returns `false` then the compressed data must have been
-    /// corrupted. If it returns `true` then there is at least no reason to suggest data
-    /// corruption (but obviously also no conclusive prove that the data is valid).
-    ///
-    /// [`decode_symbol`](#method.decode_symbol).
-    pub fn maybe_finished(&self) -> bool {
-        self.pos == self.buf.len()
-            && self.point.wrapping_sub(&self.state.lower)
-                < State::one() << (State::BITS - CompressedWord::BITS)
     }
 }
 
@@ -718,71 +686,99 @@ mod tests {
 
     #[test]
     fn compress_one() {
-        compress_few(std::iter::once(5), 1)
+        generic_compress_few(std::iter::once(5), 1)
     }
 
     #[test]
     fn compress_two() {
-        compress_few([2, 8].iter().cloned(), 1)
+        generic_compress_few([2, 8].iter().cloned(), 1)
     }
 
     #[test]
     fn compress_ten() {
-        compress_few(0..10, 2)
+        generic_compress_few(0..10, 2)
     }
 
     #[test]
     fn compress_twenty() {
-        compress_few(-10..10, 4)
+        generic_compress_few(-10..10, 4)
     }
 
-    fn compress_few(symbols: impl IntoIterator<Item = i32> + Clone, expected_size: usize) {
+    fn generic_compress_few<I>(symbols: I, expected_size: usize)
+    where
+        I: IntoIterator<Item = i32>,
+        I::IntoIter: Clone,
+    {
+        let symbols = symbols.into_iter();
+
         let mut encoder = DefaultEncoder::new();
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
         let distribution = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
-        encoder.encode_iid_symbols(symbols.clone(), &distribution);
+        encoder
+            .encode_iid_symbols(symbols.clone(), &distribution)
+            .unwrap();
         let compressed = encoder.into_compressed();
         assert_eq!(compressed.len(), expected_size);
 
         let mut decoder = DefaultDecoder::new(&compressed);
-        for i in symbols {
-            assert_eq!(decoder.decode_symbol(&distribution).unwrap(), i);
+        for symbol in symbols {
+            assert_eq!(decoder.decode_symbol(&distribution).unwrap(), symbol);
         }
         assert!(decoder.maybe_finished());
     }
 
     #[test]
-    fn compress_many_u32_32() {
-        compress_many::<u32, u64, u32, 32>();
+    fn compress_many_u32_u64_32() {
+        generic_compress_many::<u32, u64, u32, 32>();
     }
 
     #[test]
-    fn compress_many_u32_24() {
-        compress_many::<u32, u64, u32, 24>();
+    fn compress_many_u32_u64_24() {
+        generic_compress_many::<u32, u64, u32, 24>();
     }
 
     #[test]
-    fn compress_many_u32_16() {
-        compress_many::<u32, u64, u32, 16>();
+    fn compress_many_u32_u64_16() {
+        generic_compress_many::<u32, u64, u16, 16>();
     }
 
     #[test]
-    fn compress_many_u32_8() {
-        compress_many::<u32, u64, u32, 8>();
+    fn compress_many_u16_u64_16() {
+        generic_compress_many::<u16, u64, u16, 16>();
     }
 
     #[test]
-    fn compress_many_u16_16() {
-        compress_many::<u16, u32, u16, 16>();
+    fn compress_many_u32_u64_8() {
+        generic_compress_many::<u32, u64, u8, 8>();
     }
 
     #[test]
-    fn compress_many_u16_8() {
-        compress_many::<u16, u32, u16, 8>();
+    fn compress_many_u16_u64_8() {
+        generic_compress_many::<u16, u64, u8, 8>();
     }
 
-    fn compress_many<CompressedWord, State, Probability, const PRECISION: usize>()
+    #[test]
+    fn compress_many_u8_u64_8() {
+        generic_compress_many::<u8, u64, u8, 8>();
+    }
+
+    #[test]
+    fn compress_many_u16_u32_16() {
+        generic_compress_many::<u16, u32, u16, 16>();
+    }
+
+    #[test]
+    fn compress_many_u16_u32_8() {
+        generic_compress_many::<u16, u32, u8, 8>();
+    }
+
+    #[test]
+    fn compress_many_u8_u32_8() {
+        generic_compress_many::<u8, u32, u8, 8>();
+    }
+
+    fn generic_compress_many<CompressedWord, State, Probability, const PRECISION: usize>()
     where
         State: BitArray + AsPrimitive<CompressedWord>,
         CompressedWord: BitArray + Into<State> + AsPrimitive<Probability>,
@@ -853,7 +849,7 @@ mod tests {
 
         // Test if import/export of compressed data works.
         let compressed = encoder.into_compressed();
-        let mut decoder = Decoder::new(&compressed);
+        let mut decoder = Decoder::<CompressedWord, State>::new(&compressed);
 
         let reconstructed_categorical = decoder
             .decode_iid_symbols(AMT, &categorical)
