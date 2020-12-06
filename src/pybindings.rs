@@ -437,6 +437,9 @@ impl From<crate::CoderError> for PyErr {
             crate::CoderError::IterationError(_) => pyo3::exceptions::PyValueError::new_err(
                 "Invalid parameters for probability distribution.",
             ),
+            crate::CoderError::SeekError => {
+                todo!() // We don't call anything yet that can return a `SeekError`.
+            }
         }
     }
 }

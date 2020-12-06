@@ -144,10 +144,11 @@
 #![feature(min_const_generics)]
 #![warn(missing_docs, rust_2018_idioms, missing_debug_implementations)]
 
-#[cfg(feature = "pybindings")]
-pub mod pybindings;
+// #[cfg(feature = "pybindings")]
+// pub mod pybindings;
 
 pub mod distributions;
+pub mod queue;
 pub mod stack;
 
 use std::{borrow::Borrow, error::Error, fmt::Debug, marker::PhantomData};
@@ -165,15 +166,18 @@ pub trait Code {
 }
 
 pub trait Encode: Code {
-    fn encode_symbol<S, D>(&mut self, symbol: impl Borrow<S>, distribution: D) -> Result<()>
+    fn encode_symbol<S, D>(
+        &mut self,
+        symbol: impl Borrow<S>,
+        distribution: D,
+    ) -> Result<(), EncodingError>
     where
         D: DiscreteDistribution<Symbol = S>,
         D::Probability: Into<Self::CompressedWord>;
 
     /// Returns the current internal state of the encoder.
     ///
-    /// This method is usually used together with [`set_encoder_state`](
-    /// #tymethod.set_encoder_state) or with with [`SeekEncode::seek`].
+    /// This method is usually used together with [`SeekEncode::seek`].
     ///
     /// If the type also implements [`Decode`], then this method and
     /// [`Decode::decoder_state`] may or may not return the same state. For example, in
@@ -183,16 +187,7 @@ pub trait Encode: Code {
     /// opposite ends of the queue.
     fn encoder_state(&self) -> &Self::State;
 
-    /// Sets the internal state of the encoder without changing its position in the
-    /// compressed data.
-    ///
-    /// This is a low level primitive that is typically only useful if you then also
-    /// redirect the emitted compressed data to a new place. If the type operates on
-    /// in-memory compressed data then you will likely want to use [`SeekEncode::seek`]
-    /// instead of `set_encoder_state`.
-    fn set_encoder_state(&mut self, state: Self::State);
-
-    fn encode_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
+    fn encode_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<(), EncodingError>
     where
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
@@ -206,37 +201,51 @@ pub trait Encode: Code {
         Ok(())
     }
 
-    fn try_encode_symbols<E, D, S, I>(&mut self, symbols_and_distributions: I) -> Result<()>
+    fn try_encode_symbols<E, D, S, I>(
+        &mut self,
+        symbols_and_distributions: I,
+    ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         E: Error + 'static,
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
         S: Borrow<D::Symbol>,
-        I: IntoIterator<Item = std::result::Result<(S, D), E>>,
+        I: IntoIterator<Item = Result<(S, D), E>>,
     {
         for symbol_and_distribution in symbols_and_distributions.into_iter() {
             let (symbol, distribution) =
-                symbol_and_distribution.map_err(|err| CoderError::IterationError(Box::new(err)))?;
+                symbol_and_distribution.map_err(|err| TryCodingError::InvalidEntropyModel(err))?;
             self.encode_symbol(symbol, distribution)?;
         }
 
         Ok(())
     }
 
-    fn encode_iid_symbols<D, S, I>(&mut self, symbols: I, distribution: &D) -> Result<()>
+    fn encode_iid_symbols<D, S, I>(
+        &mut self,
+        symbols: I,
+        distribution: &D,
+    ) -> Result<(), EncodingError>
     where
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
         I: IntoIterator<Item = S>,
         S: Borrow<D::Symbol>,
-        I::IntoIter: DoubleEndedIterator,
     {
         self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, distribution)))
     }
 }
 
 pub trait Decode: Code {
-    fn decode_symbol<D>(&mut self, distribution: D) -> D::Symbol
+    /// The error type for [`decode_symbol`].
+    ///
+    /// This is an associated type because, [`decode_symbol`] is infallible for some
+    /// decoders (e.g., for a [`stack::Coder`]). These decoders set the `DecodingError`
+    /// type to [`std::convert::Infallible`] so that the compiler can optimize away
+    /// error checks.
+    type DecodingError: Error + 'static;
+
+    fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
     where
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
@@ -244,8 +253,7 @@ pub trait Decode: Code {
 
     /// Returns the current internal state of the decoder.
     ///
-    /// This method is usually used together with [`set_decoder_state`](
-    /// #tymethod.set_decoder_state) or with with [`SeekDecode::seek`].
+    /// This method is usually used together with [`SeekDecode::seek`].
     ///
     /// If the type also implements [`Encode`], then this method and
     /// [`Encode::encoder_state`] may or may not return the same state. For example, in
@@ -254,15 +262,6 @@ pub trait Decode: Code {
     /// `decoder_state` return different states since encoding and decoding operate on
     /// opposite ends of the queue.
     fn decoder_state(&self) -> &Self::State;
-
-    /// Sets the internal state of the decoder without changing the position in the
-    /// compressed data.
-    ///
-    /// This is a low level primitive that is typically only useful if you then also
-    /// adjust the underlying compressed data stream accordingly. If the type operates
-    /// on in-memory compressed data then you will likely want to use
-    /// [`SeekDecode::seek`] instead of `set_decoder_state`.
-    fn set_decoder_state(&mut self, state: Self::State);
 
     /// TODO: This would be much nicer to denote as
     /// `fn decode_symbols(...) -> impl Iterator`
@@ -289,7 +288,7 @@ pub trait Decode: Code {
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
-        I: Iterator<Item = std::result::Result<D, E>> + 's,
+        I: Iterator<Item = Result<D, E>> + 's,
     {
         TryDecodeSymbols {
             decoder: self,
@@ -326,7 +325,7 @@ pub trait Pos {
 }
 
 pub trait Seek: Code {
-    fn seek(&mut self, pos: usize, state: &Self::State) -> Result<()>;
+    fn seek(&mut self, pos: usize, state: &Self::State) -> Result<(), ()>;
 }
 
 pub struct DecodeSymbols<'a, Decoder: ?Sized, I> {
@@ -340,7 +339,7 @@ where
     <I::Item as DiscreteDistribution>::Probability: Into<Decoder::CompressedWord>,
     Decoder::CompressedWord: AsPrimitive<<I::Item as DiscreteDistribution>::Probability>,
 {
-    type Item = <I::Item as DiscreteDistribution>::Symbol;
+    type Item = Result<<I::Item as DiscreteDistribution>::Symbol, Decoder::DecodingError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.distributions
@@ -369,21 +368,20 @@ pub struct TryDecodeSymbols<'a, Decoder: ?Sized, I> {
 
 impl<'a, Decoder: Decode, I, E, D> Iterator for TryDecodeSymbols<'a, Decoder, I>
 where
-    I: Iterator<Item = std::result::Result<D, E>>,
+    I: Iterator<Item = Result<D, E>>,
     D: DiscreteDistribution,
     D::Probability: Into<Decoder::CompressedWord>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     E: std::error::Error + 'static,
 {
-    type Item = Result<D::Symbol>;
+    type Item = Result<D::Symbol, TryCodingError<Decoder::DecodingError, E>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.distributions
-            .next()
-            .map(|distribution| match distribution {
-                Ok(distribution) => Ok(self.decoder.decode_symbol(distribution)),
-                Err(err) => Err(CoderError::IterationError(Box::new(err))),
-            })
+        self.distributions.next().map(|distribution| {
+            Ok(self.decoder.decode_symbol(
+                distribution.map_err(|err| TryCodingError::InvalidEntropyModel(err))?,
+            )?)
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -394,7 +392,7 @@ where
 
 impl<'a, Decoder: Decode, I, E, D> ExactSizeIterator for TryDecodeSymbols<'a, Decoder, I>
 where
-    I: Iterator<Item = std::result::Result<D, E>> + ExactSizeIterator,
+    I: Iterator<Item = Result<D, E>> + ExactSizeIterator,
     D: DiscreteDistribution,
     D::Probability: Into<Decoder::CompressedWord>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
@@ -415,7 +413,7 @@ where
     D::Probability: Into<Decoder::CompressedWord>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
 {
-    type Item = D::Symbol;
+    type Item = Result<D::Symbol, Decoder::DecodingError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.amt != 0 {
@@ -472,85 +470,71 @@ pub unsafe trait BitArray:
     /// This could arguably be called `LEN` instead, but that may be confusing since
     /// "lengths" are typically not measured in bits in the Rust ecosystem.
     const BITS: usize = 8 * std::mem::size_of::<Self>();
-
-    /// Iterates from least significant to most significant bits in chunks and
-    /// terminates early as soon as all following chunks would be zero.
-    ///
-    /// This method is the inverse of [`from_chunks`](#method.from_chunks) except
-    /// that the two iterate in reverse direction with respect to each other.
-    fn chunks_truncated<Chunk>(&self) -> BitArrayChunks<Self, Chunk>
-    where
-        Chunk: BitArray + Into<Self>,
-        Self: AsPrimitive<Chunk>,
-    {
-        BitArrayChunks {
-            data: *self,
-            phantom: PhantomData,
-        }
-    }
-
-    /// Constructs a `BitArray` from an iterator over chunks of bits that starts at
-    /// the most significant chunk.
-    ///
-    /// Terminates iteration as soon as either the provided iterator terminates or
-    /// enough chunks have been read to specify all bits.
-    ///
-    /// This method is the inverse of [`chunks_truncated`](#method.chunks_truncated)
-    /// except that the two iterate in reverse direction with respect to each other.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `Self::BITS` is not an integer multiple of `Chunks::BITS`.
-    ///
-    /// TODO: this will be turned into a compile time bound as soon as that's possible.
-    fn from_chunks<Chunk>(chunks: impl IntoIterator<Item = Chunk>) -> Self
-    where
-        Chunk: BitArray + Into<Self>,
-    {
-        assert_eq!(Self::BITS % Chunk::BITS, 0);
-
-        let mut result = Self::zero();
-        for chunk in chunks.into_iter().take(Self::BITS / Chunk::BITS) {
-            result = (result << Chunk::BITS) | chunk.into();
-        }
-        result
-    }
 }
 
-/// Iterator returned by [`BitArray::chunks_truncated`].
-pub struct BitArrayChunks<Data, Chunk> {
+/// Constructs a `BitArray` from an iterator over chunks of bits that starts at
+/// the most significant chunk.
+///
+/// Terminates iteration as soon as either the provided iterator terminates or
+/// enough chunks have been read to specify all bits.
+///
+/// This method is the inverse of [`chunks_reversed_truncated`](
+/// #method.chunks_truncated) except that the two iterate in reverse direction
+/// with respect to each other.
+fn bit_array_from_chunks<Data, I>(chunks: I) -> Data
+where
+    Data: BitArray,
+    I: IntoIterator,
+    I::Item: BitArray + Into<Data>,
+{
+    let max_count = (Data::BITS + I::Item::BITS - 1) / I::Item::BITS;
+    let mut result = Data::zero();
+    for chunk in chunks.into_iter().take(max_count) {
+        result = (result << I::Item::BITS) | chunk.into();
+    }
+    result
+}
+
+/// Iterates from most significant to least significant bits in chunks but skips any
+/// initial zero chunks.
+///
+/// This method is one possible inverse of [`bit_array_from_chunks`].
+fn bit_array_to_chunks_truncated<Data, Chunk>(
     data: Data,
-    phantom: PhantomData<Chunk>,
-}
-
-impl<Data, Chunk> Iterator for BitArrayChunks<Data, Chunk>
+) -> impl Iterator<Item = Chunk> + ExactSizeIterator + DoubleEndedIterator
 where
     Data: BitArray + AsPrimitive<Chunk>,
     Chunk: BitArray,
 {
-    type Item = Chunk;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.data != Data::zero() {
-            let item = self.data.as_();
-            self.data = self.data >> Chunk::BITS;
-            Some(item)
-        } else {
-            None
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = (Data::BITS - self.data.leading_zeros() as usize + Chunk::BITS - 1) / Chunk::BITS;
-        (len, Some(len))
-    }
+    (0..(Data::BITS - data.leading_zeros() as usize))
+        .step_by(Chunk::BITS)
+        .rev()
+        .map(move |shift| (data >> shift).as_())
 }
 
-impl<Data, Chunk> ExactSizeIterator for BitArrayChunks<Data, Chunk>
+/// Iterates from most significant to most least significant bits in chunks without
+/// skipping initial zero chunks.
+///
+/// This method is one possible inverse of [`bit_array_from_chunks`].
+///
+/// # Panics
+///
+/// Panics if `Self::BITS` is not an integer multiple of `Chunks::BITS`.
+///
+/// TODO: this will be turned into a compile time bound as soon as that's possible.
+fn bit_array_to_chunks_exact<Data, Chunk>(
+    data: Data,
+) -> impl Iterator<Item = Chunk> + ExactSizeIterator + DoubleEndedIterator
 where
     Data: BitArray + AsPrimitive<Chunk>,
     Chunk: BitArray,
 {
+    assert_eq!(Data::BITS % Chunk::BITS, 0);
+
+    (0..Data::BITS)
+        .step_by(Chunk::BITS)
+        .rev()
+        .map(move |shift| (data >> shift).as_())
 }
 
 unsafe impl BitArray for u8 {}
@@ -565,7 +549,7 @@ unsafe impl BitArray for usize {}
 /// [`ans::Coder`]: struct.Coder.html
 #[non_exhaustive]
 #[derive(Debug)]
-pub enum CoderError {
+pub enum EncodingError {
     /// Tried to encode a symbol with zero probability under the used entropy model.
     ///
     /// This error can usually be avoided by using a "leaky" distribution, i.e., a
@@ -575,7 +559,10 @@ pub enum CoderError {
     /// [`Categorical::from_floating_point_probabilities`](
     /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
     ImpossibleSymbol,
+}
 
+#[derive(Debug)]
+pub enum TryCodingError<CodingError: Error + 'static, ModelError: Error + 'static> {
     /// The iterator provided to [`Coder::try_push_symbols`] or
     /// [`Coder::try_pop_symbols`] yielded `Err(_)`.
     ///
@@ -584,22 +571,51 @@ pub enum CoderError {
     ///
     /// [`Coder::try_push_symbols`]: struct.Coder.html#method.try_push_symbols
     /// [`Coder::try_pop_symbols`]: struct.Coder.html#method.try_pop_symbols
-    IterationError(Box<dyn Error + 'static>),
+    InvalidEntropyModel(ModelError),
+
+    CodingError(CodingError),
 }
 
-impl Error for CoderError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
+impl std::fmt::Display for EncodingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::IterationError(ref source) => Some(&**source),
-            _ => None,
+            Self::ImpossibleSymbol => write!(
+                f,
+                "Tried to encode symbol with zero probability under entropy model."
+            ),
         }
     }
 }
 
-impl std::fmt::Display for CoderError {
+impl Error for EncodingError {}
+
+impl<CodingError: Error + 'static, ModelError: Error + 'static> std::fmt::Display
+    for TryCodingError<CodingError, ModelError>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Error during entropy coding.")
+        write!(
+            f,
+            "Error while entropy coding multiple symbols: {}",
+            self.source().unwrap()
+        )
     }
 }
 
-type Result<T> = std::result::Result<T, CoderError>;
+impl<CodingError: Error + 'static, ModelError: Error + 'static> Error
+    for TryCodingError<CodingError, ModelError>
+{
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidEntropyModel(source) => Some(source),
+            Self::CodingError(source) => Some(source),
+        }
+    }
+}
+
+impl<CodingError: Error + 'static, ModelError: Error + 'static> From<CodingError>
+    for TryCodingError<CodingError, ModelError>
+{
+    fn from(err: CodingError) -> Self {
+        Self::CodingError(err)
+    }
+}
