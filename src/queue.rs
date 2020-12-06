@@ -17,7 +17,7 @@ pub struct CoderState<CompressedWord, State> {
 
     /// Invariant: `range >= State::one() << (State::BITS - CompressedWord::BITS)`
     /// Therefore, the highest order `CompressedWord` of `lower` is always sufficient to
-    /// identify the current interval.
+    /// identify the current interval, so only it has to be flushed at the end.
     range: State,
 
     /// We keep track of the `CompressedWord` type so that we can statically enforce
@@ -76,33 +76,6 @@ where
             buf: Vec::new(),
             state: CoderState::default(),
         }
-    }
-
-    /// Creates a range coder that appends to *unsealed* compressed data.
-    ///
-    /// TODO: describe what is meant with "unsealed"
-    pub fn with_compressed_data(
-        mut compressed: Vec<CompressedWord>,
-        state: <Self as Code>::State,
-    ) -> Result<Self, ()> {
-        assert!(State::BITS >= 2 * CompressedWord::BITS);
-        assert_eq!(State::BITS % CompressedWord::BITS, 0);
-
-        // We may assume that `state` satisfies the invariants of a `CoderState` since we
-        // don't provide a public API to create an invalid `CoderState`.
-
-        if !(compressed.is_empty() && state.range == State::max_value()) {
-            let shift = State::BITS - CompressedWord::BITS;
-            let high = (state.lower >> shift).as_();
-            if compressed.pop() != Some(high) {
-                return Err(());
-            }
-        }
-
-        Ok(Self {
-            buf: compressed,
-            state,
-        })
     }
 
     /// Discards all compressed data and resets the coder to the same state as
@@ -340,44 +313,42 @@ where
         D: DiscreteDistribution<Symbol = S>,
         D::Probability: Into<Self::CompressedWord>,
     {
+        // We maintain the following invariant (*):
+        //   range >= State::one() << (State::BITS - CompressedWord::BITS)
+
         let (left_sided_cumulative, probability) = distribution
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncodingError::ImpossibleSymbol)?;
 
         let scale = self.state.range >> D::PRECISION;
-        self.state.lower = self
+        let new_lower = self
             .state
             .lower
             .wrapping_add(&(scale * left_sided_cumulative.into().into()));
+        if new_lower < self.state.lower {
+            // Addition has wrapped around, so we have to propagate back the carry bit.
+            for word in self.buf.iter_mut().rev() {
+                *word = word.wrapping_add(&CompressedWord::one());
+                if *word != CompressedWord::zero() {
+                    break;
+                }
+            }
+        }
+        self.state.lower = new_lower;
 
         // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
-        self.state.range =
-            scale * probability.into().into() + self.state.range % (State::one() << D::PRECISION);
-        // TODO: the last part is probably irrelevant since we shift right by PRECISION as soon as we use `range`
-        //
-        // Another way of thinking about this is that we move the upper bound
-        // `upper = lower + range` analogous to how we move `lower`:
-        // `new_upper = upper - scale * ((1 << PRECISION) - right_sided_cumulative)`
-        // where `right_sided_cumulative = left_sided_cumulative + probability`.
-
-        // TODO: turns out this is wrong; instead:
-        // - CHECK AT BEGINNING OF METHOD: if range < 1 << PRECISION:
-        //   - set `upper = lower | (State::max_value() >> CompressedWord::BITS)`; this must be:
-        //     - `old_lower`
-        //   emit a compressed word; unless we would have emitted a word anyway, this must
-        //   truncate some set bits of `lower ^ (lower + range)`, so fall through to next
-        //   item:
-        // - emit words while highest word of `lower + range` is zero (maybe iterate
-        //   `(lower ^ (lower + range)).leading_zeros() / CompressedWords::BITS` times);
+        self.state.range = scale * probability.into().into();
+        // + self.state.range % (State::one() << D::PRECISION);
 
         if self.state.range < State::one() << (State::BITS - CompressedWord::BITS) {
             // Invariant `range >= State::one() << (State::BITS - CompressedWord::BITS)` is
             // violated. Since `left_cumulative_and_probability` succeeded, we know that
             // `probability != 0` and therefore:
             //   range >= scale * probability = (old_range >> PRECISION) * probability
-            //         >= old_range >> PRECISION >= old_range >> CompressedWords::BITS
-            // where `old_range` satisfied invariant (1) by assumption. Therefore, the
-            // following left-shift restores invariant (1):
+            //         >= old_range >> PRECISION
+            //         >= old_range >> CompressedWords::BITS
+            // where `old_range` is the `range` at method entry, which satisfied invariant (*)
+            // by assumption. Therefore, the following left-shift restores the invariant:
             self.state.range = self.state.range << CompressedWord::BITS;
 
             let high = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
@@ -475,7 +446,7 @@ where
 
         let scale = self.state.range >> D::PRECISION;
         let quantile = self.point.wrapping_sub(&self.state.lower) / scale;
-        if quantile == State::one() << D::PRECISION {
+        if quantile >= State::one() << D::PRECISION {
             // This can only happen if both of the following conditions apply:
             // (i) we are decoding invalid compressed data; and
             // (ii) we use entropy models with varying `PRECISION`s.
@@ -490,8 +461,8 @@ where
             .state
             .lower
             .wrapping_add(&(scale * left_sided_cumulative.into().into()));
-        self.state.range =
-            scale * probability.into().into() + self.state.range % (State::one() << D::PRECISION);
+        self.state.range = scale * probability.into().into();
+        //  + self.state.range % (State::one() << D::PRECISION);
 
         // Invariant (*) is still satisfied at this point because:
         //   (point (-) lower) / scale = (point (-) old_lower) / scale (-) left_sided_cumulative
@@ -786,30 +757,30 @@ mod tests {
         compress_many::<u32, u64, u32, 32>();
     }
 
-    // #[test]
-    // fn compress_many_u32_24() {
-    //     compress_many::<u32, u64, u32, 24>();
-    // }
+    #[test]
+    fn compress_many_u32_24() {
+        compress_many::<u32, u64, u32, 24>();
+    }
 
-    // #[test]
-    // fn compress_many_u32_16() {
-    //     compress_many::<u32, u64, u32, 16>();
-    // }
+    #[test]
+    fn compress_many_u32_16() {
+        compress_many::<u32, u64, u32, 16>();
+    }
 
-    // #[test]
-    // fn compress_many_u32_8() {
-    //     compress_many::<u32, u64, u32, 8>();
-    // }
+    #[test]
+    fn compress_many_u32_8() {
+        compress_many::<u32, u64, u32, 8>();
+    }
 
-    // #[test]
-    // fn compress_many_u16_16() {
-    //     compress_many::<u16, u32, u16, 16>();
-    // }
+    #[test]
+    fn compress_many_u16_16() {
+        compress_many::<u16, u32, u16, 16>();
+    }
 
-    // #[test]
-    // fn compress_many_u16_8() {
-    //     compress_many::<u16, u32, u16, 8>();
-    // }
+    #[test]
+    fn compress_many_u16_8() {
+        compress_many::<u16, u32, u16, 8>();
+    }
 
     fn compress_many<CompressedWord, State, Probability, const PRECISION: usize>()
     where
@@ -898,7 +869,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        // assert!(decoder.maybe_finished());
+        assert!(decoder.maybe_finished());
 
         assert_eq!(symbols_categorical, reconstructed_categorical);
         assert_eq!(symbols_gaussian, reconstructed_gaussian);
