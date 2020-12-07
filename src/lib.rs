@@ -16,8 +16,8 @@
 //! Rust users will likely want to start by encoding some data with a [`Coder`].
 //!
 //! Python users will likely want to install this library via `pip install
-//! streamcode`, then `import streamcode` in their project and construct a
-//! `streamcode.Coder`.
+//! constriction`, then `import constriction` in their project and construct a
+//! `constriction.Coder`.
 //!
 //! # A Primer on Entropy Coding
 //!
@@ -574,9 +574,9 @@ unsafe impl BitArray for u64 {}
 unsafe impl BitArray for u128 {}
 unsafe impl BitArray for usize {}
 
-/// Error type for [`ans::Coder`]
+/// Error type for [`constriction::Coder`]
 ///
-/// [`ans::Coder`]: struct.Coder.html
+/// [`constriction::Coder`]: struct.Coder.html
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum EncodingError {

@@ -16,32 +16,32 @@
 //! 2. Build an optimized library *with the `pybindings` feature flag*:
 //!
 //!     ```bash
-//!     cd ans
+//!     cd constriction
 //!     cargo build --release --features pybindings
 //!     ```
 //!
-//! 3. Check if the file `ans.so` exists in the top level directory. The git
+//! 3. Check if the file `constriction.so` exists in the top level directory. The git
 //!     repository should contain this file, and it should be a symlink that points
 //!     to the library you just compiled:
 //!
 //!     ```bash
-//!     $ ls -l ans.so
-//!     lrwxrwxrwx 1 user group Date Time ans.so -> target/release/libans.so
+//!     $ ls -l constriction.so
+//!     lrwxrwxrwx 1 user group Date Time constriction.so -> target/release/libans.so
 //!     ```
 //!
 //! # Example
 //!
 //! After compiling the python extension module as described above, `cd` to the
-//! directory that contains the symlink `ans.so`, open a python REPL, and try it
+//! directory that contains the symlink `constriction.so`, open a python REPL, and try it
 //! out:
 //!
 //! ```bash
 //! $ ipython3
 //!
-//! In [1]: import ans
+//! In [1]: import constriction
 //!    ...: import numpy as np
 //!
-//! In [2]: coder = ans.Coder()
+//! In [2]: coder = constriction.Coder()
 //!
 //! In [3]: symbols = np.array([2, -1, 0, 2], dtype = np.int32)
 //!    ...: min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
@@ -74,14 +74,14 @@ use super::distributions::{Categorical, LeakyQuantizer};
 use statrs::distribution::Normal;
 
 #[pymodule]
-fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<Coder>()?;
     Ok(())
 }
 
 /// An entropy coder based on [Asymmetric Numeral Systems (ANS)].
 ///
-/// This is a wrapper around the Rust type [`ans::Coder<u32>`](crate::Coder)
+/// This is a wrapper around the Rust type [`constriction::Coder<u32>`](crate::Coder)
 /// with python bindings.
 ///
 /// Note that this entropy coder is a stack (a "last in first out" data
@@ -93,7 +93,7 @@ fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 /// To copy out the compressed data that is currently on the stack, call
 /// `get_compressed`. You would typically want write this to a binary file in some
 /// well-documented byte order. After reading it back in at a later time, you can
-/// decompress it by constructing an `ans.Coder` where you pass in the compressed
+/// decompress it by constructing an `constriction.Coder` where you pass in the compressed
 /// data as an argument to the constructor.
 ///
 /// If you're only interested in the compressed file size, calling `num_bits` will
@@ -105,10 +105,10 @@ fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 ///
 /// ```python
 /// import sys
-/// import ans
+/// import constriction
 /// import numpy as np
 ///
-/// coder = ans.Coder()
+/// coder = constriction.Coder()
 ///
 /// symbols = np.array([2, -1, 0, 2], dtype = np.int32)
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
@@ -131,7 +131,7 @@ fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 ///
 /// ```python
 /// import sys
-/// import ans
+/// import constriction
 /// import numpy as np
 ///
 /// compressed = np.fromfile("compressed.bin")
@@ -139,7 +139,7 @@ fn ans(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 ///     # Convert little endian byte order to native byte order.
 ///     compressed.byteswap(inplace=True)
 ///
-/// coder = ans.Coder(compressed)
+/// coder = constriction.Coder(compressed)
 ///
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
 /// means = np.array([2.3, -1.7, 0.1, 2.2], dtype = np.float64)
@@ -215,7 +215,7 @@ impl Coder {
     /// Example:
     ///
     /// ```python
-    /// coder = ans.Coder()
+    /// coder = constriction.Coder()
     /// # ... push some symbols on coder ...
     /// compressed_len = coder.num_words()
     /// compressed = np.empty((compressed_len,), dtype=np.uint32)
@@ -301,7 +301,7 @@ impl Coder {
     /// reverseorder so as to simplify usage, e.g.:
     ///
     /// ```python
-    /// coder = ans.Coder()
+    /// coder = constriction.Coder()
     /// symbols = np.array([2, 8, -5], dtype=np.int32)
     /// decoded = np.empty((3,), dtype=np.int32)
     /// means = np.array([0.1, 10.3, -3.2], dtype=np.float64)
@@ -443,9 +443,10 @@ impl<CodingError: Error + Into<PyErr>, ModelError: Error>
         match err {
             crate::TryCodingError::CodingError(err) => err.into(),
             crate::TryCodingError::InvalidEntropyModel(err) => {
-                pyo3::exceptions::PyValueError::new_err(
-                    format!("Invalid parameters for entropy model: {}", err),
-                )
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid parameters for entropy model: {}",
+                    err
+                ))
             }
         }
     }

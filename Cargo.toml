@@ -1,14 +1,14 @@
 [package]
 authors = ["Robert Bamler <robert.bamler@gmail.com>"]
 edition = "2018"
-name = "ans"
+name = "constriction"
 version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 crate-type = ["rlib", "cdylib"]
-name = "ans"
+name = "constriction"
 
 [features]
 default = []

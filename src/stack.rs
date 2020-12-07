@@ -36,7 +36,7 @@ use super::{
 /// [`encode_symbols`] or [`encode_iid_symbols`].
 ///
 /// ```
-/// use ans::{distributions::LeakyQuantizer, stack::DefaultCoder, Decode};
+/// use constriction::{distributions::LeakyQuantizer, stack::DefaultCoder, Decode};
 ///
 /// // `DefaultCoder` is a type alias to `Coder` with sane generic parameters.
 /// let mut coder = DefaultCoder::new();
@@ -234,7 +234,7 @@ where
     /// # Example
     ///
     /// ```
-    /// let mut coder = ans::stack::DefaultCoder::new();
+    /// let mut coder = constriction::stack::DefaultCoder::new();
     ///
     /// // ... push some symbols onto the coder ...
     ///
@@ -347,7 +347,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use ans::{distributions::Categorical, stack::DefaultCoder, Decode};
+    /// use constriction::{distributions::Categorical, stack::DefaultCoder, Decode};
     ///
     /// let mut coder = DefaultCoder::new();
     ///
@@ -425,7 +425,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use ans::{distributions::Categorical, stack::DefaultCoder, Decode};
+    /// use constriction::{distributions::Categorical, stack::DefaultCoder, Decode};
     ///
     /// let mut coder = DefaultCoder::new();
     ///
@@ -463,7 +463,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use ans::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultCoder, Encode};
+    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultCoder, Encode};
     ///
     /// // Create a coder and encode some stuff.
     /// let mut coder = DefaultCoder::new();

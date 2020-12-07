@@ -116,7 +116,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use ans::{distributions::Categorical, stack::DefaultCoder, Decode};
+    /// use constriction::{distributions::Categorical, stack::DefaultCoder, Decode};
     ///
     /// let mut coder = DefaultCoder::new();
     ///
@@ -195,7 +195,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use ans::{distributions::Categorical, stack::DefaultCoder, Decode};
+    /// use constriction::{distributions::Categorical, stack::DefaultCoder, Decode};
     ///
     /// let mut coder = DefaultCoder::new();
     ///
@@ -239,7 +239,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use ans::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultCoder, Encode};
+    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultCoder, Encode};
     ///
     /// // Create a coder and encode some stuff.
     /// let mut coder = DefaultCoder::new();

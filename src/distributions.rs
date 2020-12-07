@@ -96,7 +96,7 @@ impl<D: DiscreteDistribution> DiscreteDistribution for &D {
 /// # Example
 ///
 /// ```
-/// use ans::{distributions::LeakyQuantizer, stack::DefaultCoder, Encode};
+/// use constriction::{distributions::LeakyQuantizer, stack::DefaultCoder, Encode};
 ///
 /// // Get a quantizer that supports integer symbols from -5 to 20 (inclusively),
 /// // representing probabilities with 24 bit precision backed by `u32`s.
@@ -581,7 +581,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
     ///
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::distributions::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
@@ -596,7 +596,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
     ///
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
@@ -607,7 +607,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
     /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
     /// let distribution = // PANICS
-    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     /// ```
     ///
     /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
@@ -615,7 +615,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```should_panic
     /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
     /// let distribution = // PANICS
-    ///     ans::distributions::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::distributions::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
     /// ```
     ///
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
@@ -683,7 +683,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```
     /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32, 32>::from_floating_point_probabilities(
+    ///     constriction::distributions::Categorical::<u32, 32>::from_floating_point_probabilities(
     ///         &probabilities
     ///     )
     ///     .unwrap();
@@ -736,7 +736,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -774,7 +774,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```compile_fail
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f32>>();
     /// //                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Compiler error: trait bound not satisfied
@@ -787,7 +787,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
     /// let distribution =
-    ///     ans::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = distribution.floating_point_probabilities_lossy().collect::<Vec<f32>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);

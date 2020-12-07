@@ -8,7 +8,9 @@ use rand::prelude::*;
 use rand_pcg::Pcg64Mcg;
 use statrs::distribution::Normal;
 
-use ans::{distributions::LeakyQuantizer, BitArray, Decode, Encode, IntoDecoder};
+use constriction::{
+    distributions::LeakyQuantizer, queue, stack, BitArray, Decode, Encode, IntoDecoder,
+};
 
 fn make_random_normal(
     amt: usize,
@@ -117,8 +119,9 @@ fn grid() {
     for amt in [10, 100, 1000, 10000].iter().cloned() {
         {
             {
-                let num_bits_stack = search_precision!(ans::stack::Coder<u32, u64>; u32; true; amt; 8, 12, 16, 24, 32);
-                let num_bits_queue = search_precision!(ans::queue::Encoder<u32, u64>; u32; false; amt; 8, 12, 16, 24, 32);
+                let num_bits_stack =
+                    search_precision!(stack::Coder<u32, u64>; u32; true; amt; 8, 12, 16, 24, 32);
+                let num_bits_queue = search_precision!(queue::Encoder<u32, u64>; u32; false; amt; 8, 12, 16, 24, 32);
                 compare(
                     "Coder<u32, u64>; Probability=u32",
                     &[8, 12, 16, 24, 32],
@@ -129,9 +132,9 @@ fn grid() {
             }
             {
                 let num_bits_stack =
-                    search_precision!(ans::stack::Coder<u32, u64>; u16; true; amt; 8, 12, 16);
+                    search_precision!(stack::Coder<u32, u64>; u16; true; amt; 8, 12, 16);
                 let num_bits_queue =
-                    search_precision!(ans::queue::Encoder<u32, u64>; u16; false; amt; 8, 12, 16);
+                    search_precision!(queue::Encoder<u32, u64>; u16; false; amt; 8, 12, 16);
                 compare(
                     "Coder<u32, u64>; Probability=u16",
                     &[8, 12, 16],
@@ -140,10 +143,9 @@ fn grid() {
                     &num_bits_queue,
                 );
 
-                let num_bits_stack =
-                    search_precision!(ans::stack::Coder<u32, u64>; u8; true; amt; 8);
+                let num_bits_stack = search_precision!(stack::Coder<u32, u64>; u8; true; amt; 8);
                 let num_bits_queue =
-                    search_precision!(ans::queue::Encoder<u32, u64>; u8; false; amt; 8);
+                    search_precision!(queue::Encoder<u32, u64>; u8; false; amt; 8);
                 compare(
                     "Coder<u32, u64>; Probability=u8",
                     &[8],
@@ -154,9 +156,9 @@ fn grid() {
             }
             {
                 let num_bits_stack =
-                    search_precision!(ans::stack::Coder<u16, u64>; u16; true; amt; 8, 12, 16);
+                    search_precision!(stack::Coder<u16, u64>; u16; true; amt; 8, 12, 16);
                 let num_bits_queue =
-                    search_precision!(ans::queue::Encoder<u16, u64>; u16; false; amt; 8, 12, 16);
+                    search_precision!(queue::Encoder<u16, u64>; u16; false; amt; 8, 12, 16);
                 compare(
                     "Coder<u16, u64>; Probability=u16",
                     &[8, 12, 16],
@@ -165,10 +167,9 @@ fn grid() {
                     &num_bits_queue,
                 );
 
-                let num_bits_stack =
-                    search_precision!(ans::stack::Coder<u16, u64>; u8; true; amt; 8);
+                let num_bits_stack = search_precision!(stack::Coder<u16, u64>; u8; true; amt; 8);
                 let num_bits_queue =
-                    search_precision!(ans::queue::Encoder<u16, u64>; u8; false; amt; 8);
+                    search_precision!(queue::Encoder<u16, u64>; u8; false; amt; 8);
                 compare(
                     "Coder<u16, u64>; Probability=u8",
                     &[8],
@@ -178,10 +179,9 @@ fn grid() {
                 );
             }
             {
-                let num_bits_stack =
-                    search_precision!(ans::stack::Coder<u8, u64>; u8; true; amt; 8);
+                let num_bits_stack = search_precision!(stack::Coder<u8, u64>; u8; true; amt; 8);
                 let num_bits_queue =
-                    search_precision!(ans::queue::Encoder<u8, u64>; u8; false; amt; 8);
+                    search_precision!(queue::Encoder<u8, u64>; u8; false; amt; 8);
                 compare(
                     "Coder<u8, u64>; Probability=u8",
                     &[8],
@@ -193,8 +193,9 @@ fn grid() {
             {
                 {
                     let num_bits_stack =
-                        search_precision!(ans::stack::Coder<u16, u32>; u16; true; amt; 8, 12, 16);
-                    let num_bits_queue = search_precision!(ans::queue::Encoder<u16, u32>; u16; false; amt; 8, 12, 16);
+                        search_precision!(stack::Coder<u16, u32>; u16; true; amt; 8, 12, 16);
+                    let num_bits_queue =
+                        search_precision!(queue::Encoder<u16, u32>; u16; false; amt; 8, 12, 16);
                     compare(
                         "Coder<u16, u32>; Probability=u16",
                         &[8, 12, 16],
@@ -204,9 +205,9 @@ fn grid() {
                     );
 
                     let num_bits_stack =
-                        search_precision!(ans::stack::Coder<u16, u32>; u8; true; amt; 8);
+                        search_precision!(stack::Coder<u16, u32>; u8; true; amt; 8);
                     let num_bits_queue =
-                        search_precision!(ans::queue::Encoder<u16, u32>; u8; false; amt; 8);
+                        search_precision!(queue::Encoder<u16, u32>; u8; false; amt; 8);
                     compare(
                         "Coder<u16, u32>; Probability=u8",
                         &[8],
@@ -217,9 +218,9 @@ fn grid() {
                 }
                 {
                     let num_bits_stack =
-                        search_precision!(ans::stack::Coder<u8, u32>; u8; true; amt; 8);
+                        search_precision!(stack::Coder<u8, u32>; u8; true; amt; 8);
                     let num_bits_queue =
-                        search_precision!(ans::queue::Encoder<u8, u32>; u8; false; amt; 8);
+                        search_precision!(queue::Encoder<u8, u32>; u8; false; amt; 8);
                     compare(
                         "Coder<u8, u32>; Probability=u8",
                         &[8],
@@ -232,9 +233,9 @@ fn grid() {
             {
                 {
                     let num_bits_stack =
-                        search_precision!(ans::stack::Coder<u8, u16>; u8; true; amt; 8);
+                        search_precision!(stack::Coder<u8, u16>; u8; true; amt; 8);
                     let num_bits_queue =
-                        search_precision!(ans::queue::Encoder<u8, u16>; u8; false; amt; 8);
+                        search_precision!(queue::Encoder<u8, u16>; u8; false; amt; 8);
                     compare(
                         "Coder<u8, u16>; Probability=u8",
                         &[8],
