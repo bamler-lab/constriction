@@ -134,14 +134,17 @@ where
     ///
     /// // Create a new coder with the same state and use it for decompression:
     /// let mut coder = DefaultCoder::with_compressed_data(compressed);
-    /// let reconstructed = coder.decode_iid_symbols(4, &distribution).collect::<Vec<_>>();
+    /// let reconstructed = coder
+    ///     .decode_iid_symbols(4, &distribution)
+    ///     .collect::<Result<Vec<_>, _>>()
+    ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// assert!(coder.is_empty())
     /// ```
     pub fn into_compressed(mut self) -> Vec<CompressedWord> {
         if !self.is_empty() {
-            let high = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            self.buf.push(high);
+            let word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
+            self.buf.push(word);
         }
         self.buf
     }
@@ -207,7 +210,10 @@ where
     /// dbg!(coder.get_compressed());
     ///
     /// // We can still use the coder afterwards.
-    /// let reconstructed = coder.decode_iid_symbols(4, &distribution).collect::<Vec<_>>();
+    /// let reconstructed = coder
+    ///     .decode_iid_symbols(4, &distribution)
+    ///     .collect::<Result<Vec<_>, _>>()
+    ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// ```
     ///
@@ -349,7 +355,6 @@ where
 
         // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
         self.state.range = scale * probability.into().into();
-        // + self.state.range % (State::one() << D::PRECISION);
 
         if self.state.range < State::one() << (State::BITS - CompressedWord::BITS) {
             // Invariant `range >= State::one() << (State::BITS - CompressedWord::BITS)` is
@@ -362,8 +367,8 @@ where
             // by assumption. Therefore, the following left-shift restores the invariant:
             self.state.range = self.state.range << CompressedWord::BITS;
 
-            let high = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            self.buf.push(high);
+            let word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
+            self.buf.push(word);
             self.state.lower = self.state.lower << CompressedWord::BITS;
         }
 
@@ -526,7 +531,6 @@ where
             .lower
             .wrapping_add(&(scale * left_sided_cumulative.into().into()));
         self.state.range = scale * probability.into().into();
-        //  + self.state.range % (State::one() << D::PRECISION);
 
         // Invariant (*) is still satisfied at this point because:
         //   (point (-) lower) / scale = (point (-) old_lower) / scale (-) left_sided_cumulative
@@ -606,8 +610,8 @@ where
     fn new(encoder: &'a mut Encoder<CompressedWord, State>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         if !encoder.is_empty() {
-            let high = (encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            encoder.buf.push(high);
+            let word = (encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
+            encoder.buf.push(word);
         }
         Self { inner: encoder }
     }

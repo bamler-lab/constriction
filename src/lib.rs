@@ -142,7 +142,7 @@
 //! [Huffman coding]: https://en.wikipedia.org/wiki/Huffman_coding
 
 #![feature(min_const_generics)]
-#![warn(missing_docs, rust_2018_idioms, missing_debug_implementations)]
+#![warn(rust_2018_idioms, missing_debug_implementations)]
 
 #[cfg(feature = "pybindings")]
 pub mod pybindings;
