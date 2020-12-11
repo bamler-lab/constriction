@@ -78,173 +78,99 @@ where
     result
 }
 
-macro_rules! search_precision {
-    ($encoder:ty; $probability:ty; $reverse:expr; $amt:expr; $($precision:expr),+) => {
+macro_rules! batch {
+    ($stack_type:ty; $queue_type:ty; $probability:ty; $($precision:expr),+; $amt:expr) => {
         {
-            [
-                $(
-                    test_normal::<$encoder, $probability, _,  _, $precision, $reverse>(
-                        $amt, |encoder| encoder.num_bits()
-                    )
-                ),+
-            ]
+            $({
+                let num_bits_stack = test_normal::<$stack_type, $probability, _,  _, $precision, true>(
+                    $amt, |encoder| encoder.num_bits()
+                );
+                let num_bits_queue = test_normal::<$queue_type, $probability, _,  _, $precision, false>(
+                    $amt, |encoder| encoder.num_bits()
+                );
+                let coder_label = stringify!($stack_type);
+                let probability_label = stringify!($probability);
+                let word_size = <<$stack_type as ::constriction::Code>::CompressedWord as ::constriction::BitArray>::BITS;
+
+                compare(
+                    coder_label,
+                    probability_label,
+                    $precision,
+                    $amt,
+                    num_bits_stack,
+                    num_bits_queue,
+                    word_size
+                );
+            })+
         }
     }
 }
 
+fn compare(
+    coder_label: &str,
+    probability_label: &str,
+    precision: usize,
+    amt: usize,
+    num_bits_stack: usize,
+    num_bits_queue: usize,
+    word_size: usize,
+) {
+    println!(
+        "{}; Probability={}; precision={}; amt={}: num_bits_stack={}; num_bits_queue={} ({} bits or {} words more than stack)",
+        &coder_label[7..],
+        probability_label,
+        precision,
+        amt,
+        num_bits_stack,
+        num_bits_queue,
+        num_bits_queue as isize - num_bits_stack as isize,
+        (num_bits_queue as isize - num_bits_stack as isize) / word_size as isize
+    );
+}
+
 #[test]
 fn grid() {
-    fn compare(
-        label: &str,
-        precisions: &[usize],
-        amt: usize,
-        num_bits_stack: &[usize],
-        num_bits_queue: &[usize],
-    ) {
-        for ((&num_bits_stack, &num_bits_queue), &precision) in
-            num_bits_stack.iter().zip(num_bits_queue).zip(precisions)
+    let amts = [
+        10,
+        100,
+        1000,
+        #[cfg(not(debug_assertions))]
+        10000,
+    ];
+
+    for amt in amts.iter().cloned() {
         {
-            println!(
-                "{}; precision={}; amt={}: num_bits_stack={}; num_bits_queue={} ({} more than stack)",
-                label,
-                precision,
-                amt,
-                num_bits_stack,
-                num_bits_queue,
-                num_bits_queue as isize - num_bits_stack as isize,
-            );
+            batch!(stack::Coder<u64, u128>; queue::Encoder<u64, u128>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(stack::Coder<u64, u128>; queue::Encoder<u64, u128>; u16; 8, 12, 16; amt);
+            batch!(stack::Coder<u64, u128>; queue::Encoder<u64, u128>; u8; 8; amt);
+
+            batch!(stack::Coder<u32, u128>; queue::Encoder<u32, u128>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(stack::Coder<u32, u128>; queue::Encoder<u32, u128>; u16; 8, 12, 16; amt);
+            batch!(stack::Coder<u32, u128>; queue::Encoder<u32, u128>; u8; 8; amt);
+
+            batch!(stack::Coder<u16, u128>; queue::Encoder<u16, u128>; u16; 8, 12, 16; amt);
+            batch!(stack::Coder<u16, u128>; queue::Encoder<u16, u128>; u8; 8; amt);
+
+            batch!(stack::Coder<u8, u128>; queue::Encoder<u8, u128>; u8; 8; amt);
         }
-    }
-
-    for amt in [10, 100, 1000, 10000].iter().cloned() {
         {
-            {
-                let num_bits_stack =
-                    search_precision!(stack::Coder<u32, u64>; u32; true; amt; 8, 12, 16, 24, 32);
-                let num_bits_queue = search_precision!(queue::Encoder<u32, u64>; u32; false; amt; 8, 12, 16, 24, 32);
-                compare(
-                    "Coder<u32, u64>; Probability=u32",
-                    &[8, 12, 16, 24, 32],
-                    amt,
-                    &num_bits_stack,
-                    &num_bits_queue,
-                );
-            }
-            {
-                let num_bits_stack =
-                    search_precision!(stack::Coder<u32, u64>; u16; true; amt; 8, 12, 16);
-                let num_bits_queue =
-                    search_precision!(queue::Encoder<u32, u64>; u16; false; amt; 8, 12, 16);
-                compare(
-                    "Coder<u32, u64>; Probability=u16",
-                    &[8, 12, 16],
-                    amt,
-                    &num_bits_stack,
-                    &num_bits_queue,
-                );
+            batch!(stack::Coder<u32, u64>; queue::Encoder<u32, u64>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(stack::Coder<u32, u64>; queue::Encoder<u32, u64>; u16; 8, 12, 16; amt);
+            batch!(stack::Coder<u32, u64>; queue::Encoder<u32, u64>; u8; 8; amt);
 
-                let num_bits_stack = search_precision!(stack::Coder<u32, u64>; u8; true; amt; 8);
-                let num_bits_queue =
-                    search_precision!(queue::Encoder<u32, u64>; u8; false; amt; 8);
-                compare(
-                    "Coder<u32, u64>; Probability=u8",
-                    &[8],
-                    amt,
-                    &num_bits_stack,
-                    &num_bits_queue,
-                );
-            }
-            {
-                let num_bits_stack =
-                    search_precision!(stack::Coder<u16, u64>; u16; true; amt; 8, 12, 16);
-                let num_bits_queue =
-                    search_precision!(queue::Encoder<u16, u64>; u16; false; amt; 8, 12, 16);
-                compare(
-                    "Coder<u16, u64>; Probability=u16",
-                    &[8, 12, 16],
-                    amt,
-                    &num_bits_stack,
-                    &num_bits_queue,
-                );
+            batch!(stack::Coder<u16, u64>; queue::Encoder<u16, u64>; u16; 8, 12, 16; amt);
+            batch!(stack::Coder<u16, u64>; queue::Encoder<u16, u64>; u8; 8; amt);
 
-                let num_bits_stack = search_precision!(stack::Coder<u16, u64>; u8; true; amt; 8);
-                let num_bits_queue =
-                    search_precision!(queue::Encoder<u16, u64>; u8; false; amt; 8);
-                compare(
-                    "Coder<u16, u64>; Probability=u8",
-                    &[8],
-                    amt,
-                    &num_bits_stack,
-                    &num_bits_queue,
-                );
-            }
-            {
-                let num_bits_stack = search_precision!(stack::Coder<u8, u64>; u8; true; amt; 8);
-                let num_bits_queue =
-                    search_precision!(queue::Encoder<u8, u64>; u8; false; amt; 8);
-                compare(
-                    "Coder<u8, u64>; Probability=u8",
-                    &[8],
-                    amt,
-                    &num_bits_stack,
-                    &num_bits_queue,
-                );
-            }
-            {
-                {
-                    let num_bits_stack =
-                        search_precision!(stack::Coder<u16, u32>; u16; true; amt; 8, 12, 16);
-                    let num_bits_queue =
-                        search_precision!(queue::Encoder<u16, u32>; u16; false; amt; 8, 12, 16);
-                    compare(
-                        "Coder<u16, u32>; Probability=u16",
-                        &[8, 12, 16],
-                        amt,
-                        &num_bits_stack,
-                        &num_bits_queue,
-                    );
+            batch!(stack::Coder<u8, u64>; queue::Encoder<u8, u64>; u8; 8; amt);
+        }
+        {
+            batch!(stack::Coder<u16, u32>; queue::Encoder<u16, u32>; u16; 8, 12, 16; amt);
+            batch!(stack::Coder<u16, u32>; queue::Encoder<u16, u32>; u8; 8; amt);
 
-                    let num_bits_stack =
-                        search_precision!(stack::Coder<u16, u32>; u8; true; amt; 8);
-                    let num_bits_queue =
-                        search_precision!(queue::Encoder<u16, u32>; u8; false; amt; 8);
-                    compare(
-                        "Coder<u16, u32>; Probability=u8",
-                        &[8],
-                        amt,
-                        &num_bits_stack,
-                        &num_bits_queue,
-                    );
-                }
-                {
-                    let num_bits_stack =
-                        search_precision!(stack::Coder<u8, u32>; u8; true; amt; 8);
-                    let num_bits_queue =
-                        search_precision!(queue::Encoder<u8, u32>; u8; false; amt; 8);
-                    compare(
-                        "Coder<u8, u32>; Probability=u8",
-                        &[8],
-                        amt,
-                        &num_bits_stack,
-                        &num_bits_queue,
-                    );
-                }
-            }
-            {
-                {
-                    let num_bits_stack =
-                        search_precision!(stack::Coder<u8, u16>; u8; true; amt; 8);
-                    let num_bits_queue =
-                        search_precision!(queue::Encoder<u8, u16>; u8; false; amt; 8);
-                    compare(
-                        "Coder<u8, u16>; Probability=u8",
-                        &[8],
-                        amt,
-                        &num_bits_stack,
-                        &num_bits_queue,
-                    );
-                }
-            }
+            batch!(stack::Coder<u8, u32>; queue::Encoder<u8, u32>; u8; 8; amt);
+        }
+        {
+            batch!(stack::Coder<u8, u16>; queue::Encoder<u8, u16>; u8; 8; amt);
         }
     }
 }
