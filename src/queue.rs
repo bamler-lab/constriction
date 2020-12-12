@@ -336,12 +336,16 @@ where
         let (left_sided_cumulative, probability) = distribution
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncodingError::ImpossibleSymbol)?;
+        let left_sided_cumulative = left_sided_cumulative.into().into();
+        let probability = probability.into().into();
 
-        let scale = self.state.range >> D::PRECISION;
+        let scale_high = self.state.range >> D::PRECISION;
+        let scale_low = self.state.range % (State::one() << D::PRECISION);
         let new_lower = self
             .state
             .lower
-            .wrapping_add(&(scale * left_sided_cumulative.into().into()));
+            .wrapping_add(&(scale_high * left_sided_cumulative))
+            .wrapping_add(&((scale_low * left_sided_cumulative) >> D::PRECISION));
         if new_lower < self.state.lower {
             // Addition has wrapped around, so we have to propagate back the carry bit.
             for word in self.buf.iter_mut().rev() {
@@ -354,7 +358,7 @@ where
         self.state.lower = new_lower;
 
         // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
-        self.state.range = scale * probability.into().into();
+        self.state.range = scale_high * probability + ((scale_low * probability) >> D::PRECISION);
 
         if self.state.range < State::one() << (State::BITS - CompressedWord::BITS) {
             // Invariant `range >= State::one() << (State::BITS - CompressedWord::BITS)` is
@@ -513,8 +517,12 @@ where
         //   point (-) lower < range
         // where (-) denotes wrapping subtraction (in `Self::State`).
 
-        let scale = self.state.range >> D::PRECISION;
-        let quantile = self.point.wrapping_sub(&self.state.lower) / scale;
+        let scale_high = self.state.range >> D::PRECISION;
+        let scale_low = self.state.range % (State::one() << D::PRECISION);
+
+        let x = self.point.wrapping_sub(&self.state.lower);
+        let quantile = ((x / self.state.range) << D::PRECISION)
+            | ((x % self.state.range) << D::PRECISION) / self.state.range;
         if quantile >= State::one() << D::PRECISION {
             // This can only happen if both of the following conditions apply:
             // (i) we are decoding invalid compressed data; and
@@ -524,13 +532,16 @@ where
 
         let (symbol, left_sided_cumulative, probability) =
             distribution.quantile_function(quantile.as_().as_());
+        let left_sided_cumulative = left_sided_cumulative.into().into();
+        let probability = probability.into().into();
 
         // Update `state` in the same way as we do in `encode_symbol` (see comments there):
         self.state.lower = self
             .state
             .lower
-            .wrapping_add(&(scale * left_sided_cumulative.into().into()));
-        self.state.range = scale * probability.into().into();
+            .wrapping_add(&(scale_high * left_sided_cumulative))
+            .wrapping_add(&((scale_low * left_sided_cumulative) >> D::PRECISION));
+        self.state.range = scale_high * probability + ((scale_low * probability) >> D::PRECISION);
 
         // Invariant (*) is still satisfied at this point because:
         //   (point (-) lower) / scale = (point (-) old_lower) / scale (-) left_sided_cumulative
