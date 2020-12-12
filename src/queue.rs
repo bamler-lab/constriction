@@ -231,6 +231,8 @@ where
         Decoder::new(self.get_compressed())
     }
 
+    pub fn cursor(&mut self, pos: usize, state: Self::State) -> Cursor<CompressedWord, State> {}
+
     /// Iterates over the compressed data currently on the stack.
     ///
     /// In contrast to [`get_compressed`] or [`into_compressed`], this method does
@@ -576,6 +578,41 @@ impl std::fmt::Display for DecodingError {
 }
 
 impl Error for DecodingError {}
+
+pub struct Cursor<'encoder, CompressedWord: BitArray, State: BitArray> {
+    encoder: &'encoder mut Encoder<CompressedWord, State>,
+    rest_state: CoderState<CompressedWord, State>,
+    final_state: CoderState<CompressedWord, State>,
+    rest: Vec<CompressedWord>,
+}
+
+impl<'encoder, CompressedWord: BitArray, State: BitArray> Cursor<'encoder, CompressedWord, State> {
+    fn new(
+        encoder: &'encoder mut Encoder<CompressedWord, State>,
+        pos: usize, // Index of next CompressedWord to be read if we were to decode
+        state: CoderState<CompressedWord, State>,
+    ) -> Option<Self> {
+        let rest = encoder.buf.get(pos..)?.to_vec();
+        let final_state = std::mem::replace(&mut encoder.state, state);
+        Self {
+            encoder,
+            rest_state: state,
+            final_state,
+            rest,
+        }
+    }
+
+    fn insert_symbol<S, D>(
+        &mut self,
+        symbol: impl Borrow<S>,
+        distribution: D,
+    ) -> Result<(), EncodingError>
+    where
+        D: DiscreteDistribution<Symbol = S>,
+        D::Probability: Into<Self::CompressedWord>,
+    {
+    }
+}
 
 /// Provides temporary read-only access to the compressed data wrapped in an
 /// [`Encoder`].
