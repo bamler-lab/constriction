@@ -4,7 +4,7 @@ use num::cast::AsPrimitive;
 
 use super::{
     bit_array_from_chunks, bit_array_to_chunks_exact, distributions::DiscreteDistribution,
-    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder,
+    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder, Pos,
 };
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
@@ -61,6 +61,16 @@ where
 
     fn state(&self) -> &Self::State {
         &self.state
+    }
+}
+
+impl<CompressedWord, State> Pos for Encoder<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn pos(&self) -> usize {
+        self.buf.len()
     }
 }
 
@@ -231,7 +241,13 @@ where
         Decoder::new(self.get_compressed())
     }
 
-    pub fn cursor(&mut self, pos: usize, state: Self::State) -> Cursor<CompressedWord, State> {}
+    pub fn cursor(
+        &mut self,
+        pos: usize,
+        state: <Self as Code>::State,
+    ) -> Option<Cursor<'_, CompressedWord, State>> {
+        Cursor::new(self, pos, state)
+    }
 
     /// Iterates over the compressed data currently on the stack.
     ///
@@ -579,30 +595,122 @@ impl std::fmt::Display for DecodingError {
 
 impl Error for DecodingError {}
 
-pub struct Cursor<'encoder, CompressedWord: BitArray, State: BitArray> {
+pub struct Cursor<'encoder, CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
     encoder: &'encoder mut Encoder<CompressedWord, State>,
     rest_state: CoderState<CompressedWord, State>,
     final_state: CoderState<CompressedWord, State>,
     rest: Vec<CompressedWord>,
 }
 
-impl<'encoder, CompressedWord: BitArray, State: BitArray> Cursor<'encoder, CompressedWord, State> {
+impl<'encoder, CompressedWord, State> Cursor<'encoder, CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
     fn new(
         encoder: &'encoder mut Encoder<CompressedWord, State>,
         pos: usize, // Index of next CompressedWord to be read if we were to decode
         state: CoderState<CompressedWord, State>,
     ) -> Option<Self> {
         let rest = encoder.buf.get(pos..)?.to_vec();
+        encoder.buf.resize(pos, CompressedWord::zero()); // Will never enlarge buf.
         let final_state = std::mem::replace(&mut encoder.state, state);
-        Self {
+
+        Some(Self {
             encoder,
             rest_state: state,
             final_state,
             rest,
+        })
+    }
+}
+
+impl<'encoder, CompressedWord, State> Drop for Cursor<'encoder, CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn drop(&mut self) {
+        let mut rest_iter = self.rest.iter();
+
+        if let Some(&first_word) = rest_iter.next() {
+            let rest_scale = self.rest_state.range >> CompressedWord::BITS;
+            let mut scale = self.encoder.state.range >> CompressedWord::BITS;
+            let x = first_word.wrapping_sub(
+                &(self.rest_state.lower >> (State::BITS - CompressedWord::BITS)).as_(),
+            );
+            let y = (self.encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
+
+            let scaled_x = scale * x.into();
+            let new_word = (scaled_x / rest_scale).as_();
+            let carry = scaled_x % rest_scale;
+
+            if self.encoder.state.range <= self.rest_state.range {
+                // Emit a new compressed word.
+                self.encoder.buf.push(new_word);
+                self.encoder.state.lower = self.encoder.state.lower << CompressedWord::BITS;
+                scale = self.encoder.state.range / self.rest_state.range;
+            } else {
+                scale = scale / rest_scale2;
+            }
+
+            self.encoder.state.range =self.encoder.state.range/
+
+            for &word in rest_iter {
+                // Encode symbol with `PRECISION=CompressedWord::BITS`,
+                // `left_sided_cumulative = word`, and `prob = 1`.
+                let new_lower = self
+                    .encoder
+                    .state
+                    .lower
+                    .wrapping_add(&(scale * word.into()));
+                if new_lower < self.encoder.state.lower {
+                    // Addition has wrapped around, so we have to propagate back the carry bit.
+                    for word_back in self.encoder.buf.iter_mut().rev() {
+                        *word_back = word_back.wrapping_add(&CompressedWord::one());
+                        if *word_back != CompressedWord::zero() {
+                            break;
+                        }
+                    }
+                }
+                self.encoder.state.lower = new_lower;
+
+                // Emit a new compressed word.
+                scale = scale << CompressedWord::BITS;
+                let word_new =
+                    (self.encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
+                self.encoder.buf.push(word_new);
+                self.encoder.state.lower = self.encoder.state.lower << CompressedWord::BITS;
+            }
+
+            self.encoder.state.range = scale << CompressedWord::BITS;
         }
     }
+}
 
-    fn insert_symbol<S, D>(
+impl<'encoder, CompressedWord, State> Code for Cursor<'encoder, CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    type CompressedWord = <Encoder<CompressedWord, State> as Code>::CompressedWord;
+    type State = <Encoder<CompressedWord, State> as Code>::State;
+
+    fn state(&self) -> &Self::State {
+        self.encoder.state()
+    }
+}
+
+impl<'encoder, CompressedWord, State> Encode for Cursor<'encoder, CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn encode_symbol<S, D>(
         &mut self,
         symbol: impl Borrow<S>,
         distribution: D,
@@ -611,6 +719,7 @@ impl<'encoder, CompressedWord: BitArray, State: BitArray> Cursor<'encoder, Compr
         D: DiscreteDistribution<Symbol = S>,
         D::Probability: Into<Self::CompressedWord>,
     {
+        self.encoder.encode_symbol(symbol, distribution)
     }
 }
 
@@ -971,5 +1080,31 @@ mod tests {
 
         assert_eq!(symbols_categorical, reconstructed_categorical);
         assert_eq!(symbols_gaussian, reconstructed_gaussian);
+    }
+
+    #[test]
+    fn insert_none() {
+        let mut encoder = DefaultEncoder::new();
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
+        let distribution = quantizer.quantize(Normal::new(3.2, 50.1).unwrap());
+
+        encoder.encode_iid_symbols(-20..0, &distribution).unwrap();
+        let state = *encoder.state();
+        let pos = encoder.pos();
+        encoder.encode_iid_symbols(0..20, &distribution).unwrap();
+
+        let expected = encoder.get_compressed().to_vec();
+
+        let cursor = encoder.cursor(pos, state);
+        std::mem::drop(cursor);
+
+        let decoded = encoder
+            .decoder()
+            .decode_iid_symbols(40, &distribution)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(decoded, (-20..20).collect::<Vec<_>>());
+        assert_eq!(encoder.into_compressed(), expected);
     }
 }
