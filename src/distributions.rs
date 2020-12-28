@@ -96,7 +96,7 @@ impl<D: DiscreteDistribution> DiscreteDistribution for &D {
 /// # Example
 ///
 /// ```
-/// use constriction::{distributions::LeakyQuantizer, stack::DefaultCoder, Encode};
+/// use constriction::{distributions::LeakyQuantizer, stack::DefaultStack, Encode};
 ///
 /// // Get a quantizer that supports integer symbols from -5 to 20 (inclusively),
 /// // representing probabilities with 24 bit precision backed by `u32`s.
@@ -111,7 +111,7 @@ impl<D: DiscreteDistribution> DiscreteDistribution for &D {
 /// let discrete_distribution2 = quantizer.quantize(continuous_distribution2);
 ///
 /// // Use the discrete distributions with a `Coder`.
-/// let mut coder = DefaultCoder::new();
+/// let mut coder = DefaultStack::new();
 /// coder.encode_symbol(4, discrete_distribution1);
 /// coder.encode_symbol(-3, discrete_distribution2);
 /// ```

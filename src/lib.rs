@@ -167,7 +167,7 @@ pub trait Code {
     /// Returns the current internal state of the coder.
     ///
     /// This method is usually used together with [`Seek::seek`].
-    fn state(&self) -> &Self::State;
+    fn state(&self) -> Self::State;
 }
 
 pub trait Encode: Code {

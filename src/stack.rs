@@ -19,14 +19,14 @@ use super::{
 /// precision used in entropy models. See [below](
 /// #generic-parameters-compressed-word-type-w-and-precision) for details on these
 /// parameters. If you're unsure about the choice of `CompressedWord` and `PRECISION` then use
-/// the type alias [`DefaultCoder`], which makes sane choices for typical
+/// the type alias [`DefaultStack`], which makes sane choices for typical
 /// applications.
 ///
-/// The `Coder` uses an entropy coding algorithm called [range Asymmetric
+/// The `Stack` uses an entropy coding algorithm called [range Asymmetric
 /// Numeral Systems (rANS)]. This means that it operates as a stack, i.e., a "last
 /// in first out" data structure: encoding "pushes symbols on" the stack and
 /// decoding "pops symbols off" the stack in reverse order. In contrast to
-/// [`SeekableDecoder`], decoding with a `Coder` *consumes* the compressed data for
+/// [`SeekableDecoder`], decoding with a `Stack` *consumes* the compressed data for
 /// the decoded symbols. This means that encoding and decoding can be interleaved
 /// arbitrarily, thus growing and shrinking the stack of compressed data as you go.
 ///
@@ -36,10 +36,10 @@ use super::{
 /// [`encode_symbols`] or [`encode_iid_symbols`].
 ///
 /// ```
-/// use constriction::{distributions::LeakyQuantizer, stack::DefaultCoder, Decode};
+/// use constriction::{distributions::LeakyQuantizer, stack::DefaultStack, Decode};
 ///
-/// // `DefaultCoder` is a type alias to `Coder` with sane generic parameters.
-/// let mut coder = DefaultCoder::new();
+/// // `DefaultStack` is a type alias to `Stack` with sane generic parameters.
+/// let mut coder = DefaultStack::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
 /// let entropy_model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
 ///
@@ -58,14 +58,14 @@ use super::{
 ///
 /// # Generic Parameters: Compressed Word Type `CompressedWord` and `PRECISION`
 ///
-/// The `Coder` is generic over a type `CompressedWord`, which is a [`CompressedWord`], and over
+/// The `Stack` is generic over a type `CompressedWord`, which is a [`CompressedWord`], and over
 /// a constant `PRECISION` of type `usize`. **If you're unsure how to set these
-/// parameters, consider using the type alias [`DefaultCoder`], which uses sane
+/// parameters, consider using the type alias [`DefaultStack`], which uses sane
 /// default values.**
 ///
 /// ## Meaning of `CompressedWord` and `PRECISION`
 ///
-/// If you need finer control over the entropy coder, and [`DefaultCoder`] does not
+/// If you need finer control over the entropy coder, and [`DefaultStack`] does not
 /// fit your needs, then here are the details about the parameters `CompressedWord` and
 /// `PRECISION`:
 ///
@@ -73,11 +73,11 @@ use super::{
 ///   unsigned integer type, such as `u32` or `u16`. The type `CompressedWord` is also used to
 ///   represent probabilities in fixed-point arithmetic in any
 ///   [`DiscreteDistribution`] that can be employed as an entropy model for this
-///   `Coder` (however, when representing probabilities, only use the lowest
+///   `Stack` (however, when representing probabilities, only use the lowest
 ///   `PRECISION` bits of a `CompressedWord` are ever used).
 ///
-///   The `Coder` operates on an internal state whose size is twice as large as `CompressedWord`.
-///   When encoding data, the `Coder` keeps filling up this internal state with
+///   The `Stack` operates on an internal state whose size is twice as large as `CompressedWord`.
+///   When encoding data, the `Stack` keeps filling up this internal state with
 ///   compressed data until it is about to overflow. Just before the internal state
 ///   would overflow, the coder chops off half of it and pushes one "compressed
 ///   word" of type `CompressedWord` onto a dynamically growable and shrinkable buffer of `CompressedWord`s.
@@ -92,8 +92,8 @@ use super::{
 ///
 ///   Since the smallest representable probability is `(1/2)^PRECISION`, the largest
 ///   possible (finite) [information content of a single symbol is `PRECISION`
-///   bits. Thus, pushing a single symbol onto the `Coder` increases the "filling
-///   level" of the `Coder`'s internal state by at most `PRECISION` bits. Since
+///   bits. Thus, pushing a single symbol onto the `Stack` increases the "filling
+///   level" of the `Stack`'s internal state by at most `PRECISION` bits. Since
 ///   `PRECISION` is at most the bitlength of `CompressedWord`, the procedure of transferring one
 ///   `CompressedWord` from the internal state to the buffer described in the list item above is
 ///   guaranteed to free up enough internal state to encode at least one additional
@@ -102,7 +102,7 @@ use super::{
 /// ## Guidance for Choosing `CompressedWord` and `PRECISION`
 ///
 /// If you choose `CompressedWord` and `PRECISION` manually (rather than using a
-/// [`DefaultCoder`]), then your choice should take into account the following
+/// [`DefaultStack`]), then your choice should take into account the following
 /// considerations:
 ///
 /// - Set `PRECISION` to a high enough value so that you can approximate your
@@ -121,13 +121,13 @@ use super::{
 ///   - it affects the size of the internal state of the coder; this is relevant if
 ///     you want to store many different internal states, e.g., as a jump table for
 ///     a [`SeekableDecoder`].
-///   - it leads to a small *constant* overhead in bitrate: since the `Coder`
+///   - it leads to a small *constant* overhead in bitrate: since the `Stack`
 ///     operates on an internal  state of two `CompressedWord`s, it has a constant bitrate
 ///     overhead between zero and two `CompressedWord`s depending on the filling level of the
 ///     internal state. This constant  overhead is usually negligible unless you
 ///     want to compress a very small amount of data.
 ///   - the choice of `CompressedWord` may have some effect on runtime performance since
-///     operations on larger types may be more expensive (remember that the `Coder`
+///     operations on larger types may be more expensive (remember that the `Stack`
 ///     operates on a state of twice the size as `CompressedWord`, i.e., if `CompressedWord = u64` then the
 ///     coder will operate on a `u128`, which may be slow on some hardware). On the
 ///     other hand, this overhead should not be used as an argument for setting `CompressedWord`
@@ -140,17 +140,17 @@ use super::{
 ///   on the bitrate. It is usually *not* a good idea to set `PRECISION` to the
 ///   highest value allowed for a given `CompressedWord` (e.g., setting `CompressedWord = u32` and
 ///   `PRECISION = 32` is *not* recommended). This is because, when encoding a
-///   symbol, the `Coder` expects there to be at least `PRECISION` bits of entropy
+///   symbol, the `Stack` expects there to be at least `PRECISION` bits of entropy
 ///   in its internal state (conceptually, encoding a symbol `s` consists of
 ///   consuming `PRECISION` bits of entropy followed by pushing
 ///   `PRECISION + information_content(s)` bits of entropy onto the internal state).
 ///   If `PRECISION` is set to the full size of `CompressedWord` then there will be relatively
 ///   frequent situations where the internal state contains less than `PRECISION`
 ///   bits of entropy, leading to an overhead (this situation will typically arise
-///   after the `Coder` transferred a `CompressedWord` from the internal state to the growable
+///   after the `Stack` transferred a `CompressedWord` from the internal state to the growable
 ///   buffer).
 ///
-/// The type alias [`DefaultCoder`] was chose with the above considerations in mind.
+/// The type alias [`DefaultStack`] was chose with the above considerations in mind.
 ///
 /// # Consistency Between Encoding and Decoding
 ///
@@ -163,7 +163,7 @@ use super::{
 ///
 /// However, using the same entropy models for encoding and decoding is not a
 /// *general* requirement. It is perfectly legal to push (encode) symbols on the
-/// `Coder` using some entropy models, and then pop off (decode) symbols using
+/// `Stack` using some entropy models, and then pop off (decode) symbols using
 /// different entropy models. The popped off symbols will then in general be
 /// different from the original symbols, but will be generated in a deterministic
 /// way. If there is no deterministic relation between the entropy models used for
@@ -183,18 +183,21 @@ use super::{
 /// [`encode_symbols`]: #method.encode_symbols
 /// [`is_empty`]: #method.is_empty`
 /// [`into_compressed`]: #method.into_compressed
-pub struct Coder<CompressedWord: BitArray, State: BitArray> {
+pub struct Stack<CompressedWord: BitArray, State: BitArray> {
     buf: Vec<CompressedWord>,
+
+    /// Invariant: `state >= State::one() << (State::BITS - CompressedWord::BITS)`
+    /// unless `buf.is_empty()`.
     state: State,
 }
 
-/// Type alias for a [`Coder`] with sane parameters for typical use cases.
+/// Type alias for a [`Stack`] with sane parameters for typical use cases.
 ///
 /// This type alias sets the generic type arguments `CompressedWord` and `State` to
 /// sane values for many typical use cases.
-pub type DefaultCoder = Coder<u32, u64>;
+pub type DefaultStack = Stack<u32, u64>;
 
-impl<CompressedWord, State> Debug for Coder<CompressedWord, State>
+impl<CompressedWord, State> Debug for Stack<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -204,7 +207,7 @@ where
     }
 }
 
-impl<CompressedWord, State> IntoDecoder for Coder<CompressedWord, State>
+impl<CompressedWord, State> IntoDecoder for Stack<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -212,7 +215,7 @@ where
     type IntoDecoder = Self;
 }
 
-impl<CompressedWord, State> Default for Coder<CompressedWord, State>
+impl<CompressedWord, State> Default for Stack<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -222,7 +225,7 @@ where
     }
 }
 
-impl<CompressedWord, State> Coder<CompressedWord, State>
+impl<CompressedWord, State> Stack<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -234,7 +237,7 @@ where
     /// # Example
     ///
     /// ```
-    /// let mut coder = constriction::stack::DefaultCoder::new();
+    /// let mut coder = constriction::stack::DefaultStack::new();
     ///
     /// // ... push some symbols onto the coder ...
     ///
@@ -323,8 +326,8 @@ where
 
     /// Check if no data for decoding is left.
     ///
-    /// Same as [`Decoder::maybe_finished`], just with a more suitable considering the
-    /// fact that this coder operates as a growable and shrinkable stack.
+    /// Same as [`Decoder::maybe_finished`], just with a more suitable name considering
+    /// the fact that this coder operates as a growable and shrinkable stack.
     ///
     /// Note that you can still pop symbols off an empty coder, but this is only
     /// useful in rare edge cases, see documentation of
@@ -347,9 +350,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::Categorical, stack::DefaultCoder, Decode};
+    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
     ///
-    /// let mut coder = DefaultCoder::new();
+    /// let mut coder = DefaultStack::new();
     ///
     /// // Push some data on the coder:
     /// let symbols = vec![8, 2, 0, 7];
@@ -364,7 +367,7 @@ where
     /// // ... write `compressed` to a file and then read it back later ...
     ///
     /// // Create a new coder with the same state and use it for decompression:
-    /// let mut coder = DefaultCoder::with_compressed_data(compressed);
+    /// let mut coder = DefaultStack::with_compressed_data(compressed);
     /// let reconstructed = coder
     ///     .decode_iid_symbols(4, &distribution)
     ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
@@ -415,7 +418,7 @@ where
     /// [`with_compressed_data`].
     ///
     /// This method requires a `&mut self` receiver. If you only have a shared
-    /// reference to a `Coder`, consider calling [`as_compressed_raw`] or
+    /// reference to a `Stack`, consider calling [`as_compressed_raw`] or
     /// [`iter_compressed`] instead.
     ///
     /// The returned `CoderGuard` dereferences to `&[CompressedWord]`, thus providing read-only
@@ -425,9 +428,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::Categorical, stack::DefaultCoder, Decode};
+    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
     ///
-    /// let mut coder = DefaultCoder::new();
+    /// let mut coder = DefaultStack::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
@@ -458,15 +461,15 @@ where
     /// Iterates over the compressed data currently on the stack.
     ///
     /// In contrast to [`get_compressed`] or [`into_compressed`], this method does
-    /// not require mutable access or even ownership of the `Coder`.
+    /// not require mutable access or even ownership of the `Stack`.
     ///
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultCoder, Encode};
+    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultStack, Encode};
     ///
     /// // Create a coder and encode some stuff.
-    /// let mut coder = DefaultCoder::new();
+    /// let mut coder = DefaultStack::new();
     /// let symbols = vec![8, -12, 0, 7];
     /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
     /// let distribution =
@@ -526,9 +529,85 @@ where
     pub fn num_bits(&self) -> usize {
         CompressedWord::BITS * self.num_words()
     }
+
+    pub fn into_auryn(self) -> Auryn<CompressedWord, State> {
+        self.into()
+    }
+
+    #[inline(always)]
+    fn chop_quantile_off_state<D: DiscreteDistribution>(&mut self) -> D::Probability
+    where
+        CompressedWord: AsPrimitive<D::Probability>,
+    {
+        let quantile = (self.state % (State::one() << D::PRECISION)).as_().as_();
+        self.state = self.state >> D::PRECISION;
+        quantile
+    }
+
+    /// Checks the invariant on `self.state` and restores it if necessary and possible.
+    #[inline(always)]
+    fn maybe_refill_state(&mut self) {
+        if self.state < State::one() << (State::BITS - CompressedWord::BITS) {
+            // Invariant on `self.state` (see its doc comment) is violated. Restore it by
+            // refilling with a compressed word from `self.buf` if available.
+            if let Some(word) = self.buf.pop() {
+                self.state = (self.state << CompressedWord::BITS) | word.into();
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn maybe_flush_state<D: DiscreteDistribution>(&mut self, threshold: D::Probability)
+    where
+        D::Probability: Into<CompressedWord>,
+    {
+        if (self.state >> (State::BITS - D::PRECISION)) >= threshold.into().into() {
+            self.buf.push(self.state.as_());
+            self.state = self.state >> CompressedWord::BITS;
+        }
+    }
+
+    #[inline(always)]
+    fn encode_quantile_onto_state<Probability: BitArray>(
+        &mut self,
+        quantile: Probability,
+        left_sided_cumulative: Probability,
+        probability: Probability,
+    ) where
+        Probability: Into<CompressedWord>,
+    {
+        self.state = probability.into().into() * self.state
+            + (quantile - left_sided_cumulative).into().into();
+    }
+
+    #[inline(always)]
+    fn decode_quantile_off_state<Probability: BitArray>(
+        &mut self,
+        left_sided_cumulative: Probability,
+        probability: Probability,
+    ) -> Result<State, EncodingError>
+    where
+        Probability: Into<CompressedWord>,
+    {
+        let quantile = left_sided_cumulative.into().into() + self.state % probability.into().into();
+        self.state = self
+            .state
+            .checked_div(&probability.into().into())
+            .ok_or(EncodingError::ImpossibleSymbol)?;
+
+        Ok(quantile)
+    }
+
+    #[inline(always)]
+    fn append_quantile_to_state<D: DiscreteDistribution>(&mut self, quantile: State)
+    where
+        D::Probability: Into<CompressedWord>,
+    {
+        self.state = (self.state << D::PRECISION) | quantile;
+    }
 }
 
-impl<CompressedWord, State> Code for Coder<CompressedWord, State>
+impl<CompressedWord, State> Code for Stack<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -536,12 +615,12 @@ where
     type State = State;
     type CompressedWord = CompressedWord;
 
-    fn state(&self) -> &Self::State {
-        &self.state
+    fn state(&self) -> Self::State {
+        self.state
     }
 }
 
-impl<CompressedWord, State> Encode for Coder<CompressedWord, State>
+impl<CompressedWord, State> Encode for Stack<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -556,7 +635,7 @@ where
     /// can provide the symbol either by value or by reference.
     ///
     /// This method is called `encode_symbol` rather than `encode_symbol` to stress
-    /// the fact that the `Coder` is a stack: the last symbol *pushed onto* the
+    /// the fact that the `Stack` is a stack: the last symbol *pushed onto* the
     /// stack will be the first symbol that [`decode_symbol`](#method.decode_symbol) will
     /// *pop off* the stack.
     ///
@@ -583,24 +662,18 @@ where
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncodingError::ImpossibleSymbol)?;
 
-        if (self.state >> (State::BITS - D::PRECISION)).as_() >= probability.into() {
-            self.buf.push(self.state.as_());
-            self.state = self.state >> CompressedWord::BITS;
-        }
+        self.maybe_flush_state::<D>(probability);
+        // At this point, the invariant on `self.state` (see its doc comment) may
+        // be temporarily violated, but it will be restored below.
 
-        let prefix = self
-            .state
-            .checked_div(&probability.into().into())
-            .ok_or(EncodingError::ImpossibleSymbol)?;
-
-        let suffix = left_sided_cumulative.into().into() + self.state % probability.into().into();
-        self.state = (prefix << D::PRECISION) | suffix.into();
+        let quantile = self.decode_quantile_off_state(left_sided_cumulative, probability)?;
+        self.append_quantile_to_state::<D>(quantile);
 
         Ok(())
     }
 }
 
-impl<CompressedWord, State> Decode for Coder<CompressedWord, State>
+impl<CompressedWord, State> Decode for Stack<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -614,7 +687,7 @@ where
     /// [`decode_iid_symbols`](#method.decode_iid_symbols) instead.
     ///
     /// This method is called `decode_symbol` rather than `decode_symbol` to stress the
-    /// fact that the `Coder` is a stack: `decode_symbol` will return the *last* symbol
+    /// fact that the `Stack` is a stack: `decode_symbol` will return the *last* symbol
     /// that was previously encoded via [`encode_symbol`](#method.encode_symbol).
     ///
     /// Note that this method cannot fail. It will still produce symbols in a
@@ -628,17 +701,10 @@ where
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
-        let quantile = (self.state % (State::one() << D::PRECISION)).as_().as_();
-        let rest = self.state >> D::PRECISION;
+        let quantile = self.chop_quantile_off_state::<D>();
         let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
-        self.state =
-            probability.into().into() * rest + (quantile - left_sided_cumulative).into().into();
-
-        if self.state < State::one() << (State::BITS - CompressedWord::BITS) {
-            if let Some(word) = self.buf.pop() {
-                self.state = (self.state << CompressedWord::BITS) | word.into();
-            }
-        }
+        self.encode_quantile_onto_state(quantile, left_sided_cumulative, probability);
+        self.maybe_refill_state();
 
         Ok(symbol)
     }
@@ -649,18 +715,18 @@ where
 }
 
 /// Provides temporary read-only access to the compressed data wrapped in a
-/// [`Coder`].
+/// [`Stack`].
 ///
 /// Dereferences to `&[CompressedWord]`. See [`Coder::get_compressed`] for an example.
 ///
-/// [`Coder`]: struct.Coder.html
+/// [`Stack`]: struct.Coder.html
 /// [`Coder::get_compressed`]: struct.Coder.html#method.get_compressed
 pub struct CoderGuard<'a, CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    inner: &'a mut Coder<CompressedWord, State>,
+    inner: &'a mut Stack<CompressedWord, State>,
 }
 
 impl<CompressedWord, State> Debug for CoderGuard<'_, CompressedWord, State>
@@ -678,7 +744,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn new(coder: &'a mut Coder<CompressedWord, State>) -> Self {
+    fn new(coder: &'a mut Stack<CompressedWord, State>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         for chunk in bit_array_to_chunks_truncated(coder.state).rev() {
             coder.buf.push(chunk)
@@ -724,7 +790,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn new(coder: &'a Coder<CompressedWord, State>) -> Self {
+    fn new(coder: &'a Stack<CompressedWord, State>) -> Self {
         let (buf, state) = coder.as_compressed_raw();
 
         // This can only fail if we wouldn't even be able to allocate space for `state` on the heap.
@@ -812,6 +878,172 @@ where
     }
 }
 
+/// # Origin of the Name "Auryn"
+///
+/// AURYN is a medallion in Michael Ende's novel "The Neverending Story". It is
+/// described as two serpents that bite each other's tails. The name therefore keeps
+/// with constriction's snake theme while at the same time serving as a metaphor for
+/// the two buffers of compressed data, where encoding and decoding transfers data
+/// from one buffer to the other (just like two serpents that "eat up" each other).
+///
+/// In the book, the two serpents represent the two realms of reality and fantasy.
+/// If worn by a person from the realm of reality, AURYN grants the bearer all
+/// whishes in the realm of fantasy; but with every whish granted in the realm of
+/// fantasy, AURYN takes away some of its bearer's memories from the realm of
+/// reality. Similarly, the `Auryn` data structure allows decoding binary data with
+/// arbitrary entropy models, i.e., even with entropy models that are unrelated to
+/// the origin of the binary data. This may be used in bits-back like algorithms to
+/// "make up" ("fantasize") a sequence of symbols; each fantasized symbol takes away
+/// a fixed number of bits from the original ("real") binary data.
+#[derive(Debug)]
+pub struct Auryn<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    /// The supply of bits.
+    supply: Stack<CompressedWord, State>,
+
+    /// Remaining information not used up by decoded symbols.
+    waste: Stack<CompressedWord, State>,
+}
+
+impl<CompressedWord, State> From<Stack<CompressedWord, State>> for Auryn<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn from(stack: Stack<CompressedWord, State>) -> Self {
+        Auryn::with_supply(stack)
+    }
+}
+
+impl<CompressedWord, State> Auryn<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    pub fn with_supply(supply: Stack<CompressedWord, State>) -> Self {
+        Self {
+            supply,
+            waste: Default::default(),
+        }
+    }
+
+    pub fn with_supply_and_waste(
+        supply: Stack<CompressedWord, State>,
+        waste: Stack<CompressedWord, State>,
+    ) -> Self {
+        Self { supply, waste }
+    }
+
+    pub fn with_compressed_data(compressed: Vec<CompressedWord>) -> Self {
+        Self {
+            supply: Stack::with_compressed_data(compressed),
+            waste: Default::default(),
+        }
+    }
+
+    pub fn supply(&self) -> &Stack<CompressedWord, State> {
+        &self.supply
+    }
+
+    pub fn supply_mut(&mut self) -> &mut Stack<CompressedWord, State> {
+        &mut self.supply
+    }
+
+    pub fn waste(&self) -> &Stack<CompressedWord, State> {
+        &self.waste
+    }
+
+    pub fn waste_mut(&mut self) -> &mut Stack<CompressedWord, State> {
+        &mut self.waste
+    }
+
+    pub fn into_supply_and_waste(
+        self,
+    ) -> (Stack<CompressedWord, State>, Stack<CompressedWord, State>) {
+        (self.supply, self.waste)
+    }
+}
+
+impl<CompressedWord, State> Code for Auryn<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    type CompressedWord = CompressedWord;
+
+    type State = (State, State);
+
+    fn state(&self) -> Self::State {
+        (self.supply.state(), self.waste.state())
+    }
+}
+
+impl<CompressedWord, State> Decode for Auryn<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    type DecodingError = std::convert::Infallible;
+
+    fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
+    where
+        D: DiscreteDistribution,
+        D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>,
+    {
+        let quantile = self.supply.chop_quantile_off_state::<D>();
+        self.supply.maybe_refill_state();
+
+        let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
+
+        // This threshold assumes that probability distributions can never assign all
+        // weight to a single symbol (i.e., that `probability` below is strictly
+        // smaller than `1 << D::PRECISION`).
+        self.waste.maybe_flush_state::<D>(num::One::one());
+
+        self.waste
+            .encode_quantile_onto_state(quantile, left_sided_cumulative, probability);
+
+        Ok(symbol)
+    }
+
+    fn maybe_finished(&self) -> bool {
+        self.supply.maybe_finished()
+    }
+}
+
+impl<CompressedWord, State> Encode for Auryn<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn encode_symbol<S, D>(
+        &mut self,
+        symbol: impl Borrow<S>,
+        distribution: D,
+    ) -> Result<(), EncodingError>
+    where
+        D: DiscreteDistribution<Symbol = S>,
+        D::Probability: Into<Self::CompressedWord>,
+    {
+        let (left_sided_cumulative, probability) = distribution
+            .left_cumulative_and_probability(symbol)
+            .map_err(|()| EncodingError::ImpossibleSymbol)?;
+
+        let quantile = self
+            .waste
+            .decode_quantile_off_state(left_sided_cumulative, probability)?;
+        self.waste.maybe_refill_state();
+        self.supply.maybe_flush_state::<D>(num::One::one());
+        self.supply.append_quantile_to_state::<D>(quantile);
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -825,12 +1057,12 @@ mod tests {
 
     #[test]
     fn compress_none() {
-        let coder1 = DefaultCoder::new();
+        let coder1 = DefaultStack::new();
         assert!(coder1.is_empty());
         let compressed = coder1.into_compressed();
         assert!(compressed.is_empty());
 
-        let coder2 = DefaultCoder::with_compressed_data(compressed);
+        let coder2 = DefaultStack::with_compressed_data(compressed);
         assert!(coder2.is_empty());
     }
 
@@ -861,7 +1093,7 @@ mod tests {
     {
         let symbols = symbols.into_iter();
 
-        let mut encoder = DefaultCoder::new();
+        let mut encoder = DefaultStack::new();
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
         let distribution = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
@@ -873,7 +1105,7 @@ mod tests {
         let compressed = encoder.into_compressed();
         assert_eq!(compressed.len(), expected_size);
 
-        let mut decoder = DefaultCoder::with_compressed_data(compressed);
+        let mut decoder = DefaultStack::with_compressed_data(compressed);
         for symbol in symbols.rev() {
             assert_eq!(decoder.decode_symbol(&distribution).unwrap(), symbol);
         }
@@ -979,7 +1211,7 @@ mod tests {
             symbols_categorical.push(symbol);
         }
 
-        let mut coder = Coder::<CompressedWord, State>::new();
+        let mut coder = Stack::<CompressedWord, State>::new();
 
         coder
             .encode_iid_symbols_reverse(&symbols_categorical, &categorical)
@@ -998,7 +1230,7 @@ mod tests {
 
         // Test if import/export of compressed data works.
         let compressed = coder.into_compressed();
-        let mut coder = Coder::with_compressed_data(compressed);
+        let mut coder = Stack::with_compressed_data(compressed);
 
         let reconstructed_gaussian = coder
             .decode_symbols(

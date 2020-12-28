@@ -59,8 +59,8 @@ where
     type State = CoderState<CompressedWord, State>;
     type CompressedWord = CompressedWord;
 
-    fn state(&self) -> &Self::State {
-        &self.state
+    fn state(&self) -> Self::State {
+        self.state
     }
 }
 
@@ -116,9 +116,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::Categorical, stack::DefaultCoder, Decode};
+    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
     ///
-    /// let mut coder = DefaultCoder::new();
+    /// let mut coder = DefaultStack::new();
     ///
     /// // Push some data on the coder:
     /// let symbols = vec![8, 2, 0, 7];
@@ -133,7 +133,7 @@ where
     /// // ... write `compressed` to a file and then read it back later ...
     ///
     /// // Create a new coder with the same state and use it for decompression:
-    /// let mut coder = DefaultCoder::with_compressed_data(compressed);
+    /// let mut coder = DefaultStack::with_compressed_data(compressed);
     /// let reconstructed = coder
     ///     .decode_iid_symbols(4, &distribution)
     ///     .collect::<Result<Vec<_>, _>>()
@@ -195,9 +195,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::Categorical, stack::DefaultCoder, Decode};
+    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
     ///
-    /// let mut coder = DefaultCoder::new();
+    /// let mut coder = DefaultStack::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
@@ -239,10 +239,10 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultCoder, Encode};
+    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultStack, Encode};
     ///
     /// // Create a coder and encode some stuff.
-    /// let mut coder = DefaultCoder::new();
+    /// let mut coder = DefaultStack::new();
     /// let symbols = vec![8, -12, 0, 7];
     /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
     /// let distribution =
@@ -415,8 +415,8 @@ where
     type State = CoderState<CompressedWord, State>;
     type CompressedWord = CompressedWord;
 
-    fn state(&self) -> &Self::State {
-        &self.state
+    fn state(&self) -> Self::State {
+        self.state
     }
 }
 
