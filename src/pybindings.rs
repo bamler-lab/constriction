@@ -163,7 +163,7 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 #[text_signature = "(compressed)"]
 #[derive(Debug)]
 pub struct Coder {
-    inner: crate::stack::DefaultCoder,
+    inner: crate::stack::DefaultStack,
 }
 
 #[pymethods]

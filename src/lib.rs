@@ -147,11 +147,16 @@
 #[cfg(feature = "pybindings")]
 pub mod pybindings;
 
+pub mod auryn;
 pub mod distributions;
 pub mod queue;
 pub mod stack;
 
-use std::{borrow::Borrow, error::Error, fmt::Debug};
+use std::{
+    borrow::Borrow,
+    error::Error,
+    fmt::{Debug, LowerHex, UpperHex},
+};
 
 use distributions::DiscreteDistribution;
 use num::{
@@ -178,12 +183,14 @@ pub trait Encode: Code {
     ) -> Result<(), EncodingError>
     where
         D: DiscreteDistribution<Symbol = S>,
-        D::Probability: Into<Self::CompressedWord>;
+        D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>;
 
     fn encode_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<(), EncodingError>
     where
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>,
         S: Borrow<D::Symbol>,
         I: IntoIterator<Item = (S, D)>,
     {
@@ -202,6 +209,7 @@ pub trait Encode: Code {
         E: Error + 'static,
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>,
         S: Borrow<D::Symbol>,
         I: IntoIterator<Item = Result<(S, D), E>>,
     {
@@ -222,6 +230,7 @@ pub trait Encode: Code {
     where
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = S>,
         S: Borrow<D::Symbol>,
     {
@@ -283,33 +292,33 @@ pub trait Decode: Code {
     /// TODO: This would be much nicer to denote as
     /// `fn decode_symbols(...) -> impl Iterator`
     /// but existential return types are currently not allowed in trait methods.
-    fn decode_symbols<'s, I>(&'s mut self, distributions: I) -> DecodeSymbols<'s, Self, I>
+    fn decode_symbols<'s, I>(&'s mut self, distributions: I) -> DecodeSymbols<'s, Self, I::IntoIter>
     where
-        I: Iterator + 's,
+        I: IntoIterator + 's,
         I::Item: DiscreteDistribution,
         <I::Item as DiscreteDistribution>::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<<I::Item as DiscreteDistribution>::Probability>,
     {
         DecodeSymbols {
             decoder: self,
-            distributions,
+            distributions: distributions.into_iter(),
         }
     }
 
     fn try_decode_symbols<'s, E, D, I>(
         &'s mut self,
         distributions: I,
-    ) -> TryDecodeSymbols<'s, Self, I>
+    ) -> TryDecodeSymbols<'s, Self, I::IntoIter>
     where
         E: Error + 'static,
         D: DiscreteDistribution,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
-        I: Iterator<Item = Result<D, E>> + 's,
+        I: IntoIterator<Item = Result<D, E>> + 's,
     {
         TryDecodeSymbols {
             decoder: self,
-            distributions,
+            distributions: distributions.into_iter(),
         }
     }
 
@@ -490,7 +499,7 @@ where
 /// that all `BitArray`s have precisely the same behavior as builtin unsigned
 /// integer types, and that [`BitArray::BITS has the correct value.
 pub unsafe trait BitArray:
-    PrimInt + Unsigned + WrappingAdd + WrappingSub + Debug + 'static
+    PrimInt + Unsigned + WrappingAdd + WrappingSub + Debug + LowerHex + UpperHex + 'static
 {
     /// The (fixed) length of the `BitArray` in bits.
     ///

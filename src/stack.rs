@@ -6,9 +6,10 @@ use std::{borrow::Borrow, error::Error, fmt::Debug, ops::Deref};
 
 use num::cast::AsPrimitive;
 
-use super::{
-    bit_array_from_chunks, bit_array_to_chunks_truncated, distributions::DiscreteDistribution,
-    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder, TryCodingError,
+use crate::{
+    auryn::Auryn, bit_array_from_chunks, bit_array_to_chunks_truncated,
+    distributions::DiscreteDistribution, BitArray, Code, Decode, Encode, EncodingError,
+    IntoDecoder, TryCodingError,
 };
 
 /// Entropy coder for both encoding and decoding on a stack
@@ -279,6 +280,7 @@ where
     where
         D: DiscreteDistribution,
         D::Probability: Into<CompressedWord>,
+        CompressedWord: AsPrimitive<D::Probability>,
         S: Borrow<D::Symbol>,
         I: IntoIterator<Item = (S, D)>,
         I::IntoIter: DoubleEndedIterator,
@@ -294,6 +296,7 @@ where
         E: Error + 'static,
         D: DiscreteDistribution,
         D::Probability: Into<CompressedWord>,
+        CompressedWord: AsPrimitive<D::Probability>,
         S: Borrow<D::Symbol>,
         I: IntoIterator<Item = std::result::Result<(S, D), E>>,
         I::IntoIter: DoubleEndedIterator,
@@ -309,6 +312,7 @@ where
     where
         D: DiscreteDistribution,
         D::Probability: Into<CompressedWord>,
+        CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = S>,
         S: Borrow<D::Symbol>,
         I::IntoIter: DoubleEndedIterator,
@@ -535,7 +539,7 @@ where
     }
 
     #[inline(always)]
-    fn chop_quantile_off_state<D: DiscreteDistribution>(&mut self) -> D::Probability
+    pub(crate) fn chop_quantile_off_state<D: DiscreteDistribution>(&mut self) -> D::Probability
     where
         CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -546,7 +550,7 @@ where
 
     /// Checks the invariant on `self.state` and restores it if necessary and possible.
     #[inline(always)]
-    fn maybe_refill_state(&mut self) {
+    pub(crate) fn refill_state_if_possible(&mut self) {
         if self.state < State::one() << (State::BITS - CompressedWord::BITS) {
             // Invariant on `self.state` (see its doc comment) is violated. Restore it by
             // refilling with a compressed word from `self.buf` if available.
@@ -557,53 +561,51 @@ where
     }
 
     #[inline(always)]
-    fn maybe_flush_state<D: DiscreteDistribution>(&mut self, threshold: D::Probability)
+    pub(crate) fn flush_state<D: DiscreteDistribution>(&mut self)
     where
         D::Probability: Into<CompressedWord>,
     {
-        if (self.state >> (State::BITS - D::PRECISION)) >= threshold.into().into() {
-            self.buf.push(self.state.as_());
-            self.state = self.state >> CompressedWord::BITS;
-        }
+        self.buf.push(self.state.as_());
+        self.state = self.state >> CompressedWord::BITS;
     }
 
     #[inline(always)]
-    fn encode_quantile_onto_state<Probability: BitArray>(
+    pub(crate) fn encode_remainder_onto_state<Probability: BitArray>(
         &mut self,
-        quantile: Probability,
-        left_sided_cumulative: Probability,
+        remainder: Probability,
         probability: Probability,
     ) where
         Probability: Into<CompressedWord>,
     {
-        self.state = probability.into().into() * self.state
-            + (quantile - left_sided_cumulative).into().into();
+        self.state = self.state * probability.into().into() + remainder.into().into();
     }
 
     #[inline(always)]
-    fn decode_quantile_off_state<Probability: BitArray>(
+    pub(crate) fn decode_remainder_off_state<Probability: BitArray>(
         &mut self,
-        left_sided_cumulative: Probability,
         probability: Probability,
-    ) -> Result<State, EncodingError>
+    ) -> Result<Probability, EncodingError>
     where
         Probability: Into<CompressedWord>,
+        CompressedWord: AsPrimitive<Probability>,
     {
-        let quantile = left_sided_cumulative.into().into() + self.state % probability.into().into();
+        let remainder = (self.state % probability.into().into()).as_().as_();
         self.state = self
             .state
             .checked_div(&probability.into().into())
             .ok_or(EncodingError::ImpossibleSymbol)?;
 
-        Ok(quantile)
+        Ok(remainder)
     }
 
     #[inline(always)]
-    fn append_quantile_to_state<D: DiscreteDistribution>(&mut self, quantile: State)
-    where
+    pub(crate) fn append_quantile_to_state<D: DiscreteDistribution>(
+        &mut self,
+        quantile: D::Probability,
+    ) where
         D::Probability: Into<CompressedWord>,
     {
-        self.state = (self.state << D::PRECISION) | quantile;
+        self.state = (self.state << D::PRECISION) | quantile.into().into();
     }
 }
 
@@ -657,17 +659,20 @@ where
     where
         D: DiscreteDistribution<Symbol = S>,
         D::Probability: Into<Self::CompressedWord>,
+        CompressedWord: AsPrimitive<D::Probability>,
     {
         let (left_sided_cumulative, probability) = distribution
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncodingError::ImpossibleSymbol)?;
 
-        self.maybe_flush_state::<D>(probability);
-        // At this point, the invariant on `self.state` (see its doc comment) may
-        // be temporarily violated, but it will be restored below.
+        if (self.state >> (State::BITS - D::PRECISION)) >= probability.into().into() {
+            self.flush_state::<D>();
+            // At this point, the invariant on `self.state` (see its doc comment) is
+            // temporarily violated, but it will be restored below.
+        }
 
-        let quantile = self.decode_quantile_off_state(left_sided_cumulative, probability)?;
-        self.append_quantile_to_state::<D>(quantile);
+        let remainder = self.decode_remainder_off_state(probability)?;
+        self.append_quantile_to_state::<D>(left_sided_cumulative + remainder);
 
         Ok(())
     }
@@ -703,8 +708,9 @@ where
     {
         let quantile = self.chop_quantile_off_state::<D>();
         let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
-        self.encode_quantile_onto_state(quantile, left_sided_cumulative, probability);
-        self.maybe_refill_state();
+        let remainder = quantile - left_sided_cumulative;
+        self.encode_remainder_onto_state(remainder, probability);
+        self.refill_state_if_possible();
 
         Ok(symbol)
     }
@@ -875,172 +881,6 @@ where
     fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
         self.index_back = std::cmp::max(self.index_front, self.index_back.saturating_sub(n));
         self.next_back()
-    }
-}
-
-/// # Origin of the Name "Auryn"
-///
-/// AURYN is a medallion in Michael Ende's novel "The Neverending Story". It is
-/// described as two serpents that bite each other's tails. The name therefore keeps
-/// with constriction's snake theme while at the same time serving as a metaphor for
-/// the two buffers of compressed data, where encoding and decoding transfers data
-/// from one buffer to the other (just like two serpents that "eat up" each other).
-///
-/// In the book, the two serpents represent the two realms of reality and fantasy.
-/// If worn by a person from the realm of reality, AURYN grants the bearer all
-/// whishes in the realm of fantasy; but with every whish granted in the realm of
-/// fantasy, AURYN takes away some of its bearer's memories from the realm of
-/// reality. Similarly, the `Auryn` data structure allows decoding binary data with
-/// arbitrary entropy models, i.e., even with entropy models that are unrelated to
-/// the origin of the binary data. This may be used in bits-back like algorithms to
-/// "make up" ("fantasize") a sequence of symbols; each fantasized symbol takes away
-/// a fixed number of bits from the original ("real") binary data.
-#[derive(Debug)]
-pub struct Auryn<CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    /// The supply of bits.
-    supply: Stack<CompressedWord, State>,
-
-    /// Remaining information not used up by decoded symbols.
-    waste: Stack<CompressedWord, State>,
-}
-
-impl<CompressedWord, State> From<Stack<CompressedWord, State>> for Auryn<CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    fn from(stack: Stack<CompressedWord, State>) -> Self {
-        Auryn::with_supply(stack)
-    }
-}
-
-impl<CompressedWord, State> Auryn<CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    pub fn with_supply(supply: Stack<CompressedWord, State>) -> Self {
-        Self {
-            supply,
-            waste: Default::default(),
-        }
-    }
-
-    pub fn with_supply_and_waste(
-        supply: Stack<CompressedWord, State>,
-        waste: Stack<CompressedWord, State>,
-    ) -> Self {
-        Self { supply, waste }
-    }
-
-    pub fn with_compressed_data(compressed: Vec<CompressedWord>) -> Self {
-        Self {
-            supply: Stack::with_compressed_data(compressed),
-            waste: Default::default(),
-        }
-    }
-
-    pub fn supply(&self) -> &Stack<CompressedWord, State> {
-        &self.supply
-    }
-
-    pub fn supply_mut(&mut self) -> &mut Stack<CompressedWord, State> {
-        &mut self.supply
-    }
-
-    pub fn waste(&self) -> &Stack<CompressedWord, State> {
-        &self.waste
-    }
-
-    pub fn waste_mut(&mut self) -> &mut Stack<CompressedWord, State> {
-        &mut self.waste
-    }
-
-    pub fn into_supply_and_waste(
-        self,
-    ) -> (Stack<CompressedWord, State>, Stack<CompressedWord, State>) {
-        (self.supply, self.waste)
-    }
-}
-
-impl<CompressedWord, State> Code for Auryn<CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    type CompressedWord = CompressedWord;
-
-    type State = (State, State);
-
-    fn state(&self) -> Self::State {
-        (self.supply.state(), self.waste.state())
-    }
-}
-
-impl<CompressedWord, State> Decode for Auryn<CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    type DecodingError = std::convert::Infallible;
-
-    fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
-    where
-        D: DiscreteDistribution,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>,
-    {
-        let quantile = self.supply.chop_quantile_off_state::<D>();
-        self.supply.maybe_refill_state();
-
-        let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
-
-        // This threshold assumes that probability distributions can never assign all
-        // weight to a single symbol (i.e., that `probability` below is strictly
-        // smaller than `1 << D::PRECISION`).
-        self.waste.maybe_flush_state::<D>(num::One::one());
-
-        self.waste
-            .encode_quantile_onto_state(quantile, left_sided_cumulative, probability);
-
-        Ok(symbol)
-    }
-
-    fn maybe_finished(&self) -> bool {
-        self.supply.maybe_finished()
-    }
-}
-
-impl<CompressedWord, State> Encode for Auryn<CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    fn encode_symbol<S, D>(
-        &mut self,
-        symbol: impl Borrow<S>,
-        distribution: D,
-    ) -> Result<(), EncodingError>
-    where
-        D: DiscreteDistribution<Symbol = S>,
-        D::Probability: Into<Self::CompressedWord>,
-    {
-        let (left_sided_cumulative, probability) = distribution
-            .left_cumulative_and_probability(symbol)
-            .map_err(|()| EncodingError::ImpossibleSymbol)?;
-
-        let quantile = self
-            .waste
-            .decode_quantile_off_state(left_sided_cumulative, probability)?;
-        self.waste.maybe_refill_state();
-        self.supply.maybe_flush_state::<D>(num::One::one());
-        self.supply.append_quantile_to_state::<D>(quantile);
-
-        Ok(())
     }
 }
 
