@@ -36,7 +36,7 @@ fn test_normal<Encoder, Probability, I, R, const PRECISION: usize, const REVERSE
     inspect: I,
 ) -> R
 where
-    Encoder: Encode + Default + IntoDecoder,
+    Encoder: Encode<PRECISION> + Default + IntoDecoder<PRECISION>,
     Probability: BitArray + Into<f64> + Into<Encoder::CompressedWord>,
     i32: AsPrimitive<Probability>,
     f64: AsPrimitive<Probability>,

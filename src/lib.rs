@@ -173,26 +173,68 @@ pub trait Code {
     ///
     /// This method is usually used together with [`Seek::seek`].
     fn state(&self) -> Self::State;
+
+    /// Check if there might be no compressed data available.
+    ///
+    /// This method is useful to check for consistency, e.g., when decoding data with a
+    /// [`Decode`]. This method returns `true` if there *might* not be any compressed
+    /// data. This can have several causes, e.g.:
+    /// - the method is called on a newly constructed empty encoder or decoder; or
+    /// - the user is decoding in-memory data and called `maybe_empty` after decoding
+    ///   all available compressed data; or
+    /// - it is unknown whether there is any compressed data left.
+    ///
+    /// The last item in the above list deserves further explanation. It is not always
+    /// possible to tell whether any compressed data is available. For example, when
+    /// encoding data onto or decoding data from a stream (like a network socket), then
+    /// the coder is not required to keep track of whether or not any compressed data
+    /// has already been emitted or can still be received, respectively. In such a case,
+    /// when it is not known whether any compressed data is available, `maybe_empty`
+    /// *must* return `true`.
+    ///
+    /// The contrapositive of the above requirement is that, when `maybe_empty` returns
+    /// `false`, then some compressed data is definitely available. Therefore,
+    /// `maybe_empty` can used to check for data corruption: if the user of this library
+    /// believes that they have decoded all available compressed data but `maybe_empty`
+    /// returns `false`, then the decoded data must have been corrupted. However, the
+    /// converse is not true: if `maybe_empty` returns `true` then this is not
+    /// necessarily a particularly strong guarantee of data integrity.
+    ///
+    /// Note that it is always legal to call [`decode_symbol`] even on an empty
+    /// [`Decode`]. Some decoder implementations may even always return and `Ok(_)`
+    /// value (with an arbitrary but deterministically constructed wrapped symbol) even
+    /// if the decoder is empty,
+    ///
+    /// # Implementation Guide
+    ///
+    /// It is always valid to return `true` from this method. By contrast, this method
+    /// may return `false` only if there is definitely some compressed data available.
+    /// Thus, when in doubt, return `true`.
+    ///
+    /// [`decode_symbol`]: Decode::decode_symbol
+    fn maybe_empty(&self) -> bool;
 }
 
-pub trait Encode: Code {
-    fn encode_symbol<S, D>(
+pub trait Encode<const PRECISION: usize>: Code {
+    fn encode_symbol<D>(
         &mut self,
-        symbol: impl Borrow<S>,
+        symbol: impl Borrow<D::Symbol>,
         distribution: D,
     ) -> Result<(), EncodingError>
     where
-        D: DiscreteDistribution<Symbol = S>,
+        D: DiscreteDistribution<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>;
 
-    fn encode_symbols<D, S, I>(&mut self, symbols_and_distributions: I) -> Result<(), EncodingError>
+    fn encode_symbols<S, D>(
+        &mut self,
+        symbols_and_distributions: impl IntoIterator<Item = (S, D)>,
+    ) -> Result<(), EncodingError>
     where
-        D: DiscreteDistribution,
+        S: Borrow<D::Symbol>,
+        D: DiscreteDistribution<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
-        S: Borrow<D::Symbol>,
-        I: IntoIterator<Item = (S, D)>,
     {
         for (symbol, distribution) in symbols_and_distributions.into_iter() {
             self.encode_symbol(symbol, distribution)?;
@@ -201,17 +243,16 @@ pub trait Encode: Code {
         Ok(())
     }
 
-    fn try_encode_symbols<E, D, S, I>(
+    fn try_encode_symbols<S, D, E>(
         &mut self,
-        symbols_and_distributions: I,
+        symbols_and_distributions: impl IntoIterator<Item = Result<(S, D), E>>,
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
-        E: Error + 'static,
-        D: DiscreteDistribution,
+        S: Borrow<D::Symbol>,
+        D: DiscreteDistribution<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
-        S: Borrow<D::Symbol>,
-        I: IntoIterator<Item = Result<(S, D), E>>,
+        E: Error + 'static,
     {
         for symbol_and_distribution in symbols_and_distributions.into_iter() {
             let (symbol, distribution) =
@@ -222,23 +263,22 @@ pub trait Encode: Code {
         Ok(())
     }
 
-    fn encode_iid_symbols<D, S, I>(
+    fn encode_iid_symbols<S, D>(
         &mut self,
-        symbols: I,
+        symbols: impl IntoIterator<Item = S>,
         distribution: &D,
     ) -> Result<(), EncodingError>
     where
-        D: DiscreteDistribution,
+        S: Borrow<D::Symbol>,
+        D: DiscreteDistribution<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
-        I: IntoIterator<Item = S>,
-        S: Borrow<D::Symbol>,
     {
         self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, distribution)))
     }
 }
 
-pub trait Decode: Code {
+pub trait Decode<const PRECISION: usize>: Code {
     /// The error type for [`decode_symbol`].
     ///
     /// This is an associated type because, [`decode_symbol`] is infallible for some
@@ -249,55 +289,22 @@ pub trait Decode: Code {
 
     fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: DiscreteDistribution,
+        D: DiscreteDistribution<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>;
-
-    /// Check if all available data might have been decoded.
-    ///
-    /// It is typically not be possible to tell when all compressed data has been
-    /// decoded. However, the converse can often (but not always) be detected with
-    /// certainty.
-    ///
-    /// If this method returns `false` then there is definitely still data left to be
-    /// decoded. If it returns `true` then the situation is unclear: there may or may
-    /// not be a few encoded symbols left. In either case, it is always legal to call
-    /// [`decode_symbol`]; it may just return a garbage (but deterministically
-    /// generated) symbol.
-    ///
-    /// This method is useful to check for data corruption. When you think you have
-    /// decoded all symbols and this method returns `false` then the compressed data
-    /// must have been corrupted. If it returns `true` then there is at least no reason
-    /// to suggest data corruption (but obviously also no conclusive prove that the data
-    /// is valid).
-    ///
-    /// # Implementation Guide
-    ///
-    /// This method should not have any side effects. If checking whether additional
-    /// compressed data is available could have side effects (such as in decoders that
-    /// operate on a fallible stream of compressed data), then this method should *not*
-    /// check if more compressed data is available and instead return a value based only
-    /// on the coder's internal state (i.e., return `true` iff terminating decoding at
-    /// this point would leave the decoder in a valid end state, regardless of whether
-    /// more compressed data might be available). By contrast, decoders that definitely
-    /// operate on in-memory compressed data should additionally check if more data is
-    /// available, and return `true` only if no additional compressed data is available
-    /// and the decoder is in a valid end state.
-    ///
-    /// When in doubt, return `true` as this is always technically correct.
-    ///
-    /// [`decode_symbol`](#method.decode_symbol).
-    fn maybe_finished(&self) -> bool;
 
     /// TODO: This would be much nicer to denote as
     /// `fn decode_symbols(...) -> impl Iterator`
     /// but existential return types are currently not allowed in trait methods.
-    fn decode_symbols<'s, I>(&'s mut self, distributions: I) -> DecodeSymbols<'s, Self, I::IntoIter>
+    fn decode_symbols<'s, I, D>(
+        &'s mut self,
+        distributions: I,
+    ) -> DecodeSymbols<'s, Self, I::IntoIter, PRECISION>
     where
-        I: IntoIterator + 's,
-        I::Item: DiscreteDistribution,
-        <I::Item as DiscreteDistribution>::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<<I::Item as DiscreteDistribution>::Probability>,
+        I: IntoIterator<Item = D> + 's,
+        D: DiscreteDistribution<PRECISION>,
+        D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>,
     {
         DecodeSymbols {
             decoder: self,
@@ -305,16 +312,15 @@ pub trait Decode: Code {
         }
     }
 
-    fn try_decode_symbols<'s, E, D, I>(
+    fn try_decode_symbols<'s, I, D, E>(
         &'s mut self,
         distributions: I,
-    ) -> TryDecodeSymbols<'s, Self, I::IntoIter>
+    ) -> TryDecodeSymbols<'s, Self, I::IntoIter, PRECISION>
     where
-        E: Error + 'static,
-        D: DiscreteDistribution,
+        I: IntoIterator<Item = Result<D, E>> + 's,
+        D: DiscreteDistribution<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
-        I: IntoIterator<Item = Result<D, E>> + 's,
     {
         TryDecodeSymbols {
             decoder: self,
@@ -333,10 +339,11 @@ pub trait Decode: Code {
         &'s mut self,
         amt: usize,
         distribution: &'s D,
-    ) -> DecodeIidSymbols<'s, Self, D>
+    ) -> DecodeIidSymbols<'s, Self, D, PRECISION>
     where
-        D: DiscreteDistribution,
+        D: DiscreteDistribution<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>,
     {
         DecodeIidSymbols {
             decoder: self,
@@ -346,12 +353,12 @@ pub trait Decode: Code {
     }
 }
 
-pub trait IntoDecoder: Encode + Sized {
-    type IntoDecoder: From<Self>
+pub trait IntoDecoder<const PRECISION: usize>: Code + Sized {
+    type Decoder: From<Self>
         + Code<CompressedWord = Self::CompressedWord, State = Self::State>
-        + Decode;
+        + Decode<PRECISION>;
 
-    fn into_decoder(self) -> Self::IntoDecoder {
+    fn into_decoder(self) -> Self::Decoder {
         self.into()
     }
 }
@@ -365,18 +372,22 @@ pub trait Seek: Code {
 }
 
 #[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.
-pub struct DecodeSymbols<'a, Decoder: ?Sized, I> {
+pub struct DecodeSymbols<'a, Decoder: ?Sized, I, const PRECISION: usize> {
     decoder: &'a mut Decoder,
     distributions: I,
 }
 
-impl<'a, Decoder: Decode, I: Iterator> Iterator for DecodeSymbols<'a, Decoder, I>
+impl<'a, Decoder, I, D, const PRECISION: usize> Iterator
+    for DecodeSymbols<'a, Decoder, I, PRECISION>
 where
-    I::Item: DiscreteDistribution,
-    <I::Item as DiscreteDistribution>::Probability: Into<Decoder::CompressedWord>,
-    Decoder::CompressedWord: AsPrimitive<<I::Item as DiscreteDistribution>::Probability>,
+    Decoder: Decode<PRECISION>,
+    I: Iterator<Item = D>,
+    D: DiscreteDistribution<PRECISION>,
+    Decoder::CompressedWord: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::CompressedWord>,
 {
-    type Item = Result<<I::Item as DiscreteDistribution>::Symbol, Decoder::DecodingError>;
+    type Item =
+        Result<<I::Item as DiscreteDistribution<PRECISION>>::Symbol, Decoder::DecodingError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.distributions
@@ -389,28 +400,32 @@ where
     }
 }
 
-impl<'a, Decoder: Decode, I: Iterator> ExactSizeIterator for DecodeSymbols<'a, Decoder, I>
+impl<'a, Decoder, I, D, const PRECISION: usize> ExactSizeIterator
+    for DecodeSymbols<'a, Decoder, I, PRECISION>
 where
-    I::Item: DiscreteDistribution,
-    <I::Item as DiscreteDistribution>::Probability: Into<Decoder::CompressedWord>,
-    Decoder::CompressedWord: AsPrimitive<<I::Item as DiscreteDistribution>::Probability>,
-    I: ExactSizeIterator,
+    Decoder: Decode<PRECISION>,
+    I: Iterator<Item = D> + ExactSizeIterator,
+    D: DiscreteDistribution<PRECISION>,
+    Decoder::CompressedWord: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::CompressedWord>,
 {
 }
 
 #[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.
-pub struct TryDecodeSymbols<'a, Decoder: ?Sized, I> {
+pub struct TryDecodeSymbols<'a, Decoder: ?Sized, I, const PRECISION: usize> {
     decoder: &'a mut Decoder,
     distributions: I,
 }
 
-impl<'a, Decoder: Decode, I, E, D> Iterator for TryDecodeSymbols<'a, Decoder, I>
+impl<'a, Decoder, I, D, E, const PRECISION: usize> Iterator
+    for TryDecodeSymbols<'a, Decoder, I, PRECISION>
 where
+    Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>>,
-    D: DiscreteDistribution,
-    D::Probability: Into<Decoder::CompressedWord>,
-    Decoder::CompressedWord: AsPrimitive<D::Probability>,
+    D: DiscreteDistribution<PRECISION>,
     E: std::error::Error + 'static,
+    Decoder::CompressedWord: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::CompressedWord>,
 {
     type Item = Result<D::Symbol, TryCodingError<Decoder::DecodingError, E>>;
 
@@ -428,29 +443,32 @@ where
     }
 }
 
-impl<'a, Decoder: Decode, I, E, D> ExactSizeIterator for TryDecodeSymbols<'a, Decoder, I>
+impl<'a, Decoder, I, D, E, const PRECISION: usize> ExactSizeIterator
+    for TryDecodeSymbols<'a, Decoder, I, PRECISION>
 where
+    Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>> + ExactSizeIterator,
-    D: DiscreteDistribution,
-    D::Probability: Into<Decoder::CompressedWord>,
-    Decoder::CompressedWord: AsPrimitive<D::Probability>,
+    D: DiscreteDistribution<PRECISION>,
     E: std::error::Error + 'static,
+    Decoder::CompressedWord: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::CompressedWord>,
 {
 }
 
 #[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.
-pub struct DecodeIidSymbols<'a, Decoder: ?Sized, D> {
+pub struct DecodeIidSymbols<'a, Decoder: ?Sized, D, const PRECISION: usize> {
     decoder: &'a mut Decoder,
     distribution: &'a D,
     amt: usize,
 }
 
-impl<'a, Decoder, D> Iterator for DecodeIidSymbols<'a, Decoder, D>
+impl<'a, Decoder, D, const PRECISION: usize> Iterator
+    for DecodeIidSymbols<'a, Decoder, D, PRECISION>
 where
-    Decoder: Decode,
-    D: DiscreteDistribution,
-    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder: Decode<PRECISION>,
+    D: DiscreteDistribution<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::CompressedWord>,
 {
     type Item = Result<D::Symbol, Decoder::DecodingError>;
 
@@ -468,12 +486,13 @@ where
     }
 }
 
-impl<'a, Decoder, D> ExactSizeIterator for DecodeIidSymbols<'a, Decoder, D>
+impl<'a, Decoder, D, const PRECISION: usize> ExactSizeIterator
+    for DecodeIidSymbols<'a, Decoder, D, PRECISION>
 where
-    Decoder: Decode,
-    D: DiscreteDistribution,
-    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder: Decode<PRECISION>,
+    D: DiscreteDistribution<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::CompressedWord>,
 {
 }
 

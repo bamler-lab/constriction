@@ -62,6 +62,10 @@ where
     fn state(&self) -> Self::State {
         self.state
     }
+
+    fn maybe_empty(&self) -> bool {
+        self.is_empty()
+    }
 }
 
 impl<CompressedWord, State> Default for Encoder<CompressedWord, State>
@@ -100,6 +104,20 @@ where
     /// Check if no data has been encoded yet.
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty() && self.state.range == State::max_value()
+    }
+
+    /// Same as IntoDecoder::into_decoder(self) but can be used for any `PRECISION`
+    /// and therefore doesn't require type arguments on the caller side.
+    pub fn into_decoder(self) -> Decoder<CompressedWord, State, Vec<CompressedWord>> {
+        self.into()
+    }
+
+    /// Same as IntoDecoder::into_decoder(&self) but can be used for any `PRECISION`
+    /// and therefore doesn't require type arguments on the caller side.
+    pub fn decoder(
+        &mut self, // TODO: document why we need mutable access (because encoder has to temporary flush its state)
+    ) -> Decoder<CompressedWord, State, CoderGuard<'_, CompressedWord, State>> {
+        Decoder::new(self.get_compressed())
     }
 
     /// Consumes the coder and returns the compressed data.
@@ -225,12 +243,6 @@ where
         CoderGuard::new(self)
     }
 
-    pub fn decoder(
-        &mut self, // TODO: document why we need mutable access (because encoder has to temporary flush its state)
-    ) -> Decoder<CompressedWord, State, CoderGuard<'_, CompressedWord, State>> {
-        Decoder::new(self.get_compressed())
-    }
-
     /// Iterates over the compressed data currently on the stack.
     ///
     /// In contrast to [`get_compressed`] or [`into_compressed`], this method does
@@ -308,27 +320,30 @@ where
     }
 }
 
-impl<CompressedWord, State> IntoDecoder for Encoder<CompressedWord, State>
+impl<CompressedWord, State, const PRECISION: usize> IntoDecoder<PRECISION>
+    for Encoder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type IntoDecoder = Decoder<CompressedWord, State, Vec<CompressedWord>>;
+    type Decoder = Decoder<CompressedWord, State, Vec<CompressedWord>>;
 }
 
-impl<CompressedWord, State> Encode for Encoder<CompressedWord, State>
+impl<CompressedWord, State, const PRECISION: usize> Encode<PRECISION>
+    for Encoder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn encode_symbol<S, D>(
+    fn encode_symbol<D>(
         &mut self,
-        symbol: impl Borrow<S>,
+        symbol: impl Borrow<D::Symbol>,
         distribution: D,
     ) -> Result<(), EncodingError>
     where
-        D: DiscreteDistribution<Symbol = S>,
+        D: DiscreteDistribution<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>,
     {
         // We maintain the following invariant (*):
         //   range >= State::one() << (State::BITS - CompressedWord::BITS)
@@ -337,7 +352,7 @@ where
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncodingError::ImpossibleSymbol)?;
 
-        let scale = self.state.range >> D::PRECISION;
+        let scale = self.state.range >> PRECISION;
         let new_lower = self
             .state
             .lower
@@ -418,6 +433,12 @@ where
     fn state(&self) -> Self::State {
         self.state
     }
+
+    fn maybe_empty(&self) -> bool {
+        self.pos == self.buf.as_ref().len()
+            && self.point.wrapping_sub(&self.state.lower)
+                < State::one() << (State::BITS - CompressedWord::BITS)
+    }
 }
 
 impl<CompressedWord, State, Buf> Decoder<CompressedWord, State, Buf>
@@ -480,7 +501,8 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Decode for Decoder<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf, const PRECISION: usize> Decode<PRECISION>
+    for Decoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -505,7 +527,7 @@ where
     /// useful in edge cases of, e.g., the bits-back algorithm.
     fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: DiscreteDistribution,
+        D: DiscreteDistribution<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -513,9 +535,9 @@ where
         //   point (-) lower < range
         // where (-) denotes wrapping subtraction (in `Self::State`).
 
-        let scale = self.state.range >> D::PRECISION;
+        let scale = self.state.range >> PRECISION;
         let quantile = self.point.wrapping_sub(&self.state.lower) / scale;
-        if quantile >= State::one() << D::PRECISION {
+        if quantile >= State::one() << PRECISION {
             // This can only happen if both of the following conditions apply:
             // (i) we are decoding invalid compressed data; and
             // (ii) we use entropy models with varying `PRECISION`s.
@@ -555,12 +577,6 @@ where
         }
 
         Ok(symbol)
-    }
-
-    fn maybe_finished(&self) -> bool {
-        self.pos == self.buf.as_ref().len()
-            && self.point.wrapping_sub(&self.state.lower)
-                < State::one() << (State::BITS - CompressedWord::BITS)
     }
 }
 
@@ -748,7 +764,7 @@ mod tests {
         assert!(compressed.is_empty());
 
         let decoder = DefaultDecoder::new(&compressed);
-        assert!(decoder.maybe_finished());
+        assert!(decoder.maybe_empty());
     }
 
     #[test]
@@ -792,7 +808,7 @@ mod tests {
         for symbol in symbols {
             assert_eq!(decoder.decode_symbol(&distribution).unwrap(), symbol);
         }
-        assert!(decoder.maybe_finished());
+        assert!(decoder.maybe_empty());
     }
 
     #[test]
@@ -930,7 +946,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert!(decoder.maybe_finished());
+        assert!(decoder.maybe_empty());
 
         assert_eq!(symbols_categorical, reconstructed_categorical);
         assert_eq!(symbols_gaussian, reconstructed_gaussian);
