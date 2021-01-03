@@ -8,7 +8,9 @@ use super::{
 };
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
-/// [`Decoder<CompressedWord, State>`], and [`EncoderDecoder<CompressedWord, State>`]
+/// [`Decoder<CompressedWord, State>`]. Relevant for [`Seek`]ing.
+///
+/// [`Seek`]: crate::Seek
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CoderState<CompressedWord, State> {
     lower: State,
@@ -120,45 +122,6 @@ where
         Decoder::new(self.get_compressed())
     }
 
-    /// Consumes the coder and returns the compressed data.
-    ///
-    /// The returned data can be used to recreate a coder with the same state
-    /// (e.g., for decoding) by passing it to
-    /// [`with_compressed_data`](#method.with_compressed_data).
-    ///
-    /// If you don't want to consume the coder, consider calling
-    /// [`get_compressed`](#method.get_compressed),
-    /// [`as_compressed_raw`](#method.as_compressed_raw), or
-    /// [`iter_compressed`](#method.iter_compressed) instead.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
-    ///
-    /// let mut coder = DefaultStack::new();
-    ///
-    /// // Push some data on the coder:
-    /// let symbols = vec![8, 2, 0, 7];
-    /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let distribution = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
-    ///     .unwrap();
-    /// coder.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
-    ///
-    /// // Get the compressed data, consuming the coder:
-    /// let compressed = coder.into_compressed();
-    ///
-    /// // ... write `compressed` to a file and then read it back later ...
-    ///
-    /// // Create a new coder with the same state and use it for decompression:
-    /// let mut coder = DefaultStack::with_compressed_data(compressed);
-    /// let reconstructed = coder
-    ///     .decode_iid_symbols(4, &distribution)
-    ///     .collect::<Result<Vec<_>, _>>()
-    ///     .unwrap();
-    /// assert_eq!(reconstructed, symbols);
-    /// assert!(coder.is_empty())
-    /// ```
     pub fn into_compressed(mut self) -> Vec<CompressedWord> {
         if !self.is_empty() {
             let word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
@@ -174,7 +137,7 @@ where
     /// cases you will likely want to call one of [`get_compressed`],
     /// [`into_compressed`], or [`iter_compressed`] instead, as these methods
     /// provide the the compressed data in more convenient forms (which is also the
-    /// form expected by the constructor [`with_compressed_data`]).
+    /// form expected by the constructor [`from_compressed`]).
     ///
     /// The return value of this method is a tuple `(bulk, head)`, where
     /// `bulk: &[CompressedWord]` has variable size (and can be empty) and `head: [CompressedWord; 2]` has a
@@ -182,15 +145,10 @@ where
     /// each encoded or decoded symbol while `bulk` changes only infrequently
     /// (whenever `head` overflows or underflows).
     ///
-    /// # TODO
-    ///
-    /// Should return `(&[CompressedWord], State)` instead, since this will probably be used
-    /// by [`SeekableDecoder`].
-    ///
     /// [`get_compressed`]: #method.get_compressed
     /// [`into_compressed`]: #method.into_compressed
     /// [`iter_compressed`]: #method.iter_compressed
-    /// [`with_compressed_data`]: #method.with_compressed_data
+    /// [`from_compressed`]: #method.from_compressed
     pub fn as_compressed_raw(&self) -> (&[CompressedWord], <Self as Code>::State) {
         (&self.buf, self.state)
     }
@@ -200,7 +158,7 @@ where
     /// This method is similar to [`as_compressed_raw`] with the difference that it
     /// concatenates the `bulk` and `head` before returning them. The concatenation
     /// truncates any trailing zero words, which is compatible with the constructor
-    /// [`with_compressed_data`].
+    /// [`from_compressed`].
     ///
     /// This method requires a `&mut self` receiver. If you only have a shared
     /// reference to a `Coder`, consider calling [`as_compressed_raw`] or
@@ -236,49 +194,13 @@ where
     /// ```
     ///
     /// [`as_compressed_raw`]: #method.as_compressed_raw
-    /// [`with_compressed_data`]: #method.with_compressed_data
+    /// [`from_compressed`]: #method.from_compressed
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`into_compressed`]: #method.into_compressed
     pub fn get_compressed(&mut self) -> CoderGuard<'_, CompressedWord, State> {
         CoderGuard::new(self)
     }
 
-    /// Iterates over the compressed data currently on the stack.
-    ///
-    /// In contrast to [`get_compressed`] or [`into_compressed`], this method does
-    /// not require mutable access or even ownership of the `Coder`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultStack, Encode};
-    ///
-    /// // Create a coder and encode some stuff.
-    /// let mut coder = DefaultStack::new();
-    /// let symbols = vec![8, -12, 0, 7];
-    /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-    /// let distribution =
-    ///     quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
-    /// coder.encode_iid_symbols(&symbols, &distribution);
-    ///
-    /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
-    /// let compressed_iter = coder.iter_compressed();
-    /// let compressed_collected = compressed_iter.collect::<Vec<_>>();
-    /// assert!(!compressed_collected.is_empty());
-    /// assert_eq!(compressed_collected, &*coder.get_compressed());
-    ///
-    /// // We can also iterate in reverse direction, which is useful for streaming decoding.
-    /// let compressed_iter_reverse = coder.iter_compressed().rev();
-    /// let compressed_collected_reverse = compressed_iter_reverse.collect::<Vec<_>>();
-    /// let mut compressed_direct = coder.into_compressed();
-    /// assert!(!compressed_collected_reverse.is_empty());
-    /// assert_ne!(compressed_collected_reverse, compressed_direct);
-    /// compressed_direct.reverse();
-    /// assert_eq!(compressed_collected_reverse, compressed_direct);
-    /// ```
-    ///
-    /// [`get_compressed`]: #method.get_compressed
-    /// [`into_compressed`]: #method.into_compressed
     pub fn iter_compressed(
         &self,
     ) -> impl Iterator<Item = CompressedWord> + ExactSizeIterator + DoubleEndedIterator + '_ {

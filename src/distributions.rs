@@ -1,9 +1,9 @@
 //! Probability distributions that can be used as entropy models for compression.
 //!
-//! See documentation of [`Coder`] for an example how to use these distributions for
+//! See documentation of [`Code`] for an example how to use these distributions for
 //! data compression or decompression.
 //!
-//! [`Coder`]: crate::Coder
+//! [`Code`]: crate::Code
 
 use num::{cast::AsPrimitive, traits::WrappingSub, Float, PrimInt};
 use statrs::distribution::{InverseCDF, Univariate};
@@ -13,12 +13,7 @@ use super::BitArray;
 
 /// A trait for probability distributions that can be used as entropy models.
 ///
-/// The type parameter `Probability` controls the fixed-point precision at which probabilities
-/// are represented. The type system enforces that this matches the type of
-/// compressed words of the [`Coder`] or [`SeekableDecoder`].
-///
-/// [`Coder`]: crate::Coder
-/// [`SeekableDecoder`]: crate::SeekableDecoder
+/// TODO: document how `PRECISION` is (not) enforced.
 pub trait DiscreteDistribution<const PRECISION: usize> {
     /// The type used to represent probabilities. Must hold at least PRECISION bits.
     ///
@@ -29,15 +24,12 @@ pub trait DiscreteDistribution<const PRECISION: usize> {
     /// The type of data over which the probability distribution is defined.
     ///
     /// When the `DiscreteDistribution` is used as an entropy model, this is the
-    /// type of an item of the *uncompressed* data. Note that a [`Coder`] can encode
-    /// several symbols with different entropy models, and each entropy model may
-    /// have a different `Symbol` type. Only the type parameter `Probability` (which controls
-    /// the fixed-point precision of the entropy models) must be the same across all
-    /// entropy models used with a given `Coder` (and this is enforced by the
-    /// compiler).
+    /// type of an item of the *uncompressed* data. Note that an [`Encode`] or
+    /// [`Decode`] may use a different entropy model for each encoded or decoded symbol,
+    /// and each employed entropy model may have a different `Symbol` type.
     ///
-    /// [`Coder`]: crate::Coder
-    /// [`CompressedWord`]: crate::CompressedWord
+    /// [`Encode`]: crate::Encode
+    /// [`Decode`]: crate::Decode
     type Symbol;
 
     /// Returns `Ok((left_sided_cumulative, probability))` of the bin for the
@@ -87,15 +79,14 @@ where
 /// typically `f64` or `f32`), and approximating them by discrete distributions
 /// defined over the integer type `Symbol` (which is typically something like `i32`) by
 /// rounding all values to the closest integer. The resulting
-/// [`LeakilyQuantizedDistribution`]s can be used for entropy coding with a
-/// [`Coder`] or a [`SeekableDecoder`] because they implement
-/// [`DiscreteDistribution`].
+/// [`LeakilyQuantizedDistribution`]s can be used for entropy coding with a coder that
+/// implements [`Encode`] or [`Decode`] because they implement [`DiscreteDistribution`].
 ///
 /// This quantizer is a "leaky" quantizer. This means that the constructor [`new`]
-/// takes a domain in `Symbol` as an argument. The resulting
+/// takes a domain over the `Symbol` type as an argument. The resulting
 /// [`LeakilyQuantizedDistribution`]s are guaranteed to assign a nonzero probability
 /// to every integer within this domain. This is often a useful property of an
-/// entropy model since it ensures that every integer within the chosen domain can
+/// entropy model because it ensures that every integer within the chosen domain can
 /// in fact be encoded.
 ///
 /// # Example
@@ -115,10 +106,10 @@ where
 /// let continuous_distribution2 = statrs::distribution::Normal::new(-1.4, 2.7).unwrap();
 /// let discrete_distribution2 = quantizer.quantize(continuous_distribution2);
 ///
-/// // Use the discrete distributions with a `Coder`.
-/// let mut coder = DefaultStack::new();
-/// coder.encode_symbol(4, discrete_distribution1);
-/// coder.encode_symbol(-3, discrete_distribution2);
+/// // Use the discrete distributions with a `Code`.
+/// let mut stack = DefaultStack::new();
+/// stack.encode_symbol(4, discrete_distribution1);
+/// stack.encode_symbol(-3, discrete_distribution2);
 /// ```
 ///
 /// # TODO
@@ -126,8 +117,8 @@ where
 /// Implement non-leaky variant once minimal const generics are stable
 /// (est. February 2021).
 ///
-/// [`Coder`]: crate::Coder
-/// [`SeekableDecoder`]: crate::SeekableDecoder
+/// [`Encode`]: crate::Encode
+/// [`Decode`]: crate::Decode
 /// [`new`]: #method.new
 #[derive(Debug)]
 pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
@@ -330,8 +321,6 @@ where
             // keep increasing `symbol` until it is.
             loop {
                 if symbol == max_symbol_inclusive {
-                    let max_probability =
-                        Probability::max_value() >> (Probability::BITS - PRECISION);
                     break max_probability.wrapping_add(&Probability::one());
                 }
 
@@ -349,22 +338,20 @@ where
             }
         };
 
-        (
-            symbol,
-            left_sided_cumulative,
-            right_sided_cumulative.wrapping_sub(&left_sided_cumulative),
-        )
+        let probability = right_sided_cumulative.wrapping_sub(&left_sided_cumulative);
+        dbg!(probability);
+        (symbol, left_sided_cumulative, probability)
     }
 }
 
 /// A categorical distribution over a finite number of bins.
 ///
-/// This distribution implements [`DiscreteDistribution<Probability>`], which means that it
-/// can be used for entropy coding with a [`Coder<Probability>`] or [`SeekableDecoder<Probability>`].
+/// This distribution implements [`DiscreteDistribution`], which means that it can be
+/// used for entropy coding with a coder that implements [`Encode`] or [`Decode`].
 ///
-/// [`DiscreteDistribution<Probability>`]: trait.DiscreteDistribution.html
-/// [`Coder<Probability>`]: crate::Coder
-/// [`SeekableDecoder<Probability>`]: crate::SeekableDecoder
+/// [`DiscreteDistribution`]: trait.DiscreteDistribution.html
+/// [`Encode`]: crate::Encode
+/// [`Decode`]: crate::Decode
 pub struct Categorical<Probability, const PRECISION: usize> {
     /// Invariants:
     /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but

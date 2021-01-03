@@ -28,7 +28,7 @@ use crate::{
 /// the origin of the binary data. This may be used in bits-back like algorithms to
 /// "make up" ("fantasize") a sequence of symbols; each fantasized symbol takes away
 /// a fixed number of bits from the original ("real") binary data.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Auryn<CompressedWord, State, const PRECISION: usize>
 where
     CompressedWord: BitArray + Into<State>,
@@ -54,38 +54,193 @@ where
 /// sane values for many typical use cases.
 pub type DefaultAuryn = Auryn<u32, u64, 24>;
 
-impl<CompressedWord, State, const PRECISION: usize> From<Stack<CompressedWord, State>>
-    for Auryn<CompressedWord, State, PRECISION>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    fn from(stack: Stack<CompressedWord, State>) -> Self {
-        Auryn::with_supply(stack)
-    }
-}
-
 impl<CompressedWord, State, const PRECISION: usize> Auryn<CompressedWord, State, PRECISION>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    pub fn with_supply(supply: Stack<CompressedWord, State>) -> Self {
-        Self {
-            supply,
-            waste: Default::default(),
+    pub fn from_stack_for_decoding(
+        stack: Stack<CompressedWord, State>,
+    ) -> Result<Self, Stack<CompressedWord, State>> {
+        assert!(CompressedWord::BITS > 0);
+        assert!(State::BITS >= 2 * CompressedWord::BITS);
+        assert!(State::BITS % CompressedWord::BITS == 0);
+        assert!(PRECISION <= CompressedWord::BITS);
+        assert!(PRECISION > 0);
+
+        if stack.state() < State::one() << (State::BITS - CompressedWord::BITS) {
+            // Not enough data to initialize `supply`.
+            return Err(stack);
         }
+
+        let mut waste_state = State::one();
+        let mut word_iter = stack.buf().iter().rev();
+        while waste_state < State::one() << (State::BITS - CompressedWord::BITS - PRECISION) {
+            if let Some(&word) = word_iter.next() {
+                waste_state = (waste_state << CompressedWord::BITS) | word.into();
+            } else {
+                // Not enough data to initialize `waste`.
+                return Err(stack);
+            }
+        }
+
+        let remaining_words = word_iter.len();
+        let (mut buf, state) = stack.into_buf_and_state();
+        buf.resize(remaining_words, CompressedWord::zero());
+
+        let supply = Stack::with_buf_and_state(buf, state)
+            .expect("Original `Stack` was valid and we only shrank its `buf`.");
+        let waste = Stack::with_state_and_empty_buf(waste_state);
+
+        Ok(Self { supply, waste })
+
+        // let (mut buf, mut waste_state) = stack.into_buf_and_state();
+        // let mut supply_state = State::one();
+
+        // let needs_transfer = waste_state >= State::one() << (State::BITS - PRECISION);
+
+        // let threshold =
+        //     State::one() << (State::BITS - CompressedWord::BITS * (1 + needs_transfer as usize));
+        // while supply_state < threshold {
+        //     if let Some(word) = buf.pop() {
+        //         supply_state = (supply_state << CompressedWord::BITS) | word.into();
+        //     } else {
+        //         break;
+        //     }
+        // }
+
+        // if needs_transfer {
+        //     // Transfer one word from `waste_state` to `supply_state`.
+        //     supply_state = (supply_state << CompressedWord::BITS) | waste_state.as_().into();
+        //     waste_state = waste_state >> CompressedWord::BITS;
+        // }
+
+        // let supply = Stack::with_buf_and_state(buf, supply_state)
+        //     .expect("We enforced validity of `supply` manually above.");
+        // let waste = Stack::with_state_and_empty_buf(waste_state);
+
+        // Self { supply, waste }
+    }
+
+    pub fn from_stack_for_encoding(
+        stack: Stack<CompressedWord, State>,
+    ) -> Result<Self, Stack<CompressedWord, State>> {
+        assert!(CompressedWord::BITS > 0);
+        assert!(State::BITS >= 2 * CompressedWord::BITS);
+        assert!(State::BITS % CompressedWord::BITS == 0);
+        assert!(PRECISION <= CompressedWord::BITS);
+        assert!(PRECISION > 0);
+
+        let (buf, state) = stack.into_buf_and_state();
+
+        let waste = Stack::from_compressed(buf)
+            .and_then(|waste| {
+                if waste.state() < State::one() << (State::BITS - PRECISION - CompressedWord::BITS)
+                {
+                    // Not enough data available to initialize `waste`.
+                    Err(waste.into_compressed())
+                } else {
+                    Ok(waste)
+                }
+            })
+            .map_err(|buf| {
+                Stack::with_buf_and_state(buf, state)
+                    .expect("We're reconstructing the original stack, which was valid.")
+            })?;
+
+        let supply = Stack::with_state_and_empty_buf(state);
+
+        Ok(Self::with_supply_and_waste(supply, waste))
+    }
+
+    pub fn finish_decoding(
+        self,
+    ) -> Result<(Vec<CompressedWord>, Stack<CompressedWord, State>), Self> {
+        if self.supply.state() < State::one() << (State::BITS - CompressedWord::BITS) {
+            // Ran out of binary data to decode. Resulting `Stack` might have invalid state
+            // (possibly only after concatenation to `prefix`).
+            return Err(self);
+        }
+
+        if self.waste.state() < State::one() << (State::BITS - PRECISION - CompressedWord::BITS) {
+            // Produced too little waste. Concatenation of `waste.state` to existing data
+            // wouldn't be reversible. (This cannot happen if `from_stack_for_decoding` was
+            // called on a stack with at least one `State` worth of `buf`, since it tries
+            // to initialize the `Auryn` with enough `waste` to start with).
+            return Err(self);
+        }
+
+        let (prefix, supply_state) = self.supply.into_buf_and_state();
+        let suffix = Stack::with_buf_and_state(self.waste.into_compressed(), supply_state)
+            .expect("We explicitly verified validity of `supply_state` above.");
+
+        Ok((prefix, suffix))
+    }
+
+    pub fn finish_decoding_and_concatenate(self) -> Result<Stack<CompressedWord, State>, Self> {
+        let (mut prefix, suffix) = self.finish_decoding()?;
+        let (suffix_buf, state) = suffix.into_buf_and_state();
+        prefix.extend_from_slice(&suffix_buf);
+        let stack = Stack::with_buf_and_state(prefix, state)
+            .expect("`finish_decoding` would have failed if `state` was too small.");
+        Ok(stack)
+    }
+
+    pub fn finish_encoding(
+        self,
+    ) -> Result<(Vec<CompressedWord>, Stack<CompressedWord, State>), Self> {
+        if self.supply.state() < State::one() << (State::BITS - CompressedWord::BITS) {
+            // Encoding ended with fewer bits than it started.
+            return Err(self);
+        }
+
+        if self.waste.state() < State::one() << (State::BITS - CompressedWord::BITS - PRECISION) {
+            // Encoding consumed more waste than available.
+            return Err(self);
+        }
+
+        let waste_state_bits =
+            (State::BITS - 1).wrapping_sub(self.waste.state().leading_zeros() as usize);
+        if waste_state_bits % CompressedWord::BITS != 0 || waste_state_bits == usize::max_value() {
+            // Waste's state (without leading 1 bit) must fit into an integer number of words.
+            return Err(self);
+        }
+
+        let (mut buf, state) = self.supply.into_buf_and_state();
+        let (prefix, mut waste_state) = self.waste.into_buf_and_state();
+
+        while waste_state != State::one() {
+            buf.push(waste_state.as_());
+            waste_state = waste_state >> CompressedWord::BITS;
+        }
+
+        let suffix = Stack::with_buf_and_state(buf, state)
+            .expect("We explicitly verified that `self.supply.state()` was large enough.");
+
+        Ok((prefix, suffix))
+    }
+
+    pub fn finish_encoding_and_concatenate(self) -> Result<Stack<CompressedWord, State>, Self> {
+        let (mut prefix, suffix) = self.finish_encoding()?;
+        let (suffix_buf, state) = suffix.into_buf_and_state();
+        prefix.extend_from_slice(&suffix_buf);
+        let stack = Stack::with_buf_and_state(prefix, state)
+            .expect("`finish_encoding` would have failed if `state` was too small.");
+        Ok(stack)
     }
 
     pub fn with_supply_and_waste(
         supply: Stack<CompressedWord, State>,
         mut waste: Stack<CompressedWord, State>,
     ) -> Self {
+        assert!(PRECISION <= CompressedWord::BITS);
+        assert!(PRECISION > 0);
+
         // `waste` has to satisfy slightly different invariants than a usual `Stack`.
         // If they're violated then flushing one word is guaranteed to restore them.
         if waste.state() >= State::one() << (State::BITS - PRECISION) {
             waste.flush_state();
-            // Now, waste satisfies both invariants:
+            // Now, `waste` satisfies both required invariants:
             // - waste.state() >= State::one() << (State::BITS - PRECISION - CompressedWord::BITS)
             // - waste.state() < State::one() << (State::BITS - CompressedWord::BITS)
             //                 <= State::one() << (State::BITS - PRECISION)
@@ -94,8 +249,60 @@ where
         Self { supply, waste }
     }
 
-    pub fn with_compressed_data(compressed: Vec<CompressedWord>) -> Self {
-        Self::with_supply(Stack::with_compressed_data(compressed))
+    /// Converts the `Auryn` into a new `Auryn` for coding with a different precision.
+    ///
+    /// Here, "precision" refers to the number of bits with which probabilities are
+    /// represented in entropy models passed to the `encode_XXX` and `decode_XXX`
+    /// methods.
+    ///
+    /// The generic argument `NEW_PRECISION` can usually be omitted because the compiler
+    /// can infer its value from the first time the new `Auryn` is used for encoding or
+    /// decoding. The recommended usage pattern is to store the returned `Auryn` in a
+    /// variable that shadows the old `Auryn` (since the old one gets consumed anyway),
+    /// i.e., `let mut auryn = auryn.change_precision()`. See example below.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::{distributions::LeakyQuantizer, Decode, stack::DefaultStack};
+    ///
+    /// // Construct two entropy models with 24 and 20 bits of precision, respectively.
+    /// let continuous_distribution = statrs::distribution::Normal::new(0.0, 10.0).unwrap();
+    /// let quantizer24 = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
+    /// let distribution24 = quantizer24.quantize(continuous_distribution);
+    /// let quantizer20 = LeakyQuantizer::<_, _, u32, 20>::new(-100..=100);
+    /// let distribution20 = quantizer20.quantize(continuous_distribution);
+    ///
+    /// // Construct an `Auryn` and decode data with the 24 bit precision entropy model.
+    /// let data = vec![0x0123_4567u32, 0x89ab_cdef];
+    /// let mut auryn = DefaultStack::from_binary(data).into_auryn_for_decoding().unwrap();
+    /// let _symbol_a = auryn.decode_symbol(distribution24);
+    ///
+    /// // Change the `Auryn`'s precision and decode data with the 20 bit precision entropy model.
+    /// let mut auryn = auryn.change_precision(); // <-- Compiler can infer `NEW_PRECISION`.
+    /// let _symbol_b = auryn.decode_symbol(distribution20);
+    /// ```
+    pub fn change_precision<const NEW_PRECISION: usize>(
+        mut self,
+    ) -> Auryn<CompressedWord, State, NEW_PRECISION> {
+        assert!(NEW_PRECISION <= CompressedWord::BITS);
+
+        if NEW_PRECISION > PRECISION {
+            if self.waste.state() >= State::one() << (State::BITS - NEW_PRECISION) {
+                self.waste.flush_state()
+            }
+        } else if NEW_PRECISION < PRECISION {
+            if self.waste.state()
+                < State::one() << (State::BITS - NEW_PRECISION - CompressedWord::BITS)
+            {
+                self.waste.refill_state_unchecked()
+            }
+        }
+
+        Auryn {
+            supply: self.supply,
+            waste: self.waste,
+        }
     }
 
     pub fn supply(&self) -> &Stack<CompressedWord, State> {
@@ -123,18 +330,10 @@ where
     /// [`Stack::get_compressed`] as in the example below:
     ///
     /// ```
-    /// use constriction::{auryn::DefaultAuryn, distributions::LeakyQuantizer, Decode};
+    /// use constriction::{distributions::LeakyQuantizer, stack::DefaultStack, Decode};
     ///
-    /// let compressed = vec![0x0123_4567, 0x89ab_cdef];
-    /// let mut auryn = constriction::auryn::DefaultAuryn::with_compressed_data(compressed);
-    ///
-    /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-    /// let distribution =
-    ///     quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
-    /// let _symbols = auryn
-    ///     .decode_iid_symbols(5, &distribution)
-    ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
-    ///     .unwrap();
+    /// let data = vec![0x0123_4567u32, 0x89ab_cdef];
+    /// let mut auryn = DefaultStack::from_binary(data).into_auryn_for_encoding::<24>().unwrap();
     ///
     /// // Calling `auryn.waste()` only needs shared access to `auryn`.
     /// dbg!(auryn.waste()); // `Debug` implementation calls `auryn.waste().iter_compressed()`.
@@ -233,7 +432,9 @@ where
     }
 
     fn maybe_empty(&self) -> bool {
-        self.supply.maybe_empty()
+        // `self.supply.state()` must always be above threshold if we still want to call
+        // `finish_decoding`, so we only check if `supply.buf` is empty here.
+        self.supply.buf().is_empty()
     }
 }
 
@@ -256,6 +457,7 @@ where
 
         let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
         let remainder = quantile - left_sided_cumulative;
+        dbg!(probability, remainder);
 
         self.waste
             .encode_remainder_onto_state::<D, PRECISION>(remainder, probability);
@@ -293,7 +495,7 @@ where
         if self.waste.state()
             < probability.into().into() << (State::BITS - CompressedWord::BITS - PRECISION)
         {
-            self.waste.refill_state_if_possible();
+            self.waste.refill_state_unchecked();
             // At this point, the invariant on `self.waste` (see its doc comment) is
             // temporarily violated (but will be restored below). This is how `decode_symbol`
             // can detect that it has to flush `waste.state`.
@@ -388,29 +590,18 @@ mod test {
     use statrs::distribution::Normal;
 
     #[test]
-    fn compress_none() {
-        let auryn1 = DefaultAuryn::with_compressed_data(Vec::new());
-        assert!(auryn1.maybe_empty());
-        let (supply, waste) = auryn1.into_supply_and_waste();
-        assert!(supply.is_empty());
-        assert!(waste.is_empty());
-
-        let auryn2 = DefaultAuryn::with_supply_and_waste(supply, waste);
-        assert!(auryn2.maybe_empty());
-    }
-    #[test]
     fn restore_none() {
         generic_restore_many::<u32, u64, u32, 24>(3, 0);
     }
 
     #[test]
     fn restore_one() {
-        generic_restore_many::<u32, u64, u32, 24>(3, 1);
+        generic_restore_many::<u32, u64, u32, 24>(5, 1);
     }
 
     #[test]
     fn restore_two() {
-        generic_restore_many::<u32, u64, u32, 24>(3, 2);
+        generic_restore_many::<u32, u64, u32, 24>(5, 2);
     }
 
     #[test]
@@ -489,28 +680,23 @@ mod test {
         let mut rng = Xoshiro256StarStar::seed_from_u64(
             (amt_compressed_words as u64).rotate_left(32) ^ amt_symbols as u64,
         );
-        let mut compressed = (0..amt_compressed_words)
+        let compressed = (0..amt_compressed_words)
             .map(|_| rng.next_u64().as_())
             .collect::<Vec<_>>();
 
-        // Set highest bit so that invariant of a `Stack` is satisfied.
-        compressed
-            .last_mut()
-            .map(|w| *w = *w | (CompressedWord::one() << (CompressedWord::BITS - 1)));
-
         let distributions = (0..amt_symbols)
             .map(|_| {
-                let mean = (200.0 / u32::MAX as f64) * rng.next_u32() as f64 - 100.0;
+                let mean = (100.0 / u32::MAX as f64) * rng.next_u32() as f64 - 100.0;
                 let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
                 Normal::new(mean, std_dev)
             })
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
+        let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-100..=100);
 
-        let mut auryn =
-            Auryn::<CompressedWord, State, PRECISION>::with_compressed_data(compressed.clone());
-        assert!(auryn.waste().is_empty());
+        let mut auryn = Stack::from_binary(compressed.clone())
+            .into_auryn_for_decoding()
+            .unwrap();
 
         let symbols = auryn
             .decode_symbols(
@@ -522,9 +708,10 @@ mod test {
             .unwrap();
 
         assert!(!auryn.maybe_empty());
-        if amt_symbols != 0 {
-            assert!(!auryn.waste().is_empty());
-        }
+
+        // Test exporting to stack and re-importing into Auryn:
+        let stack = auryn.finish_decoding_and_concatenate().unwrap();
+        let mut auryn = stack.into_auryn_for_encoding().unwrap();
 
         auryn
             .encode_symbols_reverse(
@@ -535,8 +722,7 @@ mod test {
             )
             .unwrap();
 
-        let (supply, waste) = auryn.into_supply_and_waste();
-        assert!(waste.is_empty());
-        assert_eq!(supply.into_compressed(), compressed);
+        let stack = auryn.finish_encoding_and_concatenate().unwrap();
+        assert_eq!(stack.into_binary().unwrap(), compressed);
     }
 }

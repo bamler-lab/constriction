@@ -59,10 +59,10 @@ use crate::{
 ///
 /// # Generic Parameters: Compressed Word Type `CompressedWord` and `PRECISION`
 ///
-/// The `Stack` is generic over a type `CompressedWord`, which is a
-/// [`CompressedWord`], and over a constant `PRECISION` of type `usize`. **If you're
-/// unsure how to set these parameters, consider using the type alias
-/// [`DefaultStack`], which uses sane default values.**
+/// The `Stack` is generic over a type `CompressedWord`, which is a [`BitArray`],
+/// and over a constant `PRECISION` of type `usize`. **If you're unsure how to set
+/// these parameters, consider using the type alias [`DefaultStack`], which uses
+/// sane default values.**
 ///
 /// ## Meaning of `CompressedWord` and `PRECISION`
 ///
@@ -186,7 +186,12 @@ use crate::{
 /// [`encode_symbols`]: #method.encode_symbols
 /// [`is_empty`]: #method.is_empty`
 /// [`into_compressed`]: #method.into_compressed
-pub struct Stack<CompressedWord: BitArray, State: BitArray> {
+#[derive(Clone)]
+pub struct Stack<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
     buf: Vec<CompressedWord>,
 
     /// Invariant: `state >= State::one() << (State::BITS - CompressedWord::BITS)`
@@ -257,23 +262,90 @@ where
         }
     }
 
+    pub fn with_buf_and_state(buf: Vec<CompressedWord>, state: State) -> Result<Self, ()> {
+        if buf.is_empty() || state >= State::one() << (State::BITS - CompressedWord::BITS) {
+            Ok(Self { buf, state })
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn with_state_and_empty_buf(state: State) -> Self {
+        Self {
+            buf: Vec::new(),
+            state,
+        }
+    }
+
     /// Creates an ANS stack with some initial compressed data.
     ///
-    /// This is usually the starting point if you want to *decompress* data
-    /// previously obtained from [`into_compressed`](#method.into_compressed).
-    /// However, it can also be used to append more symbols to an existing
-    /// compressed buffer of data.
-    pub fn with_compressed_data(mut compressed: Vec<CompressedWord>) -> Self {
+    /// This is usually the starting point if you want to *decompress* data previously
+    /// obtained from [`into_compressed`].  However, it can also be used to append more
+    /// symbols to an existing compressed buffer of data.
+    ///
+    /// Returns `Err(compressed)` if `compressed` is not empty and its last entry is
+    /// zero, since a `Stack` cannot represent trailing zero words. This error cannot
+    /// occur if `compressed` was obtained from [`into_compressed`], which never returns
+    /// data with a trailing zero word. If you want to construct a `Stack` from an
+    /// unknown source of binary data (e.g., to decode some side information into latent
+    /// variables) then call [`from_binary`] instead.
+    ///
+    /// [`into_compressed`]: #method.into_compressed
+    /// [`from_binary`]: #method.from_binary
+    pub fn from_compressed(
+        mut compressed: Vec<CompressedWord>,
+    ) -> Result<Self, Vec<CompressedWord>> {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
+
+        if compressed.last() == Some(&CompressedWord::zero()) {
+            return Err(compressed);
+        }
 
         let state = bit_array_from_chunks(
             std::iter::repeat_with(|| compressed.pop()).scan((), |(), chunk| chunk),
         );
 
-        Self {
+        Ok(Self {
             buf: compressed,
             state,
-        }
+        })
+    }
+
+    /// Like [`from_compressed`] but works on any binary data.
+    ///
+    /// This method is meant for rather advanced use cases. For most common use cases,
+    /// you probably want to call [`from_compressed`] instead.
+    ///
+    /// Different to `from_compressed`, this method also works if `data` ends in a zero
+    /// word. Calling this method is equivalent to (but likely more efficient than)
+    /// appending a `1` word to `data` and then calling `from_compressed`. Note that
+    /// therefore, this method always constructs a non-empty `Stack` (even if `data` is
+    /// empty):
+    ///
+    /// ```
+    /// use constriction::stack::DefaultStack;
+    ///
+    /// let stack1 = DefaultStack::from_binary(Vec::new());
+    /// assert!(!stack1.is_empty()); // <-- stack1 is *not* empty.
+    ///
+    /// let stack2 = DefaultStack::from_compressed(Vec::new()).unwrap();
+    /// assert!(stack2.is_empty()); // <-- stack2 is empty.
+    /// ```
+    /// [`from_compressed`]: #method.from_compressed
+    pub fn from_binary(mut data: Vec<CompressedWord>) -> Self {
+        // We only simulate the effect of appending a `1` to `data` because actually
+        // appending a word may cause an expensive resizing of the vector `data`. This
+        // resizing is both likely to happen and likely to be unnecessary: `data` may be
+        // explicitly copied out from some larger buffer, in which case its capacity will
+        // likely match its size, so appending a single word would cause a resize. Further,
+        // the `Stack` may be intended for decoding (e.g., decoding side information inside
+        // an `Auryn`), and so the resizing is completely avoidable.
+        let state = bit_array_from_chunks(
+            std::iter::once(CompressedWord::one())
+                .chain(std::iter::repeat_with(|| data.pop()).scan((), |(), chunk| chunk)),
+        );
+
+        Self { buf: data, state }
     }
 
     pub fn encode_symbols_reverse<S, D, I, const PRECISION: usize>(
@@ -332,8 +404,9 @@ where
 
     /// Check if no data for decoding is left.
     ///
-    /// Same as [`Decoder::maybe_finished`], just with a more suitable name considering
-    /// the fact that this stack operates as a growable and shrinkable stack.
+    /// Same as [`Code::maybe_empty`], just with a more suitable name considering the
+    /// fact that this particular implementation of `Code` can decide with certainty
+    /// whether or not it is empty.
     ///
     /// Note that you can still pop symbols off an empty stack, but this is only
     /// useful in rare edge cases, see documentation of
@@ -350,7 +423,7 @@ where
     ///
     /// The returned data can be used to recreate a stack with the same state
     /// (e.g., for decoding) by passing it to
-    /// [`with_compressed_data`](#method.with_compressed_data).
+    /// [`from_compressed`](#method.from_compressed).
     ///
     /// If you don't want to consume the stack, consider calling
     /// [`get_compressed`](#method.get_compressed),
@@ -363,7 +436,7 @@ where
     ///
     /// let mut stack = DefaultStack::new();
     ///
-    /// // Push some data on the stack:
+    /// // Push some data onto the stack:
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let distribution = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
@@ -376,7 +449,7 @@ where
     /// // ... write `compressed` to a file and then read it back later ...
     ///
     /// // Create a new stack with the same state and use it for decompression:
-    /// let mut stack = DefaultStack::with_compressed_data(compressed);
+    /// let mut stack = DefaultStack::from_compressed(compressed).expect("Corrupted compressed file.");
     /// let reconstructed = stack
     ///     .decode_iid_symbols(4, &distribution)
     ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
@@ -385,17 +458,81 @@ where
     /// assert!(stack.is_empty())
     /// ```
     pub fn into_compressed(mut self) -> Vec<CompressedWord> {
-        for chunk in bit_array_to_chunks_truncated(self.state).rev() {
-            self.buf.push(chunk)
-        }
         self.buf
+            .extend(bit_array_to_chunks_truncated(self.state).rev());
+        self.buf
+    }
+
+    /// Returns the binary data if it fits precisely into an integer number of
+    /// `CompressedWord`s
+    ///
+    /// This method is meant for rather advanced use cases. For most common use cases,
+    /// you probably want to call [`into_compressed`] instead.
+    ///
+    /// This method is the inverse of [`from_binary`]. It is equivalent to calling
+    /// [`into_compressed`], verifying that the returned vector ends in a `1` word, and
+    /// popping off that trailing `1` word.
+    ///
+    /// Returns `Err(())` if the compressed data (excluding an obligatory trailing
+    /// `1` bit) does not fit into an integer number of `CompressedWord`s. This error
+    /// case includes the case of an empty `Stack` (since an empty `Stack` lacks the
+    /// obligatory trailing one-bit).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// // Some binary data we want to represent on a `Stack`.
+    /// let data = vec![0x89ab_cdef, 0x0123_4567];
+    ///
+    /// // Constructing a `Stack` with `from_binary` indicates that all bits of `data` are
+    /// // considered part of the information-carrying payload.
+    /// let stack1 = constriction::stack::DefaultStack::from_binary(data.clone());
+    /// assert_eq!(stack1.clone().into_binary().unwrap(), data); // <-- Retrieves the original `data`.
+    ///
+    /// // By contrast, if we construct a `Stack` with `from_compressed`, we indicate that
+    /// // - any leading `0` bits of the last entry of `data` are not considered part of
+    /// //   the information-carrying payload; and
+    /// // - the (obligatory) first `1` bit of the last entry of `data` defines the
+    /// //   boundary between unused bits and information-carrying bits; it is therefore
+    /// //   also not considered part of the payload.
+    /// // Therefore, `stack2` below only contains `32 * 2 - 7 - 1 = 56` bits of payload,
+    /// // which cannot be exported into an integer number of `u32` words:
+    /// let stack2 = constriction::stack::DefaultStack::from_compressed(data.clone()).unwrap();
+    /// assert!(stack2.clone().into_binary().is_err()); // <-- Returns an error.
+    ///
+    /// // Use `into_compressed` to retrieve the data in this case:
+    /// assert_eq!(stack2.into_compressed(), data);
+    ///
+    /// // Calling `into_compressed` on `stack1` would append an extra `1` bit to indicate
+    /// // the boundary between information-carrying bits and padding `0` bits:
+    /// assert_eq!(stack1.into_compressed(), vec![0x89ab_cdef, 0x0123_4567, 0x0000_0001]);
+    /// ```
+    ///
+    /// [`from_binary`]: #method.from_binary
+    /// [`into_compressed`]: #method.into_compressed
+    pub fn into_binary(mut self) -> Result<Vec<CompressedWord>, ()> {
+        let valid_bits = (State::BITS - 1).wrapping_sub(self.state.leading_zeros() as usize);
+
+        if valid_bits % CompressedWord::BITS != 0 || valid_bits == usize::max_value() {
+            Err(())
+        } else {
+            let truncated_state = self.state ^ (State::one() << valid_bits);
+            for chunk in bit_array_to_chunks_truncated(truncated_state).rev() {
+                self.buf.push(chunk)
+            }
+            Ok(self.buf)
+        }
+    }
+
+    pub fn into_buf_and_state(self) -> (Vec<CompressedWord>, State) {
+        (self.buf, self.state)
     }
 
     /// Assembles the current compressed data into a single slice.
     ///
     /// Returns the concatenation of [`buf`] and [`state`]. The concatenation truncates
     /// any trailing zero words, which is compatible with the constructor
-    /// [`with_compressed_data`].
+    /// [`from_compressed`].
     ///
     /// This method requires a `&mut self` receiver to temporarily append `state` to
     /// [`buf`] (this mutationwill be reversed to recreate the original `buf` as soon as
@@ -432,7 +569,9 @@ where
     /// assert_eq!(reconstructed, symbols);
     /// ```
     ///
-    /// [`with_compressed_data`]: #method.with_compressed_data
+    /// [`buf`]: #method.buf
+    /// [`state`]: #method.state
+    /// [`from_compressed`]: #method.from_compressed
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`into_compressed`]: #method.into_compressed
     pub fn get_compressed<'a>(
@@ -513,8 +652,16 @@ where
         CompressedWord::BITS * self.num_words()
     }
 
-    pub fn into_auryn<const PRECISION: usize>(self) -> Auryn<CompressedWord, State, PRECISION> {
-        self.into()
+    pub fn into_auryn_for_decoding<const PRECISION: usize>(
+        self,
+    ) -> Result<Auryn<CompressedWord, State, PRECISION>, Self> {
+        Auryn::from_stack_for_decoding(self)
+    }
+
+    pub fn into_auryn_for_encoding<const PRECISION: usize>(
+        self,
+    ) -> Result<Auryn<CompressedWord, State, PRECISION>, Self> {
+        Auryn::from_stack_for_encoding(self)
     }
 
     #[inline(always)]
@@ -539,7 +686,9 @@ where
     }
 
     /// Pushes a compressed word onto `state` without checking for overflow, thus
-    /// potentially truncating `state`.
+    /// potentially truncating `state`. (However, this method does check if a compressed
+    /// word is available and it leafes `state` unchanged if there's no available
+    /// compressed word.)
     ///
     /// This method is *not* declared `unsafe` because we consider truncating `state` a
     /// logic error but not a memory/safety violation.
@@ -628,12 +777,8 @@ where
     /// like [`encode_symbols`](#method.encode_symbols) or
     /// [`encode_iid_symbols`](#method.encode_iid_symbols) instead. See examples there.
     ///
-    /// The bound `impl Borrow<S>` on argument `symbol` essentially means that you
-    /// can provide the symbol either by value or by reference.
-    ///
-    /// This method is called `encode_symbol` rather than `encode_symbol` to stress
-    /// the fact that the `Stack` is a stack: the last symbol *pushed onto* the
-    /// stack will be the first symbol that [`decode_symbol`] will *pop off* the stack.
+    /// The bound `impl Borrow<D::Symbol>` on argument `symbol` essentially means that
+    /// you can provide the symbol either by value or by reference, at your choice.
     ///
     /// Returns [`Err(ImpossibleSymbol)`] if `symbol` has zero probability under the
     /// entropy model `distribution`. This error can usually be avoided by using a
@@ -645,7 +790,7 @@ where
     /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
     ///
     /// TODO: move this and similar doc comments to the trait definition.
-    /// 
+    ///
     /// [`Err(ImpossibleSymbol)`]: enum.EncodingError.html#variant.ImpossibleSymbol
     fn encode_symbol<D>(
         &mut self,
@@ -896,7 +1041,7 @@ mod tests {
         let compressed = coder1.into_compressed();
         assert!(compressed.is_empty());
 
-        let coder2 = DefaultStack::with_compressed_data(compressed);
+        let coder2 = DefaultStack::from_compressed(compressed).unwrap();
         assert!(coder2.is_empty());
     }
 
@@ -939,7 +1084,7 @@ mod tests {
         let compressed = encoder.into_compressed();
         assert_eq!(compressed.len(), expected_size);
 
-        let mut decoder = DefaultStack::with_compressed_data(compressed);
+        let mut decoder = DefaultStack::from_compressed(compressed).unwrap();
         for symbol in symbols.rev() {
             assert_eq!(decoder.decode_symbol(&distribution).unwrap(), symbol);
         }
@@ -1064,7 +1209,7 @@ mod tests {
 
         // Test if import/export of compressed data works.
         let compressed = stack.into_compressed();
-        let mut stack = Stack::with_compressed_data(compressed);
+        let mut stack = Stack::from_compressed(compressed).unwrap();
 
         let reconstructed_gaussian = stack
             .decode_symbols(

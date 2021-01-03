@@ -13,11 +13,11 @@
 //!
 //! # Usage
 //!
-//! Rust users will likely want to start by encoding some data with a [`Coder`].
+//! Rust users will likely want to start by encoding some data with a [`Stack`].
 //!
 //! Python users will likely want to install this library via `pip install
 //! constriction`, then `import constriction` in their project and construct a
-//! `constriction.Coder`.
+//! `constriction.Stack`.
 //!
 //! # A Primer on Entropy Coding
 //!
@@ -26,7 +26,7 @@
 //! an entropy coding algorithm to assign short codewords to data it will likely
 //! see, at the cost of mapping unlikely data to longer codewords. The module
 //! [`distributions`] provides tools to construct entropy models that you can use
-//! with a [`Coder`] or a [`SeekableDecoder`].
+//! with any coder that implements [`Encode`] or  [`Decode`].
 //!
 //! The information theoretically optimal (i.e., lowest possible) *expected* bitrate
 //! for entropy coding lies within one bit of the [cross entropy] of the employed
@@ -86,10 +86,10 @@
 //! which generally trades off compression performance against runtime and memory
 //! performance). This amortization over symbols means that one can no longer map
 //! each symbol to a span of bits in the compressed bitstring. Therefore, jumping
-//! ("seeking") to a given position in the compressed bitstring in a
-//! [`SeekableDecoder`] requires providing some small additional information aside
-//! from the jump address. The additional information can be thought of as the
-//! fractional (i.e., sub-bit) part of the jump address
+//! ("seeking") to a given position in the compressed bitstring (see [`Seek::seek`])
+//! requires providing some small additional information aside from the jump
+//! address. The additional information can be thought of as the fractional (i.e.,
+//! sub-bit) part of the jump address
 //!
 //! # Encoding Correlated Data
 //!
@@ -140,6 +140,7 @@
 //! [cross entropy]: https://en.wikipedia.org/wiki/Cross_entropy
 //! [information content]: https://en.wikipedia.org/wiki/Information_content
 //! [Huffman coding]: https://en.wikipedia.org/wiki/Huffman_coding
+//! [`Stack`]: stack.Stack
 
 #![feature(min_const_generics)]
 #![warn(rust_2018_idioms, missing_debug_implementations)]
@@ -207,12 +208,15 @@ pub trait Code {
     ///
     /// # Implementation Guide
     ///
-    /// It is always valid to return `true` from this method. By contrast, this method
-    /// may return `false` only if there is definitely some compressed data available.
-    /// Thus, when in doubt, return `true`.
+    /// The default implementation always returns `true` since this is always a *valid*
+    /// (albeit not necessarily the most useful) return value. If you overwrite this
+    /// method, you may return `false` only if there is definitely some compressed data
+    /// available. When in doubt, return `true`.
     ///
     /// [`decode_symbol`]: Decode::decode_symbol
-    fn maybe_empty(&self) -> bool;
+    fn maybe_empty(&self) -> bool {
+        true
+    }
 }
 
 pub trait Encode<const PRECISION: usize>: Code {
@@ -282,9 +286,12 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// The error type for [`decode_symbol`].
     ///
     /// This is an associated type because, [`decode_symbol`] is infallible for some
-    /// decoders (e.g., for a [`stack::Coder`]). These decoders set the `DecodingError`
+    /// decoders (e.g., for a [`Stack`]). These decoders set the `DecodingError`
     /// type to [`std::convert::Infallible`] so that the compiler can optimize away
     /// error checks.
+    ///
+    /// [`decode_symbol`]: #tymethod.decode_symbol
+    /// [`Stack`]: stack.Stack
     type DecodingError: Error + 'static;
 
     fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
@@ -530,15 +537,17 @@ pub unsafe trait BitArray:
     const BITS: usize = 8 * std::mem::size_of::<Self>();
 }
 
-/// Constructs a `BitArray` from an iterator over chunks of bits that starts at
-/// the most significant chunk.
+/// Constructs a `BitArray` from an iterator from most significant to least
+/// significant chunks.
 ///
-/// Terminates iteration as soon as either the provided iterator terminates or
-/// enough chunks have been read to specify all bits.
+/// Terminates iteration as soon as either
+/// - enough chunks have been read to specify all bits; or
+/// - the provided iterator terminates; in this case, the provided chunks are used
+///   to set the lower significant end of the return value and any remaining higher
+///   significant bits are set to zero.
 ///
-/// This method is the inverse of [`chunks_reversed_truncated`](
-/// #method.chunks_truncated) except that the two iterate in reverse direction
-/// with respect to each other.
+/// This method is the inverse of [`bit_array_to_chunks_truncated`](
+/// #method.bit_array_to_chunks_truncated).
 fn bit_array_from_chunks<Data, I>(chunks: I) -> Data
 where
     Data: BitArray,
@@ -570,7 +579,7 @@ where
         .map(move |shift| (data >> shift).as_())
 }
 
-/// Iterates from most significant to most least significant bits in chunks without
+/// Iterates from most significant to least significant bits in chunks without
 /// skipping initial zero chunks.
 ///
 /// This method is one possible inverse of [`bit_array_from_chunks`].

@@ -26,7 +26,7 @@
 //!
 //!     ```bash
 //!     $ ls -l constriction.so
-//!     lrwxrwxrwx 1 user group Date Time constriction.so -> target/release/libans.so
+//!     lrwxrwxrwx 1 user group Date Time constriction.so -> target/release/libconstriction.so
 //!     ```
 //!
 //! # Example
@@ -41,7 +41,7 @@
 //! In [1]: import constriction
 //!    ...: import numpy as np
 //!
-//! In [2]: coder = constriction.Coder()
+//! In [2]: coder = constriction.Stack()
 //!
 //! In [3]: symbols = np.array([2, -1, 0, 2], dtype = np.int32)
 //!    ...: min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
@@ -75,13 +75,13 @@ use statrs::distribution::Normal;
 
 #[pymodule]
 fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
-    m.add_class::<Coder>()?;
+    m.add_class::<Stack>()?;
     Ok(())
 }
 
 /// An entropy coder based on [Asymmetric Numeral Systems (ANS)].
 ///
-/// This is a wrapper around the Rust type [`constriction::Coder<u32>`](crate::Coder)
+/// This is a wrapper around the Rust type [`constriction::stack::DefaultStack`]
 /// with python bindings.
 ///
 /// Note that this entropy coder is a stack (a "last in first out" data
@@ -93,7 +93,7 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 /// To copy out the compressed data that is currently on the stack, call
 /// `get_compressed`. You would typically want write this to a binary file in some
 /// well-documented byte order. After reading it back in at a later time, you can
-/// decompress it by constructing an `constriction.Coder` where you pass in the compressed
+/// decompress it by constructing an `constriction.Stack` where you pass in the compressed
 /// data as an argument to the constructor.
 ///
 /// If you're only interested in the compressed file size, calling `num_bits` will
@@ -108,19 +108,19 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 /// import constriction
 /// import numpy as np
 ///
-/// coder = constriction.Coder()
+/// stack = constriction.Stack()
 ///
 /// symbols = np.array([2, -1, 0, 2], dtype = np.int32)
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
 /// means = np.array([2.3, -1.7, 0.1, 2.2], dtype = np.float64)
 /// stds = np.array([1.1, 5.3, 3.8, 1.4], dtype = np.float64)
 ///
-/// coder.encode_gaussian_symbols_reverse(
+/// stack.encode_gaussian_symbols_reverse(
 ///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
 ///
-/// print(f"Compressed size (including constant overhead): {coder.num_bits()} bits")
+/// print(f"Compressed size (including constant overhead): {stack.num_bits()} bits")
 ///
-/// compressed = coder.get_compressed()
+/// compressed = stack.get_compressed()
 /// if sys.byteorder == "big":
 ///     # Convert native byte order to a consistent one (here: little endian).
 ///     compressed.byteswap(inplace=True)
@@ -139,42 +139,43 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 ///     # Convert little endian byte order to native byte order.
 ///     compressed.byteswap(inplace=True)
 ///
-/// coder = constriction.Coder(compressed)
+/// stack = constriction.Stack(compressed)
 ///
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
 /// means = np.array([2.3, -1.7, 0.1, 2.2], dtype = np.float64)
 /// stds = np.array([1.1, 5.3, 3.8, 1.4], dtype = np.float64)
 ///
-/// reconstructed = coder.decode_gaussian_symbols(
+/// reconstructed = stack.decode_gaussian_symbols(
 ///     min_supported_symbol, max_supported_symbol, means, stds)
-/// assert coder.is_empty()
+/// assert stack.is_empty()
 /// ```
 ///
 /// # Constructor
 ///
-/// Coder(compressed)
+/// Stack(compressed)
 ///
 /// Arguments:
 /// compressed (optional) -- initial compressed data, as a numpy array with
 ///     dtype `uint32`.
 ///
 /// [Asymmetric Numeral Systems (ANS)]: https://en.wikipedia.org/wiki/Asymmetric_numeral_systems
+/// [`constriction::stack::DefaultStack`]: crate::stack::DefaultStack
 #[pyclass]
 #[text_signature = "(compressed)"]
 #[derive(Debug)]
-pub struct Coder {
+pub struct Stack {
     inner: crate::stack::DefaultStack,
 }
 
 #[pymethods]
-impl Coder {
+impl Stack {
     /// Constructs a new entropy coder, optionally passing initial compressed data.
     #[new]
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = if let Some(compressed) = compressed {
-            crate::stack::Coder::with_compressed_data(compressed.to_vec()?)
+            crate::stack::Stack::from_compressed(compressed.to_vec()?)
         } else {
-            crate::stack::Coder::new()
+            crate::stack::Stack::new()
         };
 
         Ok(Self { inner })
@@ -215,7 +216,7 @@ impl Coder {
     /// Example:
     ///
     /// ```python
-    /// coder = constriction.Coder()
+    /// coder = constriction.Stack()
     /// # ... push some symbols on coder ...
     /// compressed_len = coder.num_words()
     /// compressed = np.empty((compressed_len,), dtype=np.uint32)
@@ -301,7 +302,7 @@ impl Coder {
     /// reverseorder so as to simplify usage, e.g.:
     ///
     /// ```python
-    /// coder = constriction.Coder()
+    /// coder = constriction.Stack()
     /// symbols = np.array([2, 8, -5], dtype=np.int32)
     /// decoded = np.empty((3,), dtype=np.int32)
     /// means = np.array([0.1, 10.3, -3.2], dtype=np.float64)
