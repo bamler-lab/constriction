@@ -148,7 +148,6 @@
 #[cfg(feature = "pybindings")]
 pub mod pybindings;
 
-pub mod auryn;
 pub mod distributions;
 pub mod queue;
 pub mod stack;
@@ -626,6 +625,8 @@ pub enum EncodingError {
     /// [`Categorical::from_floating_point_probabilities`](
     /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
     ImpossibleSymbol,
+
+    CapacityExceeded,
 }
 
 #[derive(Debug)]
@@ -650,6 +651,7 @@ impl std::fmt::Display for EncodingError {
                 f,
                 "Tried to encode symbol that has zero probability under the used entropy model."
             ),
+            Self::CapacityExceeded => write!(f, "The encoder cannot accept any more symbols."),
         }
     }
 }

@@ -2,14 +2,15 @@
 //!
 //!
 
-use std::{borrow::Borrow, error::Error, fmt::Debug, ops::Deref};
+pub mod stable;
+
+use std::{borrow::Borrow, convert::TryInto, error::Error, fmt::Debug, ops::Deref};
 
 use num::cast::AsPrimitive;
 
 use crate::{
-    auryn::Auryn, bit_array_from_chunks, bit_array_to_chunks_truncated,
-    distributions::DiscreteDistribution, BitArray, Code, Decode, Encode, EncodingError,
-    IntoDecoder, TryCodingError,
+    bit_array_from_chunks, bit_array_to_chunks_truncated, distributions::DiscreteDistribution,
+    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder, TryCodingError,
 };
 
 /// Entropy coder for both encoding and decoding on a stack
@@ -186,7 +187,6 @@ use crate::{
 /// [`encode_symbols`]: #method.encode_symbols
 /// [`is_empty`]: #method.is_empty`
 /// [`into_compressed`]: #method.into_compressed
-#[derive(Clone)]
 pub struct Stack<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
@@ -195,8 +195,26 @@ where
     buf: Vec<CompressedWord>,
 
     /// Invariant: `state >= State::one() << (State::BITS - CompressedWord::BITS)`
-    /// unless `buf.is_empty()` or this is the `waste` part of an `Auryn`.
+    /// unless `buf.is_empty()` or this is the `waste` part of an `stable::Coder`.
     state: State,
+}
+
+impl<CompressedWord, State> Clone for Stack<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn clone(&self) -> Self {
+        let buf = self.buf.clone();
+        let state = self.state.clone();
+        let mut cloned = Stack { buf, state };
+
+        // `cloned` may violate the invariant if `self` is the `waste` field of a
+        // `stable::Coder`. Calling `refill_state_if_possible` restores the invariant.
+        let _ = cloned.try_refill_state_if_necessary();
+
+        cloned
+    }
 }
 
 /// Type alias for a [`Stack`] with sane parameters for typical use cases.
@@ -338,8 +356,8 @@ where
         // resizing is both likely to happen and likely to be unnecessary: `data` may be
         // explicitly copied out from some larger buffer, in which case its capacity will
         // likely match its size, so appending a single word would cause a resize. Further,
-        // the `Stack` may be intended for decoding (e.g., decoding side information inside
-        // an `Auryn`), and so the resizing is completely avoidable.
+        // the `Stack` may be intended for decoding, and so the resizing is completely
+        // avoidable.
         let state = bit_array_from_chunks(
             std::iter::once(CompressedWord::one())
                 .chain(std::iter::repeat_with(|| data.pop()).scan((), |(), chunk| chunk)),
@@ -652,16 +670,22 @@ where
         CompressedWord::BITS * self.num_words()
     }
 
-    pub fn into_auryn_for_decoding<const PRECISION: usize>(
-        self,
-    ) -> Result<Auryn<CompressedWord, State, PRECISION>, Self> {
-        Auryn::from_stack_for_decoding(self)
+    pub fn num_valid_bits(&self) -> usize {
+        CompressedWord::BITS * self.buf.len()
+            + std::cmp::max(State::BITS - self.state.leading_zeros() as usize, 1)
+            - 1
     }
 
-    pub fn into_auryn_for_encoding<const PRECISION: usize>(
+    pub fn into_stable_decoder<const PRECISION: usize>(
         self,
-    ) -> Result<Auryn<CompressedWord, State, PRECISION>, Self> {
-        Auryn::from_stack_for_encoding(self)
+    ) -> Result<stable::Decoder<CompressedWord, State, PRECISION>, Self> {
+        self.try_into()
+    }
+
+    pub fn into_stable_encoder<const PRECISION: usize>(
+        self,
+    ) -> Result<stable::Encoder<CompressedWord, State, PRECISION>, Self> {
+        self.try_into()
     }
 
     #[inline(always)]
@@ -676,27 +700,34 @@ where
     }
 
     /// Checks the invariant on `self.state` and restores it if necessary and possible.
+    ///
+    /// Returns `Err(())` if the `state` should have been refilled but there are no
+    /// compressed words left. Returns `Ok(())` in all other cases.
     #[inline(always)]
-    pub(crate) fn refill_state_if_possible(&mut self) {
+    pub(crate) fn try_refill_state_if_necessary(&mut self) -> Result<(), ()> {
         if self.state < State::one() << (State::BITS - CompressedWord::BITS) {
             // Invariant on `self.state` (see its doc comment) is violated. Restore it by
             // refilling with a compressed word from `self.buf` if available.
-            self.refill_state_unchecked();
+            self.try_refill_state()
+        } else {
+            Ok(())
         }
     }
 
-    /// Pushes a compressed word onto `state` without checking for overflow, thus
-    /// potentially truncating `state`. (However, this method does check if a compressed
-    /// word is available and it leafes `state` unchanged if there's no available
-    /// compressed word.)
+    /// Tries to push a compressed word onto `state` without checking for overflow, thus
+    /// potentially truncating `state`. If you're not sure if the operation might
+    /// overflow, call [`try_refill_state_if_necessary`] instead.
     ///
-    /// This method is *not* declared `unsafe` because we consider truncating `state` a
-    /// logic error but not a memory/safety violation.
+    /// This method is *not* declared `unsafe` because the potential truncation is
+    /// well-defined and we consider truncating `state` a logic error but not a
+    /// memory/safety violation.
+    ///
+    /// Returns `Ok(())` if a compressed word to refill the state was available and
+    /// `Err(())` if no compressed word was available.
     #[inline(always)]
-    pub(crate) fn refill_state_unchecked(&mut self) {
-        if let Some(word) = self.buf.pop() {
-            self.state = (self.state << CompressedWord::BITS) | word.into();
-        }
+    pub(crate) fn try_refill_state(&mut self) -> Result<(), ()> {
+        self.state = (self.state << CompressedWord::BITS) | self.buf.pop().ok_or(())?.into();
+        Ok(())
     }
 
     #[inline(always)]
@@ -852,7 +883,7 @@ where
         let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
         let remainder = quantile - left_sided_cumulative;
         self.encode_remainder_onto_state::<D, PRECISION>(remainder, probability);
-        self.refill_state_if_possible();
+        let _ = self.try_refill_state_if_necessary();
 
         Ok(symbol)
     }

@@ -509,7 +509,11 @@ pub enum DecodingError {
 
 impl std::fmt::Display for DecodingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Tried to decode invalid compressed data.")
+        match self {
+            DecodingError::InvalidCompressedData => {
+                write!(f, "Tried to decode invalid compressed data.")
+            }
+        }
     }
 }
 
