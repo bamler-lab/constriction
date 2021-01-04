@@ -62,29 +62,23 @@ where
         assert!(PRECISION <= CompressedWord::BITS);
         assert!(PRECISION > 0);
 
-        if stack.state() < State::one() << (State::BITS - CompressedWord::BITS) {
-            // Not enough data to initialize `supply`.
+        // The following also assures that `stack.buf()` is no-empty since
+        // `State::BITS / CompressedWord::BITS - 1 >= 1`.
+        if stack.buf().len() < State::BITS / CompressedWord::BITS - 1 {
+            // Not enough data to initialize `supply` and `waste`.
             return Err(stack);
         }
 
-        let mut waste_state = State::one();
-        let mut word_iter = stack.buf().iter().rev();
-        while waste_state < State::one() << (State::BITS - CompressedWord::BITS - PRECISION) {
-            if let Some(&word) = word_iter.next() {
-                waste_state = (waste_state << CompressedWord::BITS) | word.into();
-            } else {
-                // Not enough data to initialize `waste`.
-                return Err(stack);
-            }
+        let (buf, supply_state) = stack.into_buf_and_state();
+        let prefix = Stack::from_binary(buf);
+        let (supply_buf, waste_state) = prefix.into_buf_and_state();
+
+        let supply = Stack::with_buf_and_state(supply_buf, supply_state)
+            .expect("`stack` had non-empty `buf`, so its state satisfies invariant.");
+        let mut waste = Stack::with_state_and_empty_buf(waste_state);
+        if PRECISION == CompressedWord::BITS {
+            waste.flush_state();
         }
-
-        let remaining_words = word_iter.len();
-        let (mut buf, state) = stack.into_buf_and_state();
-        buf.resize(remaining_words, CompressedWord::zero());
-
-        let supply = Stack::with_buf_and_state(buf, state)
-            .expect("Original `Stack` was valid and we only shrank its `buf`.");
-        let waste = Stack::with_state_and_empty_buf(waste_state);
 
         Ok(Self(Coder { supply, waste }))
     }
@@ -101,6 +95,21 @@ where
     /// `stable::Decoder` in a variable that shadows the old `stable::Decoder` (since
     /// the old one gets consumed anyway), i.e.,
     /// `let mut stable_decoder = stable_decoder.change_precision()`. See example below.
+    ///
+    /// # Failure Case
+    ///
+    /// The conversion can only fail if *all* of the following conditions are true
+    ///
+    /// - `NEW_PRECISION < PRECISION`; and
+    /// - the `stable::Decoder` originates from a [`stable::Encoder`] that was converted
+    ///   with [`into_decoder`]; and
+    /// - before calling `into_decoder`, the `stable::Encoder` was used incorrectly: it
+    ///   must have encoded too many symbols or used the wrong sequence of entropy
+    ///   models, causing it to use up just a few more bits of `waste` than available
+    ///   (but also not exceeding the capacity enough for this to be detected during
+    ///   encoding).
+    ///
+    /// In the event of this failure, `change_precision` returns `Err(self)`.
     ///
     /// # Example
     ///
@@ -124,15 +133,18 @@ where
     /// let mut stable_decoder = stable_decoder.change_precision().unwrap();
     /// let _symbol_b = stable_decoder.decode_symbol(distribution20);
     /// ```
+    ///
+    /// [`stable::Encoder`]: Encoder
+    /// [`into_decoder`]: Encoder::into_decoder
     pub fn change_precision<const NEW_PRECISION: usize>(
         self,
     ) -> Result<
         Decoder<CompressedWord, State, NEW_PRECISION>,
-        Encoder<CompressedWord, State, PRECISION>,
+        Decoder<CompressedWord, State, PRECISION>,
     > {
         match self.0.change_precision() {
             Ok(coder) => Ok(Decoder(coder)),
-            Err(coder) => Err(Encoder(coder)),
+            Err(coder) => Err(Decoder(coder)),
         }
     }
 
@@ -143,7 +155,7 @@ where
     /// principle have merged the two into a single type. However, keeping them as
     /// separate types makes the API more clear and prevents misuse since the conversion
     /// to and from a [`Stack`] is different for `stable::Decoder` and
-    /// [`stable::Encoder`].
+    /// `stable::Encoder`.
     ///
     /// [`stable::Encoder`]: Encoder
     pub fn into_encoder(self) -> Encoder<CompressedWord, State, PRECISION> {
@@ -223,38 +235,30 @@ where
         assert!(PRECISION <= CompressedWord::BITS);
         assert!(PRECISION > 0);
 
-        let (buf, state) = stack.into_buf_and_state();
-
-        let mut waste = Stack::from_compressed(buf)
-            .and_then(|waste| {
-                if waste.state() < State::one() << (State::BITS - PRECISION - CompressedWord::BITS)
-                {
-                    // Not enough data available to initialize `waste`.
-                    Err(waste.into_compressed())
-                } else {
-                    Ok(waste)
-                }
-            })
-            .map_err(|buf| {
-                Stack::with_buf_and_state(buf, state)
-                    .expect("We're reconstructing the original stack, which was valid.")
-            })?;
-
-        // `waste` has to satisfy slightly different invariants than a usual `Stack`.
-        // If they're violated then flushing one word is guaranteed to restore them.
-        if waste.state() >= State::one() << (State::BITS - PRECISION) {
-            waste.flush_state();
-            // Now, `waste` satisfies both required invariants:
-            // - waste.state() >= State::one() << (State::BITS - PRECISION - CompressedWord::BITS)
-            // - waste.state() < State::one() << (State::BITS - CompressedWord::BITS)
-            //                 <= State::one() << (State::BITS - PRECISION)
+        // The following also assures that `stack.buf()` is no-empty since
+        // `State::BITS / CompressedWord::BITS - 1 >= 1`.
+        if stack.buf().len() < State::BITS / CompressedWord::BITS - 1 {
+            // Not enough data to initialize `supply` and `waste`.
+            return Err(stack);
         }
 
-        let supply = Stack::with_state_and_empty_buf(state);
+        if stack.buf.last() == Some(&CompressedWord::zero()) {
+            // Invalid data that couldn't have been produced by `stable::Decoder::finish()`.
+            return Err(stack);
+        }
+
+        let (buf, supply_state) = stack.into_buf_and_state();
+        let supply = Stack::with_state_and_empty_buf(supply_state);
+        let mut waste = Stack::from_compressed(buf)
+            .expect("We verified above that `buf` doesn't end in zero word");
+        if waste.state() >= State::one() << (State::BITS - PRECISION) {
+            waste.flush_state();
+        }
 
         Ok(Self(Coder { supply, waste }))
     }
 
+    /// Stable variant of [`Stack::encode_symbols_reverse`].
     pub fn encode_symbols_reverse<S, D, I>(
         &mut self,
         symbols_and_distributions: I,
@@ -270,6 +274,7 @@ where
         self.encode_symbols(symbols_and_distributions.into_iter().rev())
     }
 
+    /// Stable variant of [`Stack::try_encode_symbols_reverse`].
     pub fn try_encode_symbols_reverse<S, D, E, I>(
         &mut self,
         symbols_and_distributions: I,
@@ -286,6 +291,7 @@ where
         self.try_encode_symbols(symbols_and_distributions.into_iter().rev())
     }
 
+    /// Stable variant of [`Stack::encode_iid_symbols_reverse`].
     pub fn encode_iid_symbols_reverse<S, D, I>(
         &mut self,
         symbols: I,
@@ -305,6 +311,18 @@ where
     /// Converts the `stable::Encoder` into a new `stable::Encoder` that accepts entropy
     /// models with a different fixed-point precision.
     ///
+    /// # Failure Case
+    ///
+    /// The conversion can only fail if *both* of the following two conditions are true
+    ///
+    /// - `NEW_PRECISION < PRECISION`; and
+    /// - the `stable::Encoder` has been used incorrectly: it must have encoded too many
+    ///   symbols or used the wrong sequence of entropy models, causing it to use up
+    ///   just a few more bits of `waste` than available (but also not exceeding the
+    ///   capacity enough for this to be detected during encoding).
+    ///
+    /// # See Also
+    ///
     /// This method is analogous to [`stable::Decoder::change_precision`]. See its
     /// documentation for details and an example.
     ///
@@ -313,11 +331,11 @@ where
         self,
     ) -> Result<
         Encoder<CompressedWord, State, NEW_PRECISION>,
-        Decoder<CompressedWord, State, PRECISION>,
+        Encoder<CompressedWord, State, PRECISION>,
     > {
         match self.0.change_precision() {
             Ok(coder) => Ok(Encoder(coder)),
-            Err(coder) => Err(Decoder(coder)),
+            Err(coder) => Err(Encoder(coder)),
         }
     }
 
@@ -328,19 +346,28 @@ where
     /// principle have merged the two into a single type. However, keeping them as
     /// separate types makes the API more clear and prevents misuse since the conversion
     /// to and from a [`Stack`] is different for `stable::Encoder` and
-    /// [`stable::Decoder`].
+    /// `stable::Decoder`.
     ///
     /// [`stable::Decoder`]: Decoder
     pub fn into_decoder(self) -> Decoder<CompressedWord, State, PRECISION> {
         Decoder(self.0)
     }
 
-    pub fn finish(self) -> Result<(Vec<CompressedWord>, Stack<CompressedWord, State>), Self> {
-        let waste_state_bits =
-            (State::BITS - 1).wrapping_sub(self.0.waste.state().leading_zeros() as usize);
-        if waste_state_bits % CompressedWord::BITS != 0 || waste_state_bits == usize::max_value() {
-            // Waste's state (without leading 1 bit) must fit into an integer number of words.
-            return Err(self);
+    pub fn finish(mut self) -> Result<(Vec<CompressedWord>, Stack<CompressedWord, State>), Self> {
+        if PRECISION == CompressedWord::BITS {
+            if self.0.waste.state() >> (State::BITS - 2 * CompressedWord::BITS) != State::one()
+                || self.0.waste.try_refill_state().is_err()
+            {
+                // Waste's state (without leading 1 bit) doesn't fit into integer number of
+                // `CompressedWord`s, or there is not enough data on `waste`.
+                return Err(self);
+            }
+        } else {
+            if self.0.waste.state() >> (State::BITS - CompressedWord::BITS) != State::one() {
+                // Waste's state (without leading 1 bit) doesn't fit into integer number of
+                // `CompressedWord`s, or there is not enough data on `waste`.
+                return Err(self);
+            }
         }
 
         let (mut buf, state) = self.0.supply.into_buf_and_state();

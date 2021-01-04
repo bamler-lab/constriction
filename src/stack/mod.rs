@@ -518,9 +518,8 @@ where
             Err(())
         } else {
             let truncated_state = self.state ^ (State::one() << valid_bits);
-            for chunk in bit_array_to_chunks_truncated(truncated_state).rev() {
-                self.buf.push(chunk)
-            }
+            self.buf
+                .extend(bit_array_to_chunks_truncated(truncated_state).rev());
             Ok(self.buf)
         }
     }
