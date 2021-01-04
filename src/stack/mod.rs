@@ -187,6 +187,7 @@ use crate::{
 /// [`encode_symbols`]: #method.encode_symbols
 /// [`is_empty`]: #method.is_empty`
 /// [`into_compressed`]: #method.into_compressed
+#[derive(Clone)]
 pub struct Stack<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
@@ -197,24 +198,6 @@ where
     /// Invariant: `state >= State::one() << (State::BITS - CompressedWord::BITS)`
     /// unless `buf.is_empty()` or this is the `waste` part of an `stable::Coder`.
     state: State,
-}
-
-impl<CompressedWord, State> Clone for Stack<CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    fn clone(&self) -> Self {
-        let buf = self.buf.clone();
-        let state = self.state.clone();
-        let mut cloned = Stack { buf, state };
-
-        // `cloned` may violate the invariant if `self` is the `waste` field of a
-        // `stable::Coder`. Calling `refill_state_if_possible` restores the invariant.
-        let _ = cloned.try_refill_state_if_necessary();
-
-        cloned
-    }
 }
 
 /// Type alias for a [`Stack`] with sane parameters for typical use cases.

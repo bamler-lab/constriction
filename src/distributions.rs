@@ -339,7 +339,6 @@ where
         };
 
         let probability = right_sided_cumulative.wrapping_sub(&left_sided_cumulative);
-        dbg!(probability);
         (symbol, left_sided_cumulative, probability)
     }
 }

@@ -55,7 +55,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    pub fn new(stack: Stack<CompressedWord, State>) -> Result<Self, Stack<CompressedWord, State>> {
+    fn new(stack: Stack<CompressedWord, State>) -> Result<Self, Stack<CompressedWord, State>> {
         assert!(CompressedWord::BITS > 0);
         assert!(State::BITS >= 2 * CompressedWord::BITS);
         assert!(State::BITS % CompressedWord::BITS == 0);
@@ -172,20 +172,6 @@ where
         self.0.supply_mut()
     }
 
-    /// Get shared access to the leftover information from decoding symbols.
-    ///
-    /// The returned `Stack` may be in an invalid state for entropy coding since the
-    /// internal representation of a `stable::Decoder` enforces slightly different
-    /// invariants. This is not an issue, however, since the returned shared reference
-    /// doesn't allow mutation, and all non-mutating operations are guaranteed to work
-    /// as expected (including `clone`, which ensures that the cloned `Stack` is in a
-    /// valid state).
-    ///
-    /// See [`Encoder::waste`] for details and alternatives.
-    pub fn waste(&self) -> &Stack<CompressedWord, State> {
-        self.0.waste()
-    }
-
     pub fn waste_mut<'a>(
         &'a mut self,
     ) -> impl DerefMut<Target = Stack<CompressedWord, State>> + Drop + 'a {
@@ -230,7 +216,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    pub fn new(stack: Stack<CompressedWord, State>) -> Result<Self, Stack<CompressedWord, State>> {
+    fn new(stack: Stack<CompressedWord, State>) -> Result<Self, Stack<CompressedWord, State>> {
         assert!(CompressedWord::BITS > 0);
         assert!(State::BITS >= 2 * CompressedWord::BITS);
         assert!(State::BITS % CompressedWord::BITS == 0);
@@ -385,50 +371,6 @@ where
         self.0.supply_mut()
     }
 
-    /// Get shared access to the leftover leftover information from decoding, which
-    /// encoding will "recycle" into chunks of binary data.
-    ///
-    /// The returned `Stack` may be in an invalid state for entropy coding since the
-    /// internal representation of a `stable::Encoder` enforces slightly different
-    /// invariants. This is not an issue, however, since the returned shared reference
-    /// doesn't allow mutation, and all non-mutating operations are guaranteed to work
-    /// as expected (including `clone`, which ensures that the cloned `Stack` is in a
-    /// valid state).
-    ///
-    /// # Example
-    ///
-    /// This method is mainly useful to read out `waste`s state, e.g., by calling
-    /// `stable_encoder.waste().iter_compressed()`. However, if you have mutable access
-    /// to or even ownership of the `stable::Encoder`, then it may be better to call
-    /// [`waste_mut`] or [`into_supply_and_waste`], respectively, followed by
-    /// [`Stack::get_compressed`] as in the example below:
-    ///
-    /// ```
-    /// use constriction::{distributions::LeakyQuantizer, stack::DefaultStack, Decode};
-    ///
-    /// let data = vec![0x0123_4567u32, 0x89ab_cdef];
-    /// let mut stable_encoder = DefaultStack::from_binary(data).into_stable_encoder::<24>().unwrap();
-    ///
-    /// // Calling `stable_encoder.waste()` only needs shared access to `stable_encoder`.
-    /// dbg!(stable_encoder.waste()); // `Debug` implementation calls `.iter_compressed()`.
-    ///
-    /// // Since we have mutable access to `stable_encoder`, the following is also possible and
-    /// // might be slightly more efficient in expectation:
-    /// dbg!(stable_encoder.waste_mut().get_compressed()); // Prints the same compressed words as above.
-    ///
-    /// // If we no longer want to use `stable_encoder` then we can also deconstruct it
-    /// // and call `get_compressed` on its constituents:
-    /// let (_supply, mut waste) = stable_encoder.into_supply_and_waste();
-    /// dbg!(waste.get_compressed()); // Prints the same compressed words as above.
-    /// ```
-    ///
-    /// [`waste_mut`]: #method.waste_mut
-    /// [`into_supply_and_waste`]: #method.into_supply_and_waste
-    /// [`get_compressed`]: Stack::get_compressed
-    pub fn waste(&self) -> &Stack<CompressedWord, State> {
-        self.0.waste()
-    }
-
     pub fn waste_mut<'a>(
         &'a mut self,
     ) -> impl DerefMut<Target = Stack<CompressedWord, State>> + Drop + 'a {
@@ -509,10 +451,6 @@ where
 
     pub fn supply_mut(&mut self) -> &mut Stack<CompressedWord, State> {
         &mut self.supply
-    }
-
-    pub fn waste(&self) -> &Stack<CompressedWord, State> {
-        &self.waste
     }
 
     pub fn waste_mut<'a>(
@@ -667,7 +605,6 @@ where
 
         let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
         let remainder = quantile - left_sided_cumulative;
-        dbg!(probability, remainder);
 
         self.0
             .waste
@@ -801,8 +738,16 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
 {
     let (suffix_buf, state) = suffix.into_buf_and_state();
-    prefix.extend_from_slice(&suffix_buf);
-    Stack::with_buf_and_state(prefix, state)
+
+    let buf = if prefix.is_empty() {
+        // Avoid copying in this not-so-unlikely special case.
+        suffix_buf
+    } else {
+        prefix.extend_from_slice(&suffix_buf);
+        prefix
+    };
+
+    Stack::with_buf_and_state(buf, state)
 }
 
 #[cfg(test)]
@@ -818,7 +763,7 @@ mod test {
 
     #[test]
     fn restore_none() {
-        generic_restore_many::<u32, u64, u32, 24>(3, 0);
+        generic_restore_many::<u32, u64, u32, 24>(4, 0);
     }
 
     #[test]
@@ -838,7 +783,7 @@ mod test {
 
     #[test]
     fn restore_twenty() {
-        generic_restore_many::<u32, u64, u32, 24>(18, 20);
+        generic_restore_many::<u32, u64, u32, 24>(19, 20);
     }
 
     #[test]
@@ -907,9 +852,17 @@ mod test {
         let mut rng = Xoshiro256StarStar::seed_from_u64(
             (amt_compressed_words as u64).rotate_left(32) ^ amt_symbols as u64,
         );
-        let compressed = (0..amt_compressed_words)
+        let mut compressed = (0..amt_compressed_words)
             .map(|_| rng.next_u64().as_())
             .collect::<Vec<_>>();
+
+        // Make the last compressed word have a random number of leading zero bits so that
+        // we test various filling levels.
+        let leading_zeros = (rng.next_u32() % (CompressedWord::BITS as u32 - 1)) as usize;
+        let last_word = compressed.last_mut().unwrap();
+        *last_word =
+            *last_word | CompressedWord::one() << (CompressedWord::BITS - leading_zeros - 1);
+        *last_word = *last_word & CompressedWord::max_value() >> leading_zeros;
 
         let distributions = (0..amt_symbols)
             .map(|_| {
@@ -921,9 +874,8 @@ mod test {
             .unwrap();
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-100..=100);
 
-        let mut stable_decoder = Stack::from_binary(compressed.clone())
-            .into_stable_decoder()
-            .unwrap();
+        let stack = Stack::from_compressed(compressed.clone()).unwrap();
+        let mut stable_decoder = stack.into_stable_decoder().unwrap();
 
         let symbols = stable_decoder
             .decode_symbols(
@@ -936,20 +888,24 @@ mod test {
 
         assert!(!stable_decoder.maybe_empty());
 
-        // Test exporting to stack and re-importing into a `stable::Encoder`:
+        // Test two ways to construct a `stable::Encoder`: direct conversion from a
+        // `stable::Decoder`, and converting to a `Stack` and then to a `stable::Encoder`.
+        let stable_encoder1 = stable_decoder.clone().into_encoder();
         let stack = stable_decoder.finish_and_concatenate();
-        let mut stable_encoder = stack.into_stable_encoder().unwrap();
+        let stable_encoder2 = stack.into_stable_encoder().unwrap();
 
-        stable_encoder
-            .encode_symbols_reverse(
-                symbols
-                    .iter()
-                    .zip(distributions)
-                    .map(|(&symbol, distribution)| (symbol, quantizer.quantize(distribution))),
-            )
-            .unwrap();
+        for mut stable_encoder in vec![stable_encoder1, stable_encoder2] {
+            stable_encoder
+                .encode_symbols_reverse(
+                    symbols
+                        .iter()
+                        .zip(&distributions)
+                        .map(|(&symbol, &distribution)| (symbol, quantizer.quantize(distribution))),
+                )
+                .unwrap();
 
-        let stack = stable_encoder.finish_and_concatenate().unwrap();
-        assert_eq!(stack.into_binary().unwrap(), compressed);
+            let stack = stable_encoder.finish_and_concatenate().unwrap();
+            assert_eq!(stack.into_compressed(), compressed);
+        }
     }
 }
