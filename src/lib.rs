@@ -369,12 +369,16 @@ pub trait IntoDecoder<const PRECISION: usize>: Code + Sized {
     }
 }
 
-pub trait Pos {
+pub trait Pos: Code {
     fn pos(&self) -> usize;
+
+    fn pos_and_state(&self) -> (usize, Self::State) {
+        (self.pos(), self.state())
+    }
 }
 
 pub trait Seek: Code {
-    fn seek(&mut self, pos: usize, state: &Self::State) -> Result<(), ()>;
+    fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()>;
 }
 
 #[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.

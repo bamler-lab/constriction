@@ -13,7 +13,7 @@ use num::cast::AsPrimitive;
 
 use crate::{
     bit_array_from_chunks, bit_array_to_chunks_truncated, distributions::DiscreteDistribution,
-    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder, TryCodingError,
+    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder, Pos, Seek, TryCodingError,
 };
 
 use self::backend::{Backend, ReadItems, ReadLookaheadItems, WriteItems, WriteMutableItems};
@@ -433,6 +433,198 @@ where
     {
         self.state = (self.state << PRECISION) | quantile.into().into();
     }
+
+    /// Check if no data for decoding is left.
+    ///
+    /// Same as [`Code::maybe_empty`], just with a more suitable name considering the
+    /// fact that this particular implementation of `Code` can decide with certainty
+    /// whether or not it is empty.
+    ///
+    /// Note that you can still pop symbols off an empty stack, but this is only
+    /// useful in rare edge cases, see documentation of
+    /// [`decode_symbol`](#method.decode_symbol).
+    pub fn is_empty(&self) -> bool
+    where
+        Buf: ReadLookaheadItems<CompressedWord>,
+    {
+        self.buf.is_at_end() && self.state == State::zero()
+    }
+
+    /// Assembles the current compressed data into a single slice.
+    ///
+    /// Returns the concatenation of [`buf`] and [`state`]. The concatenation truncates
+    /// any trailing zero words, which is compatible with the constructor
+    /// [`from_compressed`].
+    ///
+    /// This method requires a `&mut self` receiver to temporarily append `state` to
+    /// [`buf`] (this mutationwill be reversed to recreate the original `buf` as soon as
+    /// the caller drops the returned value). If you don't have mutable access to the
+    /// `Stack`, consider calling [`iter_compressed`] instead, or get the `buf` and
+    /// `state` separately by calling [`buf`] and [`state`], respectively.
+    ///
+    /// The return type dereferences to `&[CompressedWord]`, thus providing read-only
+    /// access to the compressed data. If you need ownership of the compressed data,
+    /// consider calling [`into_compressed`] instead.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
+    ///
+    /// let mut stack = DefaultStack::new();
+    ///
+    /// // Push some data on the stack.
+    /// let symbols = vec![8, 2, 0, 7];
+    /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
+    /// let distribution = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
+    ///     .unwrap();
+    /// stack.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
+    ///
+    /// // Inspect the compressed data.
+    /// dbg!(stack.get_compressed());
+    ///
+    /// // We can still use the stack afterwards.
+    /// let reconstructed = stack
+    ///     .decode_iid_symbols(4, &distribution)
+    ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
+    ///     .unwrap();
+    /// assert_eq!(reconstructed, symbols);
+    /// ```
+    ///
+    /// [`buf`]: #method.buf
+    /// [`state`]: #method.state
+    /// [`from_compressed`]: #method.from_compressed
+    /// [`iter_compressed`]: #method.iter_compressed
+    /// [`into_compressed`]: #method.into_compressed
+    pub fn get_compressed<'a>(&'a mut self) -> impl Deref<Target = Buf> + Debug + Drop + 'a
+    where
+        Buf: ReadItems<CompressedWord> + WriteItems<CompressedWord> + Debug,
+    {
+        CoderGuard::new(self)
+    }
+
+    /// Iterates over the compressed data currently on the stack.
+    ///
+    /// In contrast to [`get_compressed`] or [`into_compressed`], this method does
+    /// not require mutable access or even ownership of the `Stack`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultStack, Encode};
+    ///
+    /// // Create a stack and encode some stuff.
+    /// let mut stack = DefaultStack::new();
+    /// let symbols = vec![8, -12, 0, 7];
+    /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
+    /// let distribution =
+    ///     quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
+    /// stack.encode_iid_symbols(&symbols, &distribution).unwrap();
+    ///
+    /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
+    /// let compressed_iter = stack.iter_compressed();
+    /// let compressed_collected = compressed_iter.collect::<Vec<_>>();
+    /// assert!(!compressed_collected.is_empty());
+    /// assert_eq!(compressed_collected, *stack.get_compressed());
+    /// ```
+    ///
+    /// [`get_compressed`]: #method.get_compressed
+    /// [`into_compressed`]: #method.into_compressed
+    pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = CompressedWord> + '_
+    where
+        &'a Buf: IntoIterator<Item = &'a CompressedWord>,
+    {
+        let buf_iter = self.buf.into_iter().cloned();
+        let state_iter = bit_array_to_chunks_truncated(self.state).rev();
+        buf_iter.chain(state_iter)
+    }
+
+    /// Returns the number of compressed words on the stack.
+    ///
+    /// This includes a constant overhead of between one and two words unless the
+    /// stack is completely empty.
+    ///
+    /// This method returns the length of the slice, the `Vec<CompressedWord>`, or the iterator
+    /// that would be returned by [`get_compressed`], [`into_compressed`], or
+    /// [`iter_compressed`], respectively, when called at this time.
+    ///
+    /// See also [`num_bits`].
+    ///
+    /// [`get_compressed`]: #method.get_compressed
+    /// [`into_compressed`]: #method.into_compressed
+    /// [`iter_compressed`]: #method.iter_compressed
+    /// [`num_bits`]: #method.num_bits
+    pub fn num_words(&self) -> usize
+    where
+        Buf: ReadLookaheadItems<CompressedWord>,
+    {
+        self.buf.amt_left() + bit_array_to_chunks_truncated::<_, CompressedWord>(self.state).len()
+    }
+
+    pub fn num_bits(&self) -> usize
+    where
+        Buf: ReadLookaheadItems<CompressedWord>,
+    {
+        CompressedWord::BITS * self.num_words()
+    }
+
+    pub fn num_valid_bits(&self) -> usize
+    where
+        Buf: ReadLookaheadItems<CompressedWord>,
+    {
+        CompressedWord::BITS * self.buf.amt_left()
+            + std::cmp::max(State::BITS - self.state.leading_zeros() as usize, 1)
+            - 1
+    }
+
+    pub fn seekable_decoder(
+        &self,
+    ) -> Stack<CompressedWord, State, backend::ReadOwnedFromBack<CompressedWord, &[CompressedWord]>>
+    where
+        Buf: AsRef<[CompressedWord]>,
+    {
+        Stack {
+            buf: backend::ReadOwnedFromBack::new(self.buf.as_ref()),
+            state: self.state,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn into_seekable_decoder(
+        self,
+    ) -> Stack<CompressedWord, State, backend::ReadOwnedFromBack<CompressedWord, Buf>>
+    where
+        Buf: AsRef<[CompressedWord]>,
+    {
+        Stack {
+            buf: backend::ReadOwnedFromBack::new(self.buf),
+            state: self.state,
+            phantom: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn chop_quantile_off_state<D, const PRECISION: usize>(&mut self) -> D::Probability
+    where
+        CompressedWord: AsPrimitive<D::Probability>,
+        D: DiscreteDistribution<PRECISION>,
+    {
+        let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
+        self.state = self.state >> PRECISION;
+        quantile
+    }
+
+    #[inline(always)]
+    pub(crate) fn encode_remainder_onto_state<D, const PRECISION: usize>(
+        &mut self,
+        remainder: D::Probability,
+        probability: D::Probability,
+    ) where
+        D: DiscreteDistribution<PRECISION>,
+        D::Probability: Into<CompressedWord>,
+    {
+        self.state = self.state * probability.into().into() + remainder.into().into();
+    }
 }
 
 impl<CompressedWord, State, Buf> Stack<CompressedWord, State, Buf>
@@ -596,178 +788,6 @@ where
                 .extend(bit_array_to_chunks_truncated(truncated_state).rev());
             Ok(self.buf)
         }
-    }
-}
-
-impl<CompressedWord, State, Buf> Stack<CompressedWord, State, Buf>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    /// Check if no data for decoding is left.
-    ///
-    /// Same as [`Code::maybe_empty`], just with a more suitable name considering the
-    /// fact that this particular implementation of `Code` can decide with certainty
-    /// whether or not it is empty.
-    ///
-    /// Note that you can still pop symbols off an empty stack, but this is only
-    /// useful in rare edge cases, see documentation of
-    /// [`decode_symbol`](#method.decode_symbol).
-    pub fn is_empty(&self) -> bool
-    where
-        Buf: ReadLookaheadItems<CompressedWord>,
-    {
-        self.buf.is_at_end() && self.state == State::zero()
-    }
-
-    /// Assembles the current compressed data into a single slice.
-    ///
-    /// Returns the concatenation of [`buf`] and [`state`]. The concatenation truncates
-    /// any trailing zero words, which is compatible with the constructor
-    /// [`from_compressed`].
-    ///
-    /// This method requires a `&mut self` receiver to temporarily append `state` to
-    /// [`buf`] (this mutationwill be reversed to recreate the original `buf` as soon as
-    /// the caller drops the returned value). If you don't have mutable access to the
-    /// `Stack`, consider calling [`iter_compressed`] instead, or get the `buf` and
-    /// `state` separately by calling [`buf`] and [`state`], respectively.
-    ///
-    /// The return type dereferences to `&[CompressedWord]`, thus providing read-only
-    /// access to the compressed data. If you need ownership of the compressed data,
-    /// consider calling [`into_compressed`] instead.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
-    ///
-    /// let mut stack = DefaultStack::new();
-    ///
-    /// // Push some data on the stack.
-    /// let symbols = vec![8, 2, 0, 7];
-    /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let distribution = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
-    ///     .unwrap();
-    /// stack.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
-    ///
-    /// // Inspect the compressed data.
-    /// dbg!(stack.get_compressed());
-    ///
-    /// // We can still use the stack afterwards.
-    /// let reconstructed = stack
-    ///     .decode_iid_symbols(4, &distribution)
-    ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
-    ///     .unwrap();
-    /// assert_eq!(reconstructed, symbols);
-    /// ```
-    ///
-    /// [`buf`]: #method.buf
-    /// [`state`]: #method.state
-    /// [`from_compressed`]: #method.from_compressed
-    /// [`iter_compressed`]: #method.iter_compressed
-    /// [`into_compressed`]: #method.into_compressed
-    pub fn get_compressed<'a>(&'a mut self) -> impl Deref<Target = Buf> + Debug + Drop + 'a
-    where
-        Buf: ReadItems<CompressedWord> + WriteItems<CompressedWord> + Debug,
-    {
-        CoderGuard::new(self)
-    }
-
-    /// Iterates over the compressed data currently on the stack.
-    ///
-    /// In contrast to [`get_compressed`] or [`into_compressed`], this method does
-    /// not require mutable access or even ownership of the `Stack`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultStack, Encode};
-    ///
-    /// // Create a stack and encode some stuff.
-    /// let mut stack = DefaultStack::new();
-    /// let symbols = vec![8, -12, 0, 7];
-    /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-    /// let distribution =
-    ///     quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
-    /// stack.encode_iid_symbols(&symbols, &distribution).unwrap();
-    ///
-    /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
-    /// let compressed_iter = stack.iter_compressed();
-    /// let compressed_collected = compressed_iter.collect::<Vec<_>>();
-    /// assert!(!compressed_collected.is_empty());
-    /// assert_eq!(compressed_collected, *stack.get_compressed());
-    /// ```
-    ///
-    /// [`get_compressed`]: #method.get_compressed
-    /// [`into_compressed`]: #method.into_compressed
-    pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = CompressedWord> + '_
-    where
-        &'a Buf: IntoIterator<Item = &'a CompressedWord>,
-    {
-        let buf_iter = self.buf.into_iter().cloned();
-        let state_iter = bit_array_to_chunks_truncated(self.state).rev();
-        buf_iter.chain(state_iter)
-    }
-
-    /// Returns the number of compressed words on the stack.
-    ///
-    /// This includes a constant overhead of between one and two words unless the
-    /// stack is completely empty.
-    ///
-    /// This method returns the length of the slice, the `Vec<CompressedWord>`, or the iterator
-    /// that would be returned by [`get_compressed`], [`into_compressed`], or
-    /// [`iter_compressed`], respectively, when called at this time.
-    ///
-    /// See also [`num_bits`].
-    ///
-    /// [`get_compressed`]: #method.get_compressed
-    /// [`into_compressed`]: #method.into_compressed
-    /// [`iter_compressed`]: #method.iter_compressed
-    /// [`num_bits`]: #method.num_bits
-    pub fn num_words(&self) -> usize
-    where
-        Buf: ReadLookaheadItems<CompressedWord>,
-    {
-        self.buf.amt_left() + bit_array_to_chunks_truncated::<_, CompressedWord>(self.state).len()
-    }
-
-    pub fn num_bits(&self) -> usize
-    where
-        Buf: ReadLookaheadItems<CompressedWord>,
-    {
-        CompressedWord::BITS * self.num_words()
-    }
-
-    pub fn num_valid_bits(&self) -> usize
-    where
-        Buf: ReadLookaheadItems<CompressedWord>,
-    {
-        CompressedWord::BITS * self.buf.amt_left()
-            + std::cmp::max(State::BITS - self.state.leading_zeros() as usize, 1)
-            - 1
-    }
-
-    #[inline(always)]
-    pub(crate) fn chop_quantile_off_state<D, const PRECISION: usize>(&mut self) -> D::Probability
-    where
-        CompressedWord: AsPrimitive<D::Probability>,
-        D: DiscreteDistribution<PRECISION>,
-    {
-        let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
-        self.state = self.state >> PRECISION;
-        quantile
-    }
-
-    #[inline(always)]
-    pub(crate) fn encode_remainder_onto_state<D, const PRECISION: usize>(
-        &mut self,
-        remainder: D::Probability,
-        probability: D::Probability,
-    ) where
-        D: DiscreteDistribution<PRECISION>,
-        D::Probability: Into<CompressedWord>,
-    {
-        self.state = self.state * probability.into().into() + remainder.into().into();
     }
 }
 
@@ -940,6 +960,31 @@ where
         let _ = self.try_refill_state_if_necessary();
 
         Ok(symbol)
+    }
+}
+
+impl<CompressedWord, State, Buf> Seek for Stack<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: backend::Seek<CompressedWord>,
+{
+    fn seek(&mut self, (pos, state): (usize, Self::State)) -> Result<(), ()> {
+        let must_be_end = state < State::one() << (State::BITS - CompressedWord::BITS);
+        self.buf.seek(pos, must_be_end)?;
+        self.state = state;
+        Ok(())
+    }
+}
+
+impl<CompressedWord, State, Buf> Pos for Stack<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: backend::Pos<CompressedWord>,
+{
+    fn pos(&self) -> usize {
+        self.buf.pos()
     }
 }
 
@@ -1146,7 +1191,13 @@ mod tests {
         let mut means = Vec::with_capacity(AMT);
         let mut stds = Vec::with_capacity(AMT);
 
-        let mut rng = Xoshiro256StarStar::seed_from_u64(1234);
+        let mut rng = Xoshiro256StarStar::seed_from_u64(
+            (CompressedWord::BITS as u64).rotate_left(3 * 16)
+                ^ (State::BITS as u64).rotate_left(2 * 16)
+                ^ (Probability::BITS as u64).rotate_left(1 * 16)
+                ^ PRECISION as u64,
+        );
+
         for _ in 0..AMT {
             let mean = (200.0 / u32::MAX as f64) * rng.next_u32() as f64 - 100.0;
             let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
@@ -1222,5 +1273,105 @@ mod tests {
 
         assert_eq!(symbols_gaussian, reconstructed_gaussian);
         assert_eq!(symbols_categorical, reconstructed_categorical);
+    }
+
+    #[test]
+    fn seek() {
+        const NUM_CHUNKS: usize = 100;
+        const SYMBOLS_PER_CHUNK: usize = 100;
+
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
+        let distribution = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
+
+        let mut encoder = DefaultStack::new();
+
+        let mut rng = Xoshiro256StarStar::seed_from_u64(123);
+        let mut symbols = Vec::with_capacity(NUM_CHUNKS);
+        let mut jump_table = Vec::with_capacity(NUM_CHUNKS);
+        let (initial_pos, initial_state) = encoder.pos_and_state();
+
+        for _ in 0..NUM_CHUNKS {
+            let chunk = (0..SYMBOLS_PER_CHUNK)
+                .map(|_| distribution.quantile_function(rng.next_u32() % (1 << 24)).0)
+                .collect::<Vec<_>>();
+            encoder
+                .encode_iid_symbols_reverse(&chunk, &distribution)
+                .unwrap();
+            symbols.push(chunk);
+            jump_table.push(encoder.pos_and_state());
+        }
+
+        // Test decoding from back to front.
+        {
+            let mut seekable_decoder = encoder.seekable_decoder();
+
+            // Verify that decoding leads to the same positions and states.
+            for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
+                assert_eq!(seekable_decoder.pos_and_state(), (pos, state));
+                let decoded = seekable_decoder
+                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &distribution)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                assert_eq!(&decoded, chunk)
+            }
+            assert_eq!(
+                seekable_decoder.pos_and_state(),
+                (initial_pos, initial_state)
+            );
+            assert!(seekable_decoder.is_empty());
+
+            // Seek to some random offsets in the jump table and decode one chunk
+            for _ in 0..100 {
+                let chunk_index = rng.next_u32() as usize % NUM_CHUNKS;
+                let (pos, state) = jump_table[chunk_index];
+                seekable_decoder.seek((pos, state)).unwrap();
+                let decoded = seekable_decoder
+                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &distribution)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                assert_eq!(&decoded, &symbols[chunk_index])
+            }
+        }
+
+        // Reverse compressed data, map positions in jump table to reversed positions,
+        // and test decoding from front to back.
+        let mut compressed = encoder.into_compressed();
+        compressed.reverse();
+        for (pos, _state) in jump_table.iter_mut() {
+            *pos = compressed.len() - *pos;
+        }
+        let initial_pos = compressed.len() - initial_pos;
+
+        {
+            let mut seekable_decoder =
+                Stack::from_compressed(backend::ReadOwnedFromFront::new(compressed)).unwrap();
+
+            // Verify that decoding leads to the expected positions and states.
+            for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
+                assert_eq!(seekable_decoder.pos_and_state(), (pos, state));
+                let decoded = seekable_decoder
+                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &distribution)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                assert_eq!(&decoded, chunk)
+            }
+            assert_eq!(
+                seekable_decoder.pos_and_state(),
+                (initial_pos, initial_state)
+            );
+            assert!(seekable_decoder.is_empty());
+
+            // Seek to some random offsets in the jump table and decode one chunk each time.
+            for _ in 0..100 {
+                let chunk_index = rng.next_u32() as usize % NUM_CHUNKS;
+                let (pos, state) = jump_table[chunk_index];
+                seekable_decoder.seek((pos, state)).unwrap();
+                let decoded = seekable_decoder
+                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &distribution)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                assert_eq!(&decoded, &symbols[chunk_index])
+            }
+        }
     }
 }

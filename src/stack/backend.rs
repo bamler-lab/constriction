@@ -1,5 +1,7 @@
 use std::{fmt::Debug, marker::PhantomData};
 
+/// TODO: document that, if a `Backend<Item>` implements `AsRef<[Item]>` then the
+/// head of the stack must be at the end of the slice returned by `as_ref`.
 pub trait Backend<Item> {}
 
 pub trait ReadItems<Item>: Backend<Item> {
@@ -16,16 +18,20 @@ pub trait ReadLookaheadItems<Item>: Backend<Item> {
     }
 }
 
+pub trait Seek<Item>: Backend<Item> {
+    fn seek(&mut self, pos: usize, must_be_end: bool) -> Result<(), ()>;
+}
+
+pub trait Pos<Item>: Backend<Item> {
+    fn pos(&self) -> usize;
+}
+
 pub trait WriteItems<Item>: Backend<Item> + std::iter::Extend<Item> {
     fn push(&mut self, item: Item);
 }
 
 pub trait WriteMutableItems<Item>: WriteItems<Item> {
     fn clear(&mut self);
-}
-
-pub trait Seek<Item>: Backend<Item> {
-    fn seek(&mut self, pos: usize);
 }
 
 impl<Item> Backend<Item> for Vec<Item> {}
@@ -62,6 +68,12 @@ impl<Item> WriteMutableItems<Item> for Vec<Item> {
     }
 }
 
+impl<Item> Pos<Item> for Vec<Item> {
+    fn pos(&self) -> usize {
+        self.len()
+    }
+}
+
 pub struct ReadOwnedFromBack<Item, Buf: AsRef<[Item]>> {
     buf: Buf,
 
@@ -91,7 +103,7 @@ impl<'a, Item: Clone, Buf: AsRef<[Item]>> IntoIterator for &'a ReadOwnedFromBack
     fn into_iter(self) -> Self::IntoIter {
         let slice = unsafe {
             // SAFETY: We maintain the invariant `self.pos <= self.buf.len()`.
-            self.buf.as_ref().get_unchecked(self.pos..)
+            self.buf.as_ref().get_unchecked(..self.pos)
         };
 
         slice.iter().cloned()
@@ -141,6 +153,23 @@ impl<Item: Clone, Buf: AsRef<[Item]>> ReadLookaheadItems<Item> for ReadOwnedFrom
     }
 }
 
+impl<Item: Clone, Buf: AsRef<[Item]>> Seek<Item> for ReadOwnedFromBack<Item, Buf> {
+    fn seek(&mut self, pos: usize, must_be_end: bool) -> Result<(), ()> {
+        if pos > self.buf.as_ref().len() || (must_be_end && pos != 0) {
+            Err(())
+        } else {
+            self.pos = pos;
+            Ok(())
+        }
+    }
+}
+
+impl<Item: Clone, Buf: AsRef<[Item]>> Pos<Item> for ReadOwnedFromBack<Item, Buf> {
+    fn pos(&self) -> usize {
+        self.pos
+    }
+}
+
 pub struct ReadOwnedFromFront<Item, Buf: AsRef<[Item]>> {
     buf: Buf,
 
@@ -168,7 +197,7 @@ impl<'a, Item: Clone, Buf: AsRef<[Item]>> IntoIterator for &'a ReadOwnedFromFron
     fn into_iter(self) -> Self::IntoIter {
         let slice = unsafe {
             // SAFETY: We maintain the invariant `self.pos <= self.buf.len()`.
-            self.buf.as_ref().get_unchecked(..self.pos)
+            self.buf.as_ref().get_unchecked(self.pos..)
         };
 
         slice.iter().rev().cloned()
@@ -198,6 +227,25 @@ impl<Item: Clone, Buf: AsRef<[Item]>> ReadItems<Item> for ReadOwnedFromFront<Ite
 
 impl<Item: Clone, Buf: AsRef<[Item]>> ReadLookaheadItems<Item> for ReadOwnedFromFront<Item, Buf> {
     fn amt_left(&self) -> usize {
+        // This cannot underflow since we maintain the invariant `pos >= buf.as_ref().len()`.
         self.buf.as_ref().len() - self.pos
+    }
+}
+
+impl<Item: Clone, Buf: AsRef<[Item]>> Seek<Item> for ReadOwnedFromFront<Item, Buf> {
+    fn seek(&mut self, pos: usize, must_be_end: bool) -> Result<(), ()> {
+        match (pos.cmp(&self.buf.as_ref().len()), must_be_end) {
+            (std::cmp::Ordering::Less, false) | (std::cmp::Ordering::Equal, _) => {
+                self.pos = pos;
+                Ok(())
+            }
+            _ => Err(()),
+        }
+    }
+}
+
+impl<Item: Clone, Buf: AsRef<[Item]>> Pos<Item> for ReadOwnedFromFront<Item, Buf> {
+    fn pos(&self) -> usize {
+        self.pos
     }
 }
