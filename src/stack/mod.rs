@@ -2,9 +2,12 @@
 //!
 //!
 
+pub mod backend;
 pub mod stable;
 
-use std::{borrow::Borrow, convert::TryInto, error::Error, fmt::Debug, ops::Deref};
+use std::{
+    borrow::Borrow, convert::TryInto, error::Error, fmt::Debug, marker::PhantomData, ops::Deref,
+};
 
 use num::cast::AsPrimitive;
 
@@ -12,6 +15,8 @@ use crate::{
     bit_array_from_chunks, bit_array_to_chunks_truncated, distributions::DiscreteDistribution,
     BitArray, Code, Decode, Encode, EncodingError, IntoDecoder, TryCodingError,
 };
+
+use self::backend::{Backend, ReadItems, ReadLookaheadItems, WriteItems, WriteMutableItems};
 
 /// Entropy coder for both encoding and decoding on a stack
 ///
@@ -93,12 +98,12 @@ use crate::{
 ///   no larger than the bitlength of `CompressedWord` (e.g., if `CompressedWord` is
 ///  `u32` then we must have `1 <= PRECISION <= 32`).
 ///
-///   Since the smallest representable probability is `(1/2)^PRECISION`, the largest
-///   possible (finite) [information content of a single symbol is `PRECISION`
-///   bits. Thus, pushing a single symbol onto the `Stack` increases the "filling
-///   level" of the `Stack`'s internal state by at most `PRECISION` bits. Since
-///   `PRECISION` is at most the bitlength of `CompressedWord`, the procedure of
-///   transferring one `CompressedWord` from the internal state to the buffer
+///   Since the smallest representable nonzero probability is `(1/2)^PRECISION`, the
+///   largest possible (finite) [information content] of a single symbol is
+///   `PRECISION` bits. Thus, pushing a single symbol onto the `Stack` increases the
+///   "filling level" of the `Stack`'s internal state by at most `PRECISION` bits.
+///   Since `PRECISION` is at most the bitlength of `CompressedWord`, the procedure
+///   of transferring one `CompressedWord` from the internal state to the buffer
 ///   described in the list item above is guaranteed to free up enough internal
 ///   state to encode at least one additional symbol.
 ///
@@ -188,16 +193,20 @@ use crate::{
 /// [`is_empty`]: #method.is_empty`
 /// [`into_compressed`]: #method.into_compressed
 #[derive(Clone)]
-pub struct Stack<CompressedWord, State>
+pub struct Stack<CompressedWord, State, Buf = Vec<CompressedWord>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    buf: Vec<CompressedWord>,
+    buf: Buf,
 
     /// Invariant: `state >= State::one() << (State::BITS - CompressedWord::BITS)`
     /// unless `buf.is_empty()` or this is the `waste` part of an `stable::Coder`.
     state: State,
+
+    /// We keep track of the `CompressedWord` type so that we can statically enforce
+    /// the invariant for `state`.
+    phantom: PhantomData<CompressedWord>,
 }
 
 /// Type alias for a [`Stack`] with sane parameters for typical use cases.
@@ -206,36 +215,40 @@ where
 /// sane values for many typical use cases.
 pub type DefaultStack = Stack<u32, u64>;
 
-impl<CompressedWord, State> Debug for Stack<CompressedWord, State>
+impl<CompressedWord, State, Buf> Debug for Stack<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: ReadItems<CompressedWord>,
+    for<'a> &'a Buf: IntoIterator<Item = &'a CompressedWord>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list().entries(self.iter_compressed()).finish()
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> IntoDecoder<PRECISION>
-    for Stack<CompressedWord, State>
+impl<CompressedWord, State, Buf, const PRECISION: usize> IntoDecoder<PRECISION>
+    for Stack<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: ReadItems<CompressedWord>,
 {
     type Decoder = Self;
 }
 
-impl<CompressedWord, State> Default for Stack<CompressedWord, State>
+impl<CompressedWord, State, Buf> Default for Stack<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: Default,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<CompressedWord, State> Stack<CompressedWord, State>
+impl<CompressedWord, State, Buf> Stack<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -254,27 +267,42 @@ where
     /// // Finally, get the compressed data.
     /// let compressed = stack.into_compressed();
     /// ```
-    pub fn new() -> Self {
+    pub fn new() -> Self
+    where
+        Buf: Default,
+    {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
 
         Self {
-            buf: Vec::new(),
             state: State::zero(),
+            buf: Default::default(),
+            phantom: PhantomData,
         }
     }
 
-    pub fn with_buf_and_state(buf: Vec<CompressedWord>, state: State) -> Result<Self, ()> {
-        if buf.is_empty() || state >= State::one() << (State::BITS - CompressedWord::BITS) {
-            Ok(Self { buf, state })
+    pub fn with_state_and_empty_buf(state: State) -> Self
+    where
+        Buf: Default,
+    {
+        Self {
+            state,
+            buf: Default::default(),
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn with_buf_and_state(buf: Buf, state: State) -> Result<Self, ()>
+    where
+        Buf: ReadLookaheadItems<CompressedWord>,
+    {
+        if buf.is_at_end() || state >= State::one() << (State::BITS - CompressedWord::BITS) {
+            Ok(Self {
+                buf,
+                state,
+                phantom: PhantomData,
+            })
         } else {
             Err(())
-        }
-    }
-
-    pub fn with_state_and_empty_buf(state: State) -> Self {
-        Self {
-            buf: Vec::new(),
-            state,
         }
     }
 
@@ -293,12 +321,13 @@ where
     ///
     /// [`into_compressed`]: #method.into_compressed
     /// [`from_binary`]: #method.from_binary
-    pub fn from_compressed(
-        mut compressed: Vec<CompressedWord>,
-    ) -> Result<Self, Vec<CompressedWord>> {
+    pub fn from_compressed(mut compressed: Buf) -> Result<Self, Buf>
+    where
+        Buf: ReadItems<CompressedWord>,
+    {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
 
-        if compressed.last() == Some(&CompressedWord::zero()) {
+        if compressed.peek() == Some(&CompressedWord::zero()) {
             return Err(compressed);
         }
 
@@ -309,6 +338,7 @@ where
         Ok(Self {
             buf: compressed,
             state,
+            phantom: PhantomData,
         })
     }
 
@@ -333,7 +363,10 @@ where
     /// assert!(stack2.is_empty()); // <-- stack2 is empty.
     /// ```
     /// [`from_compressed`]: #method.from_compressed
-    pub fn from_binary(mut data: Vec<CompressedWord>) -> Self {
+    pub fn from_binary(mut data: Buf) -> Self
+    where
+        Buf: ReadItems<CompressedWord>,
+    {
         // We only simulate the effect of appending a `1` to `data` because actually
         // appending a word may cause an expensive resizing of the vector `data`. This
         // resizing is both likely to happen and likely to be unnecessary: `data` may be
@@ -346,7 +379,72 @@ where
                 .chain(std::iter::repeat_with(|| data.pop()).scan((), |(), chunk| chunk)),
         );
 
-        Self { buf: data, state }
+        Self {
+            buf: data,
+            state,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Discards all compressed data and resets the stack to the same state as
+    /// [`Coder::new`](#method.new).
+    pub fn clear(&mut self)
+    where
+        Buf: WriteMutableItems<CompressedWord>,
+    {
+        self.buf.clear();
+        self.state = State::zero();
+    }
+
+    pub fn buf(&self) -> &Buf {
+        &self.buf
+    }
+
+    pub fn into_buf_and_state(self) -> (Buf, State) {
+        (self.buf, self.state)
+    }
+
+    #[inline(always)]
+    pub(crate) fn decode_remainder_off_state<D, const PRECISION: usize>(
+        &mut self,
+        probability: D::Probability,
+    ) -> Result<D::Probability, EncodingError>
+    where
+        D: DiscreteDistribution<PRECISION>,
+        D::Probability: Into<CompressedWord>,
+        CompressedWord: AsPrimitive<D::Probability>,
+    {
+        let remainder = (self.state % probability.into().into()).as_().as_();
+        self.state = self
+            .state
+            .checked_div(&probability.into().into())
+            .ok_or(EncodingError::ImpossibleSymbol)?;
+
+        Ok(remainder)
+    }
+
+    #[inline(always)]
+    pub(crate) fn append_quantile_to_state<D, const PRECISION: usize>(
+        &mut self,
+        quantile: D::Probability,
+    ) where
+        D: DiscreteDistribution<PRECISION>,
+        D::Probability: Into<CompressedWord>,
+    {
+        self.state = (self.state << PRECISION) | quantile.into().into();
+    }
+}
+
+impl<CompressedWord, State, Buf> Stack<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: WriteItems<CompressedWord>,
+{
+    #[inline(always)]
+    pub(crate) fn flush_state(&mut self) {
+        self.buf.push(self.state.as_());
+        self.state = self.state >> CompressedWord::BITS;
     }
 
     pub fn encode_symbols_reverse<S, D, I, const PRECISION: usize>(
@@ -396,30 +494,6 @@ where
         self.encode_iid_symbols(symbols.into_iter().rev(), distribution)
     }
 
-    /// Discards all compressed data and resets the stack to the same state as
-    /// [`Coder::new`](#method.new).
-    pub fn clear(&mut self) {
-        self.buf.clear();
-        self.state = State::zero();
-    }
-
-    /// Check if no data for decoding is left.
-    ///
-    /// Same as [`Code::maybe_empty`], just with a more suitable name considering the
-    /// fact that this particular implementation of `Code` can decide with certainty
-    /// whether or not it is empty.
-    ///
-    /// Note that you can still pop symbols off an empty stack, but this is only
-    /// useful in rare edge cases, see documentation of
-    /// [`decode_symbol`](#method.decode_symbol).
-    pub fn is_empty(&self) -> bool {
-        self.buf.is_empty() && self.state == State::zero()
-    }
-
-    pub fn buf(&self) -> &[CompressedWord] {
-        &self.buf
-    }
-
     /// Consumes the stack and returns the compressed data.
     ///
     /// The returned data can be used to recreate a stack with the same state
@@ -458,7 +532,7 @@ where
     /// assert_eq!(reconstructed, symbols);
     /// assert!(stack.is_empty())
     /// ```
-    pub fn into_compressed(mut self) -> Vec<CompressedWord> {
+    pub fn into_compressed(mut self) -> Buf {
         self.buf
             .extend(bit_array_to_chunks_truncated(self.state).rev());
         self.buf
@@ -511,7 +585,7 @@ where
     ///
     /// [`from_binary`]: #method.from_binary
     /// [`into_compressed`]: #method.into_compressed
-    pub fn into_binary(mut self) -> Result<Vec<CompressedWord>, ()> {
+    pub fn into_binary(mut self) -> Result<Buf, ()> {
         let valid_bits = (State::BITS - 1).wrapping_sub(self.state.leading_zeros() as usize);
 
         if valid_bits % CompressedWord::BITS != 0 || valid_bits == usize::max_value() {
@@ -523,9 +597,27 @@ where
             Ok(self.buf)
         }
     }
+}
 
-    pub fn into_buf_and_state(self) -> (Vec<CompressedWord>, State) {
-        (self.buf, self.state)
+impl<CompressedWord, State, Buf> Stack<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    /// Check if no data for decoding is left.
+    ///
+    /// Same as [`Code::maybe_empty`], just with a more suitable name considering the
+    /// fact that this particular implementation of `Code` can decide with certainty
+    /// whether or not it is empty.
+    ///
+    /// Note that you can still pop symbols off an empty stack, but this is only
+    /// useful in rare edge cases, see documentation of
+    /// [`decode_symbol`](#method.decode_symbol).
+    pub fn is_empty(&self) -> bool
+    where
+        Buf: ReadLookaheadItems<CompressedWord>,
+    {
+        self.buf.is_at_end() && self.state == State::zero()
     }
 
     /// Assembles the current compressed data into a single slice.
@@ -574,9 +666,10 @@ where
     /// [`from_compressed`]: #method.from_compressed
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`into_compressed`]: #method.into_compressed
-    pub fn get_compressed<'a>(
-        &'a mut self,
-    ) -> impl Deref<Target = [CompressedWord]> + Debug + Drop + 'a {
+    pub fn get_compressed<'a>(&'a mut self) -> impl Deref<Target = Buf> + Debug + Drop + 'a
+    where
+        Buf: ReadItems<CompressedWord> + WriteItems<CompressedWord> + Debug,
+    {
         CoderGuard::new(self)
     }
 
@@ -602,24 +695,18 @@ where
     /// let compressed_iter = stack.iter_compressed();
     /// let compressed_collected = compressed_iter.collect::<Vec<_>>();
     /// assert!(!compressed_collected.is_empty());
-    /// assert_eq!(compressed_collected, &*stack.get_compressed());
-    ///
-    /// // We can also iterate in reverse direction, which is useful for streaming decoding.
-    /// let compressed_iter_reverse = stack.iter_compressed().rev();
-    /// let compressed_collected_reverse = compressed_iter_reverse.collect::<Vec<_>>();
-    /// let mut compressed_direct = stack.into_compressed();
-    /// assert!(!compressed_collected_reverse.is_empty());
-    /// assert_ne!(compressed_collected_reverse, compressed_direct);
-    /// compressed_direct.reverse();
-    /// assert_eq!(compressed_collected_reverse, compressed_direct);
+    /// assert_eq!(compressed_collected, *stack.get_compressed());
     /// ```
     ///
     /// [`get_compressed`]: #method.get_compressed
     /// [`into_compressed`]: #method.into_compressed
-    pub fn iter_compressed(
-        &self,
-    ) -> impl Iterator<Item = CompressedWord> + ExactSizeIterator + DoubleEndedIterator + '_ {
-        IterCompressed::new(self)
+    pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = CompressedWord> + '_
+    where
+        &'a Buf: IntoIterator<Item = &'a CompressedWord>,
+    {
+        let buf_iter = self.buf.into_iter().cloned();
+        let state_iter = bit_array_to_chunks_truncated(self.state).rev();
+        buf_iter.chain(state_iter)
     }
 
     /// Returns the number of compressed words on the stack.
@@ -637,37 +724,27 @@ where
     /// [`into_compressed`]: #method.into_compressed
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`num_bits`]: #method.num_bits
-    pub fn num_words(&self) -> usize {
-        self.buf.len() + bit_array_to_chunks_truncated::<_, CompressedWord>(self.state).len()
+    pub fn num_words(&self) -> usize
+    where
+        Buf: ReadLookaheadItems<CompressedWord>,
+    {
+        self.buf.amt_left() + bit_array_to_chunks_truncated::<_, CompressedWord>(self.state).len()
     }
 
-    /// Returns the size of the current stack of compressed data in bits.
-    ///
-    /// This includes some constant overhead unless the stack is completely empty
-    /// (see [`num_words`](#method.num_words)).
-    ///
-    /// The returned value is a multiple of the bitlength of the compressed word
-    /// type `CompressedWord`.
-    pub fn num_bits(&self) -> usize {
+    pub fn num_bits(&self) -> usize
+    where
+        Buf: ReadLookaheadItems<CompressedWord>,
+    {
         CompressedWord::BITS * self.num_words()
     }
 
-    pub fn num_valid_bits(&self) -> usize {
-        CompressedWord::BITS * self.buf.len()
+    pub fn num_valid_bits(&self) -> usize
+    where
+        Buf: ReadLookaheadItems<CompressedWord>,
+    {
+        CompressedWord::BITS * self.buf.amt_left()
             + std::cmp::max(State::BITS - self.state.leading_zeros() as usize, 1)
             - 1
-    }
-
-    pub fn into_stable_decoder<const PRECISION: usize>(
-        self,
-    ) -> Result<stable::Decoder<CompressedWord, State, PRECISION>, Self> {
-        self.try_into()
-    }
-
-    pub fn into_stable_encoder<const PRECISION: usize>(
-        self,
-    ) -> Result<stable::Encoder<CompressedWord, State, PRECISION>, Self> {
-        self.try_into()
     }
 
     #[inline(always)]
@@ -681,43 +758,6 @@ where
         quantile
     }
 
-    /// Checks the invariant on `self.state` and restores it if necessary and possible.
-    ///
-    /// Returns `Err(())` if the `state` should have been refilled but there are no
-    /// compressed words left. Returns `Ok(())` in all other cases.
-    #[inline(always)]
-    pub(crate) fn try_refill_state_if_necessary(&mut self) -> Result<(), ()> {
-        if self.state < State::one() << (State::BITS - CompressedWord::BITS) {
-            // Invariant on `self.state` (see its doc comment) is violated. Restore it by
-            // refilling with a compressed word from `self.buf` if available.
-            self.try_refill_state()
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Tries to push a compressed word onto `state` without checking for overflow, thus
-    /// potentially truncating `state`. If you're not sure if the operation might
-    /// overflow, call [`try_refill_state_if_necessary`] instead.
-    ///
-    /// This method is *not* declared `unsafe` because the potential truncation is
-    /// well-defined and we consider truncating `state` a logic error but not a
-    /// memory/safety violation.
-    ///
-    /// Returns `Ok(())` if a compressed word to refill the state was available and
-    /// `Err(())` if no compressed word was available.
-    #[inline(always)]
-    pub(crate) fn try_refill_state(&mut self) -> Result<(), ()> {
-        self.state = (self.state << CompressedWord::BITS) | self.buf.pop().ok_or(())?.into();
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(crate) fn flush_state(&mut self) {
-        self.buf.push(self.state.as_());
-        self.state = self.state >> CompressedWord::BITS;
-    }
-
     #[inline(always)]
     pub(crate) fn encode_remainder_onto_state<D, const PRECISION: usize>(
         &mut self,
@@ -729,42 +769,31 @@ where
     {
         self.state = self.state * probability.into().into() + remainder.into().into();
     }
-
-    #[inline(always)]
-    pub(crate) fn decode_remainder_off_state<D, const PRECISION: usize>(
-        &mut self,
-        probability: D::Probability,
-    ) -> Result<D::Probability, EncodingError>
-    where
-        D: DiscreteDistribution<PRECISION>,
-        D::Probability: Into<CompressedWord>,
-        CompressedWord: AsPrimitive<D::Probability>,
-    {
-        let remainder = (self.state % probability.into().into()).as_().as_();
-        self.state = self
-            .state
-            .checked_div(&probability.into().into())
-            .ok_or(EncodingError::ImpossibleSymbol)?;
-
-        Ok(remainder)
-    }
-
-    #[inline(always)]
-    pub(crate) fn append_quantile_to_state<D, const PRECISION: usize>(
-        &mut self,
-        quantile: D::Probability,
-    ) where
-        D: DiscreteDistribution<PRECISION>,
-        D::Probability: Into<CompressedWord>,
-    {
-        self.state = (self.state << PRECISION) | quantile.into().into();
-    }
 }
 
-impl<CompressedWord, State> Code for Stack<CompressedWord, State>
+impl<CompressedWord, State> Stack<CompressedWord, State, Vec<CompressedWord>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+{
+    pub fn into_stable_decoder<const PRECISION: usize>(
+        self,
+    ) -> Result<stable::Decoder<CompressedWord, State, PRECISION>, Self> {
+        self.try_into()
+    }
+
+    pub fn into_stable_encoder<const PRECISION: usize>(
+        self,
+    ) -> Result<stable::Encoder<CompressedWord, State, PRECISION>, Self> {
+        self.try_into()
+    }
+}
+
+impl<CompressedWord, State, Buf> Code for Stack<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: Backend<CompressedWord>,
 {
     type State = State;
     type CompressedWord = CompressedWord;
@@ -774,15 +803,19 @@ where
     }
 
     fn maybe_empty(&self) -> bool {
-        self.is_empty()
+        true
+        // TODO: the following only works if `Buf: ReadLookaheadItems<CompressedWord>.
+        // This would need specialization.
+        // self.is_at_read_end()
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> Encode<PRECISION>
-    for Stack<CompressedWord, State>
+impl<CompressedWord, State, Buf, const PRECISION: usize> Encode<PRECISION>
+    for Stack<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: WriteItems<CompressedWord>,
 {
     /// Encodes a single symbol and appends it to the compressed data.
     ///
@@ -832,11 +865,50 @@ where
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> Decode<PRECISION>
-    for Stack<CompressedWord, State>
+impl<CompressedWord, State, Buf> Stack<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: ReadItems<CompressedWord>,
+{
+    /// Checks the invariant on `self.state` and restores it if necessary and possible.
+    ///
+    /// Returns `Err(())` if the `state` should have been refilled but there are no
+    /// compressed words left. Returns `Ok(())` in all other cases.
+    #[inline(always)]
+    pub(crate) fn try_refill_state_if_necessary(&mut self) -> Result<(), ()> {
+        if self.state < State::one() << (State::BITS - CompressedWord::BITS) {
+            // Invariant on `self.state` (see its doc comment) is violated. Restore it by
+            // refilling with a compressed word from `self.buf` if available.
+            self.try_refill_state()
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Tries to push a compressed word onto `state` without checking for overflow, thus
+    /// potentially truncating `state`. If you're not sure if the operation might
+    /// overflow, call [`try_refill_state_if_necessary`] instead.
+    ///
+    /// This method is *not* declared `unsafe` because the potential truncation is
+    /// well-defined and we consider truncating `state` a logic error but not a
+    /// memory/safety violation.
+    ///
+    /// Returns `Ok(())` if a compressed word to refill the state was available and
+    /// `Err(())` if no compressed word was available.
+    #[inline(always)]
+    pub(crate) fn try_refill_state(&mut self) -> Result<(), ()> {
+        self.state = (self.state << CompressedWord::BITS) | self.buf.pop().ok_or(())?.into();
+        Ok(())
+    }
+}
+
+impl<CompressedWord, State, Buf, const PRECISION: usize> Decode<PRECISION>
+    for Stack<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: ReadItems<CompressedWord>,
 {
     type DecodingError = std::convert::Infallible;
 
@@ -878,42 +950,36 @@ where
 ///
 /// [`Stack`]: struct.Coder.html
 /// [`Coder::get_compressed`]: struct.Coder.html#method.get_compressed
-struct CoderGuard<'a, CompressedWord, State>
+struct CoderGuard<'a, CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
 {
-    inner: &'a mut Stack<CompressedWord, State>,
+    inner: &'a mut Stack<CompressedWord, State, Buf>,
 }
 
-impl<CompressedWord, State> Debug for CoderGuard<'_, CompressedWord, State>
+impl<'a, CompressedWord, State, Buf> CoderGuard<'a, CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(&**self, f)
-    }
-}
-
-impl<'a, CompressedWord, State> CoderGuard<'a, CompressedWord, State>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    fn new(stack: &'a mut Stack<CompressedWord, State>) -> Self {
+    fn new(stack: &'a mut Stack<CompressedWord, State, Buf>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         for chunk in bit_array_to_chunks_truncated(stack.state).rev() {
             stack.buf.push(chunk)
         }
+
         Self { inner: stack }
     }
 }
 
-impl<'a, CompressedWord, State> Drop for CoderGuard<'a, CompressedWord, State>
+impl<'a, CompressedWord, State, Buf> Drop for CoderGuard<'a, CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
 {
     fn drop(&mut self) {
         // Revert what we did in `Self::new`.
@@ -923,116 +989,27 @@ where
     }
 }
 
-impl<'a, CompressedWord, State> Deref for CoderGuard<'a, CompressedWord, State>
+impl<'a, CompressedWord, State, Buf> Deref for CoderGuard<'a, CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
 {
-    type Target = [CompressedWord];
+    type Target = Buf;
 
     fn deref(&self) -> &Self::Target {
         &self.inner.buf
     }
 }
 
-struct IterCompressed<'a, CompressedWord, State> {
-    buf: &'a [CompressedWord],
-    state: State,
-    index_front: usize,
-    index_back: usize,
-}
-
-impl<'a, CompressedWord, State> IterCompressed<'a, CompressedWord, State>
+impl<CompressedWord, State, Buf> Debug for CoderGuard<'_, CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord> + Debug,
 {
-    fn new(stack: &'a Stack<CompressedWord, State>) -> Self {
-        let buf = stack.buf();
-        let state = stack.state();
-
-        // This can only fail if we wouldn't even be able to allocate space for `state` on the heap.
-        let len = buf
-            .len()
-            .checked_add(bit_array_to_chunks_truncated::<_, CompressedWord>(stack.state).len())
-            .expect("Out of memory.");
-
-        Self {
-            buf,
-            state,
-            index_front: 0,
-            index_back: len,
-        }
-    }
-}
-
-impl<CompressedWord, State> Iterator for IterCompressed<'_, CompressedWord, State>
-where
-    CompressedWord: BitArray,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    type Item = CompressedWord;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let index_front = self.index_front;
-        if index_front == self.index_back {
-            None
-        } else {
-            self.index_front += 1;
-            let result = self.buf.get(index_front).cloned().unwrap_or_else(|| {
-                (self.state >> (CompressedWord::BITS * (index_front - self.buf.len()))).as_()
-            });
-            Some(result)
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.index_back - self.index_front;
-        (len, Some(len))
-    }
-
-    fn count(self) -> usize {
-        self.index_back - self.index_front
-    }
-
-    fn last(mut self) -> Option<Self::Item> {
-        self.next_back()
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.index_front = std::cmp::min(self.index_back, self.index_front.saturating_add(n));
-        self.next()
-    }
-}
-
-impl<CompressedWord, State> ExactSizeIterator for IterCompressed<'_, CompressedWord, State>
-where
-    CompressedWord: BitArray,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-}
-
-impl<CompressedWord, State> DoubleEndedIterator for IterCompressed<'_, CompressedWord, State>
-where
-    CompressedWord: BitArray,
-    State: BitArray + AsPrimitive<CompressedWord>,
-{
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if self.index_front == self.index_back {
-            None
-        } else {
-            // We can subtract one because `self.index_back > self.index_front >= 0`.
-            self.index_back -= 1;
-            let result = self.buf.get(self.index_back).cloned().unwrap_or_else(|| {
-                (self.state >> (CompressedWord::BITS * (self.index_back - self.buf.len()))).as_()
-            });
-            Some(result)
-        }
-    }
-
-    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-        self.index_back = std::cmp::max(self.index_front, self.index_back.saturating_sub(n));
-        self.next_back()
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&**self, f)
     }
 }
 
@@ -1208,7 +1185,10 @@ mod tests {
         stack
             .encode_iid_symbols_reverse(&symbols_categorical, &categorical)
             .unwrap();
-        dbg!(stack.num_bits(), AMT as f64 * categorical.entropy::<f64>());
+        dbg!(
+            stack.num_valid_bits(),
+            AMT as f64 * categorical.entropy::<f64>()
+        );
 
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
         stack
@@ -1218,7 +1198,7 @@ mod tests {
                 },
             ))
             .unwrap();
-        dbg!(stack.num_bits());
+        dbg!(stack.num_valid_bits());
 
         // Test if import/export of compressed data works.
         let compressed = stack.into_compressed();
