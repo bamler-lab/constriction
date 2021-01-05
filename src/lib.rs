@@ -359,12 +359,163 @@ pub trait Decode<const PRECISION: usize>: Code {
     }
 }
 
+/// A trait for conversion into matching decoder type.
+///
+/// This is useful for generic code that encodes some data with a user provided
+/// encoder of generic type, and then needs to obtain a compatible decoder.
+///
+/// This trait is similar to [`AsDecoder`], except that the conversion takes
+/// ownership of `self` (typically an encoder). This means that the calling
+/// function may return the resulting decoder or put it on the heap since it will
+/// (typically) be free of any references into the current stack frame.
+///
+/// If you don't have ownership of the original encoder, or you want to reuse the
+/// original encoder once you no longer need the returned decoder, then consider
+/// using [`AsDecoder`] instead.
+///
+/// # Example
+///
+/// To be able to convert an encoder of generic type `Encoder` into a decoder,
+/// declare a trait bound `Encoder: IntoDecoder<PRECISION>`. In the following
+/// example, differences to the example for [`AsDecoder`] are marked by `// <--`.
+///
+/// ```
+/// # #![feature(min_const_generics)]
+/// # use constriction::{
+/// #     distributions::{DiscreteDistribution, LeakyQuantizer},
+/// #     stack::DefaultStack,
+/// #     Decode, Encode, IntoDecoder
+/// # };
+/// #
+/// fn encode_and_decode<Encoder, D, const PRECISION: usize>(
+///     mut encoder: Encoder, // <-- Needs ownership of `encoder`.
+///     distribution: D
+/// ) -> Encoder::IntoDecoder
+/// where
+///     Encoder: Encode<PRECISION> + IntoDecoder<PRECISION>, // <-- Different trait bound.
+///     D: DiscreteDistribution<PRECISION, Symbol=i32>,
+///     D::Probability: Into<Encoder::CompressedWord>,
+///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
+/// {
+///     encoder.encode_symbol(137, &distribution);
+///     let mut decoder = encoder.into_decoder();
+///     let decoded = decoder.decode_symbol(&distribution).unwrap();
+///     assert_eq!(decoded, 137);
+///
+///     // encoder.encode_symbol(42, &distribution); // <-- This would fail (we moved `encoder`).
+///     decoder // <-- We can return `decoder` as it has no references to the current stack frame.
+/// }
+///
+/// // Usage example:
+/// let encoder = DefaultStack::new();
+/// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
+/// let distribution = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
+/// encode_and_decode(encoder, distribution);
+/// ```
+///
 pub trait IntoDecoder<const PRECISION: usize>: Code + Sized {
-    type Decoder: From<Self>
+    /// The target type of the conversion.
+    ///
+    /// This is the important part of the `IntoDecoder` trait. The actual conversion in
+    /// [`into_decoder`] just delegates to `self.into()`. From a caller's perspective,
+    /// the advantage of using the `IntoDecoder` trait rather than directly calling
+    /// `self.into()` is that `IntoDecoder::IntoDecoder` defines a suitable return type
+    /// so the caller doesn't need to specify one.
+    ///
+    /// [`into_decoder`]: Self::into_decoder
+    type IntoDecoder: From<Self>
         + Code<CompressedWord = Self::CompressedWord, State = Self::State>
         + Decode<PRECISION>;
 
-    fn into_decoder(self) -> Self::Decoder {
+    /// Performs the conversion.
+    ///
+    /// The default implementation delegates to `self.into()`. There is usually no
+    /// reason to overwrite the default implementation.
+    fn into_decoder(self) -> Self::IntoDecoder {
+        self.into()
+    }
+}
+
+impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> for Decoder {
+    type IntoDecoder = Self;
+}
+
+/// A trait for constructing a temporary matching decoder.
+///
+/// This is useful for generic code that encodes some data with a user provided
+/// encoder of generic type, and then needs to obtain a compatible decoder.
+///
+/// This trait is similar to [`IntoDecoder`], but it has the following advantages
+/// over it:
+/// - it doesn't need ownership of `self` (typically an encoder); and
+/// - `self` can be used again once the returned decoder is no longer used.
+///
+/// The disadvantage of `AsDecoder` compared to `IntoDecoder` is that the returned
+/// decoder cannot outlive `self`, so it typically cannot be returned from the
+/// calling function or put on the heap. If this would pose a problem for your use
+/// case then use [`IntoDecoder`] instead.
+///
+/// # Example
+///
+/// To be able to temporarily convert an encoder of generic type `Encoder` into a
+/// decoder, declare a trait bound `for<'a> Encoder: AsDecoder<'a, PRECISION>`. In
+/// the following example, differences to the example for [`IntoDecoder`] are marked
+/// by `// <--`.
+///
+/// ```
+/// # #![feature(min_const_generics)]
+/// # use constriction::{
+/// #     distributions::{DiscreteDistribution, LeakyQuantizer},
+/// #     stack::DefaultStack,
+/// #     Decode, Encode, AsDecoder
+/// # };
+/// #
+/// fn encode_decode_encode<Encoder, D, const PRECISION: usize>(
+///     encoder: &mut Encoder, // <-- Doesn't need ownership of `encoder`
+///     distribution: D
+/// )
+/// where
+///     Encoder: Encode<PRECISION>,
+///     for<'a> Encoder: AsDecoder<'a, PRECISION>, // <-- Different trait bound.
+///     D: DiscreteDistribution<PRECISION, Symbol=i32>,
+///     D::Probability: Into<Encoder::CompressedWord>,
+///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
+/// {
+///     encoder.encode_symbol(137, &distribution);
+///     let mut decoder = encoder.as_decoder();
+///     let decoded = decoder.decode_symbol(&distribution).unwrap(); // (Doesn't mutate `encoder`.)
+///     assert_eq!(decoded, 137);
+///
+///     std::mem::drop(decoder); // <-- We have to explicitly drop `decoder` ...
+///     encoder.encode_symbol(42, &distribution); // <-- ... before we can use `encoder` again.
+/// }
+///
+/// // Usage example:
+/// let mut encoder = DefaultStack::new();
+/// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
+/// let distribution = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
+/// encode_decode_encode(&mut encoder, distribution);
+/// ```
+pub trait AsDecoder<'a, const PRECISION: usize>: Code + Sized + 'a {
+    /// The target type of the conversion.
+    ///
+    /// This is the important part of the `AsDecoder` trait. The actual conversion in
+    /// [`as_decoder`] just delegates to `self.into()`. From a caller's perspective, the
+    /// advantage of using the `AsDecoder` trait rather than directly calling
+    /// `self.into()` is that `AsDecoder::AsDecoder` defines a suitable return type so
+    /// the caller doesn't need to specify one.
+    ///
+    /// [`as_decoder`]: Self::as_decoder
+    type AsDecoder: From<&'a Self>
+        + Code<CompressedWord = Self::CompressedWord, State = Self::State>
+        + Decode<PRECISION>
+        + 'a;
+
+    /// Performs the conversion.
+    ///
+    /// The default implementation delegates to `self.into()`. There is usually no
+    /// reason to overwrite the default implementation.
+    fn as_decoder(&'a self) -> Self::AsDecoder {
         self.into()
     }
 }
@@ -373,8 +524,8 @@ pub trait IntoDecoder<const PRECISION: usize>: Code + Sized {
 /// compressed data.
 ///
 /// This is the counterpart of [`Seek`]. Call [`Pos::pos_and_state`] to record
-/// "snapshots" of an entropy coder, and then call [`Seek::seek`] at a later time 
-/// to jump back to these snapshots. See examples in the documentations of [`Seek`] 
+/// "snapshots" of an entropy coder, and then call [`Seek::seek`] at a later time
+/// to jump back to these snapshots. See examples in the documentations of [`Seek`]
 /// and [`Seek::seek`].
 pub trait Pos: Code {
     /// Returns the position in the compressed data, in units of `CompressedWord`s.
@@ -403,12 +554,12 @@ pub trait Pos: Code {
 /// recorded snapshots.
 ///
 /// Not all entropy coders that implement `Pos` also implement `Seek`. For example,
-/// [`DefaultStack`] implements `Pos` but it doesn't implement `Seek` because it 
-/// supports both encoding and decoding and therefore always operates at the head. In 
-/// such a case one can usually obtain a seekable entropy coder in return for 
-/// surrendering some other property. For example, `DefaultStack` provides the methods 
-/// [`seekable_decoder`] and [`into_seekable_decoder`] that return a decoder which 
-/// implements `Seek` but which can no longer be used for encoding (i.e., it doesn't 
+/// [`DefaultStack`] implements `Pos` but it doesn't implement `Seek` because it
+/// supports both encoding and decoding and therefore always operates at the head. In
+/// such a case one can usually obtain a seekable entropy coder in return for
+/// surrendering some other property. For example, `DefaultStack` provides the methods
+/// [`seekable_decoder`] and [`into_seekable_decoder`] that return a decoder which
+/// implements `Seek` but which can no longer be used for encoding (i.e., it doesn't
 /// implement [`Encode`]).
 ///
 /// # Example
@@ -454,7 +605,7 @@ pub trait Pos: Code {
 /// assert!(decoded_both.eq(symbols2.into_iter().chain(symbols1)));
 /// assert!(seekable_decoder.is_empty()); // <-- We've reached the end again.
 /// ```
-/// 
+///
 /// [`DefaultStack`]: stack::DefaultStack
 /// [`seekable_decoder`]: stack::Stack::seekable_decoder
 /// [`into_seekable_decoder`]: stack::Stack::into_seekable_decoder
@@ -523,7 +674,7 @@ pub trait Seek: Code {
     /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 51);
     ///
     /// // But we can jump ahead:
-    /// decoder.seek((snapshot_pos, snapshot_state)); // <-- Uses the adjusted `shapshot_pos`.
+    /// decoder.seek((snapshot_pos, snapshot_state)); // <-- Uses the adjusted `snapshot_pos`.
     /// let decoded = decoder.decode_iid_symbols(140, &entropy_model).map(|symbol| symbol.unwrap());
     /// assert!(decoded.eq(-100..40));
     /// assert!(decoder.is_empty()); // <-- We've reached the end of the compressed data.
@@ -678,7 +829,7 @@ where
 ///
 /// This trait is marked `unsafe` so that entropy coders may rely on the assumption
 /// that all `BitArray`s have precisely the same behavior as builtin unsigned
-/// integer types, and that [`BitArray::BITS has the correct value.
+/// integer types, and that [`BitArray::BITS`] has the correct value.
 pub unsafe trait BitArray:
     PrimInt + Unsigned + WrappingAdd + WrappingSub + Debug + LowerHex + UpperHex + 'static
 {

@@ -13,7 +13,7 @@ use num::cast::AsPrimitive;
 
 use crate::{
     bit_array_from_chunks, bit_array_to_chunks_truncated, distributions::DiscreteDistribution,
-    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder, Pos, Seek, TryCodingError,
+    AsDecoder, BitArray, Code, Decode, Encode, EncodingError, Pos, Seek, TryCodingError,
 };
 
 use self::backend::{Backend, ReadItems, ReadLookaheadItems, WriteItems, WriteMutableItems};
@@ -227,14 +227,38 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf, const PRECISION: usize> IntoDecoder<PRECISION>
+impl<'a, CompressedWord, State, Buf> From<&'a Stack<CompressedWord, State, Buf>>
+    for Stack<
+        CompressedWord,
+        State,
+        backend::ReadOwnedFromBack<CompressedWord, &'a [CompressedWord]>,
+    >
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: Backend<CompressedWord> + AsRef<[CompressedWord]>,
+{
+    fn from(stack: &'a Stack<CompressedWord, State, Buf>) -> Self {
+        Stack {
+            buf: backend::ReadOwnedFromBack::new(stack.buf().as_ref()),
+            state: stack.state(),
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, CompressedWord, State, Buf, const PRECISION: usize> AsDecoder<'a, PRECISION>
     for Stack<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: ReadItems<CompressedWord>,
+    Buf: Backend<CompressedWord> + AsRef<[CompressedWord]> + 'a,
 {
-    type Decoder = Self;
+    type AsDecoder = Stack<
+        CompressedWord,
+        State,
+        backend::ReadOwnedFromBack<CompressedWord, &'a [CompressedWord]>,
+    >;
 }
 
 impl<CompressedWord, State, Buf> Default for Stack<CompressedWord, State, Buf>
@@ -843,8 +867,8 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: Backend<CompressedWord>,
 {
-    type State = State;
     type CompressedWord = CompressedWord;
+    type State = State;
 
     fn state(&self) -> Self::State {
         self.state

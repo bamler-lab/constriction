@@ -248,7 +248,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type Decoder = Decoder<CompressedWord, State, Vec<CompressedWord>>;
+    type IntoDecoder = Decoder<CompressedWord, State, Vec<CompressedWord>>;
 }
 
 impl<CompressedWord, State, const PRECISION: usize> Encode<PRECISION>

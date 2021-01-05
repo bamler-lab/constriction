@@ -74,6 +74,7 @@ impl<Item> Pos<Item> for Vec<Item> {
     }
 }
 
+#[derive(Clone)]
 pub struct ReadOwnedFromBack<Item, Buf: AsRef<[Item]>> {
     buf: Buf,
 
@@ -93,6 +94,47 @@ impl<Item, Buf: AsRef<[Item]>> ReadOwnedFromBack<Item, Buf> {
             pos,
             phantom: PhantomData,
         }
+    }
+
+    pub fn as_view(&self) -> ReadOwnedFromBack<Item, &[Item]> {
+        ReadOwnedFromBack {
+            buf: self.buf.as_ref(),
+            pos: self.pos,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn to_owned(&self) -> ReadOwnedFromBack<Item, Vec<Item>>
+    where
+        Item: Clone,
+    {
+        ReadOwnedFromBack {
+            buf: self.buf.as_ref().to_vec(),
+            pos: self.pos,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn buf(&self) -> &[Item] {
+        self.buf.as_ref()
+    }
+
+    pub fn into_buf_and_pos(self) -> (Buf, usize) {
+        (self.buf, self.pos)
+    }
+}
+
+impl<Item> ReadOwnedFromBack<Item, Vec<Item>> {
+    pub fn into_reversed(self) -> ReadOwnedFromFront<Item, Vec<Item>> {
+        let ReadOwnedFromBack {
+            mut buf,
+            mut pos,
+            phantom,
+        } = self;
+
+        buf.reverse();
+        pos = buf.len() - pos;
+        ReadOwnedFromFront { buf, pos, phantom }
     }
 }
 
@@ -170,6 +212,7 @@ impl<Item: Clone, Buf: AsRef<[Item]>> Pos<Item> for ReadOwnedFromBack<Item, Buf>
     }
 }
 
+#[derive(Clone)]
 pub struct ReadOwnedFromFront<Item, Buf: AsRef<[Item]>> {
     buf: Buf,
 
@@ -187,6 +230,47 @@ impl<Item, Buf: AsRef<[Item]>> ReadOwnedFromFront<Item, Buf> {
             pos: 0,
             phantom: PhantomData,
         }
+    }
+
+    pub fn as_view(&self) -> ReadOwnedFromBack<Item, &[Item]> {
+        ReadOwnedFromBack {
+            buf: self.buf.as_ref(),
+            pos: self.pos,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn to_owned(&self) -> ReadOwnedFromBack<Item, Vec<Item>>
+    where
+        Item: Clone,
+    {
+        ReadOwnedFromBack {
+            buf: self.buf.as_ref().to_vec(),
+            pos: self.pos,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn buf(&self) -> &[Item] {
+        self.buf.as_ref()
+    }
+
+    pub fn into_buf_and_pos(self) -> (Buf, usize) {
+        (self.buf, self.pos)
+    }
+}
+
+impl<Item> ReadOwnedFromFront<Item, Vec<Item>> {
+    pub fn into_reversed(self) -> ReadOwnedFromBack<Item, Vec<Item>> {
+        let ReadOwnedFromFront {
+            mut buf,
+            mut pos,
+            phantom,
+        } = self;
+
+        buf.reverse();
+        pos = buf.len() - pos;
+        ReadOwnedFromBack { buf, pos, phantom }
     }
 }
 
