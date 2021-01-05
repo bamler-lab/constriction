@@ -577,6 +577,26 @@ where
             - 1
     }
 
+    /// Returns a decoder that implements [`Seek`].
+    ///
+    /// The returned decoder shares access to the compressed data with the original
+    /// `Stack` (i.e., `self`). This means that:
+    /// - you can call this method several times to create several seekable decoders
+    ///   with independent views into the same compressed data;
+    /// - once the lifetime of all handed out seekable decoders ends, the original
+    ///   `Stack` can be used again; and
+    /// - the constructed seekable decoder cannot outlive the original `Stack`; for
+    ///   example, if the original `Stack` lives on the calling function's call stack
+    ///   then you cannot return the constructed seekable decoder from the calling
+    ///   function. If this is a problem then call [`into_seekable_decoder`] instead.
+    ///
+    /// # Limitations
+    ///
+    /// This method is only implemented for `Stack`s whose backing store of compressed
+    /// data (`Buf`) implements `AsRef<[CompressedWord]>`. This includes the default
+    /// backing data store `Buf = Vec<CompressedWord>`.
+    ///
+    /// [`into_seekable_decoder`]: Self::into_seekable_decoder
     pub fn seekable_decoder(
         &self,
     ) -> Stack<CompressedWord, State, backend::ReadOwnedFromBack<CompressedWord, &[CompressedWord]>>
@@ -590,6 +610,14 @@ where
         }
     }
 
+    /// Consumes the `Stack` and returns a decoder that implements [`Seek`].
+    ///
+    /// This method is similar to [`seekable_decoder`] except that it takes ownership of
+    /// the original `Stack`, so the returned seekable decoder can typically be returned
+    /// from the calling function or put on the heap. Otherwise, the same limitations as
+    /// for [`seekable_decoder`] apply.
+    ///
+    /// [`seekable_decoder`]: Self::seekable_decoder
     pub fn into_seekable_decoder(
         self,
     ) -> Stack<CompressedWord, State, backend::ReadOwnedFromBack<CompressedWord, Buf>>
