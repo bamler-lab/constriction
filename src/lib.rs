@@ -25,7 +25,7 @@
 //! probabilistic model over the encoded data. This so called *entropy model* allows
 //! an entropy coding algorithm to assign short codewords to data it will likely
 //! see, at the cost of mapping unlikely data to longer codewords. The module
-//! [`distributions`] provides tools to construct entropy models that you can use
+//! [`models`] provides tools to construct entropy models that you can use
 //! with any coder that implements [`Encode`] or  [`Decode`].
 //!
 //! The information theoretically optimal (i.e., lowest possible) *expected* bitrate
@@ -132,7 +132,7 @@
 //! This technique of autoregressive models can be scaled up to build very
 //! expressive entropy models over complex data types. This is outside the scope of
 //! this library, which only provides the primitive building blocks for constructing
-//! [`distributions`] over individual symbols and for encoding and decoding data.
+//! [`models`] over individual symbols and for encoding and decoding data.
 //!
 //! [range Asymmetric Numeral Systems (rANS)]:
 //! https://en.wikipedia.org/wiki/Asymmetric_numeral_systems#Range_variants_(rANS)_and_streaming
@@ -222,7 +222,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
-        distribution: D,
+        model: D,
     ) -> Result<(), EncodingError>
     where
         D: EntropyModel<PRECISION>,
@@ -231,7 +231,7 @@ pub trait Encode<const PRECISION: usize>: Code {
 
     fn encode_symbols<S, D>(
         &mut self,
-        symbols_and_distributions: impl IntoIterator<Item = (S, D)>,
+        symbols_and_models: impl IntoIterator<Item = (S, D)>,
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
@@ -239,8 +239,8 @@ pub trait Encode<const PRECISION: usize>: Code {
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
-        for (symbol, distribution) in symbols_and_distributions.into_iter() {
-            self.encode_symbol(symbol, distribution)?;
+        for (symbol, model) in symbols_and_models.into_iter() {
+            self.encode_symbol(symbol, model)?;
         }
 
         Ok(())
@@ -248,7 +248,7 @@ pub trait Encode<const PRECISION: usize>: Code {
 
     fn try_encode_symbols<S, D, E>(
         &mut self,
-        symbols_and_distributions: impl IntoIterator<Item = Result<(S, D), E>>,
+        symbols_and_models: impl IntoIterator<Item = Result<(S, D), E>>,
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         S: Borrow<D::Symbol>,
@@ -257,10 +257,10 @@ pub trait Encode<const PRECISION: usize>: Code {
         Self::CompressedWord: AsPrimitive<D::Probability>,
         E: Error + 'static,
     {
-        for symbol_and_distribution in symbols_and_distributions.into_iter() {
-            let (symbol, distribution) =
-                symbol_and_distribution.map_err(|err| TryCodingError::InvalidEntropyModel(err))?;
-            self.encode_symbol(symbol, distribution)?;
+        for symbol_and_model in symbols_and_models.into_iter() {
+            let (symbol, model) =
+                symbol_and_model.map_err(|err| TryCodingError::InvalidEntropyModel(err))?;
+            self.encode_symbol(symbol, model)?;
         }
 
         Ok(())
@@ -269,7 +269,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn encode_iid_symbols<S, D>(
         &mut self,
         symbols: impl IntoIterator<Item = S>,
-        distribution: &D,
+        model: &D,
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
@@ -277,7 +277,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
-        self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, distribution)))
+        self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, model)))
     }
 }
 
@@ -293,7 +293,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// [`Stack`]: stack.Stack
     type DecodingError: Error + 'static;
 
-    fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
+    fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
         D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -304,7 +304,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// but existential return types are currently not allowed in trait methods.
     fn decode_symbols<'s, I, D>(
         &'s mut self,
-        distributions: I,
+        models: I,
     ) -> DecodeSymbols<'s, Self, I::IntoIter, PRECISION>
     where
         I: IntoIterator<Item = D> + 's,
@@ -314,13 +314,13 @@ pub trait Decode<const PRECISION: usize>: Code {
     {
         DecodeSymbols {
             decoder: self,
-            distributions: distributions.into_iter(),
+            models: models.into_iter(),
         }
     }
 
     fn try_decode_symbols<'s, I, D, E>(
         &'s mut self,
-        distributions: I,
+        models: I,
     ) -> TryDecodeSymbols<'s, Self, I::IntoIter, PRECISION>
     where
         I: IntoIterator<Item = Result<D, E>> + 's,
@@ -330,7 +330,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     {
         TryDecodeSymbols {
             decoder: self,
-            distributions: distributions.into_iter(),
+            models: models.into_iter(),
         }
     }
 
@@ -344,7 +344,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     fn decode_iid_symbols<'s, D>(
         &'s mut self,
         amt: usize,
-        distribution: &'s D,
+        model: &'s D,
     ) -> DecodeIidSymbols<'s, Self, D, PRECISION>
     where
         D: EntropyModel<PRECISION>,
@@ -353,7 +353,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     {
         DecodeIidSymbols {
             decoder: self,
-            distribution,
+            model,
             amt,
         }
     }
@@ -389,7 +389,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// #
 /// fn encode_and_decode<Encoder, D, const PRECISION: usize>(
 ///     mut encoder: Encoder, // <-- Needs ownership of `encoder`.
-///     distribution: D
+///     model: D
 /// ) -> Encoder::IntoDecoder
 /// where
 ///     Encoder: Encode<PRECISION> + IntoDecoder<PRECISION>, // <-- Different trait bound.
@@ -397,20 +397,20 @@ pub trait Decode<const PRECISION: usize>: Code {
 ///     D::Probability: Into<Encoder::CompressedWord>,
 ///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
 /// {
-///     encoder.encode_symbol(137, &distribution);
+///     encoder.encode_symbol(137, &model);
 ///     let mut decoder = encoder.into_decoder();
-///     let decoded = decoder.decode_symbol(&distribution).unwrap();
+///     let decoded = decoder.decode_symbol(&model).unwrap();
 ///     assert_eq!(decoded, 137);
 ///
-///     // encoder.encode_symbol(42, &distribution); // <-- This would fail (we moved `encoder`).
+///     // encoder.encode_symbol(42, &model); // <-- This would fail (we moved `encoder`).
 ///     decoder // <-- We can return `decoder` as it has no references to the current stack frame.
 /// }
 ///
 /// // Usage example:
 /// let encoder = DefaultStack::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
-/// let distribution = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
-/// encode_and_decode(encoder, distribution);
+/// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
+/// encode_and_decode(encoder, model);
 /// ```
 ///
 pub trait IntoDecoder<const PRECISION: usize>: Code + Sized {
@@ -472,7 +472,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// #
 /// fn encode_decode_encode<Encoder, D, const PRECISION: usize>(
 ///     encoder: &mut Encoder, // <-- Doesn't need ownership of `encoder`
-///     distribution: D
+///     model: D
 /// )
 /// where
 ///     Encoder: Encode<PRECISION>,
@@ -481,20 +481,20 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 ///     D::Probability: Into<Encoder::CompressedWord>,
 ///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
 /// {
-///     encoder.encode_symbol(137, &distribution);
+///     encoder.encode_symbol(137, &model);
 ///     let mut decoder = encoder.as_decoder();
-///     let decoded = decoder.decode_symbol(&distribution).unwrap(); // (Doesn't mutate `encoder`.)
+///     let decoded = decoder.decode_symbol(&model).unwrap(); // (Doesn't mutate `encoder`.)
 ///     assert_eq!(decoded, 137);
 ///
 ///     std::mem::drop(decoder); // <-- We have to explicitly drop `decoder` ...
-///     encoder.encode_symbol(42, &distribution); // <-- ... before we can use `encoder` again.
+///     encoder.encode_symbol(42, &model); // <-- ... before we can use `encoder` again.
 /// }
 ///
 /// // Usage example:
 /// let mut encoder = DefaultStack::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
-/// let distribution = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
-/// encode_decode_encode(&mut encoder, distribution);
+/// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
+/// encode_decode_encode(&mut encoder, model);
 /// ```
 pub trait AsDecoder<'a, const PRECISION: usize>: Code + Sized + 'a {
     /// The target type of the conversion.
@@ -687,7 +687,7 @@ pub trait Seek: Code {
 #[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.
 pub struct DecodeSymbols<'a, Decoder: ?Sized, I, const PRECISION: usize> {
     decoder: &'a mut Decoder,
-    distributions: I,
+    models: I,
 }
 
 impl<'a, Decoder, I, D, const PRECISION: usize> Iterator
@@ -702,13 +702,13 @@ where
     type Item = Result<<I::Item as EntropyModel<PRECISION>>::Symbol, Decoder::DecodingError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.distributions
+        self.models
             .next()
-            .map(|distribution| self.decoder.decode_symbol(distribution))
+            .map(|model| self.decoder.decode_symbol(model))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.distributions.size_hint()
+        self.models.size_hint()
     }
 }
 
@@ -726,7 +726,7 @@ where
 #[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.
 pub struct TryDecodeSymbols<'a, Decoder: ?Sized, I, const PRECISION: usize> {
     decoder: &'a mut Decoder,
-    distributions: I,
+    models: I,
 }
 
 impl<'a, Decoder, I, D, E, const PRECISION: usize> Iterator
@@ -742,16 +742,16 @@ where
     type Item = Result<D::Symbol, TryCodingError<Decoder::DecodingError, E>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.distributions.next().map(|distribution| {
-            Ok(self.decoder.decode_symbol(
-                distribution.map_err(|err| TryCodingError::InvalidEntropyModel(err))?,
-            )?)
+        self.models.next().map(|model| {
+            Ok(self
+                .decoder
+                .decode_symbol(model.map_err(|err| TryCodingError::InvalidEntropyModel(err))?)?)
         })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         // We don't terminate when we encounter an error, so the size doesn't change.
-        self.distributions.size_hint()
+        self.models.size_hint()
     }
 }
 
@@ -770,7 +770,7 @@ where
 #[derive(Debug)]
 pub struct DecodeIidSymbols<'a, Decoder: ?Sized, D, const PRECISION: usize> {
     decoder: &'a mut Decoder,
-    distribution: &'a D,
+    model: &'a D,
     amt: usize,
 }
 
@@ -787,7 +787,7 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         if self.amt != 0 {
             self.amt -= 1;
-            Some(self.decoder.decode_symbol(self.distribution))
+            Some(self.decoder.decode_symbol(self.model))
         } else {
             None
         }
@@ -924,12 +924,12 @@ unsafe impl BitArray for usize {}
 pub enum EncodingError {
     /// Tried to encode a symbol with zero probability under the used entropy model.
     ///
-    /// This error can usually be avoided by using a "leaky" distribution, i.e., a
-    /// distribution that assigns a nonzero probability to all symbols within a
-    /// finite domain. Leaky distributions can be constructed with, e.g., a
-    /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
+    /// This error can usually be avoided by using a "leaky" distribution, as the
+    /// entropy model, i.e., a distribution that assigns a nonzero probability to all
+    /// symbols within a finite domain. Leaky distributions can be constructed with,
+    /// e.g., a [`LeakyQuantizer`](models/struct.LeakyQuantizer.html) or with
     /// [`Categorical::from_floating_point_probabilities`](
-    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
+    /// models/struct.Categorical.html#method.from_floating_point_probabilities).
     ImpossibleSymbol,
 
     CapacityExceeded,

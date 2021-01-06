@@ -1,6 +1,6 @@
 //! Probability distributions that can be used as entropy models for compression.
 //!
-//! See documentation of [`Code`] for an example how to use these distributions for
+//! See documentation of [`Code`] for an example how to use these models for
 //! data compression or decompression.
 //!
 //! [`Code`]: crate::Code
@@ -21,12 +21,11 @@ pub trait EntropyModel<const PRECISION: usize> {
     /// `Probability::BITS >= PRECISION` at compile time.
     type Probability: BitArray;
 
-    /// The type of data over which the probability distribution is defined.
+    /// The type of data over which the entropy model is defined.
     ///
-    /// When the `EntropyModel` is used as an entropy model, this is the
-    /// type of an item of the *uncompressed* data. Note that an [`Encode`] or
-    /// [`Decode`] may use a different entropy model for each encoded or decoded symbol,
-    /// and each employed entropy model may have a different `Symbol` type.
+    /// This is the type of an item of the *uncompressed* data. Note that an [`Encode`]
+    /// and [`Decode`] may use a different entropy model for each encoded or decoded
+    /// symbol, and each employed entropy model may have a different `Symbol` type.
     ///
     /// [`Encode`]: crate::Encode
     /// [`Decode`]: crate::Decode
@@ -69,7 +68,7 @@ where
     }
 }
 
-/// Turns continuous distributions into discrete distributions.
+/// Turns continuous distributions into discrete distributions (entropy models).
 ///
 /// This is a builder of [`LeakilyQuantizedDistribution`]s.
 ///
@@ -396,9 +395,9 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// - each symbol in the domain defined above gets assigned a strictly nonzero
     ///   probability, even if the provided probability for the symbol is zero or
     ///   below the threshold that can be resolved in fixed point arithmetic with
-    ///   type `Probability`. We refer to this property as the resulting distribution being
-    ///   "leaky". This probability ensures that all symbols within the domain can
-    ///   be encoded when this distribution is used as an entropy model.
+    ///   type `Probability`. We refer to this property as the resulting distribution
+    ///   being "leaky". This probability ensures that all symbols within the domain
+    ///   can be encoded when this distribution is used as an entropy model.
     ///
     /// More precisely, the resulting probability distribution minimizes the cross
     /// entropy from the provided (floating point) to the resulting (fixed point)
@@ -564,9 +563,9 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// // `probabilities` sums up to `1 << PRECISION` as required:
     /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
     ///
-    /// let distribution =
+    /// let model =
     ///     constriction::models::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
-    /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
+    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
     ///
@@ -579,9 +578,9 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// // `probabilities` sums up to `1 << 32` (logically), i.e., it wraps around once.
     /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
     ///
-    /// let distribution =
+    /// let model =
     ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
-    /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
+    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
     ///
@@ -590,7 +589,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```should_panic
     /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
     /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
-    /// let distribution = // PANICS
+    /// let model = // PANICS
     ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     /// ```
     ///
@@ -598,7 +597,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     ///
     /// ```should_panic
     /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
-    /// let distribution = // PANICS
+    /// let model = // PANICS
     ///     constriction::models::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
     /// ```
     ///
@@ -650,8 +649,8 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// Returns the underlying probability mass function in fixed point arithmetic.
     ///
     /// This method may be used together with [`domain`](#method.domain) to export
-    /// the distribution into a format that will be stable across minor version
-    /// changes of this library. The distribution can then be reconstructed via
+    /// the model into a format that will be stable across minor version
+    /// changes of this library. The model can then be reconstructed via
     /// [`from_fixed_point_probabilities`](#method.from_fixed_point_probabilities).
     ///
     /// The entries of the returned iterator add up to `Probability::max_value() + 1`
@@ -666,13 +665,13 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     ///
     /// ```
     /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
-    /// let distribution =
+    /// let model =
     ///     constriction::models::Categorical::<u32, 32>::from_floating_point_probabilities(
     ///         &probabilities
     ///     )
     ///     .unwrap();
     ///
-    /// let pmf = distribution.fixed_point_probabilities().collect::<Vec<_>>();
+    /// let pmf = model.fixed_point_probabilities().collect::<Vec<_>>();
     /// assert_eq!(pmf, vec![1 << 29, 1 << 31, 1 << 30, 1 << 29]);
     /// ```
     pub fn fixed_point_probabilities(
@@ -698,7 +697,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// conversion is guaranteed to be lossless (because of the trait bound
     /// `Probability: Into<F>`). In this case, the yielded probabilities sum up *exactly* to one,
     /// and passing them to [`from_floating_point_probabilities`] will reconstruct the
-    /// exact same distribution (although using [`fixed_point_probabilities`] and
+    /// exact same model (although using [`fixed_point_probabilities`] and
     /// [`from_fixed_point_probabilities`] would be cheaper for this purpose).
     ///
     /// The trait bound `Probability: Into<F>` is a conservative bound. In reality, whether or not
@@ -719,10 +718,10 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     ///
     /// ```
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let distribution =
+    /// let model =
     ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
-    /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
+    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
     /// ```
     ///
@@ -757,10 +756,10 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     ///
     /// ```compile_fail
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let distribution =
+    /// let model =
     ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
-    /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f32>>();
+    /// let pmf = model.floating_point_probabilities().collect::<Vec<f32>>();
     /// //                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Compiler error: trait bound not satisfied
     /// ```
     ///
@@ -770,10 +769,10 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     ///
     /// ```
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let distribution =
+    /// let model =
     ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
-    /// let pmf = distribution.floating_point_probabilities_lossy().collect::<Vec<f32>>();
+    /// let pmf = model.floating_point_probabilities_lossy().collect::<Vec<f32>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
     /// ```
     ///
@@ -919,14 +918,14 @@ mod tests {
 
         for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
             for &mean in &[-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0] {
-                let continuous_distribution = Normal::new(mean, std_dev).unwrap();
-                test_discrete_distribution(quantizer.quantize(continuous_distribution), -127..128);
+                let distribution = Normal::new(mean, std_dev).unwrap();
+                test_entropy_model(quantizer.quantize(distribution), -127..128);
             }
         }
     }
 
     /// Test that `optimal_weights` reproduces the same distribution when fed with an
-    /// already quantized distribution.
+    /// already quantized model.
     #[test]
     fn trivial_optimal_weights() {
         let hist = [
@@ -993,15 +992,13 @@ mod tests {
         ];
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
-        let distribution =
+        let model =
             Categorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
-        test_discrete_distribution(distribution, 0..probabilities.len());
+        test_entropy_model(model, 0..probabilities.len());
     }
 
-    fn test_discrete_distribution<D, const PRECISION: usize>(
-        distribution: D,
-        domain: std::ops::Range<D::Symbol>,
-    ) where
+    fn test_entropy_model<D, const PRECISION: usize>(model: D, domain: std::ops::Range<D::Symbol>)
+    where
         D: EntropyModel<PRECISION, Probability = u32>,
         D::Symbol: Copy + std::fmt::Debug + PartialEq,
         std::ops::Range<D::Symbol>: Iterator<Item = D::Symbol>,
@@ -1009,17 +1006,15 @@ mod tests {
         let mut sum = 0;
 
         for symbol in domain {
-            let (left_cumulative, prob) = distribution
-                .left_cumulative_and_probability(symbol)
-                .unwrap();
+            let (left_cumulative, prob) = model.left_cumulative_and_probability(symbol).unwrap();
             assert_eq!(left_cumulative as u64, sum);
             sum += prob as u64;
 
             let expected = (symbol, left_cumulative, prob);
-            assert_eq!(distribution.quantile_function(left_cumulative), expected);
-            assert_eq!(distribution.quantile_function((sum - 1) as u32), expected);
+            assert_eq!(model.quantile_function(left_cumulative), expected);
+            assert_eq!(model.quantile_function((sum - 1) as u32), expected);
             assert_eq!(
-                distribution.quantile_function(left_cumulative + prob / 2),
+                model.quantile_function(left_cumulative + prob / 2),
                 expected
             );
         }

@@ -188,7 +188,7 @@ use self::backend::{
 /// https://en.wikipedia.org/wiki/Asymmetric_numeral_systems#Range_variants_(rANS)_and_streaming
 /// [`encode_symbols`]: #method.encode_symbols
 /// [`encode_iid_symbols`]: #method.encode_iid_symbols
-/// [`distributions`]: distributions/index.html
+/// [`models`]: models/index.html
 /// [entropy]: https://en.wikipedia.org/wiki/Entropy_(information_theory)
 /// [information content]: https://en.wikipedia.org/wiki/Information_content
 /// [`encode_symbols`]: #method.encode_symbols
@@ -532,16 +532,16 @@ where
     /// // Push some data on the stack.
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let distribution = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
+    /// let model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
     ///     .unwrap();
-    /// stack.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
+    /// stack.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Inspect the compressed data.
     /// dbg!(stack.get_compressed());
     ///
     /// // We can still use the stack afterwards.
     /// let reconstructed = stack
-    ///     .decode_iid_symbols(4, &distribution)
+    ///     .decode_iid_symbols(4, &model)
     ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
@@ -573,9 +573,9 @@ where
     /// let mut stack = DefaultStack::new();
     /// let symbols = vec![8, -12, 0, 7];
     /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-    /// let distribution =
+    /// let model =
     ///     quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
-    /// stack.encode_iid_symbols(&symbols, &distribution).unwrap();
+    /// stack.encode_iid_symbols(&symbols, &model).unwrap();
     ///
     /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
     /// let compressed_iter = stack.iter_compressed();
@@ -725,7 +725,7 @@ where
 
     pub fn encode_symbols_reverse<S, D, I, const PRECISION: usize>(
         &mut self,
-        symbols_and_distributions: I,
+        symbols_and_models: I,
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
@@ -735,12 +735,12 @@ where
         I: IntoIterator<Item = (S, D)>,
         I::IntoIter: DoubleEndedIterator,
     {
-        self.encode_symbols(symbols_and_distributions.into_iter().rev())
+        self.encode_symbols(symbols_and_models.into_iter().rev())
     }
 
     pub fn try_encode_symbols_reverse<S, D, E, I, const PRECISION: usize>(
         &mut self,
-        symbols_and_distributions: I,
+        symbols_and_models: I,
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         S: Borrow<D::Symbol>,
@@ -751,13 +751,13 @@ where
         I: IntoIterator<Item = std::result::Result<(S, D), E>>,
         I::IntoIter: DoubleEndedIterator,
     {
-        self.try_encode_symbols(symbols_and_distributions.into_iter().rev())
+        self.try_encode_symbols(symbols_and_models.into_iter().rev())
     }
 
     pub fn encode_iid_symbols_reverse<S, D, I, const PRECISION: usize>(
         &mut self,
         symbols: I,
-        distribution: &D,
+        model: &D,
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
@@ -767,7 +767,7 @@ where
         I: IntoIterator<Item = S>,
         I::IntoIter: DoubleEndedIterator,
     {
-        self.encode_iid_symbols(symbols.into_iter().rev(), distribution)
+        self.encode_iid_symbols(symbols.into_iter().rev(), model)
     }
 
     /// Consumes the stack and returns the compressed data.
@@ -790,9 +790,9 @@ where
     /// // Push some data onto the stack:
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let distribution = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
+    /// let model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
     ///     .unwrap();
-    /// stack.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
+    /// stack.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Get the compressed data, consuming the stack:
     /// let compressed = stack.into_compressed();
@@ -802,7 +802,7 @@ where
     /// // Create a new stack with the same state and use it for decompression:
     /// let mut stack = DefaultStack::from_compressed(compressed).expect("Corrupted compressed file.");
     /// let reconstructed = stack
-    ///     .decode_iid_symbols(4, &distribution)
+    ///     .decode_iid_symbols(4, &model)
     ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
@@ -931,13 +931,13 @@ where
     /// you can provide the symbol either by value or by reference, at your choice.
     ///
     /// Returns [`Err(ImpossibleSymbol)`] if `symbol` has zero probability under the
-    /// entropy model `distribution`. This error can usually be avoided by using a
-    /// "leaky" distribution, i.e., a distribution that assigns a nonzero
-    /// probability to all symbols within a finite domain. Leaky distributions can
-    /// be constructed with, e.g., a
-    /// [`LeakyQuantizer`](distributions/struct.LeakyQuantizer.html) or with
+    /// entropy model `model`. This error can usually be avoided by using a
+    /// "leaky" distribution as the entropy model, i.e., a distribution that assigns a
+    /// nonzero probability to all symbols within a finite domain. Leaky distributions
+    /// can be constructed with, e.g., a
+    /// [`LeakyQuantizer`](models/struct.LeakyQuantizer.html) or with
     /// [`Categorical::from_floating_point_probabilities`](
-    /// distributions/struct.Categorical.html#method.from_floating_point_probabilities).
+    /// models/struct.Categorical.html#method.from_floating_point_probabilities).
     ///
     /// TODO: move this and similar doc comments to the trait definition.
     ///
@@ -945,14 +945,14 @@ where
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
-        distribution: D,
+        model: D,
     ) -> Result<(), EncodingError>
     where
         D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
-        let (left_sided_cumulative, probability) = distribution
+        let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncodingError::ImpossibleSymbol)?;
 
@@ -1031,14 +1031,14 @@ where
     /// recover any previously encoded data and will generally have low entropy.
     /// Still, being able to pop off an arbitrary number of symbols can sometimes be
     /// useful in edge cases of, e.g., the bits-back algorithm.
-    fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
+    fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
         D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
         let quantile = self.chop_quantile_off_state::<D, PRECISION>();
-        let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
+        let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
         let remainder = quantile - left_sided_cumulative;
         self.encode_remainder_onto_state::<D, PRECISION>(remainder, probability);
         let _ = self.try_refill_state_if_necessary();
@@ -1193,19 +1193,17 @@ mod tests {
 
         let mut encoder = DefaultStack::new();
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
-        let distribution = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
+        let model = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
         // We don't reuse the same encoder for decoding because we want to test
         // if exporting and re-importing of compressed data works.
-        encoder
-            .encode_iid_symbols(symbols.clone(), &distribution)
-            .unwrap();
+        encoder.encode_iid_symbols(symbols.clone(), &model).unwrap();
         let compressed = encoder.into_compressed();
         assert_eq!(compressed.len(), expected_size);
 
         let mut decoder = DefaultStack::from_compressed(compressed).unwrap();
         for symbol in symbols.rev() {
-            assert_eq!(decoder.decode_symbol(&distribution).unwrap(), symbol);
+            assert_eq!(decoder.decode_symbol(&model).unwrap(), symbol);
         }
         assert!(decoder.is_empty());
     }
@@ -1365,7 +1363,7 @@ mod tests {
         const SYMBOLS_PER_CHUNK: usize = 100;
 
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-        let distribution = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
+        let model = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
 
         let mut encoder = DefaultStack::new();
 
@@ -1376,11 +1374,9 @@ mod tests {
 
         for _ in 0..NUM_CHUNKS {
             let chunk = (0..SYMBOLS_PER_CHUNK)
-                .map(|_| distribution.quantile_function(rng.next_u32() % (1 << 24)).0)
+                .map(|_| model.quantile_function(rng.next_u32() % (1 << 24)).0)
                 .collect::<Vec<_>>();
-            encoder
-                .encode_iid_symbols_reverse(&chunk, &distribution)
-                .unwrap();
+            encoder.encode_iid_symbols_reverse(&chunk, &model).unwrap();
             symbols.push(chunk);
             jump_table.push(encoder.pos_and_state());
         }
@@ -1393,7 +1389,7 @@ mod tests {
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
                 assert_eq!(seekable_decoder.pos_and_state(), (pos, state));
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &distribution)
+                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, chunk)
@@ -1410,7 +1406,7 @@ mod tests {
                 let (pos, state) = jump_table[chunk_index];
                 seekable_decoder.seek((pos, state)).unwrap();
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &distribution)
+                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, &symbols[chunk_index])
@@ -1434,7 +1430,7 @@ mod tests {
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
                 assert_eq!(seekable_decoder.pos_and_state(), (pos, state));
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &distribution)
+                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, chunk)
@@ -1451,7 +1447,7 @@ mod tests {
                 let (pos, state) = jump_table[chunk_index];
                 seekable_decoder.seek((pos, state)).unwrap();
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &distribution)
+                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, &symbols[chunk_index])

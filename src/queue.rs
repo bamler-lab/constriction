@@ -178,16 +178,16 @@ where
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let distribution = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
+    /// let model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
     ///     .unwrap();
-    /// coder.encode_iid_symbols_reverse(&symbols, &distribution).unwrap();
+    /// coder.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Inspect the compressed data.
     /// dbg!(coder.get_compressed());
     ///
     /// // We can still use the coder afterwards.
     /// let reconstructed = coder
-    ///     .decode_iid_symbols(4, &distribution)
+    ///     .decode_iid_symbols(4, &model)
     ///     .collect::<Result<Vec<_>, _>>()
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
@@ -260,7 +260,7 @@ where
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
-        distribution: D,
+        model: D,
     ) -> Result<(), EncodingError>
     where
         D: EntropyModel<PRECISION>,
@@ -270,7 +270,7 @@ where
         // We maintain the following invariant (*):
         //   range >= State::one() << (State::BITS - CompressedWord::BITS)
 
-        let (left_sided_cumulative, probability) = distribution
+        let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncodingError::ImpossibleSymbol)?;
 
@@ -447,7 +447,7 @@ where
     /// recover any previously encoded data and will generally have low entropy.
     /// Still, being able to pop off an arbitrary number of symbols can sometimes be
     /// useful in edge cases of, e.g., the bits-back algorithm.
-    fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
+    fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
         D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -467,7 +467,7 @@ where
         }
 
         let (symbol, left_sided_cumulative, probability) =
-            distribution.quantile_function(quantile.as_().as_());
+            model.quantile_function(quantile.as_().as_());
 
         // Update `state` in the same way as we do in `encode_symbol` (see comments there):
         self.state.lower = self
@@ -722,17 +722,15 @@ mod tests {
 
         let mut encoder = DefaultEncoder::new();
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
-        let distribution = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
+        let model = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
-        encoder
-            .encode_iid_symbols(symbols.clone(), &distribution)
-            .unwrap();
+        encoder.encode_iid_symbols(symbols.clone(), &model).unwrap();
         let compressed = encoder.into_compressed();
         assert_eq!(compressed.len(), expected_size);
 
         let mut decoder = DefaultDecoder::new(&compressed);
         for symbol in symbols {
-            assert_eq!(decoder.decode_symbol(&distribution).unwrap(), symbol);
+            assert_eq!(decoder.decode_symbol(&model).unwrap(), symbol);
         }
         assert!(decoder.maybe_empty());
     }

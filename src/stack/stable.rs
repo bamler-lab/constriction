@@ -258,7 +258,7 @@ where
     /// Stable variant of [`Stack::encode_symbols_reverse`].
     pub fn encode_symbols_reverse<S, D, I>(
         &mut self,
-        symbols_and_distributions: I,
+        symbols_and_models: I,
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
@@ -268,13 +268,13 @@ where
         I: IntoIterator<Item = (S, D)>,
         I::IntoIter: DoubleEndedIterator,
     {
-        self.encode_symbols(symbols_and_distributions.into_iter().rev())
+        self.encode_symbols(symbols_and_models.into_iter().rev())
     }
 
     /// Stable variant of [`Stack::try_encode_symbols_reverse`].
     pub fn try_encode_symbols_reverse<S, D, E, I>(
         &mut self,
-        symbols_and_distributions: I,
+        symbols_and_models: I,
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         S: Borrow<D::Symbol>,
@@ -285,14 +285,14 @@ where
         I: IntoIterator<Item = std::result::Result<(S, D), E>>,
         I::IntoIter: DoubleEndedIterator,
     {
-        self.try_encode_symbols(symbols_and_distributions.into_iter().rev())
+        self.try_encode_symbols(symbols_and_models.into_iter().rev())
     }
 
     /// Stable variant of [`Stack::encode_iid_symbols_reverse`].
     pub fn encode_iid_symbols_reverse<S, D, I>(
         &mut self,
         symbols: I,
-        distribution: &D,
+        model: &D,
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
@@ -302,7 +302,7 @@ where
         I: IntoIterator<Item = S>,
         I::IntoIter: DoubleEndedIterator,
     {
-        self.encode_iid_symbols(symbols.into_iter().rev(), distribution)
+        self.encode_iid_symbols(symbols.into_iter().rev(), model)
     }
 
     /// Converts the `stable::Encoder` into a new `stable::Encoder` that accepts entropy
@@ -612,7 +612,7 @@ where
 {
     type DecodingError = DecodingError;
 
-    fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
+    fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
         D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -627,7 +627,7 @@ where
             return Err(DecodingError::OutOfData);
         }
 
-        let (symbol, left_sided_cumulative, probability) = distribution.quantile_function(quantile);
+        let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
         let remainder = quantile - left_sided_cumulative;
 
         self.0
@@ -653,14 +653,14 @@ where
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
-        distribution: D,
+        model: D,
     ) -> Result<(), EncodingError>
     where
         D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
     {
-        let (left_sided_cumulative, probability) = distribution
+        let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncodingError::ImpossibleSymbol)?;
 

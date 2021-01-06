@@ -356,7 +356,7 @@ impl Stack {
         Ok(PyArray1::from_vec(py, symbols))
     }
 
-    /// Encodes a sequence of symbols using a fixed categorical distribution.
+    /// Encodes a sequence of symbols using a fixed categorical entropy model.
     ///
     /// This method is analogous to the method `encode_gaussian_symbols_reverse` except that
     /// - all symbols are encoded with the same entropy model; and
@@ -378,11 +378,11 @@ impl Stack {
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
-        let distribution =
+        let model =
             Categorical::<u32, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
                 .map_err(|()| {
                     pyo3::exceptions::PyValueError::new_err(
-                        "Probability distribution is either degenerate or not normalizable.",
+                        "Probability model is either degenerate or not normalizable.",
                     )
                 })?;
 
@@ -391,7 +391,7 @@ impl Stack {
                 .as_slice()?
                 .iter()
                 .map(|s| s.wrapping_sub(min_supported_symbol) as usize),
-            &distribution,
+            &model,
         )?;
 
         Ok(())
@@ -401,7 +401,7 @@ impl Stack {
     ///
     /// This method is analogous to the method `decode_gaussian_symbols` except that
     /// - all symbols are decoded with the same entropy model; and
-    /// - the entropy model is a categorical rather than a Gaussian distribution.
+    /// - the entropy model is a categorical rather than a Gaussian model.
     ///
     /// See documentation of `encode_iid_categorical_symbols_reverse` for details of the
     /// categorical entropy model. See documentation of `decode_gaussian_symbols` for a
@@ -414,7 +414,7 @@ impl Stack {
         probabilities: PyReadonlyArray1<'_, f64>,
         py: Python<'p>,
     ) -> PyResult<&'p PyArray1<i32>> {
-        let distribution =
+        let model =
             Categorical::<u32, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
                 .map_err(|()| {
                     pyo3::exceptions::PyValueError::new_err(
@@ -424,15 +424,13 @@ impl Stack {
 
         Ok(PyArray1::from_iter(
             py,
-            self.inner
-                .decode_iid_symbols(amt, &distribution)
-                .map(|symbol| {
-                    let symbol = match symbol {
-                        Ok(symbol) => symbol,
-                        Err(never) => match never {},
-                    };
-                    (symbol as i32).wrapping_add(min_supported_symbol)
-                }),
+            self.inner.decode_iid_symbols(amt, &model).map(|symbol| {
+                let symbol = match symbol {
+                    Ok(symbol) => symbol,
+                    Err(never) => match never {},
+                };
+                (symbol as i32).wrapping_add(min_supported_symbol)
+            }),
         ))
     }
 }
