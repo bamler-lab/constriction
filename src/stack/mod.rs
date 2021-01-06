@@ -208,7 +208,7 @@ where
 
     /// We keep track of the `CompressedWord` type so that we can statically enforce
     /// the invariant for `state`.
-    phantom: PhantomData<CompressedWord>,
+    phantom: PhantomData<*mut CompressedWord>,
 }
 
 /// Type alias for a [`Stack`] with sane parameters for typical use cases.

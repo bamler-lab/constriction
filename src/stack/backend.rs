@@ -105,7 +105,7 @@ pub struct ReadCursor<Item, Buf: AsRef<[Item]>, Dir: Direction> {
     /// In both cases: satisfies invariant `pos <= buf.as_ref().len()`.
     pos: usize,
 
-    phantom: PhantomData<(Item, Dir)>,
+    phantom: PhantomData<*mut (Item, Dir)>,
 }
 
 pub type ReadCursorForward<Item, Buf> = ReadCursor<Item, Buf, Forward>;

@@ -22,7 +22,7 @@ pub struct CoderState<CompressedWord, State> {
 
     /// We keep track of the `CompressedWord` type so that we can statically enforce
     /// the invariants for `lower` and `range`.
-    phantom: PhantomData<CompressedWord>,
+    phantom: PhantomData<*mut CompressedWord>,
 }
 
 impl<CompressedWord: BitArray, State: BitArray> Default for CoderState<CompressedWord, State> {

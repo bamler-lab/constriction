@@ -125,7 +125,7 @@ pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
     min_symbol_inclusive: Symbol,
     max_symbol_inclusive: Symbol,
     free_weight: F,
-    phantom: PhantomData<Probability>,
+    phantom: PhantomData<*mut Probability>,
 }
 
 impl<F, Symbol, Probability, const PRECISION: usize>
