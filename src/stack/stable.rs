@@ -9,10 +9,7 @@ use num::cast::AsPrimitive;
 
 use super::Stack;
 
-use crate::{
-    distributions::DiscreteDistribution, BitArray, Code, Decode, Encode, EncodingError,
-    TryCodingError,
-};
+use crate::{models::EntropyModel, BitArray, Code, Decode, Encode, EncodingError, TryCodingError};
 
 #[derive(Debug, Clone)]
 struct Coder<CompressedWord, State, const PRECISION: usize>
@@ -114,7 +111,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::LeakyQuantizer, Decode, stack::DefaultStack};
+    /// use constriction::{models::LeakyQuantizer, Decode, stack::DefaultStack};
     ///
     /// // Construct two entropy models with 24 bits and 20 bits of precision, respectively.
     /// let continuous_distribution = statrs::distribution::Normal::new(0.0, 10.0).unwrap();
@@ -265,7 +262,7 @@ where
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = (S, D)>,
@@ -281,7 +278,7 @@ where
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         S: Borrow<D::Symbol>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         E: Error + 'static,
@@ -299,7 +296,7 @@ where
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = S>,
@@ -617,7 +614,7 @@ where
 
     fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -659,7 +656,7 @@ where
         distribution: D,
     ) -> Result<(), EncodingError>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -780,7 +777,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::distributions::LeakyQuantizer;
+    use crate::models::LeakyQuantizer;
 
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},

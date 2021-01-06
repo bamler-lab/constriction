@@ -3,8 +3,8 @@ use std::{borrow::Borrow, error::Error, fmt::Debug, marker::PhantomData, ops::De
 use num::cast::AsPrimitive;
 
 use super::{
-    bit_array_from_chunks, bit_array_to_chunks_exact, distributions::DiscreteDistribution,
-    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder,
+    bit_array_from_chunks, bit_array_to_chunks_exact, models::EntropyModel, BitArray, Code, Decode,
+    Encode, EncodingError, IntoDecoder,
 };
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
@@ -171,7 +171,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
+    /// use constriction::{models::Categorical, stack::DefaultStack, Decode};
     ///
     /// let mut coder = DefaultStack::new();
     ///
@@ -263,7 +263,7 @@ where
         distribution: D,
     ) -> Result<(), EncodingError>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -449,7 +449,7 @@ where
     /// useful in edge cases of, e.g., the bits-back algorithm.
     fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -674,7 +674,7 @@ impl<CompressedWord: BitArray> DoubleEndedIterator for IterCompressed<'_, Compre
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::distributions::{Categorical, DiscreteDistribution, LeakyQuantizer};
+    use crate::models::{Categorical, LeakyQuantizer};
 
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},

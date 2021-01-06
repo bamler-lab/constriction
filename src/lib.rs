@@ -148,7 +148,7 @@
 #[cfg(feature = "pybindings")]
 pub mod pybindings;
 
-pub mod distributions;
+pub mod models;
 pub mod queue;
 pub mod stack;
 
@@ -158,7 +158,7 @@ use std::{
     fmt::{Debug, LowerHex, UpperHex},
 };
 
-use distributions::DiscreteDistribution;
+use models::EntropyModel;
 use num::{
     cast::AsPrimitive,
     traits::{WrappingAdd, WrappingSub},
@@ -225,7 +225,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         distribution: D,
     ) -> Result<(), EncodingError>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>;
 
@@ -235,7 +235,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -252,7 +252,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         S: Borrow<D::Symbol>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
         E: Error + 'static,
@@ -273,7 +273,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -295,7 +295,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 
     fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>;
 
@@ -308,7 +308,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     ) -> DecodeSymbols<'s, Self, I::IntoIter, PRECISION>
     where
         I: IntoIterator<Item = D> + 's,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -324,7 +324,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     ) -> TryDecodeSymbols<'s, Self, I::IntoIter, PRECISION>
     where
         I: IntoIterator<Item = Result<D, E>> + 's,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -347,7 +347,7 @@ pub trait Decode<const PRECISION: usize>: Code {
         distribution: &'s D,
     ) -> DecodeIidSymbols<'s, Self, D, PRECISION>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -382,7 +382,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// ```
 /// # #![feature(min_const_generics)]
 /// # use constriction::{
-/// #     distributions::{DiscreteDistribution, LeakyQuantizer},
+/// #     models::{EntropyModel, LeakyQuantizer},
 /// #     stack::DefaultStack,
 /// #     Decode, Encode, IntoDecoder
 /// # };
@@ -393,7 +393,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// ) -> Encoder::IntoDecoder
 /// where
 ///     Encoder: Encode<PRECISION> + IntoDecoder<PRECISION>, // <-- Different trait bound.
-///     D: DiscreteDistribution<PRECISION, Symbol=i32>,
+///     D: EntropyModel<PRECISION, Symbol=i32>,
 ///     D::Probability: Into<Encoder::CompressedWord>,
 ///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
 /// {
@@ -465,7 +465,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// ```
 /// # #![feature(min_const_generics)]
 /// # use constriction::{
-/// #     distributions::{DiscreteDistribution, LeakyQuantizer},
+/// #     models::{EntropyModel, LeakyQuantizer},
 /// #     stack::DefaultStack,
 /// #     Decode, Encode, AsDecoder
 /// # };
@@ -477,7 +477,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// where
 ///     Encoder: Encode<PRECISION>,
 ///     for<'a> Encoder: AsDecoder<'a, PRECISION>, // <-- Different trait bound.
-///     D: DiscreteDistribution<PRECISION, Symbol=i32>,
+///     D: EntropyModel<PRECISION, Symbol=i32>,
 ///     D::Probability: Into<Encoder::CompressedWord>,
 ///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
 /// {
@@ -565,7 +565,7 @@ pub trait Pos: Code {
 /// # Example
 ///
 /// ```
-/// use constriction::{distributions::Categorical, stack::DefaultStack, Decode, Pos, Seek};
+/// use constriction::{models::Categorical, stack::DefaultStack, Decode, Pos, Seek};
 ///
 /// // Create a `Stack` encoder and an entropy model:
 /// let mut stack = DefaultStack::new();
@@ -648,7 +648,7 @@ pub trait Seek: Code {
     ///
     /// ```
     /// use constriction::{
-    ///     distributions::LeakyQuantizer,
+    ///     models::LeakyQuantizer,
     ///     stack::{backend::ReadCursorForward, DefaultStack, Stack},
     ///     Decode, Pos, Seek
     /// };
@@ -695,12 +695,11 @@ impl<'a, Decoder, I, D, const PRECISION: usize> Iterator
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = D>,
-    D: DiscreteDistribution<PRECISION>,
+    D: EntropyModel<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
-    type Item =
-        Result<<I::Item as DiscreteDistribution<PRECISION>>::Symbol, Decoder::DecodingError>;
+    type Item = Result<<I::Item as EntropyModel<PRECISION>>::Symbol, Decoder::DecodingError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.distributions
@@ -718,7 +717,7 @@ impl<'a, Decoder, I, D, const PRECISION: usize> ExactSizeIterator
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = D> + ExactSizeIterator,
-    D: DiscreteDistribution<PRECISION>,
+    D: EntropyModel<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
@@ -735,7 +734,7 @@ impl<'a, Decoder, I, D, E, const PRECISION: usize> Iterator
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>>,
-    D: DiscreteDistribution<PRECISION>,
+    D: EntropyModel<PRECISION>,
     E: std::error::Error + 'static,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
@@ -761,7 +760,7 @@ impl<'a, Decoder, I, D, E, const PRECISION: usize> ExactSizeIterator
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>> + ExactSizeIterator,
-    D: DiscreteDistribution<PRECISION>,
+    D: EntropyModel<PRECISION>,
     E: std::error::Error + 'static,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
@@ -779,7 +778,7 @@ impl<'a, Decoder, D, const PRECISION: usize> Iterator
     for DecodeIidSymbols<'a, Decoder, D, PRECISION>
 where
     Decoder: Decode<PRECISION>,
-    D: DiscreteDistribution<PRECISION>,
+    D: EntropyModel<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
@@ -803,7 +802,7 @@ impl<'a, Decoder, D, const PRECISION: usize> ExactSizeIterator
     for DecodeIidSymbols<'a, Decoder, D, PRECISION>
 where
     Decoder: Decode<PRECISION>,
-    D: DiscreteDistribution<PRECISION>,
+    D: EntropyModel<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
@@ -816,7 +815,7 @@ where
 /// - to represent the smallest unit of compressed data (see
 ///   [`Code::CompressedWord`]);
 /// - to represent probabilities in fixed point arithmetic (see
-///   [`DiscreteDistribution::Probability`]); and
+///   [`EntropyModel::Probability`]); and
 /// - the internal state of entropy coders (see [`Code::State`]) is typically
 ///   comprised of one or more `BitArray`s, although this is not a requirement.
 ///

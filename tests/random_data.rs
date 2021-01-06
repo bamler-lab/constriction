@@ -8,9 +8,7 @@ use rand::prelude::*;
 use rand_pcg::Pcg64Mcg;
 use statrs::distribution::Normal;
 
-use constriction::{
-    distributions::LeakyQuantizer, queue, stack, BitArray, Decode, Encode, IntoDecoder,
-};
+use constriction::{models::LeakyQuantizer, queue, stack, BitArray, Decode, Encode, IntoDecoder};
 
 fn make_random_normal(
     amt: usize,

@@ -12,8 +12,8 @@ use std::{
 use num::cast::AsPrimitive;
 
 use crate::{
-    bit_array_from_chunks, bit_array_to_chunks_truncated, distributions::DiscreteDistribution,
-    AsDecoder, BitArray, Code, Decode, Encode, EncodingError, Pos, Seek, TryCodingError,
+    bit_array_from_chunks, bit_array_to_chunks_truncated, models::EntropyModel, AsDecoder,
+    BitArray, Code, Decode, Encode, EncodingError, Pos, Seek, TryCodingError,
 };
 
 use self::backend::{
@@ -45,7 +45,7 @@ use self::backend::{
 /// [`encode_symbols`] or [`encode_iid_symbols`].
 ///
 /// ```
-/// use constriction::{distributions::LeakyQuantizer, stack::DefaultStack, Decode};
+/// use constriction::{models::LeakyQuantizer, stack::DefaultStack, Decode};
 ///
 /// // `DefaultStack` is a type alias to `Stack` with sane generic parameters.
 /// let mut stack = DefaultStack::new();
@@ -81,7 +81,7 @@ use self::backend::{
 /// - `CompressedWord` is the smallest "chunk" of compressed data. It is usually a
 ///   primitive unsigned integer type, such as `u32` or `u16`. The type
 ///   `CompressedWord` is also used to represent probabilities in fixed-point
-///   arithmetic in any [`DiscreteDistribution`] that can be employed as an entropy
+///   arithmetic in any [`EntropyModel`] that can be employed as an entropy
 ///   model for this `Stack` (however, when representing probabilities, only use the
 ///   lowest `PRECISION` bits of a `CompressedWord` are ever used).
 ///
@@ -466,7 +466,7 @@ where
         probability: D::Probability,
     ) -> Result<D::Probability, EncodingError>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -484,7 +484,7 @@ where
         &mut self,
         quantile: D::Probability,
     ) where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
     {
         self.state = (self.state << PRECISION) | quantile.into().into();
@@ -525,7 +525,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
+    /// use constriction::{models::Categorical, stack::DefaultStack, Decode};
     ///
     /// let mut stack = DefaultStack::new();
     ///
@@ -567,7 +567,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::{Categorical, LeakyQuantizer}, stack::DefaultStack, Encode};
+    /// use constriction::{models::{Categorical, LeakyQuantizer}, stack::DefaultStack, Encode};
     ///
     /// // Create a stack and encode some stuff.
     /// let mut stack = DefaultStack::new();
@@ -691,7 +691,7 @@ where
     pub(crate) fn chop_quantile_off_state<D, const PRECISION: usize>(&mut self) -> D::Probability
     where
         CompressedWord: AsPrimitive<D::Probability>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
     {
         let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
         self.state = self.state >> PRECISION;
@@ -704,7 +704,7 @@ where
         remainder: D::Probability,
         probability: D::Probability,
     ) where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
     {
         self.state = self.state * probability.into().into() + remainder.into().into();
@@ -729,7 +729,7 @@ where
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = (S, D)>,
@@ -744,7 +744,7 @@ where
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         S: Borrow<D::Symbol>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         E: Error + 'static,
@@ -761,7 +761,7 @@ where
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = S>,
@@ -783,7 +783,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{distributions::Categorical, stack::DefaultStack, Decode};
+    /// use constriction::{models::Categorical, stack::DefaultStack, Decode};
     ///
     /// let mut stack = DefaultStack::new();
     ///
@@ -948,7 +948,7 @@ where
         distribution: D,
     ) -> Result<(), EncodingError>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -1033,7 +1033,7 @@ where
     /// useful in edge cases of, e.g., the bits-back algorithm.
     fn decode_symbol<D>(&mut self, distribution: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: DiscreteDistribution<PRECISION>,
+        D: EntropyModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -1145,7 +1145,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::distributions::{Categorical, DiscreteDistribution, LeakyQuantizer};
+    use crate::models::{Categorical, EntropyModel, LeakyQuantizer};
 
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},

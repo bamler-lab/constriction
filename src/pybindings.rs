@@ -70,7 +70,7 @@ use pyo3::prelude::*;
 
 use crate::{Decode, EncodingError, TryCodingError};
 
-use super::distributions::{Categorical, LeakyQuantizer};
+use super::models::{Categorical, LeakyQuantizer};
 use statrs::distribution::Normal;
 
 #[pymodule]

@@ -14,7 +14,7 @@ use super::BitArray;
 /// A trait for probability distributions that can be used as entropy models.
 ///
 /// TODO: document how `PRECISION` is (not) enforced.
-pub trait DiscreteDistribution<const PRECISION: usize> {
+pub trait EntropyModel<const PRECISION: usize> {
     /// The type used to represent probabilities. Must hold at least PRECISION bits.
     ///
     /// TODO: once this is possible, we should enforce the constraint that
@@ -23,7 +23,7 @@ pub trait DiscreteDistribution<const PRECISION: usize> {
 
     /// The type of data over which the probability distribution is defined.
     ///
-    /// When the `DiscreteDistribution` is used as an entropy model, this is the
+    /// When the `EntropyModel` is used as an entropy model, this is the
     /// type of an item of the *uncompressed* data. Note that an [`Encode`] or
     /// [`Decode`] may use a different entropy model for each encoded or decoded symbol,
     /// and each employed entropy model may have a different `Symbol` type.
@@ -47,9 +47,9 @@ pub trait DiscreteDistribution<const PRECISION: usize> {
     ) -> (Self::Symbol, Self::Probability, Self::Probability);
 }
 
-impl<D, const PRECISION: usize> DiscreteDistribution<PRECISION> for &D
+impl<D, const PRECISION: usize> EntropyModel<PRECISION> for &D
 where
-    D: DiscreteDistribution<PRECISION>,
+    D: EntropyModel<PRECISION>,
 {
     type Probability = D::Probability;
     type Symbol = D::Symbol;
@@ -80,7 +80,7 @@ where
 /// defined over the integer type `Symbol` (which is typically something like `i32`) by
 /// rounding all values to the closest integer. The resulting
 /// [`LeakilyQuantizedDistribution`]s can be used for entropy coding with a coder that
-/// implements [`Encode`] or [`Decode`] because they implement [`DiscreteDistribution`].
+/// implements [`Encode`] or [`Decode`] because they implement [`EntropyModel`].
 ///
 /// This quantizer is a "leaky" quantizer. This means that the constructor [`new`]
 /// takes a domain over the `Symbol` type as an argument. The resulting
@@ -92,7 +92,7 @@ where
 /// # Example
 ///
 /// ```
-/// use constriction::{distributions::LeakyQuantizer, stack::DefaultStack, Encode};
+/// use constriction::{models::LeakyQuantizer, stack::DefaultStack, Encode};
 ///
 /// // Get a quantizer that supports integer symbols from -5 to 20 (inclusively),
 /// // representing probabilities with 24 bit precision backed by `u32`s.
@@ -198,17 +198,17 @@ where
 }
 
 /// Wrapper that turns a continuous probability density into a
-/// [`DiscreteDistribution`].
+/// [`EntropyModel`].
 ///
 /// Such a `LeakilyQuantizedDistribution` can be created with a [`LeakyQuantizer`].
-/// It can be used for entropy coding since it implements [`DiscreteDistribution`].
+/// It can be used for entropy coding since it implements [`EntropyModel`].
 #[derive(Debug)]
 pub struct LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, const PRECISION: usize> {
     inner: CD,
     quantizer: &'a LeakyQuantizer<F, Symbol, Probability, PRECISION>,
 }
 
-impl<'a, F, Symbol, Probability, CD, const PRECISION: usize> DiscreteDistribution<PRECISION>
+impl<'a, F, Symbol, Probability, CD, const PRECISION: usize> EntropyModel<PRECISION>
     for LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, PRECISION>
 where
     Symbol: PrimInt + AsPrimitive<Probability> + Into<F> + WrappingSub,
@@ -345,10 +345,10 @@ where
 
 /// A categorical distribution over a finite number of bins.
 ///
-/// This distribution implements [`DiscreteDistribution`], which means that it can be
+/// This distribution implements [`EntropyModel`], which means that it can be
 /// used for entropy coding with a coder that implements [`Encode`] or [`Decode`].
 ///
-/// [`DiscreteDistribution`]: trait.DiscreteDistribution.html
+/// [`EntropyModel`]: trait.EntropyModel.html
 /// [`Encode`]: crate::Encode
 /// [`Decode`]: crate::Decode
 pub struct Categorical<Probability, const PRECISION: usize> {
@@ -565,7 +565,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
     ///
     /// let distribution =
-    ///     constriction::distributions::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::models::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
@@ -580,7 +580,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
     ///
     /// let distribution =
-    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
@@ -591,7 +591,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
     /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
     /// let distribution = // PANICS
-    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     /// ```
     ///
     /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
@@ -599,7 +599,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```should_panic
     /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
     /// let distribution = // PANICS
-    ///     constriction::distributions::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::models::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
     /// ```
     ///
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
@@ -667,7 +667,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```
     /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
     /// let distribution =
-    ///     constriction::distributions::Categorical::<u32, 32>::from_floating_point_probabilities(
+    ///     constriction::models::Categorical::<u32, 32>::from_floating_point_probabilities(
     ///         &probabilities
     ///     )
     ///     .unwrap();
@@ -720,7 +720,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
     /// let distribution =
-    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -758,7 +758,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```compile_fail
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
     /// let distribution =
-    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = distribution.floating_point_probabilities().collect::<Vec<f32>>();
     /// //                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Compiler error: trait bound not satisfied
@@ -771,7 +771,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
     /// let distribution =
-    ///     constriction::distributions::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = distribution.floating_point_probabilities_lossy().collect::<Vec<f32>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -834,7 +834,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     }
 }
 
-impl<Probability: BitArray, const PRECISION: usize> DiscreteDistribution<PRECISION>
+impl<Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
     for Categorical<Probability, PRECISION>
 {
     type Probability = Probability;
@@ -903,6 +903,9 @@ impl<Probability: BitArray, const PRECISION: usize> DiscreteDistribution<PRECISI
         (left, cdf, next_cdf.wrapping_sub(&cdf))
     }
 }
+
+#[derive(Clone, Debug)]
+struct LookupTable {}
 
 #[cfg(test)]
 mod tests {
@@ -999,7 +1002,7 @@ mod tests {
         distribution: D,
         domain: std::ops::Range<D::Symbol>,
     ) where
-        D: DiscreteDistribution<PRECISION, Probability = u32>,
+        D: EntropyModel<PRECISION, Probability = u32>,
         D::Symbol: Copy + std::fmt::Debug + PartialEq,
         std::ops::Range<D::Symbol>: Iterator<Item = D::Symbol>,
     {
