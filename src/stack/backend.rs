@@ -74,21 +74,47 @@ impl<Item> Pos<Item> for Vec<Item> {
     }
 }
 
-#[derive(Clone)]
-pub struct ReadOwnedFromBack<Item, Buf: AsRef<[Item]>> {
-    buf: Buf,
-
-    /// One plus the index of the next item to read.
-    /// Satisfies invariant `pos <= buf.as_ref().len()`.
-    pos: usize,
-
-    phantom: PhantomData<Item>,
+pub trait Direction: 'static {
+    const FORWARD: bool;
+    type Reverse: Direction;
 }
 
-impl<Item, Buf: AsRef<[Item]>> ReadOwnedFromBack<Item, Buf> {
+#[derive(Debug, Clone)]
+pub struct Forward;
+
+#[derive(Debug, Clone)]
+pub struct Backward;
+
+impl Direction for Forward {
+    const FORWARD: bool = true;
+    type Reverse = Backward;
+}
+
+impl Direction for Backward {
+    const FORWARD: bool = false;
+    type Reverse = Forward;
+}
+
+#[derive(Clone)]
+pub struct ReadOwned<Item, Buf: AsRef<[Item]>, Dir: Direction> {
+    buf: Buf,
+
+    /// If `Dir::FORWARD`: the index of the next item to be read.
+    /// else: one plus the index of the next item to read.
+    ///
+    /// In both cases: satisfies invariant `pos <= buf.as_ref().len()`.
+    pos: usize,
+
+    phantom: PhantomData<(Item, Dir)>,
+}
+
+pub type ReadOwnedFromFront<Item, Buf> = ReadOwned<Item, Buf, Forward>;
+pub type ReadOwnedFromBack<Item, Buf> = ReadOwned<Item, Buf, Backward>;
+
+impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadOwned<Item, Buf, Dir> {
     #[inline(always)]
     pub fn new(buf: Buf) -> Self {
-        let pos = buf.as_ref().len();
+        let pos = if Dir::FORWARD { 0 } else { buf.as_ref().len() };
         Self {
             buf,
             pos,
@@ -96,19 +122,19 @@ impl<Item, Buf: AsRef<[Item]>> ReadOwnedFromBack<Item, Buf> {
         }
     }
 
-    pub fn as_view(&self) -> ReadOwnedFromBack<Item, &[Item]> {
-        ReadOwnedFromBack {
+    pub fn as_view(&self) -> ReadOwned<Item, &[Item], Dir> {
+        ReadOwned {
             buf: self.buf.as_ref(),
             pos: self.pos,
             phantom: PhantomData,
         }
     }
 
-    pub fn to_owned(&self) -> ReadOwnedFromBack<Item, Vec<Item>>
+    pub fn to_owned(&self) -> ReadOwned<Item, Vec<Item>, Dir>
     where
         Item: Clone,
     {
-        ReadOwnedFromBack {
+        ReadOwned {
             buf: self.buf.as_ref().to_vec(),
             pos: self.pos,
             phantom: PhantomData,
@@ -124,80 +150,113 @@ impl<Item, Buf: AsRef<[Item]>> ReadOwnedFromBack<Item, Buf> {
     }
 }
 
-impl<Item> ReadOwnedFromBack<Item, Vec<Item>> {
-    pub fn into_reversed(self) -> ReadOwnedFromFront<Item, Vec<Item>> {
-        let ReadOwnedFromBack {
-            mut buf,
-            mut pos,
-            phantom,
+impl<Item, Dir: Direction> ReadOwned<Item, Vec<Item>, Dir> {
+    pub fn into_reversed(self) -> ReadOwned<Item, Vec<Item>, Dir::Reverse> {
+        let ReadOwned {
+            mut buf, mut pos, ..
         } = self;
 
         buf.reverse();
         pos = buf.len() - pos;
-        ReadOwnedFromFront { buf, pos, phantom }
+        ReadOwned {
+            buf,
+            pos,
+            phantom: PhantomData,
+        }
     }
 }
 
-impl<'a, Item: Clone, Buf: AsRef<[Item]>> IntoIterator for &'a ReadOwnedFromBack<Item, Buf> {
+impl<'a, Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> IntoIterator
+    for &'a ReadOwned<Item, Buf, Dir>
+{
     type Item = Item;
     type IntoIter = std::iter::Cloned<std::slice::Iter<'a, Item>>;
 
     fn into_iter(self) -> Self::IntoIter {
         let slice = unsafe {
             // SAFETY: We maintain the invariant `self.pos <= self.buf.len()`.
-            self.buf.as_ref().get_unchecked(..self.pos)
+            if Dir::FORWARD {
+                self.buf.as_ref().get_unchecked(self.pos..)
+            } else {
+                self.buf.as_ref().get_unchecked(..self.pos)
+            }
         };
 
         slice.iter().cloned()
     }
 }
 
-impl<Item: Clone + Debug, Buf: AsRef<[Item]>> Debug for ReadOwnedFromBack<Item, Buf> {
+impl<Item: Clone + Debug, Buf: AsRef<[Item]>, Dir: Direction> Debug for ReadOwned<Item, Buf, Dir> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list().entries(self).finish()
     }
 }
 
-impl<Item, Buf: AsRef<[Item]>> Backend<Item> for ReadOwnedFromBack<Item, Buf> {}
+impl<Item, Buf: AsRef<[Item]>, Dir: Direction> Backend<Item> for ReadOwned<Item, Buf, Dir> {}
 
-impl<Item: Clone, Buf: AsRef<[Item]>> ReadItems<Item> for ReadOwnedFromBack<Item, Buf> {
+impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadItems<Item>
+    for ReadOwned<Item, Buf, Dir>
+{
     #[inline(always)]
     fn pop(&mut self) -> Option<Item> {
-        if self.pos == 0 {
-            None
+        if Dir::FORWARD {
+            let item = self.buf.as_ref().get(self.pos)?.clone();
+            self.pos += 1;
+            Some(item)
         } else {
-            self.pos -= 1;
-            unsafe {
-                // SAFETY: We maintain the invariant `self.pos <=self.buf.as_ref().len()` and we
-                // just decreased `self.pos` (making sure it doesn't wrap around), so we now have
-                // `self.pos < self.buf.as_ref().len()`.
-                Some(self.buf.as_ref().get_unchecked(self.pos).clone())
+            if self.pos == 0 {
+                None
+            } else {
+                self.pos -= 1;
+                unsafe {
+                    // SAFETY: We maintain the invariant `self.pos <=self.buf.as_ref().len()` and we
+                    // just decreased `self.pos` (making sure it doesn't wrap around), so we now have
+                    // `self.pos < self.buf.as_ref().len()`.
+                    Some(self.buf.as_ref().get_unchecked(self.pos).clone())
+                }
             }
         }
     }
 
     fn peek(&self) -> Option<&Item> {
-        if self.pos == 0 {
-            None
+        if Dir::FORWARD {
+            self.buf.as_ref().get(self.pos)
         } else {
-            unsafe {
-                // SAFETY: We maintain the invariant `self.pos <=self.buf.as_ref().len()` and we
-                // ensured that `self.pos != 0`, thus `self.pos - 1 < self.buf.as_ref().len()`.
-                Some(self.buf.as_ref().get_unchecked(self.pos - 1))
+            if self.pos == 0 {
+                None
+            } else {
+                unsafe {
+                    // SAFETY: We maintain the invariant `self.pos <=self.buf.as_ref().len()` and we
+                    // ensured that `self.pos != 0`, thus `self.pos - 1 < self.buf.as_ref().len()`.
+                    Some(self.buf.as_ref().get_unchecked(self.pos - 1))
+                }
             }
         }
     }
 }
 
-impl<Item: Clone, Buf: AsRef<[Item]>> ReadLookaheadItems<Item> for ReadOwnedFromBack<Item, Buf> {
+impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadLookaheadItems<Item>
+    for ReadOwned<Item, Buf, Dir>
+{
     fn amt_left(&self) -> usize {
-        self.pos
+        if Dir::FORWARD {
+            // This cannot underflow since we maintain the invariant `pos >= buf.as_ref().len()`.
+            self.buf.as_ref().len() - self.pos
+        } else {
+            self.pos
+        }
     }
 }
 
-impl<Item: Clone, Buf: AsRef<[Item]>> Seek<Item> for ReadOwnedFromBack<Item, Buf> {
+impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Seek<Item> for ReadOwned<Item, Buf, Dir> {
     fn seek(&mut self, pos: usize, must_be_end: bool) -> Result<(), ()> {
-        if pos > self.buf.as_ref().len() || (must_be_end && pos != 0) {
+        let end_pos = if Dir::FORWARD {
+            self.buf.as_ref().len()
+        } else {
+            0
+        };
+
+        if pos > self.buf.as_ref().len() || (must_be_end && pos != end_pos) {
             Err(())
         } else {
             self.pos = pos;
@@ -206,129 +265,7 @@ impl<Item: Clone, Buf: AsRef<[Item]>> Seek<Item> for ReadOwnedFromBack<Item, Buf
     }
 }
 
-impl<Item: Clone, Buf: AsRef<[Item]>> Pos<Item> for ReadOwnedFromBack<Item, Buf> {
-    fn pos(&self) -> usize {
-        self.pos
-    }
-}
-
-#[derive(Clone)]
-pub struct ReadOwnedFromFront<Item, Buf: AsRef<[Item]>> {
-    buf: Buf,
-
-    /// Index of the next item to be read, or `buf.as_ref().len()` if `is_at_end()`.
-    pos: usize,
-
-    phantom: PhantomData<Item>,
-}
-
-impl<Item, Buf: AsRef<[Item]>> ReadOwnedFromFront<Item, Buf> {
-    #[inline(always)]
-    pub fn new(buf: Buf) -> Self {
-        Self {
-            buf,
-            pos: 0,
-            phantom: PhantomData,
-        }
-    }
-
-    pub fn as_view(&self) -> ReadOwnedFromBack<Item, &[Item]> {
-        ReadOwnedFromBack {
-            buf: self.buf.as_ref(),
-            pos: self.pos,
-            phantom: PhantomData,
-        }
-    }
-
-    pub fn to_owned(&self) -> ReadOwnedFromBack<Item, Vec<Item>>
-    where
-        Item: Clone,
-    {
-        ReadOwnedFromBack {
-            buf: self.buf.as_ref().to_vec(),
-            pos: self.pos,
-            phantom: PhantomData,
-        }
-    }
-
-    pub fn buf(&self) -> &[Item] {
-        self.buf.as_ref()
-    }
-
-    pub fn into_buf_and_pos(self) -> (Buf, usize) {
-        (self.buf, self.pos)
-    }
-}
-
-impl<Item> ReadOwnedFromFront<Item, Vec<Item>> {
-    pub fn into_reversed(self) -> ReadOwnedFromBack<Item, Vec<Item>> {
-        let ReadOwnedFromFront {
-            mut buf,
-            mut pos,
-            phantom,
-        } = self;
-
-        buf.reverse();
-        pos = buf.len() - pos;
-        ReadOwnedFromBack { buf, pos, phantom }
-    }
-}
-
-impl<'a, Item: Clone, Buf: AsRef<[Item]>> IntoIterator for &'a ReadOwnedFromFront<Item, Buf> {
-    type Item = Item;
-    type IntoIter = std::iter::Cloned<std::iter::Rev<std::slice::Iter<'a, Item>>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        let slice = unsafe {
-            // SAFETY: We maintain the invariant `self.pos <= self.buf.len()`.
-            self.buf.as_ref().get_unchecked(self.pos..)
-        };
-
-        slice.iter().rev().cloned()
-    }
-}
-
-impl<Item: Clone + Debug, Buf: AsRef<[Item]>> Debug for ReadOwnedFromFront<Item, Buf> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(self).finish()
-    }
-}
-
-impl<Item, Buf: AsRef<[Item]>> Backend<Item> for ReadOwnedFromFront<Item, Buf> {}
-
-impl<Item: Clone, Buf: AsRef<[Item]>> ReadItems<Item> for ReadOwnedFromFront<Item, Buf> {
-    #[inline(always)]
-    fn pop(&mut self) -> Option<Item> {
-        let item = self.buf.as_ref().get(self.pos)?.clone();
-        self.pos += 1;
-        Some(item)
-    }
-
-    fn peek(&self) -> Option<&Item> {
-        self.buf.as_ref().get(self.pos)
-    }
-}
-
-impl<Item: Clone, Buf: AsRef<[Item]>> ReadLookaheadItems<Item> for ReadOwnedFromFront<Item, Buf> {
-    fn amt_left(&self) -> usize {
-        // This cannot underflow since we maintain the invariant `pos >= buf.as_ref().len()`.
-        self.buf.as_ref().len() - self.pos
-    }
-}
-
-impl<Item: Clone, Buf: AsRef<[Item]>> Seek<Item> for ReadOwnedFromFront<Item, Buf> {
-    fn seek(&mut self, pos: usize, must_be_end: bool) -> Result<(), ()> {
-        match (pos.cmp(&self.buf.as_ref().len()), must_be_end) {
-            (std::cmp::Ordering::Less, false) | (std::cmp::Ordering::Equal, _) => {
-                self.pos = pos;
-                Ok(())
-            }
-            _ => Err(()),
-        }
-    }
-}
-
-impl<Item: Clone, Buf: AsRef<[Item]>> Pos<Item> for ReadOwnedFromFront<Item, Buf> {
+impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Pos<Item> for ReadOwned<Item, Buf, Dir> {
     fn pos(&self) -> usize {
         self.pos
     }

@@ -16,7 +16,9 @@ use crate::{
     AsDecoder, BitArray, Code, Decode, Encode, EncodingError, Pos, Seek, TryCodingError,
 };
 
-use self::backend::{Backend, ReadItems, ReadLookaheadItems, WriteItems, WriteMutableItems};
+use self::backend::{
+    Backend, ReadItems, ReadLookaheadItems, ReadOwned, WriteItems, WriteMutableItems,
+};
 
 /// Entropy coder for both encoding and decoding on a stack
 ///
@@ -259,6 +261,36 @@ where
         State,
         backend::ReadOwnedFromBack<CompressedWord, &'a [CompressedWord]>,
     >;
+}
+
+impl<'a, CompressedWord, State, Buf, Dir>
+    From<&'a Stack<CompressedWord, State, ReadOwned<CompressedWord, Buf, Dir>>>
+    for Stack<CompressedWord, State, ReadOwned<CompressedWord, &'a [CompressedWord], Dir>>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]>,
+    Dir: backend::Direction,
+{
+    fn from(stack: &'a Stack<CompressedWord, State, ReadOwned<CompressedWord, Buf, Dir>>) -> Self {
+        Stack {
+            buf: stack.buf().as_view(),
+            state: stack.state(),
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, CompressedWord, State, Buf, Dir, const PRECISION: usize> AsDecoder<'a, PRECISION>
+    for Stack<CompressedWord, State, ReadOwned<CompressedWord, Buf, Dir>>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]> + 'a,
+    Dir: backend::Direction,
+{
+    type AsDecoder =
+        Stack<CompressedWord, State, ReadOwned<CompressedWord, &'a [CompressedWord], Dir>>;
 }
 
 impl<CompressedWord, State, Buf> Default for Stack<CompressedWord, State, Buf>
