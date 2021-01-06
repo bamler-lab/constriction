@@ -17,7 +17,7 @@ use crate::{
 };
 
 use self::backend::{
-    Backend, ReadItems, ReadLookaheadItems, ReadOwned, WriteItems, WriteMutableItems,
+    Backend, ReadItems, ReadLookaheadItems, ReadCursor, WriteItems, WriteMutableItems,
 };
 
 /// Entropy coder for both encoding and decoding on a stack
@@ -233,7 +233,7 @@ impl<'a, CompressedWord, State, Buf> From<&'a Stack<CompressedWord, State, Buf>>
     for Stack<
         CompressedWord,
         State,
-        backend::ReadOwnedFromBack<CompressedWord, &'a [CompressedWord]>,
+        backend::ReadCursorBackward<CompressedWord, &'a [CompressedWord]>,
     >
 where
     CompressedWord: BitArray + Into<State>,
@@ -242,7 +242,7 @@ where
 {
     fn from(stack: &'a Stack<CompressedWord, State, Buf>) -> Self {
         Stack {
-            buf: backend::ReadOwnedFromBack::new(stack.buf().as_ref()),
+            buf: backend::ReadCursorBackward::new(stack.buf().as_ref()),
             state: stack.state(),
             phantom: PhantomData,
         }
@@ -259,20 +259,20 @@ where
     type AsDecoder = Stack<
         CompressedWord,
         State,
-        backend::ReadOwnedFromBack<CompressedWord, &'a [CompressedWord]>,
+        backend::ReadCursorBackward<CompressedWord, &'a [CompressedWord]>,
     >;
 }
 
 impl<'a, CompressedWord, State, Buf, Dir>
-    From<&'a Stack<CompressedWord, State, ReadOwned<CompressedWord, Buf, Dir>>>
-    for Stack<CompressedWord, State, ReadOwned<CompressedWord, &'a [CompressedWord], Dir>>
+    From<&'a Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>>
+    for Stack<CompressedWord, State, ReadCursor<CompressedWord, &'a [CompressedWord], Dir>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: AsRef<[CompressedWord]>,
     Dir: backend::Direction,
 {
-    fn from(stack: &'a Stack<CompressedWord, State, ReadOwned<CompressedWord, Buf, Dir>>) -> Self {
+    fn from(stack: &'a Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>) -> Self {
         Stack {
             buf: stack.buf().as_view(),
             state: stack.state(),
@@ -282,7 +282,7 @@ where
 }
 
 impl<'a, CompressedWord, State, Buf, Dir, const PRECISION: usize> AsDecoder<'a, PRECISION>
-    for Stack<CompressedWord, State, ReadOwned<CompressedWord, Buf, Dir>>
+    for Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -290,7 +290,7 @@ where
     Dir: backend::Direction,
 {
     type AsDecoder =
-        Stack<CompressedWord, State, ReadOwned<CompressedWord, &'a [CompressedWord], Dir>>;
+        Stack<CompressedWord, State, ReadCursor<CompressedWord, &'a [CompressedWord], Dir>>;
 }
 
 impl<CompressedWord, State, Buf> Default for Stack<CompressedWord, State, Buf>
@@ -655,12 +655,12 @@ where
     /// [`into_seekable_decoder`]: Self::into_seekable_decoder
     pub fn seekable_decoder(
         &self,
-    ) -> Stack<CompressedWord, State, backend::ReadOwnedFromBack<CompressedWord, &[CompressedWord]>>
+    ) -> Stack<CompressedWord, State, backend::ReadCursorBackward<CompressedWord, &[CompressedWord]>>
     where
         Buf: AsRef<[CompressedWord]>,
     {
         Stack {
-            buf: backend::ReadOwnedFromBack::new(self.buf.as_ref()),
+            buf: backend::ReadCursorBackward::new(self.buf.as_ref()),
             state: self.state,
             phantom: PhantomData,
         }
@@ -676,12 +676,12 @@ where
     /// [`seekable_decoder`]: Self::seekable_decoder
     pub fn into_seekable_decoder(
         self,
-    ) -> Stack<CompressedWord, State, backend::ReadOwnedFromBack<CompressedWord, Buf>>
+    ) -> Stack<CompressedWord, State, backend::ReadCursorBackward<CompressedWord, Buf>>
     where
         Buf: AsRef<[CompressedWord]>,
     {
         Stack {
-            buf: backend::ReadOwnedFromBack::new(self.buf),
+            buf: backend::ReadCursorBackward::new(self.buf),
             state: self.state,
             phantom: PhantomData,
         }
@@ -1428,7 +1428,7 @@ mod tests {
 
         {
             let mut seekable_decoder =
-                Stack::from_compressed(backend::ReadOwnedFromFront::new(compressed)).unwrap();
+                Stack::from_compressed(backend::ReadCursorForward::new(compressed)).unwrap();
 
             // Verify that decoding leads to the expected positions and states.
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {

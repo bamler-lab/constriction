@@ -96,7 +96,7 @@ impl Direction for Backward {
 }
 
 #[derive(Clone)]
-pub struct ReadOwned<Item, Buf: AsRef<[Item]>, Dir: Direction> {
+pub struct ReadCursor<Item, Buf: AsRef<[Item]>, Dir: Direction> {
     buf: Buf,
 
     /// If `Dir::FORWARD`: the index of the next item to be read.
@@ -108,10 +108,10 @@ pub struct ReadOwned<Item, Buf: AsRef<[Item]>, Dir: Direction> {
     phantom: PhantomData<(Item, Dir)>,
 }
 
-pub type ReadOwnedFromFront<Item, Buf> = ReadOwned<Item, Buf, Forward>;
-pub type ReadOwnedFromBack<Item, Buf> = ReadOwned<Item, Buf, Backward>;
+pub type ReadCursorForward<Item, Buf> = ReadCursor<Item, Buf, Forward>;
+pub type ReadCursorBackward<Item, Buf> = ReadCursor<Item, Buf, Backward>;
 
-impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadOwned<Item, Buf, Dir> {
+impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
     #[inline(always)]
     pub fn new(buf: Buf) -> Self {
         let pos = if Dir::FORWARD { 0 } else { buf.as_ref().len() };
@@ -122,19 +122,19 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadOwned<Item, Buf, Dir> {
         }
     }
 
-    pub fn as_view(&self) -> ReadOwned<Item, &[Item], Dir> {
-        ReadOwned {
+    pub fn as_view(&self) -> ReadCursor<Item, &[Item], Dir> {
+        ReadCursor {
             buf: self.buf.as_ref(),
             pos: self.pos,
             phantom: PhantomData,
         }
     }
 
-    pub fn to_owned(&self) -> ReadOwned<Item, Vec<Item>, Dir>
+    pub fn to_owned(&self) -> ReadCursor<Item, Vec<Item>, Dir>
     where
         Item: Clone,
     {
-        ReadOwned {
+        ReadCursor {
             buf: self.buf.as_ref().to_vec(),
             pos: self.pos,
             phantom: PhantomData,
@@ -150,15 +150,15 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadOwned<Item, Buf, Dir> {
     }
 }
 
-impl<Item, Dir: Direction> ReadOwned<Item, Vec<Item>, Dir> {
-    pub fn into_reversed(self) -> ReadOwned<Item, Vec<Item>, Dir::Reverse> {
-        let ReadOwned {
+impl<Item, Dir: Direction> ReadCursor<Item, Vec<Item>, Dir> {
+    pub fn into_reversed(self) -> ReadCursor<Item, Vec<Item>, Dir::Reverse> {
+        let ReadCursor {
             mut buf, mut pos, ..
         } = self;
 
         buf.reverse();
         pos = buf.len() - pos;
-        ReadOwned {
+        ReadCursor {
             buf,
             pos,
             phantom: PhantomData,
@@ -167,7 +167,7 @@ impl<Item, Dir: Direction> ReadOwned<Item, Vec<Item>, Dir> {
 }
 
 impl<'a, Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> IntoIterator
-    for &'a ReadOwned<Item, Buf, Dir>
+    for &'a ReadCursor<Item, Buf, Dir>
 {
     type Item = Item;
     type IntoIter = std::iter::Cloned<std::slice::Iter<'a, Item>>;
@@ -186,16 +186,16 @@ impl<'a, Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> IntoIterator
     }
 }
 
-impl<Item: Clone + Debug, Buf: AsRef<[Item]>, Dir: Direction> Debug for ReadOwned<Item, Buf, Dir> {
+impl<Item: Clone + Debug, Buf: AsRef<[Item]>, Dir: Direction> Debug for ReadCursor<Item, Buf, Dir> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list().entries(self).finish()
     }
 }
 
-impl<Item, Buf: AsRef<[Item]>, Dir: Direction> Backend<Item> for ReadOwned<Item, Buf, Dir> {}
+impl<Item, Buf: AsRef<[Item]>, Dir: Direction> Backend<Item> for ReadCursor<Item, Buf, Dir> {}
 
 impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadItems<Item>
-    for ReadOwned<Item, Buf, Dir>
+    for ReadCursor<Item, Buf, Dir>
 {
     #[inline(always)]
     fn pop(&mut self) -> Option<Item> {
@@ -236,7 +236,7 @@ impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadItems<Item>
 }
 
 impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadLookaheadItems<Item>
-    for ReadOwned<Item, Buf, Dir>
+    for ReadCursor<Item, Buf, Dir>
 {
     fn amt_left(&self) -> usize {
         if Dir::FORWARD {
@@ -248,7 +248,7 @@ impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadLookaheadItems<Item>
     }
 }
 
-impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Seek<Item> for ReadOwned<Item, Buf, Dir> {
+impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Seek<Item> for ReadCursor<Item, Buf, Dir> {
     fn seek(&mut self, pos: usize, must_be_end: bool) -> Result<(), ()> {
         let end_pos = if Dir::FORWARD {
             self.buf.as_ref().len()
@@ -265,7 +265,7 @@ impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Seek<Item> for ReadOwned<I
     }
 }
 
-impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Pos<Item> for ReadOwned<Item, Buf, Dir> {
+impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Pos<Item> for ReadCursor<Item, Buf, Dir> {
     fn pos(&self) -> usize {
         self.pos
     }

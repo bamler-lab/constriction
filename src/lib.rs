@@ -649,7 +649,7 @@ pub trait Seek: Code {
     /// ```
     /// use constriction::{
     ///     distributions::LeakyQuantizer,
-    ///     stack::{backend::ReadOwnedFromFront, DefaultStack, Stack},
+    ///     stack::{backend::ReadCursorForward, DefaultStack, Stack},
     ///     Decode, Pos, Seek
     /// };
     ///
@@ -667,7 +667,7 @@ pub trait Seek: Code {
     /// let mut compressed = encoder.into_compressed();
     /// compressed.reverse();
     /// snapshot_pos = compressed.len() - snapshot_pos; // <-- Adjusts the snapshot position.
-    /// let mut decoder = Stack::from_compressed(ReadOwnedFromFront::new(compressed)).unwrap();
+    /// let mut decoder = Stack::from_compressed(ReadCursorForward::new(compressed)).unwrap();
     ///
     /// // Decoding yields the last encoded chunk of symbols first:
     /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 50);
