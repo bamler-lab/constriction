@@ -2,9 +2,10 @@ use std::{borrow::Borrow, error::Error, fmt::Debug, marker::PhantomData, ops::De
 
 use num::cast::AsPrimitive;
 
-use super::{
-    bit_array_from_chunks, bit_array_to_chunks_exact, models::EntropyModel, BitArray, Code, Decode,
-    Encode, EncodingError, IntoDecoder,
+use crate::{
+    bit_array_from_chunks, bit_array_to_chunks_exact,
+    models::{DecoderModel, EncoderModel},
+    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder,
 };
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
@@ -263,7 +264,7 @@ where
         model: D,
     ) -> Result<(), EncodingError>
     where
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -449,7 +450,7 @@ where
     /// useful in edge cases of, e.g., the bits-back algorithm.
     fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: EntropyModel<PRECISION>,
+        D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {

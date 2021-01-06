@@ -12,8 +12,9 @@ use std::{
 use num::cast::AsPrimitive;
 
 use crate::{
-    bit_array_from_chunks, bit_array_to_chunks_truncated, models::EntropyModel, AsDecoder,
-    BitArray, Code, Decode, Encode, EncodingError, Pos, Seek, TryCodingError,
+    bit_array_from_chunks, bit_array_to_chunks_truncated,
+    models::{DecoderModel, EncoderModel, EntropyModel},
+    AsDecoder, BitArray, Code, Decode, Encode, EncodingError, Pos, Seek, TryCodingError,
 };
 
 use self::backend::{
@@ -729,7 +730,7 @@ where
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = (S, D)>,
@@ -744,7 +745,7 @@ where
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         S: Borrow<D::Symbol>,
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         E: Error + 'static,
@@ -761,7 +762,7 @@ where
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = S>,
@@ -948,7 +949,7 @@ where
         model: D,
     ) -> Result<(), EncodingError>
     where
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -1033,7 +1034,7 @@ where
     /// useful in edge cases of, e.g., the bits-back algorithm.
     fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: EntropyModel<PRECISION>,
+        D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -1145,7 +1146,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Categorical, EntropyModel, LeakyQuantizer};
+    use crate::models::{Categorical, LeakyQuantizer};
 
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},

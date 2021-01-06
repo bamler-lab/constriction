@@ -9,7 +9,10 @@ use num::cast::AsPrimitive;
 
 use super::Stack;
 
-use crate::{models::EntropyModel, BitArray, Code, Decode, Encode, EncodingError, TryCodingError};
+use crate::{
+    models::{DecoderModel, EncoderModel},
+    BitArray, Code, Decode, Encode, EncodingError, TryCodingError,
+};
 
 #[derive(Debug, Clone)]
 struct Coder<CompressedWord, State, const PRECISION: usize>
@@ -262,7 +265,7 @@ where
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = (S, D)>,
@@ -278,7 +281,7 @@ where
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         S: Borrow<D::Symbol>,
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         E: Error + 'static,
@@ -296,7 +299,7 @@ where
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = S>,
@@ -614,7 +617,7 @@ where
 
     fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: EntropyModel<PRECISION>,
+        D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -656,7 +659,7 @@ where
         model: D,
     ) -> Result<(), EncodingError>
     where
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
     {

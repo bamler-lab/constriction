@@ -30,14 +30,18 @@ pub trait EntropyModel<const PRECISION: usize> {
     /// [`Encode`]: crate::Encode
     /// [`Decode`]: crate::Decode
     type Symbol;
+}
 
+pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     /// Returns `Ok((left_sided_cumulative, probability))` of the bin for the
     /// provided `symbol` if the symbol has nonzero probability.
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Self::Symbol>,
     ) -> Result<(Self::Probability, Self::Probability), ()>;
+}
 
+pub trait DecoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     /// Returns `(symbol, left_sided_cumulative, probability)` of the unique bin
     /// that satisfies `left_sided_cumulative <= quantile < right_sided_cumulative`.
     fn quantile_function(
@@ -52,14 +56,24 @@ where
 {
     type Probability = D::Probability;
     type Symbol = D::Symbol;
+}
 
+impl<D, const PRECISION: usize> EncoderModel<PRECISION> for &D
+where
+    D: EncoderModel<PRECISION>,
+{
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Self::Symbol>,
     ) -> Result<(Self::Probability, Self::Probability), ()> {
         (*self).left_cumulative_and_probability(symbol)
     }
+}
 
+impl<D, const PRECISION: usize> DecoderModel<PRECISION> for &D
+where
+    D: DecoderModel<PRECISION>,
+{
     fn quantile_function(
         &self,
         quantile: Self::Probability,
@@ -213,11 +227,20 @@ where
     Symbol: PrimInt + AsPrimitive<Probability> + Into<F> + WrappingSub,
     F: Float + AsPrimitive<Symbol> + AsPrimitive<Probability>,
     Probability: BitArray + Into<F>,
-    CD: Univariate<F, F> + InverseCDF<F>,
+    CD: Univariate<F, F>,
 {
     type Probability = Probability;
     type Symbol = Symbol;
+}
 
+impl<'a, F, Symbol, Probability, CD, const PRECISION: usize> EncoderModel<PRECISION>
+    for LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, PRECISION>
+where
+    Symbol: PrimInt + AsPrimitive<Probability> + Into<F> + WrappingSub,
+    F: Float + AsPrimitive<Symbol> + AsPrimitive<Probability>,
+    Probability: BitArray + Into<F>,
+    CD: Univariate<F, F>,
+{
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Symbol>,
@@ -261,7 +284,16 @@ where
 
         Ok((left_sided_cumulative, probability))
     }
+}
 
+impl<'a, F, Symbol, Probability, CD, const PRECISION: usize> DecoderModel<PRECISION>
+    for LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, PRECISION>
+where
+    Symbol: PrimInt + AsPrimitive<Probability> + Into<F> + WrappingSub,
+    F: Float + AsPrimitive<Symbol> + AsPrimitive<Probability>,
+    Probability: BitArray + Into<F>,
+    CD: Univariate<F, F> + InverseCDF<F>,
+{
     fn quantile_function(&self, quantile: Probability) -> (Self::Symbol, Probability, Probability) {
         let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
         // This check should usually compile away in inlined and verifiably correct usages
@@ -838,7 +870,11 @@ impl<Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
 {
     type Probability = Probability;
     type Symbol = usize;
+}
 
+impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
+    for Categorical<Probability, PRECISION>
+{
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<usize>,
@@ -858,7 +894,11 @@ impl<Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
 
         Ok((cdf, next_cdf.wrapping_sub(&cdf)))
     }
+}
 
+impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
+    for Categorical<Probability, PRECISION>
+{
     fn quantile_function(&self, quantile: Probability) -> (Self::Symbol, Probability, Probability) {
         let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
         // This check should usually compile away in inlined and verifiably correct usages
@@ -999,7 +1039,7 @@ mod tests {
 
     fn test_entropy_model<D, const PRECISION: usize>(model: D, domain: std::ops::Range<D::Symbol>)
     where
-        D: EntropyModel<PRECISION, Probability = u32>,
+        D: EncoderModel<PRECISION, Probability = u32> + DecoderModel<PRECISION, Probability = u32>,
         D::Symbol: Copy + std::fmt::Debug + PartialEq,
         std::ops::Range<D::Symbol>: Iterator<Item = D::Symbol>,
     {

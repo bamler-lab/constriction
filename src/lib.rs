@@ -158,7 +158,7 @@ use std::{
     fmt::{Debug, LowerHex, UpperHex},
 };
 
-use models::EntropyModel;
+use models::{DecoderModel, EncoderModel, EntropyModel};
 use num::{
     cast::AsPrimitive,
     traits::{WrappingAdd, WrappingSub},
@@ -225,7 +225,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         model: D,
     ) -> Result<(), EncodingError>
     where
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>;
 
@@ -235,7 +235,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -252,7 +252,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     ) -> Result<(), TryCodingError<EncodingError, E>>
     where
         S: Borrow<D::Symbol>,
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
         E: Error + 'static,
@@ -273,7 +273,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     ) -> Result<(), EncodingError>
     where
         S: Borrow<D::Symbol>,
-        D: EntropyModel<PRECISION>,
+        D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -295,7 +295,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 
     fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: EntropyModel<PRECISION>,
+        D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>;
 
@@ -308,7 +308,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     ) -> DecodeSymbols<'s, Self, I::IntoIter, PRECISION>
     where
         I: IntoIterator<Item = D> + 's,
-        D: EntropyModel<PRECISION>,
+        D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -324,7 +324,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     ) -> TryDecodeSymbols<'s, Self, I::IntoIter, PRECISION>
     where
         I: IntoIterator<Item = Result<D, E>> + 's,
-        D: EntropyModel<PRECISION>,
+        D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -347,7 +347,7 @@ pub trait Decode<const PRECISION: usize>: Code {
         model: &'s D,
     ) -> DecodeIidSymbols<'s, Self, D, PRECISION>
     where
-        D: EntropyModel<PRECISION>,
+        D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -382,7 +382,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// ```
 /// # #![feature(min_const_generics)]
 /// # use constriction::{
-/// #     models::{EntropyModel, LeakyQuantizer},
+/// #     models::{EncoderModel, DecoderModel, LeakyQuantizer},
 /// #     stack::DefaultStack,
 /// #     Decode, Encode, IntoDecoder
 /// # };
@@ -393,7 +393,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// ) -> Encoder::IntoDecoder
 /// where
 ///     Encoder: Encode<PRECISION> + IntoDecoder<PRECISION>, // <-- Different trait bound.
-///     D: EntropyModel<PRECISION, Symbol=i32>,
+///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32>,
 ///     D::Probability: Into<Encoder::CompressedWord>,
 ///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
 /// {
@@ -465,7 +465,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// ```
 /// # #![feature(min_const_generics)]
 /// # use constriction::{
-/// #     models::{EntropyModel, LeakyQuantizer},
+/// #     models::{EncoderModel, DecoderModel, LeakyQuantizer},
 /// #     stack::DefaultStack,
 /// #     Decode, Encode, AsDecoder
 /// # };
@@ -477,7 +477,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// where
 ///     Encoder: Encode<PRECISION>,
 ///     for<'a> Encoder: AsDecoder<'a, PRECISION>, // <-- Different trait bound.
-///     D: EntropyModel<PRECISION, Symbol=i32>,
+///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32>,
 ///     D::Probability: Into<Encoder::CompressedWord>,
 ///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
 /// {
@@ -695,7 +695,7 @@ impl<'a, Decoder, I, D, const PRECISION: usize> Iterator
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = D>,
-    D: EntropyModel<PRECISION>,
+    D: DecoderModel<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
@@ -717,7 +717,7 @@ impl<'a, Decoder, I, D, const PRECISION: usize> ExactSizeIterator
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = D> + ExactSizeIterator,
-    D: EntropyModel<PRECISION>,
+    D: DecoderModel<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
@@ -734,7 +734,7 @@ impl<'a, Decoder, I, D, E, const PRECISION: usize> Iterator
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>>,
-    D: EntropyModel<PRECISION>,
+    D: DecoderModel<PRECISION>,
     E: std::error::Error + 'static,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
@@ -760,7 +760,7 @@ impl<'a, Decoder, I, D, E, const PRECISION: usize> ExactSizeIterator
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>> + ExactSizeIterator,
-    D: EntropyModel<PRECISION>,
+    D: DecoderModel<PRECISION>,
     E: std::error::Error + 'static,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
@@ -778,7 +778,7 @@ impl<'a, Decoder, D, const PRECISION: usize> Iterator
     for DecodeIidSymbols<'a, Decoder, D, PRECISION>
 where
     Decoder: Decode<PRECISION>,
-    D: EntropyModel<PRECISION>,
+    D: DecoderModel<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
@@ -802,7 +802,7 @@ impl<'a, Decoder, D, const PRECISION: usize> ExactSizeIterator
     for DecodeIidSymbols<'a, Decoder, D, PRECISION>
 where
     Decoder: Decode<PRECISION>,
-    D: EntropyModel<PRECISION>,
+    D: DecoderModel<PRECISION>,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
