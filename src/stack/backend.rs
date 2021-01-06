@@ -130,7 +130,7 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
         }
     }
 
-    pub fn to_owned(&self) -> ReadCursor<Item, Vec<Item>, Dir>
+    pub fn cloned(&self) -> ReadCursor<Item, Vec<Item>, Dir>
     where
         Item: Clone,
     {
@@ -148,16 +148,26 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
     pub fn into_buf_and_pos(self) -> (Buf, usize) {
         (self.buf, self.pos)
     }
-}
 
-impl<Item, Dir: Direction> ReadCursor<Item, Vec<Item>, Dir> {
-    pub fn into_reversed(self) -> ReadCursor<Item, Vec<Item>, Dir::Reverse> {
+    /// Reverses both the data and the reading direction.
+    ///
+    /// This method consumes the original `ReadCursor`, reverses the order of the
+    /// `Item`s in-place, updates the cursor position accordingly, and returns a
+    /// `ReadCursor` that progresses in the opposite direction. Reading from the
+    /// returned `ReadCursor` will yield the same `Item`s as continued reading from the
+    /// original one would, but the changed direction will be observable via different
+    /// behavior of [`Pos::pos`], [`Seek::seek`], and [`Self::buf`].
+    pub fn into_reversed(self) -> ReadCursor<Item, Buf, Dir::Reverse>
+    where
+        Buf: AsMut<[Item]>,
+    {
         let ReadCursor {
             mut buf, mut pos, ..
         } = self;
 
-        buf.reverse();
-        pos = buf.len() - pos;
+        buf.as_mut().reverse();
+        pos = buf.as_ref().len() - pos;
+
         ReadCursor {
             buf,
             pos,

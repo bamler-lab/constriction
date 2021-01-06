@@ -17,7 +17,7 @@ use crate::{
 };
 
 use self::backend::{
-    Backend, ReadItems, ReadLookaheadItems, ReadCursor, WriteItems, WriteMutableItems,
+    Backend, ReadCursor, ReadItems, ReadLookaheadItems, WriteItems, WriteMutableItems,
 };
 
 /// Entropy coder for both encoding and decoding on a stack
