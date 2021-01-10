@@ -142,7 +142,6 @@
 //! [Huffman coding]: https://en.wikipedia.org/wiki/Huffman_coding
 //! [`Stack`]: stack.Stack
 
-#![feature(min_const_generics, slice_fill)]
 #![warn(rust_2018_idioms, missing_debug_implementations)]
 
 #[cfg(feature = "pybindings")]

@@ -1,5 +1,3 @@
-#![feature(min_const_generics)]
-
 use std::any::type_name;
 
 use constriction::{
