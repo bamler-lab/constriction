@@ -5,6 +5,8 @@
 //!
 //! [`Code`]: crate::Code
 
+pub mod lookup;
+
 use num::{cast::AsPrimitive, traits::WrappingSub, Float, PrimInt};
 use statrs::distribution::{InverseCDF, Univariate};
 use std::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::RangeInclusive};
@@ -15,12 +17,6 @@ use super::BitArray;
 ///
 /// TODO: document how `PRECISION` is (not) enforced.
 pub trait EntropyModel<const PRECISION: usize> {
-    /// The type used to represent probabilities. Must hold at least PRECISION bits.
-    ///
-    /// TODO: once this is possible, we should enforce the constraint that
-    /// `Probability::BITS >= PRECISION` at compile time.
-    type Probability: BitArray;
-
     /// The type of data over which the entropy model is defined.
     ///
     /// This is the type of an item of the *uncompressed* data. Note that an [`Encode`]
@@ -30,6 +26,12 @@ pub trait EntropyModel<const PRECISION: usize> {
     /// [`Encode`]: crate::Encode
     /// [`Decode`]: crate::Decode
     type Symbol;
+
+    /// The type used to represent probabilities. Must hold at least PRECISION bits.
+    ///
+    /// TODO: once this is possible, we should enforce the constraint that
+    /// `Probability::BITS >= PRECISION` at compile time.
+    type Probability: BitArray;
 }
 
 pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {

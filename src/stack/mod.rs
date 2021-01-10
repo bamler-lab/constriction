@@ -671,8 +671,7 @@ where
     ///
     /// This method is similar to [`seekable_decoder`] except that it takes ownership of
     /// the original `Stack`, so the returned seekable decoder can typically be returned
-    /// from the calling function or put on the heap. Otherwise, the same limitations as
-    /// for [`seekable_decoder`] apply.
+    /// from the calling function or put on the heap.
     ///
     /// [`seekable_decoder`]: Self::seekable_decoder
     pub fn into_seekable_decoder(
