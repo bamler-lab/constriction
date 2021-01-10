@@ -672,7 +672,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
             cdf.resize(last + 2, Probability::zero()); // Should never make cdf larger.
         } else {
             assert_eq!(laps, 0);
-            let expected_last = Probability::one() << PRECISION;
+            let expected_last = Probability::wrapping_pow2::<PRECISION>();
             assert!(fingerprint != expected_last);
             assert!(cdf.last() == Some(&expected_last));
         }

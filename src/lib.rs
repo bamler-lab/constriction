@@ -840,6 +840,15 @@ pub unsafe trait BitArray:
     /// This could arguably be called `LEN` instead, but that may be confusing since
     /// "lengths" are typically not measured in bits in the Rust ecosystem.
     const BITS: usize = 8 * std::mem::size_of::<Self>();
+
+    #[inline(always)]
+    fn wrapping_pow2<const EXPONENT: usize>() -> Self {
+        if EXPONENT >= Self::BITS {
+            Self::zero()
+        } else {
+            Self::one() << EXPONENT
+        }
+    }
 }
 
 /// Constructs a `BitArray` from an iterator from most significant to least
