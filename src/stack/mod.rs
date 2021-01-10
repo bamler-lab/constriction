@@ -893,6 +893,27 @@ where
     }
 }
 
+impl<CompressedWord, State, Buf, Dir>
+    Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>
+where
+    CompressedWord: BitArray,
+    State: BitArray + AsPrimitive<CompressedWord> + From<CompressedWord>,
+    Buf: AsRef<[CompressedWord]> + AsMut<[CompressedWord]>,
+    Dir: backend::Direction,
+{
+    pub fn into_reversed(
+        self,
+    ) -> Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir::Reverse>> {
+        let (buf, state) = self.into_buf_and_state();
+        let buf = buf.into_reversed();
+        Stack {
+            buf,
+            state,
+            phantom: PhantomData,
+        }
+    }
+}
+
 impl<CompressedWord, State, Buf> Code for Stack<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,

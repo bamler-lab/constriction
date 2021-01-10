@@ -10,7 +10,7 @@
 			"problemMatcher": [
 				"$rustc"
 			],
-			"group": "doc",
+			"group": "build",
 			"label": "rust: cargo doc --all-features"
 		},
 		{
@@ -24,6 +24,15 @@
 			],
 			"group": "build",
 			"label": "rust: cargo build --all-features"
+		},
+		{
+			"type": "cargo",
+			"command": "bench",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "rust: cargo bench"
 		}
 	]
 }
