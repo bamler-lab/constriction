@@ -356,6 +356,36 @@ pub trait Decode<const PRECISION: usize>: Code {
             amt,
         }
     }
+
+    /// Decodes multiple symbols driven by a provided iterator.
+    ///
+    /// Iterates over all `x` in `iterator.into_iter()`. In each iteration, it decodes
+    /// a symbol using the entropy model `model`, terminates on error and otherwise
+    /// calls `callback(x, decoded_symbol)`.
+    ///
+    /// The default implementation literally just has a `for` loop over
+    /// `iterator.into_iter()`, which contains a single line of code in its body. But,
+    /// in a real-world example, it turns out to be significantly faster this way than
+    /// if we would write the same `for` loop at the call site. This may hint at some
+    /// issues with method inlining.
+    fn map_decode_iid_symbols<'s, D, I>(
+        &'s mut self,
+        iterator: I,
+        model: &'s D,
+        mut callback: impl FnMut(I::Item, D::Symbol),
+    ) -> Result<(), Self::DecodingError>
+    where
+        D: DecoderModel<PRECISION>,
+        D::Probability: Into<Self::CompressedWord>,
+        Self::CompressedWord: AsPrimitive<D::Probability>,
+        I: IntoIterator,
+    {
+        for x in iterator.into_iter() {
+            callback(x, self.decode_symbol(model)?)
+        }
+
+        Ok(())
+    }
 }
 
 /// A trait for conversion into matching decoder type.
