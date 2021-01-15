@@ -307,11 +307,12 @@ where
     Probability: BitArray,
 {
     /// Satisfies invariant:
-    /// `quantile_to_index.len() == 1 << PRECISION`
+    /// `quantile_to_index.as_ref().len() == 1 << PRECISION`
     quantile_to_index: Table1,
 
     /// Satisfies invariant:
-    /// `left_sided_cumulative_and_symbol.len() == quantile_to_index.into_iter().max() as usize + 1`
+    /// `left_sided_cumulative_and_symbol.as_ref().len()
+    /// == *quantile_to_index.as_ref().iter().max() as usize + 2`
     left_sided_cumulative_and_symbol: Table2,
 
     phantom: PhantomData<*mut (Symbol, Probability)>,
@@ -520,6 +521,7 @@ where
     Symbol: Hash + Eq,
     Probability: BitArray,
 {
+    #[inline(always)]
     fn left_cumulative_and_probability(
         &self,
         symbol: impl std::borrow::Borrow<Self::Symbol>,
@@ -546,6 +548,7 @@ where
     Probability: BitArray,
     Table: AsRef<[(Probability, Probability)]>,
 {
+    #[inline(always)]
     fn left_cumulative_and_probability(
         &self,
         symbol: impl std::borrow::Borrow<Self::Symbol>,
@@ -612,34 +615,43 @@ where
     Table2: SymbolTable<Symbol, Probability>,
     Symbol: Clone,
 {
+    #[inline(always)]
     fn quantile_function(
         &self,
         quantile: Self::Probability,
     ) -> (Self::Symbol, Self::Probability, Self::Probability) {
         if Probability::BITS != PRECISION {
-            // It would be nice if we could avoid this we we currently don't statically enforce
-            // `quantile` fit into `PRECISION` bits.
+            // It would be nice if we could avoid this but we currently don't statically enforce
+            // `quantile` to fit into `PRECISION` bits.
             assert!(PRECISION == Probability::BITS || quantile < Probability::one() << PRECISION);
         }
 
-        unsafe {
+        let ((left_sided_cumulative, symbol), next_cumulative) = unsafe {
+            // SAFETY:
+            // - `quantile_to_index` has length `1 << PRECISION` and we verified that
+            //   `quantile` fits into `PRECISION` bits above.
+            // - `left_sided_cumulative_and_symbol` has length
+            //   `*quantile_to_index.as_ref().iter().max() as usize + 2`, so we can always
+            //   access it at `index + 1` for `index` coming from `quantile_to_index`.
             let index = *self
                 .quantile_to_index
                 .as_ref()
                 .get_unchecked(quantile.into());
-            let (left_sided_cumulative, symbol) = self
-                .left_sided_cumulative_and_symbol
-                .get_unchecked(index.into());
-            let (next_cumulative, _) = self
-                .left_sided_cumulative_and_symbol
-                .get_unchecked(index.into() + 1);
+            let index = index.into();
 
             (
-                symbol,
-                left_sided_cumulative,
-                next_cumulative.wrapping_sub(&left_sided_cumulative),
+                self.left_sided_cumulative_and_symbol.get_unchecked(index),
+                self.left_sided_cumulative_and_symbol
+                    .get_unchecked(index + 1)
+                    .0,
             )
-        }
+        };
+
+        (
+            symbol,
+            left_sided_cumulative,
+            next_cumulative.wrapping_sub(&left_sided_cumulative),
+        )
     }
 }
 
