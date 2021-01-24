@@ -654,15 +654,21 @@ pub trait Seek: Code {
     ///
     /// The method takes the position and state as a tuple rather than as independent
     /// method arguments so that one can simply pass in the tuple obtained from
-    /// `Pos::pos_and_state` as sketched below:
+    /// [`Pos::pos_and_state`] as sketched below:
     ///
-    /// ```ignore
-    /// // Encode some data ...
+    /// ```
+    /// // Step 1: Obtain an encoder and encode some data (omitted for brevity) ...
+    /// # use constriction::{stack::DefaultStack, Pos, Seek};
+    /// # let encoder = DefaultStack::new();
+    ///
+    /// // Step 2: Take a snapshot by calling `Pos::pos_and_state`:
     /// let snapshot = encoder.pos_and_state(); // <-- Returns a tuple `(pos, state)`.
-    /// // Encode some more data ...
     ///
-    /// // Obtain a decoder, then jump to snapshot:
-    /// decoder.seek(snapshot); // <-- No need to deconstruct the tuple `snapshot`.
+    /// // Step 3: Encode some more data and then obtain a decoder (omitted for brevity) ...
+    /// # let mut decoder = encoder.seekable_decoder();
+    ///
+    /// // Step 4: Jump to snapshot by calling `Seek::seek`:
+    /// decoder.seek(snapshot); // <-- No need to deconstruct `snapshot` into `(pos, state)`.
     /// ```
     ///
     /// For more fine-grained control, one may want to assemble the tuple
@@ -698,14 +704,13 @@ pub trait Seek: Code {
     /// snapshot_pos = compressed.len() - snapshot_pos; // <-- Adjusts the snapshot position.
     /// let mut decoder = Stack::from_compressed(ReadCursorForward::new(compressed)).unwrap();
     ///
-    /// // Decoding yields the last encoded chunk of symbols first:
+    /// // Since we chose to encode onto a stack, decoding yields the last encoded chunk first:
     /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 50);
     /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 51);
     ///
-    /// // But we can jump ahead:
-    /// decoder.seek((snapshot_pos, snapshot_state)); // <-- Uses the adjusted `snapshot_pos`.
-    /// let decoded = decoder.decode_iid_symbols(140, &entropy_model).map(|symbol| symbol.unwrap());
-    /// assert!(decoded.eq(-100..40));
+    /// // To jump to our snapshot, we have to use the adjusted `snapshot_pos`:
+    /// decoder.seek((snapshot_pos, snapshot_state));
+    /// assert!(decoder.decode_iid_symbols(140, &entropy_model).map(Result::unwrap).eq(-100..40));
     /// assert!(decoder.is_empty()); // <-- We've reached the end of the compressed data.
     /// ```
     ///
