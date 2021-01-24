@@ -122,6 +122,18 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
         }
     }
 
+    pub fn with_buf_and_pos(buf: Buf, pos: usize) -> Result<Self, ()> {
+        if pos > buf.as_ref().len() {
+            Err(())
+        } else {
+            Ok(Self {
+                buf,
+                pos,
+                phantom: PhantomData,
+            })
+        }
+    }
+
     pub fn as_view(&self) -> ReadCursor<Item, &[Item], Dir> {
         ReadCursor {
             buf: self.buf.as_ref(),
