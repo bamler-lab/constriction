@@ -1,9 +1,19 @@
-use std::{
+#[cfg(feature = "std")]
+use std::collections::{
+    hash_map::Entry::{Occupied, Vacant},
+    HashMap,
+};
+
+#[cfg(not(feature = "std"))]
+use hashbrown::hash_map::{
+    Entry::{Occupied, Vacant},
+    HashMap,
+};
+
+use alloc::{boxed::Box, vec::Vec};
+
+use core::{
     borrow::Borrow,
-    collections::{
-        hash_map::Entry::{Occupied, Vacant},
-        HashMap,
-    },
     convert::{TryFrom, TryInto},
     hash::Hash,
     marker::PhantomData,
@@ -524,7 +534,7 @@ where
     #[inline(always)]
     fn left_cumulative_and_probability(
         &self,
-        symbol: impl std::borrow::Borrow<Self::Symbol>,
+        symbol: impl core::borrow::Borrow<Self::Symbol>,
     ) -> Result<(Self::Probability, Self::Probability), ()> {
         self.symbol_to_left_cumulative_and_probability
             .get(symbol.borrow())
@@ -551,7 +561,7 @@ where
     #[inline(always)]
     fn left_cumulative_and_probability(
         &self,
-        symbol: impl std::borrow::Borrow<Self::Symbol>,
+        symbol: impl core::borrow::Borrow<Self::Symbol>,
     ) -> Result<(Self::Probability, Self::Probability), ()> {
         self.symbol_to_left_cumulative_and_probability
             .as_ref()
@@ -768,8 +778,8 @@ where
     Probability: BitArray + Into<usize>,
     I: Iterator<Item = (Probability, Symbol)>,
 {
-    let mut quantile_to_index: Vec<MaybeUninit<Probability>> =
-        vec![MaybeUninit::uninit(); 1 << PRECISION];
+    let mut quantile_to_index = Vec::with_capacity(1 << PRECISION);
+    quantile_to_index.resize(1 << PRECISION, MaybeUninit::uninit());
 
     let mut old_entry = left_sided_cumulative_and_symbol
         .next()
@@ -799,7 +809,7 @@ where
     unsafe {
         // SAFETY: `encoder_model` is a valid `EncoderModel`, so it must map each quantile
         // to exactly one symbol.
-        std::mem::transmute::<_, Vec<Probability>>(quantile_to_index).into_boxed_slice()
+        core::mem::transmute::<_, Vec<Probability>>(quantile_to_index).into_boxed_slice()
     }
 }
 
@@ -885,6 +895,9 @@ where
 
 #[cfg(test)]
 mod test {
+    extern crate std;
+    use std::{string::String, vec};
+
     use crate::{
         models::{DecoderModel, EncoderModel},
         stack::DefaultStack,

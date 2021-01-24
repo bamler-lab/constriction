@@ -1,4 +1,5 @@
-use std::{borrow::Borrow, error::Error, fmt::Debug, marker::PhantomData, ops::Deref};
+use alloc::vec::Vec;
+use core::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::Deref};
 
 use num::cast::AsPrimitive;
 
@@ -49,7 +50,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_list().entries(self.iter_compressed()).finish()
     }
 }
@@ -334,7 +335,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: AsRef<[CompressedWord]>,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_list()
             .entries(
                 bit_array_to_chunks_exact(self.state.lower)
@@ -508,8 +509,8 @@ pub enum DecodingError {
     InvalidCompressedData,
 }
 
-impl std::fmt::Display for DecodingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for DecodingError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             DecodingError::InvalidCompressedData => {
                 write!(f, "Tried to decode invalid compressed data.")
@@ -518,7 +519,8 @@ impl std::fmt::Display for DecodingError {
     }
 }
 
-impl Error for DecodingError {}
+#[cfg(feature = "std")]
+impl std::error::Error for DecodingError {}
 
 /// Provides temporary read-only access to the compressed data wrapped in an
 /// [`Encoder`].
@@ -540,7 +542,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Debug::fmt(&**self, f)
     }
 }
@@ -647,7 +649,7 @@ impl<CompressedWord: BitArray> Iterator for IterCompressed<'_, CompressedWord> {
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.index_front = std::cmp::min(self.index_back, self.index_front.saturating_add(n));
+        self.index_front = core::cmp::min(self.index_back, self.index_front.saturating_add(n));
         self.next()
     }
 }
@@ -667,13 +669,16 @@ impl<CompressedWord: BitArray> DoubleEndedIterator for IterCompressed<'_, Compre
     }
 
     fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-        self.index_back = std::cmp::max(self.index_front, self.index_back.saturating_sub(n));
+        self.index_back = core::cmp::max(self.index_front, self.index_back.saturating_sub(n));
         self.next_back()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::dbg;
+
     use super::*;
     use crate::models::{Categorical, LeakyQuantizer};
 
@@ -696,7 +701,7 @@ mod tests {
 
     #[test]
     fn compress_one() {
-        generic_compress_few(std::iter::once(5), 1)
+        generic_compress_few(core::iter::once(5), 1)
     }
 
     #[test]
@@ -807,9 +812,9 @@ mod tests {
             let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
             let quantile = (rng.next_u32() as f64 + 0.5) / (1u64 << 32) as f64;
             let dist = Normal::new(mean, std_dev).unwrap();
-            let symbol = std::cmp::max(
+            let symbol = core::cmp::max(
                 -127,
-                std::cmp::min(127, dist.inverse_cdf(quantile).round() as i32),
+                core::cmp::min(127, dist.inverse_cdf(quantile).round() as i32),
             );
 
             symbols_gaussian.push(symbol);
@@ -848,8 +853,8 @@ mod tests {
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
         encoder
             .encode_symbols(symbols_gaussian.iter().zip(&means).zip(&stds).map(
-                |((&symbol, &mean), &std)| {
-                    (symbol, quantizer.quantize(Normal::new(mean, std).unwrap()))
+                |((&symbol, &mean), &core)| {
+                    (symbol, quantizer.quantize(Normal::new(mean, core).unwrap()))
                 },
             ))
             .unwrap();
@@ -866,7 +871,7 @@ mod tests {
                 means
                     .iter()
                     .zip(&stds)
-                    .map(|(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())),
+                    .map(|(&mean, &core)| quantizer.quantize(Normal::new(mean, core).unwrap())),
             )
             .collect::<Result<Vec<_>, _>>()
             .unwrap();

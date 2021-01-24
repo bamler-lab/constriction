@@ -11,7 +11,8 @@ crate-type = ["rlib", "cdylib"]
 name = "constriction"
 
 [features]
-default = []
+default = ["std"]
+std = []
 
 # Use feature `pybindings` to compile the python extension module that provides
 # access to this library from python. This feature is turned off by default
@@ -20,6 +21,7 @@ default = []
 pybindings = ["ndarray", "numpy", "pyo3"]
 
 [dependencies]
+hashbrown = "0.9"
 num = "0.3.1"
 statrs = "0.13"
 

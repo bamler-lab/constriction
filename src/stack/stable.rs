@@ -1,7 +1,8 @@
-use std::{
+use alloc::vec::Vec;
+
+use core::{
     borrow::Borrow,
     convert::TryFrom,
-    error::Error,
     ops::{Deref, DerefMut},
 };
 
@@ -284,8 +285,7 @@ where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
-        E: Error + 'static,
-        I: IntoIterator<Item = std::result::Result<(S, D), E>>,
+        I: IntoIterator<Item = core::result::Result<(S, D), E>>,
         I::IntoIter: DoubleEndedIterator,
     {
         self.try_encode_symbols(symbols_and_models.into_iter().rev())
@@ -595,8 +595,8 @@ pub enum DecodingError {
     OutOfData,
 }
 
-impl std::fmt::Display for DecodingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for DecodingError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             DecodingError::OutOfData => {
                 write!(f, "Out of binary data.")
@@ -605,7 +605,8 @@ impl std::fmt::Display for DecodingError {
     }
 }
 
-impl Error for DecodingError {}
+#[cfg(feature = "std")]
+impl std::error::Error for DecodingError {}
 
 impl<CompressedWord, State, const PRECISION: usize> Decode<PRECISION>
     for Decoder<CompressedWord, State, PRECISION>
@@ -921,7 +922,7 @@ mod test {
         let stack = stable_decoder.finish_and_concatenate();
         let stable_encoder2 = stack.into_stable_encoder().unwrap();
 
-        for mut stable_encoder in vec![stable_encoder1, stable_encoder2] {
+        for mut stable_encoder in alloc::vec![stable_encoder1, stable_encoder2] {
             stable_encoder
                 .encode_symbols_reverse(
                     symbols

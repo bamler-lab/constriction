@@ -142,7 +142,10 @@
 //! [Huffman coding]: https://en.wikipedia.org/wiki/Huffman_coding
 //! [`Stack`]: stack.Stack
 
+#![no_std]
 #![warn(rust_2018_idioms, missing_debug_implementations)]
+
+extern crate alloc;
 
 #[cfg(feature = "pybindings")]
 pub mod pybindings;
@@ -151,11 +154,15 @@ pub mod models;
 pub mod queue;
 pub mod stack;
 
-use std::{
+use core::{
     borrow::Borrow,
-    error::Error,
     fmt::{Debug, LowerHex, UpperHex},
 };
+
+#[cfg(feature = "std")]
+extern crate std;
+#[cfg(feature = "std")]
+use std::error::Error;
 
 use models::{DecoderModel, EncoderModel, EntropyModel};
 use num::{
@@ -254,7 +261,6 @@ pub trait Encode<const PRECISION: usize>: Code {
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
-        E: Error + 'static,
     {
         for symbol_and_model in symbols_and_models.into_iter() {
             let (symbol, model) =
@@ -283,14 +289,27 @@ pub trait Encode<const PRECISION: usize>: Code {
 pub trait Decode<const PRECISION: usize>: Code {
     /// The error type for [`decode_symbol`].
     ///
-    /// This is an associated type because, [`decode_symbol`] is infallible for some
+    /// This is an associated type because [`decode_symbol`] is infallible for some
     /// decoders (e.g., for a [`Stack`]). These decoders set the `DecodingError`
-    /// type to [`std::convert::Infallible`] so that the compiler can optimize away
+    /// type to [`core::convert::Infallible`] so that the compiler can optimize away
     /// error checks.
     ///
     /// [`decode_symbol`]: #tymethod.decode_symbol
     /// [`Stack`]: stack.Stack
-    type DecodingError: Error + 'static;
+    #[cfg(not(feature = "std"))]
+    type DecodingError: Debug;
+
+    /// The error type for [`decode_symbol`].
+    ///
+    /// This is an associated type because [`decode_symbol`] is infallible for some
+    /// decoders (e.g., for a [`Stack`]). These decoders set the `DecodingError`
+    /// type to [`core::convert::Infallible`] so that the compiler can optimize away
+    /// error checks.
+    ///
+    /// [`decode_symbol`]: #tymethod.decode_symbol
+    /// [`Stack`]: stack.Stack
+    #[cfg(feature = "std")]
+    type DecodingError: Error;
 
     fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
@@ -769,7 +788,6 @@ where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>>,
     D: DecoderModel<PRECISION>,
-    E: std::error::Error + 'static,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
@@ -795,7 +813,6 @@ where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>> + ExactSizeIterator,
     D: DecoderModel<PRECISION>,
-    E: std::error::Error + 'static,
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
@@ -868,12 +885,12 @@ pub unsafe trait BitArray:
 {
     /// The (fixed) length of the `BitArray` in bits.
     ///
-    /// Defaults to `8 * std::mem::size_of::<Self>()`, which is suitable for all
+    /// Defaults to `8 * core::mem::size_of::<Self>()`, which is suitable for all
     /// primitive unsigned integers.
     ///
     /// This could arguably be called `LEN` instead, but that may be confusing since
     /// "lengths" are typically not measured in bits in the Rust ecosystem.
-    const BITS: usize = 8 * std::mem::size_of::<Self>();
+    const BITS: usize = 8 * core::mem::size_of::<Self>();
 
     #[inline(always)]
     fn wrapping_pow2<const EXPONENT: usize>() -> Self {
@@ -979,7 +996,7 @@ pub enum EncodingError {
 }
 
 #[derive(Debug)]
-pub enum TryCodingError<CodingError: Error + 'static, ModelError: Error + 'static> {
+pub enum TryCodingError<CodingError, ModelError> {
     /// The iterator provided to [`Coder::try_push_symbols`] or
     /// [`Coder::try_pop_symbols`] yielded `Err(_)`.
     ///
@@ -993,8 +1010,8 @@ pub enum TryCodingError<CodingError: Error + 'static, ModelError: Error + 'stati
     CodingError(CodingError),
 }
 
-impl std::fmt::Display for EncodingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for EncodingError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::ImpossibleSymbol => write!(
                 f,
@@ -1005,12 +1022,13 @@ impl std::fmt::Display for EncodingError {
     }
 }
 
+#[cfg(feature = "std")]
 impl Error for EncodingError {}
 
-impl<CodingError: Error + 'static, ModelError: Error + 'static> std::fmt::Display
+impl<CodingError: core::fmt::Display, ModelError: core::fmt::Display> core::fmt::Display
     for TryCodingError<CodingError, ModelError>
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidEntropyModel(err) => {
                 write!(f, "Error while constructing entropy model or data: {}", err)
@@ -1022,6 +1040,7 @@ impl<CodingError: Error + 'static, ModelError: Error + 'static> std::fmt::Displa
     }
 }
 
+#[cfg(feature = "std")]
 impl<CodingError: Error + 'static, ModelError: Error + 'static> Error
     for TryCodingError<CodingError, ModelError>
 {
@@ -1033,9 +1052,7 @@ impl<CodingError: Error + 'static, ModelError: Error + 'static> Error
     }
 }
 
-impl<CodingError: Error + 'static, ModelError: Error + 'static> From<CodingError>
-    for TryCodingError<CodingError, ModelError>
-{
+impl<CodingError, ModelError> From<CodingError> for TryCodingError<CodingError, ModelError> {
     fn from(err: CodingError) -> Self {
         Self::CodingError(err)
     }

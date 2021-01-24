@@ -1,4 +1,3 @@
-#![feature(min_const_generics)]
 #![warn(rust_2018_idioms)]
 
 use std::{cmp::max, cmp::min, ops::RangeInclusive};

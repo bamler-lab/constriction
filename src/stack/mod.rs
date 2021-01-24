@@ -5,10 +5,8 @@
 pub mod backend;
 pub mod stable;
 
-use std::{
-    borrow::Borrow, convert::TryInto, error::Error, fmt::Debug, marker::PhantomData, ops::Deref,
-};
-
+use alloc::vec::Vec;
+use core::{borrow::Borrow, convert::TryInto, fmt::Debug, marker::PhantomData, ops::Deref};
 use num::cast::AsPrimitive;
 
 use crate::{
@@ -61,7 +59,7 @@ use self::backend::{
 /// // documentation). So popping them off now will yield the same symbols in original order.
 /// let reconstructed = stack
 ///     .decode_iid_symbols(4, &entropy_model)
-///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
+///     .collect::<Result<Vec<_>, core::convert::Infallible>>()
 ///     .unwrap();
 /// assert_eq!(reconstructed, symbols);
 /// ```
@@ -225,7 +223,7 @@ where
     Buf: ReadItems<CompressedWord>,
     for<'a> &'a Buf: IntoIterator<Item = &'a CompressedWord>,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_list().entries(self.iter_compressed()).finish()
     }
 }
@@ -389,7 +387,7 @@ where
         }
 
         let state = bit_array_from_chunks(
-            std::iter::repeat_with(|| compressed.pop()).scan((), |(), chunk| chunk),
+            core::iter::repeat_with(|| compressed.pop()).scan((), |(), chunk| chunk),
         );
 
         Ok(Self {
@@ -432,8 +430,8 @@ where
         // the `Stack` may be intended for decoding, and so the resizing is completely
         // avoidable.
         let state = bit_array_from_chunks(
-            std::iter::once(CompressedWord::one())
-                .chain(std::iter::repeat_with(|| data.pop()).scan((), |(), chunk| chunk)),
+            core::iter::once(CompressedWord::one())
+                .chain(core::iter::repeat_with(|| data.pop()).scan((), |(), chunk| chunk)),
         );
 
         Self {
@@ -543,7 +541,7 @@ where
     /// // We can still use the stack afterwards.
     /// let reconstructed = stack
     ///     .decode_iid_symbols(4, &model)
-    ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
+    ///     .collect::<Result<Vec<_>, core::convert::Infallible>>()
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// ```
@@ -630,7 +628,7 @@ where
         Buf: ReadLookaheadItems<CompressedWord>,
     {
         CompressedWord::BITS * self.buf.amt_left()
-            + std::cmp::max(State::BITS - self.state.leading_zeros() as usize, 1)
+            + core::cmp::max(State::BITS - self.state.leading_zeros() as usize, 1)
             - 1
     }
 
@@ -747,8 +745,7 @@ where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
-        E: Error + 'static,
-        I: IntoIterator<Item = std::result::Result<(S, D), E>>,
+        I: IntoIterator<Item = core::result::Result<(S, D), E>>,
         I::IntoIter: DoubleEndedIterator,
     {
         self.try_encode_symbols(symbols_and_models.into_iter().rev())
@@ -803,7 +800,7 @@ where
     /// let mut stack = DefaultStack::from_compressed(compressed).expect("Corrupted compressed file.");
     /// let reconstructed = stack
     ///     .decode_iid_symbols(4, &model)
-    ///     .collect::<Result<Vec<_>, std::convert::Infallible>>()
+    ///     .collect::<Result<Vec<_>, core::convert::Infallible>>()
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// assert!(stack.is_empty())
@@ -1035,7 +1032,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: ReadItems<CompressedWord>,
 {
-    type DecodingError = std::convert::Infallible;
+    type DecodingError = core::convert::Infallible;
 
     /// Decodes a single symbol and pops it off the compressed data.
     ///
@@ -1055,7 +1052,7 @@ where
     #[inline(always)]
     fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
     where
-        D: DecoderModel<PRECISION>, 
+        D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
         Self::CompressedWord: AsPrimitive<D::Probability>,
     {
@@ -1159,7 +1156,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord> + Debug,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Debug::fmt(&**self, f)
     }
 }
@@ -1168,6 +1165,8 @@ where
 mod tests {
     use super::*;
     use crate::models::{Categorical, LeakyQuantizer};
+    extern crate std;
+    use std::dbg;
 
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},
@@ -1188,7 +1187,7 @@ mod tests {
 
     #[test]
     fn compress_one() {
-        generic_compress_few(std::iter::once(5), 1)
+        generic_compress_few(core::iter::once(5), 1)
     }
 
     #[test]
@@ -1307,9 +1306,9 @@ mod tests {
             let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
             let quantile = (rng.next_u32() as f64 + 0.5) / (1u64 << 32) as f64;
             let dist = Normal::new(mean, std_dev).unwrap();
-            let symbol = std::cmp::max(
+            let symbol = core::cmp::max(
                 -127,
-                std::cmp::min(127, dist.inverse_cdf(quantile).round() as i32),
+                core::cmp::min(127, dist.inverse_cdf(quantile).round() as i32),
             );
 
             symbols_gaussian.push(symbol);
@@ -1348,8 +1347,8 @@ mod tests {
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
         stack
             .encode_symbols_reverse(symbols_gaussian.iter().zip(&means).zip(&stds).map(
-                |((&symbol, &mean), &std)| {
-                    (symbol, quantizer.quantize(Normal::new(mean, std).unwrap()))
+                |((&symbol, &mean), &core)| {
+                    (symbol, quantizer.quantize(Normal::new(mean, core).unwrap()))
                 },
             ))
             .unwrap();
@@ -1364,13 +1363,13 @@ mod tests {
                 means
                     .iter()
                     .zip(&stds)
-                    .map(|(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())),
+                    .map(|(&mean, &core)| quantizer.quantize(Normal::new(mean, core).unwrap())),
             )
-            .collect::<Result<Vec<_>, std::convert::Infallible>>()
+            .collect::<Result<Vec<_>, core::convert::Infallible>>()
             .unwrap();
         let reconstructed_categorical = stack
             .decode_iid_symbols(AMT, &categorical)
-            .collect::<Result<Vec<_>, std::convert::Infallible>>()
+            .collect::<Result<Vec<_>, core::convert::Infallible>>()
             .unwrap();
 
         assert!(stack.is_empty());

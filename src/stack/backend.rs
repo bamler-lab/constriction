@@ -1,4 +1,5 @@
-use std::{fmt::Debug, marker::PhantomData};
+use alloc::vec::Vec;
+use core::{fmt::Debug, marker::PhantomData};
 
 /// TODO: document that, if a `Backend<Item>` implements `AsRef<[Item]>` then the
 /// head of the stack must be at the end of the slice returned by `as_ref`.
@@ -26,7 +27,7 @@ pub trait Pos<Item>: Backend<Item> {
     fn pos(&self) -> usize;
 }
 
-pub trait WriteItems<Item>: Backend<Item> + std::iter::Extend<Item> {
+pub trait WriteItems<Item>: Backend<Item> + core::iter::Extend<Item> {
     fn push(&mut self, item: Item);
 }
 
@@ -192,7 +193,7 @@ impl<'a, Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> IntoIterator
     for &'a ReadCursor<Item, Buf, Dir>
 {
     type Item = Item;
-    type IntoIter = std::iter::Cloned<std::slice::Iter<'a, Item>>;
+    type IntoIter = core::iter::Cloned<core::slice::Iter<'a, Item>>;
 
     fn into_iter(self) -> Self::IntoIter {
         let slice = unsafe {
@@ -209,7 +210,7 @@ impl<'a, Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> IntoIterator
 }
 
 impl<Item: Clone + Debug, Buf: AsRef<[Item]>, Dir: Direction> Debug for ReadCursor<Item, Buf, Dir> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_list().entries(self).finish()
     }
 }

@@ -7,9 +7,10 @@
 
 pub mod lookup;
 
+use alloc::vec::Vec;
+use core::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::RangeInclusive};
 use num::{cast::AsPrimitive, traits::WrappingSub, Float, PrimInt};
 use statrs::distribution::{InverseCDF, Univariate};
-use std::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::RangeInclusive};
 
 use super::BitArray;
 
@@ -398,7 +399,7 @@ impl<Probability, const PRECISION: usize> Debug for Categorical<Probability, PRE
 where
     Probability: BitArray + Debug,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_list()
             .entries(self.fixed_point_probabilities())
             .finish()
@@ -452,7 +453,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// distribution
     pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
-        F: Float + std::iter::Sum<F> + Into<f64>,
+        F: Float + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -518,7 +519,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
         // Distribute remaining weight evenly among symbols with highest wins.
         while remaining_free_weight != Probability::zero() {
             slots.sort_by(|a, b| b.win.partial_cmp(&a.win).unwrap());
-            let batch_size = std::cmp::min(remaining_free_weight.as_(), slots.len());
+            let batch_size = core::cmp::min(remaining_free_weight.as_(), slots.len());
             for slot in &mut slots[..batch_size] {
                 slot.weight = slot.weight + Probability::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
                 slot.win = slot.prob * (1.0f64 / slot.weight.into()).ln_1p();
@@ -648,7 +649,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
         let mut accum = Probability::zero();
         let mut fingerprint = Probability::zero();
 
-        let mut cdf = std::iter::once(Probability::zero())
+        let mut cdf = core::iter::once(Probability::zero())
             .chain(probabilities.into_iter().map(|prob| {
                 let old_accum = accum;
                 accum = accum.wrapping_add(prob.borrow());
@@ -843,7 +844,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// Returns the entropy in units of bits (i.e., base 2).
     pub fn entropy<F>(&self) -> F
     where
-        F: Float + std::iter::Sum,
+        F: Float + core::iter::Sum,
         Probability: Into<F>,
     {
         let entropy_scaled = self
@@ -1039,11 +1040,11 @@ mod tests {
         test_entropy_model(model, 0..probabilities.len());
     }
 
-    fn test_entropy_model<D, const PRECISION: usize>(model: D, domain: std::ops::Range<D::Symbol>)
+    fn test_entropy_model<D, const PRECISION: usize>(model: D, domain: core::ops::Range<D::Symbol>)
     where
         D: EncoderModel<PRECISION, Probability = u32> + DecoderModel<PRECISION, Probability = u32>,
-        D::Symbol: Copy + std::fmt::Debug + PartialEq,
-        std::ops::Range<D::Symbol>: Iterator<Item = D::Symbol>,
+        D::Symbol: Copy + core::fmt::Debug + PartialEq,
+        core::ops::Range<D::Symbol>: Iterator<Item = D::Symbol>,
     {
         let mut sum = 0;
 
