@@ -27,14 +27,14 @@ use self::backend::{
 /// precision used in entropy models. See [below](
 /// #generic-parameters-compressed-word-type-w-and-precision) for details on these
 /// parameters. If you're unsure about the choice of `CompressedWord` and `PRECISION` then use
-/// the type alias [`DefaultStack`], which makes sane choices for typical
+/// the type alias [`DefaultAns`], which makes sane choices for typical
 /// applications.
 ///
-/// The `Stack` uses an entropy coding algorithm called [range Asymmetric
+/// The `Ans` uses an entropy coding algorithm called [range Asymmetric
 /// Numeral Systems (rANS)]. This means that it operates as a stack, i.e., a "last
 /// in first out" data structure: encoding "pushes symbols on" the stack and
 /// decoding "pops symbols off" the stack in reverse order. In contrast to
-/// [`SeekableDecoder`], decoding with a `Stack` *consumes* the compressed data for
+/// [`SeekableDecoder`], decoding with a `Ans` *consumes* the compressed data for
 /// the decoded symbols. This means that encoding and decoding can be interleaved
 /// arbitrarily, thus growing and shrinking the stack of compressed data as you go.
 ///
@@ -44,20 +44,20 @@ use self::backend::{
 /// [`encode_symbols`] or [`encode_iid_symbols`].
 ///
 /// ```
-/// use constriction::{models::LeakyQuantizer, stack::DefaultStack, Decode};
+/// use constriction::{models::LeakyQuantizer, ans::DefaultAns, Decode};
 ///
-/// // `DefaultStack` is a type alias to `Stack` with sane generic parameters.
-/// let mut stack = DefaultStack::new();
+/// // `DefaultAns` is a type alias to `Ans` with sane generic parameters.
+/// let mut ans = DefaultAns::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
 /// let entropy_model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
 ///
 /// let symbols = vec![-10, 4, 0, 3];
-/// stack.encode_iid_symbols_reverse(&symbols, &entropy_model).unwrap();
-/// println!("Encoded into {} bits: {:?}", stack.num_bits(), &*stack.get_compressed());
+/// ans.encode_iid_symbols_reverse(&symbols, &entropy_model).unwrap();
+/// println!("Encoded into {} bits: {:?}", ans.num_bits(), &*ans.get_compressed());
 ///
 /// // The call to `encode_iid_symbols` above encoded the symbols in reverse order (see
 /// // documentation). So popping them off now will yield the same symbols in original order.
-/// let reconstructed = stack
+/// let reconstructed = ans
 ///     .decode_iid_symbols(4, &entropy_model)
 ///     .collect::<Result<Vec<_>, core::convert::Infallible>>()
 ///     .unwrap();
@@ -66,14 +66,14 @@ use self::backend::{
 ///
 /// # Generic Parameters: Compressed Word Type `CompressedWord` and `PRECISION`
 ///
-/// The `Stack` is generic over a type `CompressedWord`, which is a [`BitArray`],
+/// The `Ans` is generic over a type `CompressedWord`, which is a [`BitArray`],
 /// and over a constant `PRECISION` of type `usize`. **If you're unsure how to set
-/// these parameters, consider using the type alias [`DefaultStack`], which uses
+/// these parameters, consider using the type alias [`DefaultAns`], which uses
 /// sane default values.**
 ///
 /// ## Meaning of `CompressedWord` and `PRECISION`
 ///
-/// If you need finer control over the entropy coder, and [`DefaultStack`] does not
+/// If you need finer control over the entropy coder, and [`DefaultAns`] does not
 /// fit your needs, then here are the details about the parameters `CompressedWord`
 /// and `PRECISION`:
 ///
@@ -81,11 +81,11 @@ use self::backend::{
 ///   primitive unsigned integer type, such as `u32` or `u16`. The type
 ///   `CompressedWord` is also used to represent probabilities in fixed-point
 ///   arithmetic in any [`EntropyModel`] that can be employed as an entropy
-///   model for this `Stack` (however, when representing probabilities, only use the
+///   model for this `Ans` (however, when representing probabilities, only use the
 ///   lowest `PRECISION` bits of a `CompressedWord` are ever used).
 ///
-///   The `Stack` operates on an internal state whose size is twice as large as
-///   `CompressedWord`. When encoding data, the `Stack` keeps filling up this
+///   The `Ans` operates on an internal state whose size is twice as large as
+///   `CompressedWord`. When encoding data, the `Ans` keeps filling up this
 ///   internal state with compressed data until it is about to overflow. Just before
 ///   the internal state would overflow, the stack chops off half of it and pushes
 ///   one "compressed word" of type `CompressedWord` onto a dynamically growable and
@@ -101,8 +101,8 @@ use self::backend::{
 ///
 ///   Since the smallest representable nonzero probability is `(1/2)^PRECISION`, the
 ///   largest possible (finite) [information content] of a single symbol is
-///   `PRECISION` bits. Thus, pushing a single symbol onto the `Stack` increases the
-///   "filling level" of the `Stack`'s internal state by at most `PRECISION` bits.
+///   `PRECISION` bits. Thus, pushing a single symbol onto the `Ans` increases the
+///   "filling level" of the `Ans`'s internal state by at most `PRECISION` bits.
 ///   Since `PRECISION` is at most the bitlength of `CompressedWord`, the procedure
 ///   of transferring one `CompressedWord` from the internal state to the buffer
 ///   described in the list item above is guaranteed to free up enough internal
@@ -111,7 +111,7 @@ use self::backend::{
 /// ## Guidance for Choosing `CompressedWord` and `PRECISION`
 ///
 /// If you choose `CompressedWord` and `PRECISION` manually (rather than using a
-/// [`DefaultStack`]), then your choice should take into account the following
+/// [`DefaultAns`]), then your choice should take into account the following
 /// considerations:
 ///
 /// - Set `PRECISION` to a high enough value so that you can approximate your
@@ -131,7 +131,7 @@ use self::backend::{
 ///   - it affects the size of the internal state of the stack; this is relevant if
 ///     you want to store many different internal states, e.g., as a jump table for
 ///     a [`SeekableDecoder`].
-///   - it leads to a small *constant* overhead in bitrate: since the `Stack`
+///   - it leads to a small *constant* overhead in bitrate: since the `Ans`
 ///     operates on an internal  state of two `CompressedWord`s, it has a constant
 ///     bitrate  overhead between zero and two `CompressedWord`s depending on the
 ///     filling level of the internal state. This constant  overhead is usually
@@ -150,17 +150,17 @@ use self::backend::{
 ///   an influence on the bitrate. It is usually *not* a good idea to set
 ///   `PRECISION` to the highest value allowed for a given `CompressedWord` (e.g.,
 ///   setting `CompressedWord = u32` and `PRECISION = 32` is *not* recommended).
-///   This is because, when encoding a symbol, the `Stack` expects there to be at
+///   This is because, when encoding a symbol, the `Ans` expects there to be at
 ///   least `PRECISION` bits of entropy in its internal state (conceptually,
 ///   encoding a symbol `s` consists of consuming `PRECISION` bits of entropy
 ///   followed by pushing `PRECISION + information_content(s)` bits of entropy onto
 ///   the internal state).  If `PRECISION` is set to the full size of
 ///   `CompressedWord` then there will be relatively frequent situations where the
 ///   internal state contains less than `PRECISION` bits of entropy, leading to an
-///   overhead (this situation will typically arise after the `Stack` transferred a
+///   overhead (this situation will typically arise after the `Ans` transferred a
 ///   `CompressedWord` from the internal state to the growable buffer).
 ///
-/// The type alias [`DefaultStack`] was chose with the above considerations in mind.
+/// The type alias [`DefaultAns`] was chose with the above considerations in mind.
 ///
 /// # Consistency Between Encoding and Decoding
 ///
@@ -173,7 +173,7 @@ use self::backend::{
 ///
 /// However, using the same entropy models for encoding and decoding is not a
 /// *general* requirement. It is perfectly legal to push (encode) symbols on the
-/// `Stack` using some entropy models, and then pop off (decode) symbols using
+/// `Ans` using some entropy models, and then pop off (decode) symbols using
 /// different entropy models. The popped off symbols will then in general be
 /// different from the original symbols, but will be generated in a deterministic
 /// way. If there is no deterministic relation between the entropy models used for
@@ -194,7 +194,7 @@ use self::backend::{
 /// [`is_empty`]: #method.is_empty`
 /// [`into_compressed`]: #method.into_compressed
 #[derive(Clone)]
-pub struct Stack<CompressedWord, State, Buf = Vec<CompressedWord>>
+pub struct Ans<CompressedWord, State, Buf = Vec<CompressedWord>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -210,13 +210,13 @@ where
     phantom: PhantomData<*mut CompressedWord>,
 }
 
-/// Type alias for a [`Stack`] with sane parameters for typical use cases.
+/// Type alias for a [`Ans`] with sane parameters for typical use cases.
 ///
 /// This type alias sets the generic type arguments `CompressedWord` and `State` to
 /// sane values for many typical use cases.
-pub type DefaultStack = Stack<u32, u64>;
+pub type DefaultAns = Ans<u32, u64>;
 
-impl<CompressedWord, State, Buf> Debug for Stack<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Debug for Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -228,8 +228,8 @@ where
     }
 }
 
-impl<'a, CompressedWord, State, Buf> From<&'a Stack<CompressedWord, State, Buf>>
-    for Stack<
+impl<'a, CompressedWord, State, Buf> From<&'a Ans<CompressedWord, State, Buf>>
+    for Ans<
         CompressedWord,
         State,
         backend::ReadCursorBackward<CompressedWord, &'a [CompressedWord]>,
@@ -239,23 +239,23 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: Backend<CompressedWord> + AsRef<[CompressedWord]>,
 {
-    fn from(stack: &'a Stack<CompressedWord, State, Buf>) -> Self {
-        Stack {
-            buf: backend::ReadCursorBackward::new(stack.buf().as_ref()),
-            state: stack.state(),
+    fn from(ans: &'a Ans<CompressedWord, State, Buf>) -> Self {
+        Ans {
+            buf: backend::ReadCursorBackward::new(ans.buf().as_ref()),
+            state: ans.state(),
             phantom: PhantomData,
         }
     }
 }
 
 impl<'a, CompressedWord, State, Buf, const PRECISION: usize> AsDecoder<'a, PRECISION>
-    for Stack<CompressedWord, State, Buf>
+    for Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: Backend<CompressedWord> + AsRef<[CompressedWord]> + 'a,
 {
-    type AsDecoder = Stack<
+    type AsDecoder = Ans<
         CompressedWord,
         State,
         backend::ReadCursorBackward<CompressedWord, &'a [CompressedWord]>,
@@ -263,25 +263,25 @@ where
 }
 
 impl<'a, CompressedWord, State, Buf, Dir>
-    From<&'a Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>>
-    for Stack<CompressedWord, State, ReadCursor<CompressedWord, &'a [CompressedWord], Dir>>
+    From<&'a Ans<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>>
+    for Ans<CompressedWord, State, ReadCursor<CompressedWord, &'a [CompressedWord], Dir>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: AsRef<[CompressedWord]>,
     Dir: backend::Direction,
 {
-    fn from(stack: &'a Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>) -> Self {
-        Stack {
-            buf: stack.buf().as_view(),
-            state: stack.state(),
+    fn from(ans: &'a Ans<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>) -> Self {
+        Ans {
+            buf: ans.buf().as_view(),
+            state: ans.state(),
             phantom: PhantomData,
         }
     }
 }
 
 impl<'a, CompressedWord, State, Buf, Dir, const PRECISION: usize> AsDecoder<'a, PRECISION>
-    for Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>
+    for Ans<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -289,10 +289,10 @@ where
     Dir: backend::Direction,
 {
     type AsDecoder =
-        Stack<CompressedWord, State, ReadCursor<CompressedWord, &'a [CompressedWord], Dir>>;
+        Ans<CompressedWord, State, ReadCursor<CompressedWord, &'a [CompressedWord], Dir>>;
 }
 
-impl<CompressedWord, State, Buf> Default for Stack<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Default for Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -303,7 +303,7 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Stack<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -315,12 +315,12 @@ where
     /// # Example
     ///
     /// ```
-    /// let mut stack = constriction::stack::DefaultStack::new();
+    /// let mut ans = constriction::ans::DefaultAns::new();
     ///
-    /// // ... push some symbols onto the stack ...
+    /// // ... push some symbols onto the ANS coder's stack ...
     ///
     /// // Finally, get the compressed data.
-    /// let compressed = stack.into_compressed();
+    /// let compressed = ans.into_compressed();
     /// ```
     pub fn new() -> Self
     where
@@ -368,9 +368,9 @@ where
     /// symbols to an existing compressed buffer of data.
     ///
     /// Returns `Err(compressed)` if `compressed` is not empty and its last entry is
-    /// zero, since a `Stack` cannot represent trailing zero words. This error cannot
+    /// zero, since a `Ans` cannot represent trailing zero words. This error cannot
     /// occur if `compressed` was obtained from [`into_compressed`], which never returns
-    /// data with a trailing zero word. If you want to construct a `Stack` from an
+    /// data with a trailing zero word. If you want to construct a `Ans` from an
     /// unknown source of binary data (e.g., to decode some side information into latent
     /// variables) then call [`from_binary`] instead.
     ///
@@ -405,16 +405,16 @@ where
     /// Different to `from_compressed`, this method also works if `data` ends in a zero
     /// word. Calling this method is equivalent to (but likely more efficient than)
     /// appending a `1` word to `data` and then calling `from_compressed`. Note that
-    /// therefore, this method always constructs a non-empty `Stack` (even if `data` is
+    /// therefore, this method always constructs a non-empty `Ans` (even if `data` is
     /// empty):
     ///
     /// ```
-    /// use constriction::stack::DefaultStack;
+    /// use constriction::ans::DefaultAns;
     ///
-    /// let stack1 = DefaultStack::from_binary(Vec::new());
+    /// let stack1 = DefaultAns::from_binary(Vec::new());
     /// assert!(!stack1.is_empty()); // <-- stack1 is *not* empty.
     ///
-    /// let stack2 = DefaultStack::from_compressed(Vec::new()).unwrap();
+    /// let stack2 = DefaultAns::from_compressed(Vec::new()).unwrap();
     /// assert!(stack2.is_empty()); // <-- stack2 is empty.
     /// ```
     /// [`from_compressed`]: #method.from_compressed
@@ -427,7 +427,7 @@ where
         // resizing is both likely to happen and likely to be unnecessary: `data` may be
         // explicitly copied out from some larger buffer, in which case its capacity will
         // likely match its size, so appending a single word would cause a resize. Further,
-        // the `Stack` may be intended for decoding, and so the resizing is completely
+        // the `Ans` may be intended for decoding, and so the resizing is completely
         // avoidable.
         let state = bit_array_from_chunks(
             core::iter::once(CompressedWord::one())
@@ -441,7 +441,7 @@ where
         }
     }
 
-    /// Discards all compressed data and resets the stack to the same state as
+    /// Discards all compressed data and resets the coder to the same state as
     /// [`Coder::new`](#method.new).
     pub fn clear(&mut self)
     where
@@ -514,7 +514,7 @@ where
     /// This method requires a `&mut self` receiver to temporarily append `state` to
     /// [`buf`] (this mutationwill be reversed to recreate the original `buf` as soon as
     /// the caller drops the returned value). If you don't have mutable access to the
-    /// `Stack`, consider calling [`iter_compressed`] instead, or get the `buf` and
+    /// `Ans`, consider calling [`iter_compressed`] instead, or get the `buf` and
     /// `state` separately by calling [`buf`] and [`state`], respectively.
     ///
     /// The return type dereferences to `&[CompressedWord]`, thus providing read-only
@@ -524,22 +524,22 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::Categorical, stack::DefaultStack, Decode};
+    /// use constriction::{models::Categorical, ans::DefaultAns, Decode};
     ///
-    /// let mut stack = DefaultStack::new();
+    /// let mut ans = DefaultAns::new();
     ///
-    /// // Push some data on the stack.
+    /// // Push some data on the ans.
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
     ///     .unwrap();
-    /// stack.encode_iid_symbols_reverse(&symbols, &model).unwrap();
+    /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Inspect the compressed data.
-    /// dbg!(stack.get_compressed());
+    /// dbg!(ans.get_compressed());
     ///
-    /// // We can still use the stack afterwards.
-    /// let reconstructed = stack
+    /// // We can still use the ANS coder afterwards.
+    /// let reconstructed = ans
     ///     .decode_iid_symbols(4, &model)
     ///     .collect::<Result<Vec<_>, core::convert::Infallible>>()
     ///     .unwrap();
@@ -558,29 +558,29 @@ where
         CoderGuard::new(self)
     }
 
-    /// Iterates over the compressed data currently on the stack.
+    /// Iterates over the compressed data currently on the ans.
     ///
     /// In contrast to [`get_compressed`] or [`into_compressed`], this method does
-    /// not require mutable access or even ownership of the `Stack`.
+    /// not require mutable access or even ownership of the `Ans`.
     ///
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::{Categorical, LeakyQuantizer}, stack::DefaultStack, Encode};
+    /// use constriction::{models::{Categorical, LeakyQuantizer}, ans::DefaultAns, Encode};
     ///
     /// // Create a stack and encode some stuff.
-    /// let mut stack = DefaultStack::new();
+    /// let mut ans = DefaultAns::new();
     /// let symbols = vec![8, -12, 0, 7];
     /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
     /// let model =
     ///     quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
-    /// stack.encode_iid_symbols(&symbols, &model).unwrap();
+    /// ans.encode_iid_symbols(&symbols, &model).unwrap();
     ///
     /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
-    /// let compressed_iter = stack.iter_compressed();
+    /// let compressed_iter = ans.iter_compressed();
     /// let compressed_collected = compressed_iter.collect::<Vec<_>>();
     /// assert!(!compressed_collected.is_empty());
-    /// assert_eq!(compressed_collected, *stack.get_compressed());
+    /// assert_eq!(compressed_collected, *ans.get_compressed());
     /// ```
     ///
     /// [`get_compressed`]: #method.get_compressed
@@ -594,7 +594,7 @@ where
         buf_iter.chain(state_iter)
     }
 
-    /// Returns the number of compressed words on the stack.
+    /// Returns the number of compressed words on the ANS coder's stack.
     ///
     /// This includes a constant overhead of between one and two words unless the
     /// stack is completely empty.
@@ -635,50 +635,50 @@ where
     /// Returns a decoder that implements [`Seek`].
     ///
     /// The returned decoder shares access to the compressed data with the original
-    /// `Stack` (i.e., `self`). This means that:
+    /// `Ans` (i.e., `self`). This means that:
     /// - you can call this method several times to create several seekable decoders
     ///   with independent views into the same compressed data;
     /// - once the lifetime of all handed out seekable decoders ends, the original
-    ///   `Stack` can be used again; and
-    /// - the constructed seekable decoder cannot outlive the original `Stack`; for
-    ///   example, if the original `Stack` lives on the calling function's call stack
-    ///   then you cannot return the constructed seekable decoder from the calling
+    ///   `Ans` can be used again; and
+    /// - the constructed seekable decoder cannot outlive the original `Ans`; for
+    ///   example, if the original `Ans` lives on the calling function's call stack
+    ///   frame then you cannot return the constructed seekable decoder from the calling
     ///   function. If this is a problem then call [`into_seekable_decoder`] instead.
     ///
     /// # Limitations
     ///
-    /// This method is only implemented for `Stack`s whose backing store of compressed
+    /// This method is only implemented for `Ans`s whose backing store of compressed
     /// data (`Buf`) implements `AsRef<[CompressedWord]>`. This includes the default
     /// backing data store `Buf = Vec<CompressedWord>`.
     ///
     /// [`into_seekable_decoder`]: Self::into_seekable_decoder
     pub fn seekable_decoder(
         &self,
-    ) -> Stack<CompressedWord, State, backend::ReadCursorBackward<CompressedWord, &[CompressedWord]>>
+    ) -> Ans<CompressedWord, State, backend::ReadCursorBackward<CompressedWord, &[CompressedWord]>>
     where
         Buf: AsRef<[CompressedWord]>,
     {
-        Stack {
+        Ans {
             buf: backend::ReadCursorBackward::new(self.buf.as_ref()),
             state: self.state,
             phantom: PhantomData,
         }
     }
 
-    /// Consumes the `Stack` and returns a decoder that implements [`Seek`].
+    /// Consumes the `Ans` and returns a decoder that implements [`Seek`].
     ///
     /// This method is similar to [`seekable_decoder`] except that it takes ownership of
-    /// the original `Stack`, so the returned seekable decoder can typically be returned
+    /// the original `Ans`, so the returned seekable decoder can typically be returned
     /// from the calling function or put on the heap.
     ///
     /// [`seekable_decoder`]: Self::seekable_decoder
     pub fn into_seekable_decoder(
         self,
-    ) -> Stack<CompressedWord, State, backend::ReadCursorBackward<CompressedWord, Buf>>
+    ) -> Ans<CompressedWord, State, backend::ReadCursorBackward<CompressedWord, Buf>>
     where
         Buf: AsRef<[CompressedWord]>,
     {
-        Stack {
+        Ans {
             buf: backend::ReadCursorBackward::new(self.buf),
             state: self.state,
             phantom: PhantomData,
@@ -709,7 +709,7 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Stack<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -767,43 +767,43 @@ where
         self.encode_iid_symbols(symbols.into_iter().rev(), model)
     }
 
-    /// Consumes the stack and returns the compressed data.
+    /// Consumes the ANS coder and returns the compressed data.
     ///
-    /// The returned data can be used to recreate a stack with the same state
+    /// The returned data can be used to recreate an ANS coder with the same state
     /// (e.g., for decoding) by passing it to
     /// [`from_compressed`](#method.from_compressed).
     ///
-    /// If you don't want to consume the stack, consider calling
+    /// If you don't want to consume the ANS coder, consider calling
     /// [`get_compressed`](#method.get_compressed),
     /// [`iter_compressed`](#method.iter_compressed) instead.
     ///
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::Categorical, stack::DefaultStack, Decode};
+    /// use constriction::{models::Categorical, ans::DefaultAns, Decode};
     ///
-    /// let mut stack = DefaultStack::new();
+    /// let mut ans = DefaultAns::new();
     ///
-    /// // Push some data onto the stack:
+    /// // Push some data onto the ANS coder's stack:
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
     ///     .unwrap();
-    /// stack.encode_iid_symbols_reverse(&symbols, &model).unwrap();
+    /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
-    /// // Get the compressed data, consuming the stack:
-    /// let compressed = stack.into_compressed();
+    /// // Get the compressed data, consuming the ANS coder:
+    /// let compressed = ans.into_compressed();
     ///
     /// // ... write `compressed` to a file and then read it back later ...
     ///
-    /// // Create a new stack with the same state and use it for decompression:
-    /// let mut stack = DefaultStack::from_compressed(compressed).expect("Corrupted compressed file.");
-    /// let reconstructed = stack
+    /// // Create a new ANS coder with the same state and use it for decompression:
+    /// let mut ans = DefaultAns::from_compressed(compressed).expect("Corrupted compressed file.");
+    /// let reconstructed = ans
     ///     .decode_iid_symbols(4, &model)
     ///     .collect::<Result<Vec<_>, core::convert::Infallible>>()
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
-    /// assert!(stack.is_empty())
+    /// assert!(ans.is_empty())
     /// ```
     pub fn into_compressed(mut self) -> Buf {
         self.buf
@@ -823,21 +823,21 @@ where
     ///
     /// Returns `Err(())` if the compressed data (excluding an obligatory trailing
     /// `1` bit) does not fit into an integer number of `CompressedWord`s. This error
-    /// case includes the case of an empty `Stack` (since an empty `Stack` lacks the
+    /// case includes the case of an empty `Ans` (since an empty `Ans` lacks the
     /// obligatory trailing one-bit).
     ///
     /// # Example
     ///
     /// ```
-    /// // Some binary data we want to represent on a `Stack`.
+    /// // Some binary data we want to represent on a `Ans`.
     /// let data = vec![0x89ab_cdef, 0x0123_4567];
     ///
-    /// // Constructing a `Stack` with `from_binary` indicates that all bits of `data` are
+    /// // Constructing a `Ans` with `from_binary` indicates that all bits of `data` are
     /// // considered part of the information-carrying payload.
-    /// let stack1 = constriction::stack::DefaultStack::from_binary(data.clone());
+    /// let stack1 = constriction::ans::DefaultAns::from_binary(data.clone());
     /// assert_eq!(stack1.clone().into_binary().unwrap(), data); // <-- Retrieves the original `data`.
     ///
-    /// // By contrast, if we construct a `Stack` with `from_compressed`, we indicate that
+    /// // By contrast, if we construct a `Ans` with `from_compressed`, we indicate that
     /// // - any leading `0` bits of the last entry of `data` are not considered part of
     /// //   the information-carrying payload; and
     /// // - the (obligatory) first `1` bit of the last entry of `data` defines the
@@ -845,7 +845,7 @@ where
     /// //   also not considered part of the payload.
     /// // Therefore, `stack2` below only contains `32 * 2 - 7 - 1 = 56` bits of payload,
     /// // which cannot be exported into an integer number of `u32` words:
-    /// let stack2 = constriction::stack::DefaultStack::from_compressed(data.clone()).unwrap();
+    /// let stack2 = constriction::ans::DefaultAns::from_compressed(data.clone()).unwrap();
     /// assert!(stack2.clone().into_binary().is_err()); // <-- Returns an error.
     ///
     /// // Use `into_compressed` to retrieve the data in this case:
@@ -872,7 +872,7 @@ where
     }
 }
 
-impl<CompressedWord, State> Stack<CompressedWord, State, Vec<CompressedWord>>
+impl<CompressedWord, State> Ans<CompressedWord, State, Vec<CompressedWord>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -891,7 +891,7 @@ where
 }
 
 impl<CompressedWord, State, Buf, Dir>
-    Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>
+    Ans<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>
 where
     CompressedWord: BitArray,
     State: BitArray + AsPrimitive<CompressedWord> + From<CompressedWord>,
@@ -900,10 +900,10 @@ where
 {
     pub fn into_reversed(
         self,
-    ) -> Stack<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir::Reverse>> {
+    ) -> Ans<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir::Reverse>> {
         let (buf, state) = self.into_buf_and_state();
         let buf = buf.into_reversed();
-        Stack {
+        Ans {
             buf,
             state,
             phantom: PhantomData,
@@ -911,7 +911,7 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Code for Stack<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Code for Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -933,7 +933,7 @@ where
 }
 
 impl<CompressedWord, State, Buf, const PRECISION: usize> Encode<PRECISION>
-    for Stack<CompressedWord, State, Buf>
+    for Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -987,7 +987,7 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Stack<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -1026,7 +1026,7 @@ where
 }
 
 impl<CompressedWord, State, Buf, const PRECISION: usize> Decode<PRECISION>
-    for Stack<CompressedWord, State, Buf>
+    for Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -1041,7 +1041,7 @@ where
     /// [`decode_iid_symbols`](#method.decode_iid_symbols) instead.
     ///
     /// This method is called `decode_symbol` rather than `decode_symbol` to stress the
-    /// fact that the `Stack` is a stack: `decode_symbol` will return the *last* symbol
+    /// fact that the `Ans` is a stack: `decode_symbol` will return the *last* symbol
     /// that was previously encoded via [`encode_symbol`](#method.encode_symbol).
     ///
     /// Note that this method cannot fail. It will still produce symbols in a
@@ -1066,7 +1066,7 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Seek for Stack<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Seek for Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -1080,7 +1080,7 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Pos for Stack<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Pos for Ans<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -1092,11 +1092,11 @@ where
 }
 
 /// Provides temporary read-only access to the compressed data wrapped in a
-/// [`Stack`].
+/// [`Ans`].
 ///
 /// Dereferences to `&[CompressedWord]`. See [`Coder::get_compressed`] for an example.
 ///
-/// [`Stack`]: struct.Coder.html
+/// [`Ans`]: struct.Coder.html
 /// [`Coder::get_compressed`]: struct.Coder.html#method.get_compressed
 struct CoderGuard<'a, CompressedWord, State, Buf>
 where
@@ -1104,7 +1104,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
 {
-    inner: &'a mut Stack<CompressedWord, State, Buf>,
+    inner: &'a mut Ans<CompressedWord, State, Buf>,
 }
 
 impl<'a, CompressedWord, State, Buf> CoderGuard<'a, CompressedWord, State, Buf>
@@ -1113,13 +1113,13 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
 {
-    fn new(stack: &'a mut Stack<CompressedWord, State, Buf>) -> Self {
+    fn new(ans: &'a mut Ans<CompressedWord, State, Buf>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
-        for chunk in bit_array_to_chunks_truncated(stack.state).rev() {
-            stack.buf.push(chunk)
+        for chunk in bit_array_to_chunks_truncated(ans.state).rev() {
+            ans.buf.push(chunk)
         }
 
-        Self { inner: stack }
+        Self { inner: ans }
     }
 }
 
@@ -1176,12 +1176,12 @@ mod tests {
 
     #[test]
     fn compress_none() {
-        let coder1 = DefaultStack::new();
+        let coder1 = DefaultAns::new();
         assert!(coder1.is_empty());
         let compressed = coder1.into_compressed();
         assert!(compressed.is_empty());
 
-        let coder2 = DefaultStack::from_compressed(compressed).unwrap();
+        let coder2 = DefaultAns::from_compressed(compressed).unwrap();
         assert!(coder2.is_empty());
     }
 
@@ -1212,7 +1212,7 @@ mod tests {
     {
         let symbols = symbols.into_iter();
 
-        let mut encoder = DefaultStack::new();
+        let mut encoder = DefaultAns::new();
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
         let model = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
@@ -1222,7 +1222,7 @@ mod tests {
         let compressed = encoder.into_compressed();
         assert_eq!(compressed.len(), expected_size);
 
-        let mut decoder = DefaultStack::from_compressed(compressed).unwrap();
+        let mut decoder = DefaultAns::from_compressed(compressed).unwrap();
         for symbol in symbols.rev() {
             assert_eq!(decoder.decode_symbol(&model).unwrap(), symbol);
         }
@@ -1334,31 +1334,29 @@ mod tests {
             symbols_categorical.push(symbol);
         }
 
-        let mut stack = Stack::<CompressedWord, State>::new();
+        let mut ans = Ans::<CompressedWord, State>::new();
 
-        stack
-            .encode_iid_symbols_reverse(&symbols_categorical, &categorical)
+        ans.encode_iid_symbols_reverse(&symbols_categorical, &categorical)
             .unwrap();
         dbg!(
-            stack.num_valid_bits(),
+            ans.num_valid_bits(),
             AMT as f64 * categorical.entropy::<f64>()
         );
 
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
-        stack
-            .encode_symbols_reverse(symbols_gaussian.iter().zip(&means).zip(&stds).map(
-                |((&symbol, &mean), &core)| {
-                    (symbol, quantizer.quantize(Normal::new(mean, core).unwrap()))
-                },
-            ))
-            .unwrap();
-        dbg!(stack.num_valid_bits());
+        ans.encode_symbols_reverse(symbols_gaussian.iter().zip(&means).zip(&stds).map(
+            |((&symbol, &mean), &core)| {
+                (symbol, quantizer.quantize(Normal::new(mean, core).unwrap()))
+            },
+        ))
+        .unwrap();
+        dbg!(ans.num_valid_bits());
 
         // Test if import/export of compressed data works.
-        let compressed = stack.into_compressed();
-        let mut stack = Stack::from_compressed(compressed).unwrap();
+        let compressed = ans.into_compressed();
+        let mut ans = Ans::from_compressed(compressed).unwrap();
 
-        let reconstructed_gaussian = stack
+        let reconstructed_gaussian = ans
             .decode_symbols(
                 means
                     .iter()
@@ -1367,12 +1365,12 @@ mod tests {
             )
             .collect::<Result<Vec<_>, core::convert::Infallible>>()
             .unwrap();
-        let reconstructed_categorical = stack
+        let reconstructed_categorical = ans
             .decode_iid_symbols(AMT, &categorical)
             .collect::<Result<Vec<_>, core::convert::Infallible>>()
             .unwrap();
 
-        assert!(stack.is_empty());
+        assert!(ans.is_empty());
 
         assert_eq!(symbols_gaussian, reconstructed_gaussian);
         assert_eq!(symbols_categorical, reconstructed_categorical);
@@ -1386,7 +1384,7 @@ mod tests {
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
         let model = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
 
-        let mut encoder = DefaultStack::new();
+        let mut encoder = DefaultAns::new();
 
         let mut rng = Xoshiro256StarStar::seed_from_u64(123);
         let mut symbols = Vec::with_capacity(NUM_CHUNKS);
@@ -1445,7 +1443,7 @@ mod tests {
 
         {
             let mut seekable_decoder =
-                Stack::from_compressed(backend::ReadCursorForward::new(compressed)).unwrap();
+                Ans::from_compressed(backend::ReadCursorForward::new(compressed)).unwrap();
 
             // Verify that decoding leads to the expected positions and states.
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {

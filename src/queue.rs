@@ -132,7 +132,7 @@ where
         self.buf
     }
 
-    /// Returns a view into the full compressed data currently on the stack.
+    /// Returns a view into the full compressed data currently on the ans.
     ///
     /// This is a low level method that provides a view into the current compressed
     /// data at zero cost, but in a somewhat inconvenient representation. In most
@@ -173,9 +173,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::Categorical, stack::DefaultStack, Decode};
+    /// use constriction::{models::Categorical, ans::DefaultAns, Decode};
     ///
-    /// let mut coder = DefaultStack::new();
+    /// let mut coder = DefaultAns::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
@@ -209,7 +209,7 @@ where
         IterCompressed::new(self)
     }
 
-    /// Returns the number of compressed words on the stack.
+    /// Returns the number of compressed words on the ans.
     ///
     /// This includes a constant overhead of between one and two words unless the
     /// coder is completely empty.
@@ -232,7 +232,7 @@ where
         }
     }
 
-    /// Returns the size of the current stack of compressed data in bits.
+    /// Returns the size of the current queue of compressed data in bits.
     ///
     /// This includes some constant overhead unless the coder is completely empty
     /// (see [`num_words`](#method.num_words)).

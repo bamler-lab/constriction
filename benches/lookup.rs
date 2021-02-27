@@ -1,7 +1,7 @@
 use std::any::type_name;
 
 use constriction::{
-    models::lookup::EncoderHashLookupTable, stack::Stack, BitArray, Code, Decode, Pos, Seek,
+    models::lookup::EncoderHashLookupTable, ans::Ans, BitArray, Code, Decode, Pos, Seek,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use num::cast::AsPrimitive;
@@ -43,7 +43,7 @@ where
     .unwrap();
 
     let data = make_data(&symbols, 10_000);
-    let mut encoder = Stack::<u16, u32>::new();
+    let mut encoder = Ans::<u16, u32>::new();
 
     let label_suffix = format!("u16_u32_{}_{}", type_name::<Probability>(), PRECISION);
     c.bench_function(&format!("encoding_{}", label_suffix), |b| {
@@ -53,7 +53,7 @@ where
                 .encode_iid_symbols_reverse(black_box(&data), &encoder_model)
                 .unwrap();
 
-            // Access `stack.state()` and `stack.buf()` at an unpredictable position.
+            // Access `ans.state()` and `ans.buf()` at an unpredictable position.
             let index = encoder.state() as usize % encoder.buf().len();
             black_box(encoder.buf()[index]);
         })

@@ -8,7 +8,7 @@ use core::{
 
 use num::cast::AsPrimitive;
 
-use super::Stack;
+use super::Ans;
 
 use crate::{
     models::{DecoderModel, EncoderModel},
@@ -23,16 +23,16 @@ where
 {
     /// The supply of bits.
     ///
-    /// Satisfies the normal invariant of a `Stack`.
-    supply: Stack<CompressedWord, State>,
+    /// Satisfies the normal invariant of a `Ans`.
+    supply: Ans<CompressedWord, State>,
 
     /// Remaining information not used up by decoded symbols.
     ///
-    /// Satisfies different invariants than a usual `Stack`:
+    /// Satisfies different invariants than a usual `Ans`:
     /// - `waste.state() >= State::one() << (State::BITS - PRECISION - CompressedWord::BITS)`
     ///   unless `waste.buf().is_empty()`; and
     /// - `waste.state() < State::one() << (State::BITS - PRECISION)`
-    waste: Stack<CompressedWord, State>,
+    waste: Ans<CompressedWord, State>,
 }
 
 #[derive(Debug, Clone)]
@@ -56,27 +56,27 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn new(stack: Stack<CompressedWord, State>) -> Result<Self, Stack<CompressedWord, State>> {
+    fn new(ans: Ans<CompressedWord, State>) -> Result<Self, Ans<CompressedWord, State>> {
         assert!(CompressedWord::BITS > 0);
         assert!(State::BITS >= 2 * CompressedWord::BITS);
         assert!(State::BITS % CompressedWord::BITS == 0);
         assert!(PRECISION <= CompressedWord::BITS);
         assert!(PRECISION > 0);
 
-        // The following also assures that `stack.buf()` is no-empty since
+        // The following also assures that `ans.buf()` is no-empty since
         // `State::BITS / CompressedWord::BITS - 1 >= 1`.
-        if stack.buf().len() < State::BITS / CompressedWord::BITS - 1 {
+        if ans.buf().len() < State::BITS / CompressedWord::BITS - 1 {
             // Not enough data to initialize `supply` and `waste`.
-            return Err(stack);
+            return Err(ans);
         }
 
-        let (buf, supply_state) = stack.into_buf_and_state();
-        let prefix = Stack::from_binary(buf);
+        let (buf, supply_state) = ans.into_buf_and_state();
+        let prefix = Ans::from_binary(buf);
         let (supply_buf, waste_state) = prefix.into_buf_and_state();
 
-        let supply = Stack::with_buf_and_state(supply_buf, supply_state)
-            .expect("`stack` had non-empty `buf`, so its state satisfies invariant.");
-        let mut waste = Stack::with_state_and_empty_buf(waste_state);
+        let supply = Ans::with_buf_and_state(supply_buf, supply_state)
+            .expect("`ans` had non-empty `buf`, so its state satisfies invariant.");
+        let mut waste = Ans::with_state_and_empty_buf(waste_state);
         if PRECISION == CompressedWord::BITS {
             waste.flush_state();
         }
@@ -115,7 +115,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::LeakyQuantizer, Decode, stack::DefaultStack};
+    /// use constriction::{models::LeakyQuantizer, Decode, ans::DefaultAns};
     ///
     /// // Construct two entropy models with 24 bits and 20 bits of precision, respectively.
     /// let continuous_distribution = statrs::distribution::Normal::new(0.0, 10.0).unwrap();
@@ -126,7 +126,7 @@ where
     ///
     /// // Construct a `stable::Decoder` and decode some data with the 24 bit precision entropy model.
     /// let data = vec![0x0123_4567u32, 0x89ab_cdef];
-    /// let mut stable_decoder = DefaultStack::from_binary(data).into_stable_decoder().unwrap();
+    /// let mut stable_decoder = DefaultAns::from_binary(data).into_stable_decoder().unwrap();
     /// let _symbol_a = stable_decoder.decode_symbol(distribution24);
     ///
     /// // Change the `Decoder`'s precision and decode data with the 20 bit precision entropy model.
@@ -155,7 +155,7 @@ where
     /// internal representation with the same invariants. Therefore, we could in
     /// principle have merged the two into a single type. However, keeping them as
     /// separate types makes the API more clear and prevents misuse since the conversion
-    /// to and from a [`Stack`] is different for `stable::Decoder` and
+    /// to and from a [`Ans`] is different for `stable::Decoder` and
     /// `stable::Encoder`.
     ///
     /// [`stable::Encoder`]: Encoder
@@ -163,58 +163,56 @@ where
         Encoder(self.0)
     }
 
-    pub fn finish(self) -> (Vec<CompressedWord>, Stack<CompressedWord, State>) {
+    pub fn finish(self) -> (Vec<CompressedWord>, Ans<CompressedWord, State>) {
         let (prefix, supply_state) = self.0.supply.into_buf_and_state();
-        let suffix = Stack::with_buf_and_state(self.0.waste.into_compressed(), supply_state)
+        let suffix = Ans::with_buf_and_state(self.0.waste.into_compressed(), supply_state)
             .expect("`stable::Decoder` always reserves enough `supply.state`.");
 
         (prefix, suffix)
     }
 
-    pub fn finish_and_concatenate(self) -> Stack<CompressedWord, State> {
-        let stack = concatenate(self.finish())
+    pub fn finish_and_concatenate(self) -> Ans<CompressedWord, State> {
+        let ans = concatenate(self.finish())
             .expect("`stable::Decoder` always reserves enough `supply.state`.");
-        stack
+        ans
     }
 
-    pub fn supply(&self) -> &Stack<CompressedWord, State> {
+    pub fn supply(&self) -> &Ans<CompressedWord, State> {
         self.0.supply()
     }
 
-    pub fn supply_mut(&mut self) -> &mut Stack<CompressedWord, State> {
+    pub fn supply_mut(&mut self) -> &mut Ans<CompressedWord, State> {
         self.0.supply_mut()
     }
 
     pub fn waste_mut<'a>(
         &'a mut self,
-    ) -> impl DerefMut<Target = Stack<CompressedWord, State>> + Drop + 'a {
+    ) -> impl DerefMut<Target = Ans<CompressedWord, State>> + Drop + 'a {
         self.0.waste_mut()
     }
 
-    pub fn into_supply_and_waste(
-        self,
-    ) -> (Stack<CompressedWord, State>, Stack<CompressedWord, State>) {
-        // `self.waste` satisfies slightly different invariants than a usual `Stack`.
-        // We therefore first restore the usual `Stack` invariant.
+    pub fn into_supply_and_waste(self) -> (Ans<CompressedWord, State>, Ans<CompressedWord, State>) {
+        // `self.waste` satisfies slightly different invariants than a usual `Ans`.
+        // We therefore first restore the usual `Ans` invariant.
         self.0.into_supply_and_waste()
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> TryFrom<Stack<CompressedWord, State>>
+impl<CompressedWord, State, const PRECISION: usize> TryFrom<Ans<CompressedWord, State>>
     for Decoder<CompressedWord, State, PRECISION>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type Error = Stack<CompressedWord, State>;
+    type Error = Ans<CompressedWord, State>;
 
-    fn try_from(stack: Stack<CompressedWord, State>) -> Result<Self, Stack<CompressedWord, State>> {
-        Self::new(stack)
+    fn try_from(ans: Ans<CompressedWord, State>) -> Result<Self, Ans<CompressedWord, State>> {
+        Self::new(ans)
     }
 }
 
 impl<CompressedWord, State, const PRECISION: usize> From<Decoder<CompressedWord, State, PRECISION>>
-    for Stack<CompressedWord, State>
+    for Ans<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -229,28 +227,28 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn new(stack: Stack<CompressedWord, State>) -> Result<Self, Stack<CompressedWord, State>> {
+    fn new(ans: Ans<CompressedWord, State>) -> Result<Self, Ans<CompressedWord, State>> {
         assert!(CompressedWord::BITS > 0);
         assert!(State::BITS >= 2 * CompressedWord::BITS);
         assert!(State::BITS % CompressedWord::BITS == 0);
         assert!(PRECISION <= CompressedWord::BITS);
         assert!(PRECISION > 0);
 
-        // The following also assures that `stack.buf()` is no-empty since
+        // The following also assures that `ans.buf()` is no-empty since
         // `State::BITS / CompressedWord::BITS - 1 >= 1`.
-        if stack.buf().len() < State::BITS / CompressedWord::BITS - 1 {
+        if ans.buf().len() < State::BITS / CompressedWord::BITS - 1 {
             // Not enough data to initialize `supply` and `waste`.
-            return Err(stack);
+            return Err(ans);
         }
 
-        if stack.buf.last() == Some(&CompressedWord::zero()) {
+        if ans.buf.last() == Some(&CompressedWord::zero()) {
             // Invalid data that couldn't have been produced by `stable::Decoder::finish()`.
-            return Err(stack);
+            return Err(ans);
         }
 
-        let (buf, supply_state) = stack.into_buf_and_state();
-        let supply = Stack::with_state_and_empty_buf(supply_state);
-        let mut waste = Stack::from_compressed(buf)
+        let (buf, supply_state) = ans.into_buf_and_state();
+        let supply = Ans::with_state_and_empty_buf(supply_state);
+        let mut waste = Ans::from_compressed(buf)
             .expect("We verified above that `buf` doesn't end in zero word");
         if waste.state() >= State::one() << (State::BITS - PRECISION) {
             waste.flush_state();
@@ -259,7 +257,7 @@ where
         Ok(Self(Coder { supply, waste }))
     }
 
-    /// Stable variant of [`Stack::encode_symbols_reverse`].
+    /// Stable variant of [`Ans::encode_symbols_reverse`].
     pub fn encode_symbols_reverse<S, D, I>(
         &mut self,
         symbols_and_models: I,
@@ -275,7 +273,7 @@ where
         self.encode_symbols(symbols_and_models.into_iter().rev())
     }
 
-    /// Stable variant of [`Stack::try_encode_symbols_reverse`].
+    /// Stable variant of [`Ans::try_encode_symbols_reverse`].
     pub fn try_encode_symbols_reverse<S, D, E, I>(
         &mut self,
         symbols_and_models: I,
@@ -291,7 +289,7 @@ where
         self.try_encode_symbols(symbols_and_models.into_iter().rev())
     }
 
-    /// Stable variant of [`Stack::encode_iid_symbols_reverse`].
+    /// Stable variant of [`Ans::encode_iid_symbols_reverse`].
     pub fn encode_iid_symbols_reverse<S, D, I>(
         &mut self,
         symbols: I,
@@ -345,7 +343,7 @@ where
     /// internal representation with the same invariants. Therefore, we could in
     /// principle have merged the two into a single type. However, keeping them as
     /// separate types makes the API more clear and prevents misuse since the conversion
-    /// to and from a [`Stack`] is different for `stable::Encoder` and
+    /// to and from a [`Ans`] is different for `stable::Encoder` and
     /// `stable::Decoder`.
     ///
     /// [`stable::Decoder`]: Decoder
@@ -353,7 +351,7 @@ where
         Decoder(self.0)
     }
 
-    pub fn finish(mut self) -> Result<(Vec<CompressedWord>, Stack<CompressedWord, State>), Self> {
+    pub fn finish(mut self) -> Result<(Vec<CompressedWord>, Ans<CompressedWord, State>), Self> {
         if PRECISION == CompressedWord::BITS {
             if self.0.waste.state() >> (State::BITS - 2 * CompressedWord::BITS) != State::one()
                 || self.0.waste.try_refill_state().is_err()
@@ -378,56 +376,54 @@ where
             waste_state = waste_state >> CompressedWord::BITS;
         }
 
-        let suffix = Stack::with_buf_and_state(buf, state)
+        let suffix = Ans::with_buf_and_state(buf, state)
             .expect("`stable::Encoder` always reserves enough `supply.state`.");
 
         Ok((prefix, suffix))
     }
 
-    pub fn finish_and_concatenate(self) -> Result<Stack<CompressedWord, State>, Self> {
-        let stack = concatenate(self.finish()?)
+    pub fn finish_and_concatenate(self) -> Result<Ans<CompressedWord, State>, Self> {
+        let ans = concatenate(self.finish()?)
             .expect("`stable::Encoder` always reserves enough `supply.state`.");
-        Ok(stack)
+        Ok(ans)
     }
 
-    pub fn supply(&self) -> &Stack<CompressedWord, State> {
+    pub fn supply(&self) -> &Ans<CompressedWord, State> {
         self.0.supply()
     }
 
-    pub fn supply_mut(&mut self) -> &mut Stack<CompressedWord, State> {
+    pub fn supply_mut(&mut self) -> &mut Ans<CompressedWord, State> {
         self.0.supply_mut()
     }
 
     pub fn waste_mut<'a>(
         &'a mut self,
-    ) -> impl DerefMut<Target = Stack<CompressedWord, State>> + Drop + 'a {
+    ) -> impl DerefMut<Target = Ans<CompressedWord, State>> + Drop + 'a {
         self.0.waste_mut()
     }
 
-    pub fn into_supply_and_waste(
-        self,
-    ) -> (Stack<CompressedWord, State>, Stack<CompressedWord, State>) {
-        // `self.waste` satisfies slightly different invariants than a usual `Stack`.
-        // We therefore first restore the usual `Stack` invariant.
+    pub fn into_supply_and_waste(self) -> (Ans<CompressedWord, State>, Ans<CompressedWord, State>) {
+        // `self.waste` satisfies slightly different invariants than a usual `Ans`.
+        // We therefore first restore the usual `Ans` invariant.
         self.0.into_supply_and_waste()
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> TryFrom<Stack<CompressedWord, State>>
+impl<CompressedWord, State, const PRECISION: usize> TryFrom<Ans<CompressedWord, State>>
     for Encoder<CompressedWord, State, PRECISION>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type Error = Stack<CompressedWord, State>;
+    type Error = Ans<CompressedWord, State>;
 
-    fn try_from(stack: Stack<CompressedWord, State>) -> Result<Self, Stack<CompressedWord, State>> {
-        Self::new(stack)
+    fn try_from(ans: Ans<CompressedWord, State>) -> Result<Self, Ans<CompressedWord, State>> {
+        Self::new(ans)
     }
 }
 
 impl<CompressedWord, State, const PRECISION: usize>
-    TryFrom<Encoder<CompressedWord, State, PRECISION>> for Stack<CompressedWord, State>
+    TryFrom<Encoder<CompressedWord, State, PRECISION>> for Ans<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -472,25 +468,25 @@ where
         })
     }
 
-    pub fn supply(&self) -> &Stack<CompressedWord, State> {
+    pub fn supply(&self) -> &Ans<CompressedWord, State> {
         &self.supply
     }
 
-    pub fn supply_mut(&mut self) -> &mut Stack<CompressedWord, State> {
+    pub fn supply_mut(&mut self) -> &mut Ans<CompressedWord, State> {
         &mut self.supply
     }
 
     pub fn waste_mut<'a>(
         &'a mut self,
-    ) -> impl DerefMut<Target = Stack<CompressedWord, State>> + Drop + 'a {
+    ) -> impl DerefMut<Target = Ans<CompressedWord, State>> + Drop + 'a {
         WasteGuard::<'a, _, _, PRECISION>::new(&mut self.waste)
     }
 
     pub fn into_supply_and_waste(
         mut self,
-    ) -> (Stack<CompressedWord, State>, Stack<CompressedWord, State>) {
-        // `self.waste` satisfies slightly different invariants than a usual `Stack`.
-        // We therefore first restore the usual `Stack` invariant.
+    ) -> (Ans<CompressedWord, State>, Ans<CompressedWord, State>) {
+        // `self.waste` satisfies slightly different invariants than a usual `Ans`.
+        // We therefore first restore the usual `Ans` invariant.
         let _ = self.waste.try_refill_state_if_necessary();
 
         (self.supply, self.waste)
@@ -584,14 +580,14 @@ pub enum DecodingError {
     ///   [`stable::Decoder::finish`]).
     ///
     /// Thus, when you want to decode `n` symbols with a [`stable::Decoder`], you should
-    /// construct it from a [`Stack`] where [`num_valid_bits`] reports at least
+    /// construct it from a [`Ans`] where [`num_valid_bits`] reports at least
     /// `n * PRECISION + 2 * State::BITS - CompressedWord::BITS`.
     ///
     /// [`stable::Decoder<State, CompressedWord, PRECISION>`]: Decoder
     /// [`stable::Decoder`]: Decoder
     /// [`waste`]: Decoder::waste
     /// [`stable::Decoder::finish`]: Decoder::finish
-    /// [`num_valid_bits`]: Stack::num_valid_bits
+    /// [`num_valid_bits`]: Ans::num_valid_bits
     OutOfData,
 }
 
@@ -700,7 +696,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    waste: &'a mut Stack<CompressedWord, State>,
+    waste: &'a mut Ans<CompressedWord, State>,
 }
 
 impl<'a, CompressedWord, State, const PRECISION: usize>
@@ -709,9 +705,9 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn new(waste: &'a mut Stack<CompressedWord, State>) -> Self {
+    fn new(waste: &'a mut Ans<CompressedWord, State>) -> Self {
         // `stable::Coder::waste` satisfies slightly different invariants than a usual
-        // `Stack`. We therefore restore the usual `Stack` invariant here. This is reversed
+        // `Ans`. We therefore restore the usual `Ans` invariant here. This is reversed
         // when the `WasteGuard` gets dropped.
         let _ = waste.try_refill_state_if_necessary();
 
@@ -725,7 +721,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type Target = Stack<CompressedWord, State>;
+    type Target = Ans<CompressedWord, State>;
 
     fn deref(&self) -> &Self::Target {
         self.waste
@@ -759,8 +755,8 @@ where
 }
 
 fn concatenate<CompressedWord, State>(
-    (mut prefix, suffix): (Vec<CompressedWord>, Stack<CompressedWord, State>),
-) -> Result<Stack<CompressedWord, State>, ()>
+    (mut prefix, suffix): (Vec<CompressedWord>, Ans<CompressedWord, State>),
+) -> Result<Ans<CompressedWord, State>, ()>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -775,7 +771,7 @@ where
         prefix
     };
 
-    Stack::with_buf_and_state(buf, state)
+    Ans::with_buf_and_state(buf, state)
 }
 
 #[cfg(test)]
@@ -902,8 +898,8 @@ mod test {
             .unwrap();
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-100..=100);
 
-        let stack = Stack::from_compressed(compressed.clone()).unwrap();
-        let mut stable_decoder = stack.into_stable_decoder().unwrap();
+        let ans = Ans::from_compressed(compressed.clone()).unwrap();
+        let mut stable_decoder = ans.into_stable_decoder().unwrap();
 
         let symbols = stable_decoder
             .decode_symbols(
@@ -917,10 +913,10 @@ mod test {
         assert!(!stable_decoder.maybe_empty());
 
         // Test two ways to construct a `stable::Encoder`: direct conversion from a
-        // `stable::Decoder`, and converting to a `Stack` and then to a `stable::Encoder`.
+        // `stable::Decoder`, and converting to a `Ans` and then to a `stable::Encoder`.
         let stable_encoder1 = stable_decoder.clone().into_encoder();
-        let stack = stable_decoder.finish_and_concatenate();
-        let stable_encoder2 = stack.into_stable_encoder().unwrap();
+        let ans = stable_decoder.finish_and_concatenate();
+        let stable_encoder2 = ans.into_stable_encoder().unwrap();
 
         for mut stable_encoder in alloc::vec![stable_encoder1, stable_encoder2] {
             stable_encoder
@@ -932,8 +928,8 @@ mod test {
                 )
                 .unwrap();
 
-            let stack = stable_encoder.finish_and_concatenate().unwrap();
-            assert_eq!(stack.into_compressed(), compressed);
+            let ans = stable_encoder.finish_and_concatenate().unwrap();
+            assert_eq!(ans.into_compressed(), compressed);
         }
     }
 }

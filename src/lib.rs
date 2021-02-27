@@ -13,11 +13,11 @@
 //!
 //! # Usage
 //!
-//! Rust users will likely want to start by encoding some data with a [`Stack`].
+//! Rust users will likely want to start by encoding some data with a [`Ans`].
 //!
 //! Python users will likely want to install this library via `pip install
 //! constriction`, then `import constriction` in their project and construct a
-//! `constriction.Stack`.
+//! `constriction.Ans`.
 //!
 //! # A Primer on Entropy Coding
 //!
@@ -140,7 +140,7 @@
 //! [cross entropy]: https://en.wikipedia.org/wiki/Cross_entropy
 //! [information content]: https://en.wikipedia.org/wiki/Information_content
 //! [Huffman coding]: https://en.wikipedia.org/wiki/Huffman_coding
-//! [`Stack`]: stack.Stack
+//! [`Ans`]: ans.Ans
 
 #![no_std]
 #![warn(rust_2018_idioms, missing_debug_implementations)]
@@ -150,9 +150,9 @@ extern crate alloc;
 #[cfg(feature = "pybindings")]
 pub mod pybindings;
 
+pub mod ans;
 pub mod models;
 pub mod queue;
-pub mod stack;
 
 use core::{
     borrow::Borrow,
@@ -290,24 +290,24 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// The error type for [`decode_symbol`].
     ///
     /// This is an associated type because [`decode_symbol`] is infallible for some
-    /// decoders (e.g., for a [`Stack`]). These decoders set the `DecodingError`
+    /// decoders (e.g., for a [`Ans`]). These decoders set the `DecodingError`
     /// type to [`core::convert::Infallible`] so that the compiler can optimize away
     /// error checks.
     ///
     /// [`decode_symbol`]: #tymethod.decode_symbol
-    /// [`Stack`]: stack.Stack
+    /// [`Ans`]: ans.Ans
     #[cfg(not(feature = "std"))]
     type DecodingError: Debug;
 
     /// The error type for [`decode_symbol`].
     ///
     /// This is an associated type because [`decode_symbol`] is infallible for some
-    /// decoders (e.g., for a [`Stack`]). These decoders set the `DecodingError`
+    /// decoders (e.g., for a [`Ans`]). These decoders set the `DecodingError`
     /// type to [`core::convert::Infallible`] so that the compiler can optimize away
     /// error checks.
     ///
     /// [`decode_symbol`]: #tymethod.decode_symbol
-    /// [`Stack`]: stack.Stack
+    /// [`Ans`]: ans.Ans
     #[cfg(feature = "std")]
     type DecodingError: Error;
 
@@ -431,7 +431,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// # #![feature(min_const_generics)]
 /// # use constriction::{
 /// #     models::{EncoderModel, DecoderModel, LeakyQuantizer},
-/// #     stack::DefaultStack,
+/// #     ans::DefaultAns,
 /// #     Decode, Encode, IntoDecoder
 /// # };
 /// #
@@ -455,7 +455,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// }
 ///
 /// // Usage example:
-/// let encoder = DefaultStack::new();
+/// let encoder = DefaultAns::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
 /// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
 /// encode_and_decode(encoder, model);
@@ -514,7 +514,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// # #![feature(min_const_generics)]
 /// # use constriction::{
 /// #     models::{EncoderModel, DecoderModel, LeakyQuantizer},
-/// #     stack::DefaultStack,
+/// #     ans::DefaultAns,
 /// #     Decode, Encode, AsDecoder
 /// # };
 /// #
@@ -539,7 +539,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// }
 ///
 /// // Usage example:
-/// let mut encoder = DefaultStack::new();
+/// let mut encoder = DefaultAns::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
 /// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
 /// encode_decode_encode(&mut encoder, model);
@@ -579,10 +579,10 @@ pub trait Pos: Code {
     /// Returns the position in the compressed data, in units of `CompressedWord`s.
     ///
     /// It is up to the entropy coder to define what constitutes the beginning and end
-    /// positions within the compressed data (for example, a [`Stack`] begins encoding
-    /// at position zero but it begins decoding at position `stack.buf().len()`).
+    /// positions within the compressed data (for example, a [`Ans`] begins encoding
+    /// at position zero but it begins decoding at position `ans.buf().len()`).
     ///
-    /// [`Stack`]: stack::Stack
+    /// [`Ans`]: ans::Ans
     fn pos(&self) -> usize;
 
     /// Convenience method that returns both parts of a snapshot expected by
@@ -602,10 +602,10 @@ pub trait Pos: Code {
 /// recorded snapshots.
 ///
 /// Not all entropy coders that implement `Pos` also implement `Seek`. For example,
-/// [`DefaultStack`] implements `Pos` but it doesn't implement `Seek` because it
+/// [`DefaultAns`] implements `Pos` but it doesn't implement `Seek` because it
 /// supports both encoding and decoding and therefore always operates at the head. In
 /// such a case one can usually obtain a seekable entropy coder in return for
-/// surrendering some other property. For example, `DefaultStack` provides the methods
+/// surrendering some other property. For example, `DefaultAns` provides the methods
 /// [`seekable_decoder`] and [`into_seekable_decoder`] that return a decoder which
 /// implements `Seek` but which can no longer be used for encoding (i.e., it doesn't
 /// implement [`Encode`]).
@@ -613,27 +613,27 @@ pub trait Pos: Code {
 /// # Example
 ///
 /// ```
-/// use constriction::{models::Categorical, stack::DefaultStack, Decode, Pos, Seek};
+/// use constriction::{models::Categorical, ans::DefaultAns, Decode, Pos, Seek};
 ///
-/// // Create a `Stack` encoder and an entropy model:
-/// let mut stack = DefaultStack::new();
+/// // Create a `Ans` encoder and an entropy model:
+/// let mut ans = DefaultAns::new();
 /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
 /// let entropy_model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
 ///     .unwrap();
 ///
 /// // Encode some symbols in two chunks and take a snapshot after each chunk.
 /// let symbols1 = vec![8, 2, 0, 7];
-/// stack.encode_iid_symbols_reverse(&symbols1, &entropy_model).unwrap();
-/// let snapshot1 = stack.pos_and_state();
+/// ans.encode_iid_symbols_reverse(&symbols1, &entropy_model).unwrap();
+/// let snapshot1 = ans.pos_and_state();
 ///
 /// let symbols2 = vec![3, 1, 5];
-/// stack.encode_iid_symbols_reverse(&symbols2, &entropy_model).unwrap();
-/// let snapshot2 = stack.pos_and_state();
+/// ans.encode_iid_symbols_reverse(&symbols2, &entropy_model).unwrap();
+/// let snapshot2 = ans.pos_and_state();
 ///
-/// // As discussed above, `DefaultStack` doesn't impl `Seek` but we can get a decoder that does:
-/// let mut seekable_decoder = stack.seekable_decoder();
+/// // As discussed above, `DefaultAns` doesn't impl `Seek` but we can get a decoder that does:
+/// let mut seekable_decoder = ans.seekable_decoder();
 ///
-/// // `seekable_decoder` is still a `Stack`, so decoding would start with the items we encoded
+/// // `seekable_decoder` is still a `Ans`, so decoding would start with the items we encoded
 /// // last. But since it implements `Seek` we can jump ahead to our first snapshot:
 /// seekable_decoder.seek(snapshot1);
 /// let decoded1 = seekable_decoder
@@ -654,9 +654,9 @@ pub trait Pos: Code {
 /// assert!(seekable_decoder.is_empty()); // <-- We've reached the end again.
 /// ```
 ///
-/// [`DefaultStack`]: stack::DefaultStack
-/// [`seekable_decoder`]: stack::Stack::seekable_decoder
-/// [`into_seekable_decoder`]: stack::Stack::into_seekable_decoder
+/// [`DefaultAns`]: ans::DefaultAns
+/// [`seekable_decoder`]: ans::Ans::seekable_decoder
+/// [`into_seekable_decoder`]: ans::Ans::into_seekable_decoder
 pub trait Seek: Code {
     /// Jumps to a given position in the compressed data.
     ///
@@ -677,8 +677,8 @@ pub trait Seek: Code {
     ///
     /// ```
     /// // Step 1: Obtain an encoder and encode some data (omitted for brevity) ...
-    /// # use constriction::{stack::DefaultStack, Pos, Seek};
-    /// # let encoder = DefaultStack::new();
+    /// # use constriction::{ans::DefaultAns, Pos, Seek};
+    /// # let encoder = DefaultAns::new();
     ///
     /// // Step 2: Take a snapshot by calling `Pos::pos_and_state`:
     /// let snapshot = encoder.pos_and_state(); // <-- Returns a tuple `(pos, state)`.
@@ -691,7 +691,7 @@ pub trait Seek: Code {
     /// ```
     ///
     /// For more fine-grained control, one may want to assemble the tuple
-    /// `pos_and_state` manually. For example, a [`DefaultStack`] encodes data from
+    /// `pos_and_state` manually. For example, a [`DefaultAns`] encodes data from
     /// front to back and then decodes the data in the reverse direction from back to
     /// front. Decoding from back to front may be inconvenient in some use cases, so one
     /// might prefer to instead reverse the order of the `CompressedWord`s once encoding
@@ -703,12 +703,12 @@ pub trait Seek: Code {
     /// ```
     /// use constriction::{
     ///     models::LeakyQuantizer,
-    ///     stack::{backend::ReadCursorForward, DefaultStack, Stack},
+    ///     ans::{backend::ReadCursorForward, DefaultAns, Ans},
     ///     Decode, Pos, Seek
     /// };
     ///
-    /// // Construct a `DefaultStack` for encoding and an entropy model:
-    /// let mut encoder = DefaultStack::new();
+    /// // Construct a `DefaultAns` for encoding and an entropy model:
+    /// let mut encoder = DefaultAns::new();
     /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
     /// let entropy_model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
     ///
@@ -721,7 +721,7 @@ pub trait Seek: Code {
     /// let mut compressed = encoder.into_compressed();
     /// compressed.reverse();
     /// snapshot_pos = compressed.len() - snapshot_pos; // <-- Adjusts the snapshot position.
-    /// let mut decoder = Stack::from_compressed(ReadCursorForward::new(compressed)).unwrap();
+    /// let mut decoder = Ans::from_compressed(ReadCursorForward::new(compressed)).unwrap();
     ///
     /// // Since we chose to encode onto a stack, decoding yields the last encoded chunk first:
     /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 50);
@@ -733,7 +733,7 @@ pub trait Seek: Code {
     /// assert!(decoder.is_empty()); // <-- We've reached the end of the compressed data.
     /// ```
     ///
-    /// [`DefaultStack`]: stack::DefaultStack
+    /// [`DefaultAns`]: ans::DefaultAns
     fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()>;
 }
 

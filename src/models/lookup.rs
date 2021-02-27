@@ -899,8 +899,8 @@ mod test {
     use std::{string::String, vec};
 
     use crate::{
+        ans::DefaultAns,
         models::{DecoderModel, EncoderModel},
-        stack::DefaultStack,
         Decode,
     };
 
@@ -942,17 +942,17 @@ mod test {
 
         // Test encoding and decoding a few symbols.
         let symbols = "axcxcyaac";
-        let mut stack = DefaultStack::new();
-        stack
+        let mut ans = DefaultAns::new();
+        ans
             .encode_iid_symbols_reverse(symbols.chars(), &encoder_model)
             .unwrap();
-        assert!(!stack.is_empty());
-        let decoded = stack
+        assert!(!ans.is_empty());
+        let decoded = ans
             .decode_iid_symbols(9, &decoder_model)
             .collect::<Result<String, _>>()
             .unwrap();
         assert_eq!(decoded, symbols);
-        assert!(stack.is_empty());
+        assert!(ans.is_empty());
     }
 
     #[test]
@@ -988,16 +988,16 @@ mod test {
 
         // Test encoding and decoding a few symbols.
         let symbols = vec![0, 3, 2, 3, 1, 3, 2, 0, 3];
-        let mut stack = DefaultStack::new();
-        stack
+        let mut ans = DefaultAns::new();
+        ans
             .encode_iid_symbols_reverse(&symbols, &encoder_model)
             .unwrap();
-        assert!(!stack.is_empty());
-        let decoded = stack
+        assert!(!ans.is_empty());
+        let decoded = ans
             .decode_iid_symbols(9, &decoder_model)
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(decoded, symbols);
-        assert!(stack.is_empty());
+        assert!(ans.is_empty());
     }
 }

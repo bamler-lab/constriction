@@ -7,7 +7,7 @@ use rand::prelude::*;
 use rand_pcg::Pcg64Mcg;
 use statrs::distribution::Normal;
 
-use constriction::{models::LeakyQuantizer, queue, stack, BitArray, Decode, Encode, IntoDecoder};
+use constriction::{ans, models::LeakyQuantizer, queue, BitArray, Decode, Encode, IntoDecoder};
 
 fn make_random_normal(
     amt: usize,
@@ -113,7 +113,7 @@ fn compare(
     word_size: usize,
 ) {
     println!(
-        "{}; Probability={}; precision={}; amt={}: num_bits_stack={}; num_bits_queue={} ({} bits or {} words more than stack)",
+        "{}; Probability={}; precision={}; amt={}: num_bits_stack={}; num_bits_queue={} ({} bits or {} words more than ANS coder)",
         &coder_label[7..],
         probability_label,
         precision,
@@ -137,37 +137,37 @@ fn grid() {
 
     for amt in amts.iter().cloned() {
         {
-            batch!(stack::Stack<u64, u128>; queue::Encoder<u64, u128>; u32; 8, 12, 16, 24, 32; amt);
-            batch!(stack::Stack<u64, u128>; queue::Encoder<u64, u128>; u16; 8, 12, 16; amt);
-            batch!(stack::Stack<u64, u128>; queue::Encoder<u64, u128>; u8; 8; amt);
+            batch!(ans::Ans<u64, u128>; queue::Encoder<u64, u128>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(ans::Ans<u64, u128>; queue::Encoder<u64, u128>; u16; 8, 12, 16; amt);
+            batch!(ans::Ans<u64, u128>; queue::Encoder<u64, u128>; u8; 8; amt);
 
-            batch!(stack::Stack<u32, u128>; queue::Encoder<u32, u128>; u32; 8, 12, 16, 24, 32; amt);
-            batch!(stack::Stack<u32, u128>; queue::Encoder<u32, u128>; u16; 8, 12, 16; amt);
-            batch!(stack::Stack<u32, u128>; queue::Encoder<u32, u128>; u8; 8; amt);
+            batch!(ans::Ans<u32, u128>; queue::Encoder<u32, u128>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(ans::Ans<u32, u128>; queue::Encoder<u32, u128>; u16; 8, 12, 16; amt);
+            batch!(ans::Ans<u32, u128>; queue::Encoder<u32, u128>; u8; 8; amt);
 
-            batch!(stack::Stack<u16, u128>; queue::Encoder<u16, u128>; u16; 8, 12, 16; amt);
-            batch!(stack::Stack<u16, u128>; queue::Encoder<u16, u128>; u8; 8; amt);
+            batch!(ans::Ans<u16, u128>; queue::Encoder<u16, u128>; u16; 8, 12, 16; amt);
+            batch!(ans::Ans<u16, u128>; queue::Encoder<u16, u128>; u8; 8; amt);
 
-            batch!(stack::Stack<u8, u128>; queue::Encoder<u8, u128>; u8; 8; amt);
+            batch!(ans::Ans<u8, u128>; queue::Encoder<u8, u128>; u8; 8; amt);
         }
         {
-            batch!(stack::Stack<u32, u64>; queue::Encoder<u32, u64>; u32; 8, 12, 16, 24, 32; amt);
-            batch!(stack::Stack<u32, u64>; queue::Encoder<u32, u64>; u16; 8, 12, 16; amt);
-            batch!(stack::Stack<u32, u64>; queue::Encoder<u32, u64>; u8; 8; amt);
+            batch!(ans::Ans<u32, u64>; queue::Encoder<u32, u64>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(ans::Ans<u32, u64>; queue::Encoder<u32, u64>; u16; 8, 12, 16; amt);
+            batch!(ans::Ans<u32, u64>; queue::Encoder<u32, u64>; u8; 8; amt);
 
-            batch!(stack::Stack<u16, u64>; queue::Encoder<u16, u64>; u16; 8, 12, 16; amt);
-            batch!(stack::Stack<u16, u64>; queue::Encoder<u16, u64>; u8; 8; amt);
+            batch!(ans::Ans<u16, u64>; queue::Encoder<u16, u64>; u16; 8, 12, 16; amt);
+            batch!(ans::Ans<u16, u64>; queue::Encoder<u16, u64>; u8; 8; amt);
 
-            batch!(stack::Stack<u8, u64>; queue::Encoder<u8, u64>; u8; 8; amt);
+            batch!(ans::Ans<u8, u64>; queue::Encoder<u8, u64>; u8; 8; amt);
         }
         {
-            batch!(stack::Stack<u16, u32>; queue::Encoder<u16, u32>; u16; 8, 12, 16; amt);
-            batch!(stack::Stack<u16, u32>; queue::Encoder<u16, u32>; u8; 8; amt);
+            batch!(ans::Ans<u16, u32>; queue::Encoder<u16, u32>; u16; 8, 12, 16; amt);
+            batch!(ans::Ans<u16, u32>; queue::Encoder<u16, u32>; u8; 8; amt);
 
-            batch!(stack::Stack<u8, u32>; queue::Encoder<u8, u32>; u8; 8; amt);
+            batch!(ans::Ans<u8, u32>; queue::Encoder<u8, u32>; u8; 8; amt);
         }
         {
-            batch!(stack::Stack<u8, u16>; queue::Encoder<u8, u16>; u8; 8; amt);
+            batch!(ans::Ans<u8, u16>; queue::Encoder<u8, u16>; u8; 8; amt);
         }
     }
 }
