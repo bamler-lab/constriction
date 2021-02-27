@@ -152,7 +152,7 @@ pub mod pybindings;
 
 pub mod ans;
 pub mod models;
-pub mod queue;
+pub mod range;
 
 use core::{
     borrow::Borrow,
