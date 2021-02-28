@@ -1,7 +1,8 @@
 use std::any::type_name;
 
 use constriction::{
-    models::lookup::EncoderHashLookupTable, ans::Ans, BitArray, Code, Decode, Pos, Seek,
+    stream::{ans::Ans, models::lookup::EncoderHashLookupTable, Code, Decode, Pos, Seek},
+    BitArray,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use num::cast::AsPrimitive;

@@ -7,7 +7,10 @@ use rand::prelude::*;
 use rand_pcg::Pcg64Mcg;
 use statrs::distribution::Normal;
 
-use constriction::{ans, models::LeakyQuantizer, range, BitArray, Decode, Encode, IntoDecoder};
+use constriction::{
+    stream::{ans, models::LeakyQuantizer, range, Decode, Encode, IntoDecoder},
+    BitArray,
+};
 
 fn make_random_normal(
     amt: usize,
@@ -87,7 +90,7 @@ macro_rules! batch {
                 );
                 let coder_label = stringify!($stack_type);
                 let probability_label = stringify!($probability);
-                let word_size = <<$stack_type as ::constriction::Code>::CompressedWord as ::constriction::BitArray>::BITS;
+                let word_size = <<$stack_type as ::constriction::stream::Code>::CompressedWord as ::constriction::BitArray>::BITS;
 
                 compare(
                     coder_label,

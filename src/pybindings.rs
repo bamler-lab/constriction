@@ -68,9 +68,14 @@ use std::error::Error;
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
-use crate::{Decode, EncodingError, TryCodingError};
+use crate::{
+    stream::{
+        models::{Categorical, LeakyQuantizer},
+        Decode, TryCodingError,
+    },
+    EncodingError,
+};
 
-use super::models::{Categorical, LeakyQuantizer};
 use statrs::distribution::Normal;
 
 #[pymodule]
@@ -81,7 +86,7 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
 /// An entropy coder based on [Asymmetric Numeral Systems (ANS)].
 ///
-/// This is a wrapper around the Rust type [`constriction::ans::DefaultAns`]
+/// This is a wrapper around the Rust type [`constriction::stream::ans::DefaultAns`]
 /// with python bindings.
 ///
 /// Note that this entropy coder is a stack (a "last in first out" data
@@ -159,12 +164,12 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 ///     dtype `uint32`.
 ///
 /// [Asymmetric Numeral Systems (ANS)]: https://en.wikipedia.org/wiki/Asymmetric_numeral_systems
-/// [`constriction::ans::DefaultAns`]: crate::ans::DefaultAns
+/// [`constriction::stream::ans::DefaultAns`]: crate::ans::DefaultAns
 #[pyclass]
 #[text_signature = "(compressed)"]
 #[derive(Debug)]
 pub struct Ans {
-    inner: crate::ans::DefaultAns,
+    inner: crate::stream::ans::DefaultAns,
 }
 
 #[pymethods]

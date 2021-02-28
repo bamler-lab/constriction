@@ -9,11 +9,11 @@ use alloc::vec::Vec;
 use core::{borrow::Borrow, convert::TryInto, fmt::Debug, marker::PhantomData, ops::Deref};
 use num::cast::AsPrimitive;
 
-use crate::{
-    bit_array_from_chunks, bit_array_to_chunks_truncated,
+use super::{
     models::{DecoderModel, EncoderModel, EntropyModel},
-    AsDecoder, BitArray, Code, Decode, Encode, EncodingError, Pos, Seek, TryCodingError,
+    AsDecoder, Code, Decode, Encode, Pos, Seek, TryCodingError,
 };
+use crate::{bit_array_from_chunks, bit_array_to_chunks_truncated, BitArray, EncodingError};
 
 use self::backend::{
     Backend, ReadCursor, ReadItems, ReadLookaheadItems, WriteItems, WriteMutableItems,
@@ -44,7 +44,7 @@ use self::backend::{
 /// [`encode_symbols`] or [`encode_iid_symbols`].
 ///
 /// ```
-/// use constriction::{models::LeakyQuantizer, ans::DefaultAns, Decode};
+/// use constriction::stream::{models::LeakyQuantizer, ans::DefaultAns, Decode};
 ///
 /// // `DefaultAns` is a type alias to `Ans` with sane generic parameters.
 /// let mut ans = DefaultAns::new();
@@ -315,7 +315,7 @@ where
     /// # Example
     ///
     /// ```
-    /// let mut ans = constriction::ans::DefaultAns::new();
+    /// let mut ans = constriction::stream::ans::DefaultAns::new();
     ///
     /// // ... push some symbols onto the ANS coder's stack ...
     ///
@@ -409,7 +409,7 @@ where
     /// empty):
     ///
     /// ```
-    /// use constriction::ans::DefaultAns;
+    /// use constriction::stream::ans::DefaultAns;
     ///
     /// let stack1 = DefaultAns::from_binary(Vec::new());
     /// assert!(!stack1.is_empty()); // <-- stack1 is *not* empty.
@@ -524,7 +524,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::Categorical, ans::DefaultAns, Decode};
+    /// use constriction::stream::{models::Categorical, ans::DefaultAns, Decode};
     ///
     /// let mut ans = DefaultAns::new();
     ///
@@ -566,7 +566,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::{Categorical, LeakyQuantizer}, ans::DefaultAns, Encode};
+    /// use constriction::stream::{models::{Categorical, LeakyQuantizer}, ans::DefaultAns, Encode};
     ///
     /// // Create a stack and encode some stuff.
     /// let mut ans = DefaultAns::new();
@@ -780,7 +780,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::Categorical, ans::DefaultAns, Decode};
+    /// use constriction::stream::{models::Categorical, ans::DefaultAns, Decode};
     ///
     /// let mut ans = DefaultAns::new();
     ///
@@ -834,7 +834,7 @@ where
     ///
     /// // Constructing a `Ans` with `from_binary` indicates that all bits of `data` are
     /// // considered part of the information-carrying payload.
-    /// let stack1 = constriction::ans::DefaultAns::from_binary(data.clone());
+    /// let stack1 = constriction::stream::ans::DefaultAns::from_binary(data.clone());
     /// assert_eq!(stack1.clone().into_binary().unwrap(), data); // <-- Retrieves the original `data`.
     ///
     /// // By contrast, if we construct a `Ans` with `from_compressed`, we indicate that
@@ -845,7 +845,7 @@ where
     /// //   also not considered part of the payload.
     /// // Therefore, `stack2` below only contains `32 * 2 - 7 - 1 = 56` bits of payload,
     /// // which cannot be exported into an integer number of `u32` words:
-    /// let stack2 = constriction::ans::DefaultAns::from_compressed(data.clone()).unwrap();
+    /// let stack2 = constriction::stream::ans::DefaultAns::from_compressed(data.clone()).unwrap();
     /// assert!(stack2.clone().into_binary().is_err()); // <-- Returns an error.
     ///
     /// // Use `into_compressed` to retrieve the data in this case:
@@ -1163,8 +1163,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::models::{Categorical, LeakyQuantizer};
     use super::*;
-    use crate::models::{Categorical, LeakyQuantizer};
     extern crate std;
     use std::dbg;
 

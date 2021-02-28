@@ -898,7 +898,7 @@ mod test {
     extern crate std;
     use std::{string::String, vec};
 
-    use crate::{
+    use super::super::super::{
         ans::DefaultAns,
         models::{DecoderModel, EncoderModel},
         Decode,
@@ -943,8 +943,7 @@ mod test {
         // Test encoding and decoding a few symbols.
         let symbols = "axcxcyaac";
         let mut ans = DefaultAns::new();
-        ans
-            .encode_iid_symbols_reverse(symbols.chars(), &encoder_model)
+        ans.encode_iid_symbols_reverse(symbols.chars(), &encoder_model)
             .unwrap();
         assert!(!ans.is_empty());
         let decoded = ans
@@ -989,8 +988,7 @@ mod test {
         // Test encoding and decoding a few symbols.
         let symbols = vec![0, 3, 2, 3, 1, 3, 2, 0, 3];
         let mut ans = DefaultAns::new();
-        ans
-            .encode_iid_symbols_reverse(&symbols, &encoder_model)
+        ans.encode_iid_symbols_reverse(&symbols, &encoder_model)
             .unwrap();
         assert!(!ans.is_empty());
         let decoded = ans

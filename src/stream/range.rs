@@ -3,11 +3,11 @@ use core::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::Deref};
 
 use num::cast::AsPrimitive;
 
-use crate::{
-    bit_array_from_chunks, bit_array_to_chunks_exact,
+use super::{
     models::{DecoderModel, EncoderModel},
-    BitArray, Code, Decode, Encode, EncodingError, IntoDecoder,
+    Code, Decode, Encode, IntoDecoder,
 };
+use crate::{bit_array_from_chunks, bit_array_to_chunks_exact, BitArray, EncodingError};
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
 /// [`Decoder<CompressedWord, State>`]. Relevant for [`Seek`]ing.
@@ -173,7 +173,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::Categorical, ans::DefaultAns, Decode};
+    /// use constriction::stream::{models::Categorical, ans::DefaultAns, Decode};
     ///
     /// let mut coder = DefaultAns::new();
     ///
@@ -679,8 +679,8 @@ mod tests {
     extern crate std;
     use std::dbg;
 
+    use super::super::models::{Categorical, LeakyQuantizer};
     use super::*;
-    use crate::models::{Categorical, LeakyQuantizer};
 
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},

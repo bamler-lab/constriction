@@ -8,12 +8,11 @@ use core::{
 
 use num::cast::AsPrimitive;
 
-use super::Ans;
-
-use crate::{
-    models::{DecoderModel, EncoderModel},
-    BitArray, Code, Decode, Encode, EncodingError, TryCodingError,
+use super::{
+    super::models::{DecoderModel, EncoderModel},
+    Ans, Code, Decode, Encode, EncodingError, TryCodingError,
 };
+use crate::BitArray;
 
 #[derive(Debug, Clone)]
 struct Coder<CompressedWord, State, const PRECISION: usize>
@@ -115,7 +114,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::{models::LeakyQuantizer, Decode, ans::DefaultAns};
+    /// use constriction::stream::{models::LeakyQuantizer, Decode, ans::DefaultAns};
     ///
     /// // Construct two entropy models with 24 bits and 20 bits of precision, respectively.
     /// let continuous_distribution = statrs::distribution::Normal::new(0.0, 10.0).unwrap();
@@ -776,8 +775,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use super::super::super::models::LeakyQuantizer;
     use super::*;
-    use crate::models::LeakyQuantizer;
 
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},

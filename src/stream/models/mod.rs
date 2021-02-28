@@ -108,7 +108,7 @@ where
 /// # Example
 ///
 /// ```
-/// use constriction::{models::LeakyQuantizer, ans::DefaultAns, Encode};
+/// use constriction::stream::{models::LeakyQuantizer, ans::DefaultAns, Encode};
 ///
 /// // Get a quantizer that supports integer symbols from -5 to 20 (inclusively),
 /// // representing probabilities with 24 bit precision backed by `u32`s.
@@ -594,12 +594,13 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// The provided probabilities have to sum up to `1 << PRECISION`:
     ///
     /// ```
+    /// use constriction::stream::models::Categorical;
+    ///
     /// let probabilities = vec![1u32 << 21, 1 << 22, 1 << 22, 1 << 22, 1 << 21];
     /// // `probabilities` sums up to `1 << PRECISION` as required:
     /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
     ///
-    /// let model =
-    ///     constriction::models::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
@@ -609,12 +610,13 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// `1 << PRECISION` (i.e., the summation has to wrap around exactly once):
     ///
     /// ```
+    /// use constriction::stream::models::Categorical;
+    ///
     /// let probabilities = vec![1u32 << 29, 1 << 30, 1 << 30, 1 << 30, 1 << 29];
     /// // `probabilities` sums up to `1 << 32` (logically), i.e., it wraps around once.
     /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
     ///
-    /// let model =
-    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
@@ -622,18 +624,18 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// Wrapping around twice panics:
     ///
     /// ```should_panic
+    /// use constriction::stream::models::Categorical;
     /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
     /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
-    /// let model = // PANICS
-    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities); // PANICS.
     /// ```
     ///
     /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
     ///
     /// ```should_panic
+    /// use constriction::stream::models::Categorical;
     /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
-    /// let model = // PANICS
-    ///     constriction::models::Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities); // PANICS.
     /// ```
     ///
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
@@ -699,12 +701,10 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// # Example
     ///
     /// ```
+    /// use constriction::stream::models::Categorical;
+    ///
     /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
-    /// let model =
-    ///     constriction::models::Categorical::<u32, 32>::from_floating_point_probabilities(
-    ///         &probabilities
-    ///     )
-    ///     .unwrap();
+    /// let model = Categorical::<u32, 32>::from_floating_point_probabilities(&probabilities).unwrap();
     ///
     /// let pmf = model.fixed_point_probabilities().collect::<Vec<_>>();
     /// assert_eq!(pmf, vec![1 << 29, 1 << 31, 1 << 30, 1 << 29]);
@@ -752,9 +752,10 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// # Example
     ///
     /// ```
+    /// use constriction::stream::models::Categorical;
+    ///
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model =
-    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -790,9 +791,9 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// be lossless (even though, for these particular values, it would be):
     ///
     /// ```compile_fail
+    /// use constriction::stream::models::Categorical;
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model =
-    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f32>>();
     /// //                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Compiler error: trait bound not satisfied
@@ -803,9 +804,10 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// `floating_point_probabilities_lossy` as follows:
     ///
     /// ```
+    /// use constriction::stream::models::Categorical;
+    ///
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model =
-    ///     constriction::models::Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = model.floating_point_probabilities_lossy().collect::<Vec<f32>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
