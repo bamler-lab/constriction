@@ -23,6 +23,7 @@ pybindings = ["ndarray", "numpy", "pyo3"]
 [dependencies]
 hashbrown = "0.9"
 num = "0.3.1"
+smallvec = "1.6.1"
 statrs = "0.13"
 
 ndarray = {version = "0.13", optional = true}

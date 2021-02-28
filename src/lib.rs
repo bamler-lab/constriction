@@ -151,6 +151,7 @@ extern crate alloc;
 pub mod pybindings;
 
 pub mod ans;
+pub mod symbol;
 pub mod models;
 pub mod range;
 
@@ -881,7 +882,7 @@ where
 /// that all `BitArray`s have precisely the same behavior as builtin unsigned
 /// integer types, and that [`BitArray::BITS`] has the correct value.
 pub unsafe trait BitArray:
-    PrimInt + Unsigned + WrappingAdd + WrappingSub + Debug + LowerHex + UpperHex + 'static
+    PrimInt + Unsigned + WrappingAdd + WrappingSub + Debug + LowerHex + UpperHex + Default + 'static
 {
     /// The (fixed) length of the `BitArray` in bits.
     ///
