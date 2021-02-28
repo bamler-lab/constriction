@@ -156,7 +156,7 @@ pub mod pybindings;
 pub mod stream;
 pub mod symbol;
 
-use core::fmt::{Debug, LowerHex, UpperHex};
+use core::fmt::{Binary, Debug, LowerHex, UpperHex};
 
 use num::{
     cast::AsPrimitive,
@@ -205,7 +205,16 @@ pub enum EncodingError {
 /// that all `BitArray`s have precisely the same behavior as builtin unsigned
 /// integer types, and that [`BitArray::BITS`] has the correct value.
 pub unsafe trait BitArray:
-    PrimInt + Unsigned + WrappingAdd + WrappingSub + Debug + LowerHex + UpperHex + Default + 'static
+    PrimInt
+    + Unsigned
+    + WrappingAdd
+    + WrappingSub
+    + Debug
+    + LowerHex
+    + UpperHex
+    + Binary
+    + Default
+    + 'static
 {
     /// The (fixed) length of the `BitArray` in bits.
     ///
