@@ -4,7 +4,8 @@ use alloc::{collections::BinaryHeap, vec, vec::Vec};
 use core::{borrow::Borrow, cmp::Reverse, marker::PhantomData, ops::Add};
 
 use super::{
-    DecoderCodebook, DecodingError, EncoderCodebook, SmallBitVec, SmallBitVecReverseIterator,
+    Codebook, DecoderCodebook, DecodingError, EncoderCodebook, SmallBitVec,
+    SmallBitVecReverseIterator,
 };
 use crate::{BitArray, EncodingError};
 
@@ -80,6 +81,12 @@ impl EncoderHuffmanTree {
     }
 }
 
+impl<W: BitArray> Codebook for EncoderHuffmanTree<W> {
+    fn num_symbols(&self) -> usize {
+        self.nodes.len() / 2 + 1
+    }
+}
+
 impl<W: BitArray> EncoderCodebook for EncoderHuffmanTree<W> {
     type BitIterator = SmallBitVecReverseIterator<W>;
 
@@ -100,10 +107,6 @@ impl<W: BitArray> EncoderCodebook for EncoderHuffmanTree<W> {
         }
 
         Ok(reverse_codeword.into_iter_reverse())
-    }
-
-    fn num_symbols(&self) -> usize {
-        self.nodes.len() / 2 + 1
     }
 }
 
@@ -166,6 +169,12 @@ impl DecoderHuffmanTree {
     }
 }
 
+impl Codebook for DecoderHuffmanTree {
+    fn num_symbols(&self) -> usize {
+        self.nodes.len() + 1
+    }
+}
+
 impl DecoderCodebook for DecoderHuffmanTree {
     fn decode_symbol(
         &self,
@@ -182,10 +191,6 @@ impl DecoderCodebook for DecoderHuffmanTree {
         }
 
         Ok(node_index)
-    }
-
-    fn num_symbols(&self) -> usize {
-        self.nodes.len() + 1
     }
 }
 

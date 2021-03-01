@@ -3,7 +3,7 @@ pub mod huffman;
 use smallvec::SmallVec;
 
 use alloc::vec::Vec;
-use core::{iter::FromIterator, ops::DerefMut};
+use core::{borrow::Borrow, iter::FromIterator, ops::DerefMut};
 
 use crate::{BitArray, EncodingError};
 
@@ -12,18 +12,37 @@ pub enum DecodingError {
     OutOfCompressedData,
 }
 
-trait EncoderCodebook {
+pub trait Codebook {
+    fn num_symbols(&self) -> usize;
+}
+pub trait EncoderCodebook: Codebook {
     type BitIterator: Iterator<Item = bool>;
 
     fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncodingError>;
-
-    fn num_symbols(&self) -> usize;
 }
 
-trait DecoderCodebook {
+pub trait DecoderCodebook: Codebook {
     fn decode_symbol(&self, source: impl Iterator<Item = bool>) -> Result<usize, DecodingError>;
+}
 
-    fn num_symbols(&self) -> usize;
+impl<C: Codebook> Codebook for &C {
+    fn num_symbols(&self) -> usize {
+        (*self).num_symbols()
+    }
+}
+
+impl<C: EncoderCodebook> EncoderCodebook for &C {
+    type BitIterator = C::BitIterator;
+
+    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncodingError> {
+        (*self).encode_symbol(symbol)
+    }
+}
+
+impl<C: DecoderCodebook> DecoderCodebook for &C {
+    fn decode_symbol(&self, source: impl Iterator<Item = bool>) -> Result<usize, DecodingError> {
+        (*self).decode_symbol(source)
+    }
 }
 
 pub trait GenericVec<T>: Default + DerefMut<Target = [T]> {
@@ -52,12 +71,12 @@ pub struct BitVec<W: BitArray, V: GenericVec<W> = Vec<W>> {
 }
 
 #[derive(Debug)]
-pub struct BitVecReverseIterator<W: BitArray, V: GenericVec<W> = Vec<W>> {
+pub struct BitVecIterRev<W: BitArray, V: GenericVec<W> = Vec<W>> {
     inner: BitVec<W, V>,
 }
 
 type SmallBitVec<W> = BitVec<W, SmallVec<[W; 1]>>;
-type SmallBitVecReverseIterator<W> = BitVecReverseIterator<W, SmallVec<[W; 1]>>;
+type SmallBitVecReverseIterator<W> = BitVecIterRev<W, SmallVec<[W; 1]>>;
 
 impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
     pub fn new() -> Self {
@@ -140,8 +159,8 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
         self.mask_last_written = W::zero();
     }
 
-    pub fn into_iter_reverse(self) -> BitVecReverseIterator<W, V> {
-        BitVecReverseIterator { inner: self }
+    pub fn into_iter_reverse(self) -> BitVecIterRev<W, V> {
+        BitVecIterRev { inner: self }
     }
 
     /// TODO: test
@@ -176,6 +195,44 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
 
         Ok(())
     }
+
+    pub fn encode_symbol(
+        &mut self,
+        symbol: usize,
+        codebook: impl EncoderCodebook,
+    ) -> Result<(), EncodingError> {
+        Ok(self.extend(codebook.encode_symbol(symbol)?))
+    }
+
+    pub fn encode_symbols<S, C>(
+        &mut self,
+        symbols_and_codebooks: impl IntoIterator<Item = (S, C)>,
+    ) -> Result<(), EncodingError>
+    where
+        S: Borrow<usize>,
+        C: EncoderCodebook,
+    {
+        for (symbol, codebook) in symbols_and_codebooks.into_iter() {
+            self.encode_symbol(*symbol.borrow(), codebook)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn encode_iid_symbols<S>(
+        &mut self,
+        symbols: impl IntoIterator<Item = S>,
+        codebook: &impl EncoderCodebook,
+    ) -> Result<(), EncodingError>
+    where
+        S: Borrow<usize>,
+    {
+        self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, codebook)))
+    }
+
+    pub fn iter(&self) -> BitVecIter<'_, W> {
+        self.into()
+    }
 }
 
 impl<W: BitArray, V: GenericVec<W>> FromIterator<bool> for BitVec<W, V> {
@@ -189,7 +246,19 @@ impl<W: BitArray, V: GenericVec<W>> FromIterator<bool> for BitVec<W, V> {
     }
 }
 
-impl<W: BitArray, V: GenericVec<W>> Iterator for BitVecReverseIterator<W, V> {
+impl<W: BitArray, V: GenericVec<W>> Extend<bool> for BitVec<W, V> {
+    fn extend<T: IntoIterator<Item = bool>>(&mut self, iter: T) {
+        // TODO: when specialization becomes stable, distinguish between extending from a
+        // `SmallBitVecReverseIterator` and other iterators. For extending from
+        // `SmallBitVecReverseIterator`, leave it as is. For other iterators, calculate
+        // the number of added words upfront and insert a `reserve` call here.
+        for bit in iter {
+            self.push(bit);
+        }
+    }
+}
+
+impl<W: BitArray, V: GenericVec<W>> Iterator for BitVecIterRev<W, V> {
     type Item = bool;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -221,7 +290,151 @@ impl<W: BitArray, V: GenericVec<W>> Iterator for BitVecReverseIterator<W, V> {
     }
 }
 
-impl<W: BitArray, V: GenericVec<W>> ExactSizeIterator for BitVecReverseIterator<W, V> {}
+impl<W: BitArray, V: GenericVec<W>> ExactSizeIterator for BitVecIterRev<W, V> {}
+
+#[derive(Debug)]
+pub struct BitVecIter<'buf, W: BitArray> {
+    buf: &'buf [W],
+    next_pos: usize,
+    last_word_allowed_bits: W,
+    current_word: W,
+    current_allowed_bits: W,
+    mask_next_to_read: W,
+}
+
+impl<'buf, W: BitArray, V: GenericVec<W>> From<&'buf BitVec<W, V>> for BitVecIter<'buf, W> {
+    fn from(bit_vec: &'buf BitVec<W, V>) -> Self {
+        Self {
+            buf: &bit_vec.buf,
+            next_pos: 0,
+            last_word_allowed_bits: (bit_vec.mask_last_written << 1).wrapping_sub(&W::one()),
+            current_word: W::zero(),
+            current_allowed_bits: W::max_value(),
+            mask_next_to_read: W::zero(),
+        }
+    }
+}
+
+impl<'buf, W: BitArray> Iterator for BitVecIter<'buf, W> {
+    type Item = bool;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.mask_next_to_read & self.current_allowed_bits != W::zero() {
+            // Most common case, therefore reachable with only a single branch.
+            let bit = self.current_word & self.mask_next_to_read != W::zero();
+            self.mask_next_to_read = self.mask_next_to_read << 1;
+            Some(bit)
+        } else if self.mask_next_to_read == W::zero() {
+            if self.next_pos >= self.buf.len() {
+                None
+            } else {
+                self.current_word = self.buf[self.next_pos]; // TODO: use get_unchecked
+                self.next_pos += 1;
+                self.mask_next_to_read = W::one() << 1;
+                if self.next_pos == self.buf.len() {
+                    self.current_allowed_bits = self.last_word_allowed_bits
+                }
+                Some(self.current_word & W::one() != W::zero())
+            }
+        } else {
+            None
+        }
+    }
+}
+
+impl<'buf, W: BitArray> BitVecIter<'buf, W> {
+    pub fn decode_symbol(
+        &mut self,
+        codebook: impl DecoderCodebook,
+    ) -> Result<usize, DecodingError> {
+        codebook.decode_symbol(self)
+    }
+
+    pub fn decode_symbols<'s, I, C>(
+        &'s mut self,
+        codebooks: I,
+    ) -> DecodeSymbols<'s, Self, I::IntoIter>
+    where
+        I: IntoIterator<Item = C> + 's,
+        C: DecoderCodebook,
+    {
+        // TODO: It would be much nicer to implement this just as a `map`, but it doesn't
+        // currently seem to work with lifetimes (because of 'buf).
+        DecodeSymbols {
+            bit_iterator: self,
+            codebooks: codebooks.into_iter(),
+        }
+    }
+
+    pub fn decode_iid_symbols<'s, 'c, C>(
+        &'s mut self,
+        amt: usize,
+        codebook: &'c C,
+    ) -> DecodeIidSymbols<'s, 'c, Self, C>
+    where
+        C: DecoderCodebook,
+    {
+        DecodeIidSymbols {
+            bit_iterator: self,
+            codebook,
+            amt,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DecodeSymbols<'a, BI, CI> {
+    bit_iterator: &'a mut BI,
+    codebooks: CI,
+}
+
+impl<'bi, BI, CI> Iterator for DecodeSymbols<'bi, BI, CI>
+where
+    BI: Iterator<Item = bool>,
+    CI: Iterator,
+    CI::Item: DecoderCodebook,
+{
+    type Item = Result<usize, DecodingError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(
+            self.codebooks
+                .next()?
+                .decode_symbol(&mut *self.bit_iterator),
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct DecodeIidSymbols<'bi, 'c, BI, C> {
+    bit_iterator: &'bi mut BI,
+    codebook: &'c C,
+    amt: usize,
+}
+
+impl<'bi, 'c, BI, C> Iterator for DecodeIidSymbols<'bi, 'c, BI, C>
+where
+    BI: Iterator<Item = bool>,
+    C: DecoderCodebook,
+{
+    type Item = Result<usize, DecodingError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.amt != 0 {
+            self.amt -= 1;
+            Some(self.codebook.decode_symbol(&mut *self.bit_iterator))
+        } else {
+            None
+        }
+    }
+}
+
+// fn f<'buf>(iter: BitVecIter<'buf, u32>, codebooks: Vec<DecoderHuffmanTree>) {
+//     let codebook_slice = &codebooks[..];
+//     let new_iter = iter.decode_symbols(codebook_slice);
+
+//     // return new_iter;  <-- forbidden since `iter` and `codebook` will be dropped
+// }
 
 impl<T> GenericVec<T> for Vec<T> {
     fn with_capacity(capacity: usize) -> Self {
@@ -277,7 +490,16 @@ impl<T> GenericVec<T> for SmallVec<[T; 1]> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use super::{
+        huffman::{DecoderHuffmanTree, EncoderHuffmanTree},
+        *,
+    };
+
+    use rand_xoshiro::{
+        rand_core::{RngCore, SeedableRng},
+        Xoshiro256StarStar,
+    };
+
     extern crate std;
 
     #[test]
@@ -301,5 +523,89 @@ mod test {
         }
 
         assert_eq!(count_down, 0);
+    }
+
+    #[test]
+    fn bit_vec_iter() {
+        let mut bit_vec = BitVec::<u16>::new();
+        let amt = 100usize;
+        for i in 0..amt {
+            bit_vec.push(i.count_ones() % 2 != 0);
+        }
+        assert_eq!(bit_vec.len(), amt);
+        assert!(!bit_vec.is_empty());
+
+        let mut count = 0usize;
+        for bit in bit_vec.iter() {
+            assert_eq!(bit, count.count_ones() % 2 != 0);
+            count += 1;
+        }
+        assert_eq!(count, amt);
+    }
+
+    #[test]
+    fn encode_decode_iid() {
+        let amt = 1000;
+        let mut rng = Xoshiro256StarStar::seed_from_u64(1234);
+        let symbols = (0..amt)
+            .map(|_| (rng.next_u32() % 5) as usize)
+            .collect::<Vec<_>>();
+
+        let probabilities = [2, 2, 4, 1, 1];
+        let encoder = EncoderHuffmanTree::from_probabilities::<u32, _>(&probabilities);
+        let decoder = DecoderHuffmanTree::from_probabilities::<u32, _>(&probabilities);
+
+        let mut compressed = BitVec::<u32>::new();
+
+        assert_eq!(compressed.len(), 0);
+        compressed.encode_iid_symbols(&symbols, &encoder).unwrap();
+        assert!(compressed.len() > amt);
+
+        let mut bit_iter = compressed.iter();
+        let reconstructed = bit_iter
+            .decode_iid_symbols(amt, &decoder)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(reconstructed, symbols);
+        assert!(bit_iter.next().is_none());
+    }
+
+    #[test]
+    fn encode_decode_noniid() {
+        fn iter_probs_and_symbols(amt: usize) -> impl Iterator<Item = (Vec<u32>, usize)> {
+            let mut rng = Xoshiro256StarStar::seed_from_u64(1234);
+            (0..amt).map(move |_| {
+                let num_symbols = 1 + rng.next_u32() % 10;
+                let probs = (0..num_symbols).map(|_| rng.next_u32() >> 16).collect();
+                let symbol = rng.next_u32() % num_symbols;
+                (probs, symbol as usize)
+            })
+        }
+
+        let amt = 1000;
+        let mut compressed = BitVec::<u32>::new();
+
+        assert_eq!(compressed.len(), 0);
+        compressed
+            .encode_symbols(iter_probs_and_symbols(amt).map(|(probs, symbol)| {
+                (
+                    symbol,
+                    EncoderHuffmanTree::from_probabilities::<u32, _>(&probs),
+                )
+            }))
+            .unwrap();
+        assert!(compressed.len() > amt);
+
+        let mut bit_iter = compressed.iter();
+        let reconstructed = bit_iter
+            .decode_symbols(
+                iter_probs_and_symbols(amt)
+                    .map(|(probs, _)| DecoderHuffmanTree::from_probabilities::<u32, _>(&probs)),
+            )
+            .map(Result::unwrap);
+
+        assert!(reconstructed.eq(iter_probs_and_symbols(amt).map(|(_, symbol)| symbol)));
+        assert!(bit_iter.next().is_none());
     }
 }
