@@ -165,7 +165,7 @@ where
 {
     symbol_to_left_cumulative_and_probability: Table,
 
-    phantom: PhantomData<*mut (usize, Probability)>,
+    phantom: PhantomData<(usize, Probability)>,
 }
 
 impl<Probability, const PRECISION: usize>
@@ -325,7 +325,7 @@ where
     /// == *quantile_to_index.as_ref().iter().max() as usize + 2`
     left_sided_cumulative_and_symbol: Table2,
 
-    phantom: PhantomData<*mut (Symbol, Probability)>,
+    phantom: PhantomData<(Symbol, Probability)>,
 }
 
 impl<Symbol, Probability, const PRECISION: usize>

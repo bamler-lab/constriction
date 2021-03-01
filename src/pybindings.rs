@@ -63,7 +63,7 @@
 //! In [8]: assert coder.is_empty()
 //! ```
 
-use std::error::Error;
+use std::{error::Error, format, prelude::v1::*, vec};
 
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
@@ -164,7 +164,7 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 ///     dtype `uint32`.
 ///
 /// [Asymmetric Numeral Systems (ANS)]: https://en.wikipedia.org/wiki/Asymmetric_numeral_systems
-/// [`constriction::stream::ans::DefaultAns`]: crate::ans::DefaultAns
+/// [`constriction::stream::ans::DefaultAns`]: crate::stream::ans::DefaultAns
 #[pyclass]
 #[text_signature = "(compressed)"]
 #[derive(Debug)]
@@ -178,9 +178,13 @@ impl Ans {
     #[new]
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = if let Some(compressed) = compressed {
-            crate::ans::Ans::from_compressed(compressed.to_vec()?)
+            crate::stream::ans::Ans::from_compressed(compressed.to_vec()?).map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid compressed data: ANS compressed data never ends in a zero word."
+                ))
+            })?
         } else {
-            crate::ans::Ans::new()
+            crate::stream::ans::Ans::new()
         };
 
         Ok(Self { inner })
@@ -445,8 +449,8 @@ impl<CodingError: Error + Into<PyErr>, ModelError: Error>
 {
     fn from(err: TryCodingError<CodingError, ModelError>) -> Self {
         match err {
-            crate::TryCodingError::CodingError(err) => err.into(),
-            crate::TryCodingError::InvalidEntropyModel(err) => {
+            crate::stream::TryCodingError::CodingError(err) => err.into(),
+            crate::stream::TryCodingError::InvalidEntropyModel(err) => {
                 pyo3::exceptions::PyValueError::new_err(format!(
                     "Invalid parameters for entropy model: {}",
                     err
@@ -461,6 +465,9 @@ impl From<EncodingError> for PyErr {
         match err {
             EncodingError::ImpossibleSymbol => {
                 pyo3::exceptions::PyKeyError::new_err(err.to_string())
+            }
+            EncodingError::CapacityExceeded => {
+                pyo3::exceptions::PyBufferError::new_err(err.to_string())
             }
         }
     }

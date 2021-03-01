@@ -28,7 +28,7 @@ pub struct EncoderHuffmanTree<W: BitArray = usize> {
     /// It is guaranteed that `num_symbols != 0` i.e., `nodes` is not empty.
     nodes: Vec<usize>,
 
-    phantom: PhantomData<*mut W>,
+    phantom: PhantomData<W>,
 }
 
 impl EncoderHuffmanTree {
