@@ -1,7 +1,10 @@
+#[cfg(feature = "std")]
+use std::error::Error;
+
 use num::Float;
 
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
-use core::{borrow::Borrow, cmp::Reverse, marker::PhantomData, ops::Add};
+use core::{borrow::Borrow, cmp::Reverse, convert::Infallible, marker::PhantomData, ops::Add};
 
 use super::{
     Codebook, DecoderCodebook, DecodingError, EncoderCodebook, SmallBitVec,
@@ -38,11 +41,37 @@ impl EncoderHuffmanTree {
         I: IntoIterator,
         I::Item: Borrow<P>,
     {
+        match Self::try_from_probabilities::<_, Infallible, _>(
+            probabilities.into_iter().map(|p| Ok(p.borrow().clone())),
+        ) {
+            Ok(tree) => tree,
+            Err(infallible) => match infallible {},
+        }
+    }
+
+    pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, ()>
+    where
+        P: Float + Clone + Add<Output = P>,
+        I: IntoIterator,
+        I::Item: Borrow<P>,
+    {
+        Self::try_from_probabilities(
+            probabilities
+                .into_iter()
+                .map(|p| NonNanFloat::new(p.borrow().clone())),
+        )
+    }
+
+    pub fn try_from_probabilities<P, E, I>(probabilities: I) -> Result<Self, E>
+    where
+        P: Ord + Clone + Add<Output = P>,
+        I: IntoIterator<Item = Result<P, E>>,
+    {
         let mut heap = probabilities
             .into_iter()
             .enumerate()
-            .map(|(i, s)| Reverse((s.borrow().clone(), i)))
-            .collect::<BinaryHeap<_>>();
+            .map(|(i, s)| s.map(|s| (Reverse((s, i)))))
+            .collect::<Result<BinaryHeap<_>, E>>()?;
 
         if heap.is_empty() || heap.len() > usize::max_value() / 4 {
             panic!();
@@ -61,23 +90,10 @@ impl EncoderHuffmanTree {
             next_node_index += 1;
         }
 
-        Self {
+        Ok(Self {
             nodes,
             phantom: PhantomData,
-        }
-    }
-
-    pub fn from_probabilities_panic_on_nan<P, I>(probabilities: I) -> Self
-    where
-        P: Float + Clone + Add<Output = P>,
-        I: IntoIterator,
-        I::Item: Borrow<P>,
-    {
-        Self::from_probabilities(
-            probabilities
-                .into_iter()
-                .map(|x| PanickingFloatOrd::new(x.borrow().clone())),
-        )
+        })
     }
 }
 
@@ -131,11 +147,37 @@ impl DecoderHuffmanTree {
         I: IntoIterator,
         I::Item: Borrow<P>,
     {
+        match Self::try_from_probabilities::<_, Infallible, _>(
+            probabilities.into_iter().map(|p| Ok(p.borrow().clone())),
+        ) {
+            Ok(tree) => tree,
+            Err(infallible) => match infallible {},
+        }
+    }
+
+    pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, ()>
+    where
+        P: Float + Clone + Add<Output = P>,
+        I: IntoIterator,
+        I::Item: Borrow<P>,
+    {
+        Self::try_from_probabilities(
+            probabilities
+                .into_iter()
+                .map(|p| NonNanFloat::new(p.borrow().clone())),
+        )
+    }
+
+    pub fn try_from_probabilities<P, E, I>(probabilities: I) -> Result<Self, E>
+    where
+        P: Ord + Clone + Add<Output = P>,
+        I: IntoIterator<Item = Result<P, E>>,
+    {
         let mut heap = probabilities
             .into_iter()
             .enumerate()
-            .map(|(i, s)| Reverse((s.borrow().clone(), i)))
-            .collect::<BinaryHeap<_>>();
+            .map(|(i, s)| s.map(|s| (Reverse((s, i)))))
+            .collect::<Result<BinaryHeap<_>, E>>()?;
 
         if heap.is_empty() || heap.len() > usize::max_value() / 2 {
             panic!();
@@ -152,20 +194,7 @@ impl DecoderHuffmanTree {
             next_node_index += 1;
         }
 
-        Self { nodes }
-    }
-
-    pub fn from_probabilities_panic_on_nan<P, I>(probabilities: I) -> Self
-    where
-        P: Float + Clone + Add<Output = P>,
-        I: IntoIterator,
-        I::Item: Borrow<P>,
-    {
-        Self::from_probabilities(
-            probabilities
-                .into_iter()
-                .map(|x| PanickingFloatOrd::new(x.borrow().clone())),
-        )
+        Ok(Self { nodes })
     }
 }
 
@@ -194,39 +223,56 @@ impl DecoderCodebook for DecoderHuffmanTree {
     }
 }
 
+pub trait TryIntoOrd {
+    type Target: Ord;
+
+    #[cfg(not(feature = "std"))]
+    type Error: Debug;
+
+    #[cfg(feature = "std")]
+    type Error: Error;
+
+    fn try_into(self) -> Result<Self::Target, Self::Error>;
+}
+
 #[derive(PartialOrd, Clone, Copy)]
-struct PanickingFloatOrd<F: Float> {
+struct NonNanFloat<F: Float> {
     inner: F,
 }
 
-impl<F: Float> PanickingFloatOrd<F> {
-    fn new(x: F) -> Self {
-        Self { inner: x }
+impl<F: Float> NonNanFloat<F> {
+    fn new(x: F) -> Result<Self, ()> {
+        if x.is_nan() {
+            Err(())
+        } else {
+            Ok(Self { inner: x })
+        }
     }
 }
 
-impl<F: Float> PartialEq for PanickingFloatOrd<F> {
+impl<F: Float> PartialEq for NonNanFloat<F> {
     fn eq(&self, other: &Self) -> bool {
-        if self.inner.is_nan() || other.inner.is_nan() {
-            panic!();
-        }
         self.inner.eq(&other.inner)
     }
 }
 
-impl<F: Float> Eq for PanickingFloatOrd<F> {}
+impl<F: Float> Eq for NonNanFloat<F> {}
 
-impl<F: Float> Ord for PanickingFloatOrd<F> {
+impl<F: Float> Ord for NonNanFloat<F> {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
+        self.inner
+            .partial_cmp(&other.inner)
+            .expect("NonNanFloat::inner is not NaN.")
     }
 }
 
-impl<F: Float> Add for PanickingFloatOrd<F> {
+impl<F: Float> Add for NonNanFloat<F> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        PanickingFloatOrd::new(self.inner + rhs.inner)
+        NonNanFloat {
+            inner: self.inner + rhs.inner,
+        }
     }
 }
 
@@ -272,9 +318,9 @@ mod test {
 
         // Let's not test ties of sums in floating point probabilities since they'll depend
         // on rounding errors (but should still be deterministic).
-        let tree = EncoderHuffmanTree::from_probabilities_panic_on_nan::<f32, _>(&[
-            0.19, 0.2, 0.41, 0.1, 0.1,
-        ]);
+        let tree =
+            EncoderHuffmanTree::from_float_probabilities::<f32, _>(&[0.19, 0.2, 0.41, 0.1, 0.1])
+                .unwrap();
         assert_eq!(tree.nodes, [12, 13, 16, 10, 11, 14, 15, 17, 0,]);
         assert_eq!(
             encode_all_symbols(&tree),
@@ -334,15 +380,14 @@ mod test {
 
         // Let's not test ties of sums in floating point probabilities since they'll depend
         // on rounding errors (but should still be deterministic).
-        let tree = DecoderHuffmanTree::from_probabilities_panic_on_nan::<f32, _>(&[
-            0.19, 0.2, 0.41, 0.1, 0.1,
-        ]);
+        let tree =
+            DecoderHuffmanTree::from_float_probabilities::<f32, _>(&[0.19, 0.2, 0.41, 0.1, 0.1])
+                .unwrap();
         assert_eq!(tree.nodes, [[3, 4], [0, 1], [5, 6], [2, 7]]);
         test_decoding_all_symbols(
             &tree,
-            &EncoderHuffmanTree::from_probabilities_panic_on_nan::<f32, _>(&[
-                0.19, 0.2, 0.41, 0.1, 0.1,
-            ]),
+            &EncoderHuffmanTree::from_float_probabilities::<f32, _>(&[0.19, 0.2, 0.41, 0.1, 0.1])
+                .unwrap(),
         );
     }
 }
