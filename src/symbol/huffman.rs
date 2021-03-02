@@ -83,10 +83,32 @@ impl EncoderHuffmanTree {
         while let (Some(Reverse((prob0, index0))), Some(Reverse((prob1, index1)))) =
             (heap.pop(), heap.pop())
         {
-            // TODO: turn into `get_unchecked`
             heap.push(Reverse((prob0 + prob1, next_node_index)));
-            nodes[index0] = next_node_index << 1;
-            nodes[index1] = (next_node_index << 1) | 1;
+            unsafe {
+                // SAFETY:
+                // - `nodes.len() == original_heap_len * 2 - 1` (which we made sure doesn't wrap),
+                //   where `original_heap_len` is the value of `heap.len()` before entering this
+                //   `while` loop, which we checked is nonzero.
+                // - We access `nodes` and indices found in `heap`. These have to be either the
+                //   indices `0..original_heap_len` that we wrote into it initially (which are all
+                //   smaller than `original_heap_len * 2 - 1` since we checked that
+                //   `!heap.is_empty()`, i.e., that `original_heap_len != 0`); or they have to be
+                //   the indices we write to the heap in this `while` loop, which come from
+                //   `next_node_index`.
+                // - `next_node_index` starts at `original_heap_len` and increases by one in each
+                //   iteration of this `while` loop.
+                // - Each iteration of this `while` loop removes two elements from `heap` and
+                //   pushes one element back onto `heap`; so each iteration reduces the number of
+                //   elements on `heap` by one; since we terminate as soon as there are fewer than
+                //   2 elements on `heap`, this `while` loop iterates `original_heap_len - 1` times
+                //   (which is nonnegative since `original_heap_len != 0`).
+                // - Thus, the largest value that `next_node_index` can take is
+                //   `original_heap_len * 2 - 1`; but since we access `next_node_index` before
+                //   incrementing it, all values we ever push on the heap are strictly smaller than
+                //   `original_heap_len * 2 - 1`, and thus are valid indices.
+                *nodes.get_unchecked_mut(index0) = next_node_index << 1;
+                *nodes.get_unchecked_mut(index1) = (next_node_index << 1) | 1;
+            }
             next_node_index += 1;
         }
 
@@ -114,7 +136,14 @@ impl<W: BitArray> EncoderCodebook for EncoderHuffmanTree<W> {
         let mut reverse_codeword = SmallBitVec::<W>::new();
         let mut node_index = symbol;
         loop {
-            let node = self.nodes[node_index];
+            let node = unsafe {
+                // SAFETY: `node_index` is
+                // - either its initial value of `symbol`, which is `<= num_symbols`, and
+                //   `nodes.len() = 2 * num_symbols - 1 > num_symbols` since `num_symbols != 0`;
+                // - or `node_index` is `node >> 1` where `node` is the value of a parent node; in
+                //   this case it is guaranteed to be a valid index.
+                *self.nodes.get_unchecked(node_index)
+            };
             if node == 0 {
                 break;
             }
@@ -135,8 +164,9 @@ pub struct DecoderHuffmanTree {
     /// `num_symbols + index` where `index` is the index into `nodes` where the
     /// respective child node can be found.
     ///
-    /// It is guaranteed that `num_symbols != 0`, but `nodes` can still be empty if
-    /// `num_symbols == 1`.
+    /// # Invariants
+    /// - `num_symbols != 0` (but `nodes` can still be empty if `num_symbols == 1`.
+    /// - All entries of `nodes` are strictly smaller than `2 * nodes.len()`.
     nodes: Vec<[usize; 2]>,
 }
 
@@ -211,12 +241,23 @@ impl DecoderCodebook for DecoderHuffmanTree {
     ) -> Result<usize, DecodingError> {
         let num_nodes = self.nodes.len();
         let num_symbols = num_nodes + 1;
-        let mut node_index = 2 * num_nodes;
+        let mut node_index = 2 * num_nodes; // Start at root node.
 
         while node_index >= num_symbols {
             let bit = source.next().ok_or(DecodingError::OutOfCompressedData)?;
-            // TODO: turn into `get_unchecked`
-            node_index = self.nodes[node_index - num_symbols][bit as usize];
+            unsafe {
+                // SAFETY:
+                // - `node_index >= num_symbols` within this loop, so `node_index - num_symbols`
+                //   does not wrap.
+                // - `node_index is either the initial value `2 * num_nodes` or it comes from an
+                //   entry of `nodes`, which are all strictly smaller than `2 * num_nodes`.
+                // - Thus, `node_index - num_symbols = node_index - num_nodes - 1 <= num_nodes - 1`,
+                //   which is a valid index into `nodes`.
+                //
+                // NOTE: No need to use `get_unchecked(bit as usize)` since the compiler is smart
+                //       enough to optimize away the bounds check in this case on its own.
+                node_index = self.nodes.get_unchecked(node_index - num_symbols)[bit as usize];
+            }
         }
 
         Ok(node_index)
