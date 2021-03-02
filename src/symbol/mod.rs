@@ -235,6 +235,21 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
     }
 }
 
+impl<W: BitArray, V: GenericVec<W>> From<V> for BitVec<W, V> {
+    fn from(buf: V) -> Self {
+        let mask_last_written = if buf.is_empty() {
+            W::zero()
+        } else {
+            W::one() << (W::BITS - 1)
+        };
+
+        Self {
+            buf,
+            mask_last_written,
+        }
+    }
+}
+
 impl<W: BitArray, V: GenericVec<W>> FromIterator<bool> for BitVec<W, V> {
     fn from_iter<T: IntoIterator<Item = bool>>(iter: T) -> Self {
         let iter = iter.into_iter();
@@ -508,36 +523,42 @@ mod test {
         assert_eq!(bit_vec.len(), 0);
         assert!(bit_vec.is_empty());
 
-        let amt = 150usize;
-        for i in 0..amt {
-            bit_vec.push(i.count_ones() % 2 != 0);
+        let amt = 150;
+        let mut bool_vec = Vec::with_capacity(amt);
+        let mut rng = Xoshiro256StarStar::seed_from_u64(123);
+        for _ in 0..amt {
+            let bit = rng.next_u32() % 2 != 0;
+            bit_vec.push(bit);
+            bool_vec.push(bit);
         }
 
         assert_eq!(bit_vec.len(), amt);
         assert!(!bit_vec.is_empty());
 
-        let mut count_down = amt;
         for bit in bit_vec.into_iter_reverse() {
-            count_down -= 1;
-            assert_eq!(bit, count_down.count_ones() % 2 != 0);
+            assert_eq!(bit, bool_vec.pop().unwrap());
         }
 
-        assert_eq!(count_down, 0);
+        assert!(bool_vec.is_empty());
     }
 
     #[test]
     fn bit_vec_iter() {
+        let amt = 100;
         let mut bit_vec = BitVec::<u16>::new();
-        let amt = 100usize;
-        for i in 0..amt {
-            bit_vec.push(i.count_ones() % 2 != 0);
+        let mut bool_vec = Vec::with_capacity(amt);
+        let mut rng = Xoshiro256StarStar::seed_from_u64(1234);
+        for _ in 0..amt {
+            let bit = rng.next_u32() % 2 != 0;
+            bit_vec.push(bit);
+            bool_vec.push(bit);
         }
         assert_eq!(bit_vec.len(), amt);
         assert!(!bit_vec.is_empty());
 
-        let mut count = 0usize;
+        let mut count = 0;
         for bit in bit_vec.iter() {
-            assert_eq!(bit, count.count_ones() % 2 != 0);
+            assert_eq!(bit, bool_vec[count]);
             count += 1;
         }
         assert_eq!(count, amt);
@@ -546,7 +567,7 @@ mod test {
     #[test]
     fn encode_decode_iid() {
         let amt = 1000;
-        let mut rng = Xoshiro256StarStar::seed_from_u64(1234);
+        let mut rng = Xoshiro256StarStar::seed_from_u64(12345);
         let symbols = (0..amt)
             .map(|_| (rng.next_u32() % 5) as usize)
             .collect::<Vec<_>>();
@@ -572,9 +593,9 @@ mod test {
     }
 
     #[test]
-    fn encode_decode_noniid() {
+    fn encode_decode_non_iid() {
         fn iter_probs_and_symbols(amt: usize) -> impl Iterator<Item = (Vec<u32>, usize)> {
-            let mut rng = Xoshiro256StarStar::seed_from_u64(1234);
+            let mut rng = Xoshiro256StarStar::seed_from_u64(123456);
             (0..amt).map(move |_| {
                 let num_symbols = 1 + rng.next_u32() % 10;
                 let probs = (0..num_symbols).map(|_| rng.next_u32() >> 16).collect();
