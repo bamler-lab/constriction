@@ -1,0 +1,22 @@
+[tool.poetry]
+authors = ["Robert Bamler <robert.bamler@gmail.com>"]
+description = ""
+name = "constriction"
+version = "0.1.0"
+
+[tool.poetry.dependencies]
+python = "^3.7"
+
+[tool.poetry.dev-dependencies]
+autopep8 = "*"
+flake8 = "^3.5"
+maturin = "==0.9.4"
+numpy = "^1.20"
+pylint = "^2.6"
+pytest = "^6.1"
+pytest-runner = "*"
+wheel = "*"
+
+[build-system]
+build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core>=1.0.0"]

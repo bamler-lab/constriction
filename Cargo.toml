@@ -1,6 +1,7 @@
 [package]
 authors = ["Robert Bamler <robert.bamler@gmail.com>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
 name = "constriction"
 version = "0.1.0"
 
@@ -39,3 +40,13 @@ rand_xoshiro = "0.4"
 [[bench]]
 harness = false
 name = "lookup"
+
+[package.metadata.maturin]
+# TODO: requires-python (string fields), requires-external
+classifiers = [
+  "Topic :: System :: Archiving :: Compression",
+  "Intended Audience :: Science/Research",
+]
+maintainer = "Robert Bamler"
+maintainer-email = "robert.bamler@gmail.com"
+project-url."Source repository" = "https://github.com/robamler/constriction/"
