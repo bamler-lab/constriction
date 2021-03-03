@@ -3,7 +3,7 @@ pub mod huffman;
 use smallvec::SmallVec;
 
 use alloc::vec::Vec;
-use core::{borrow::Borrow, iter::FromIterator, ops::DerefMut};
+use core::{borrow::Borrow, iter::FromIterator};
 
 use crate::{BitArray, EncodingError};
 
@@ -45,7 +45,7 @@ impl<C: DecoderCodebook> DecoderCodebook for &C {
     }
 }
 
-pub trait GenericVec<T>: Default + DerefMut<Target = [T]> {
+pub trait GenericVec<T>: Default + AsRef<[T]> + AsMut<[T]> {
     fn with_capacity(capacity: usize) -> Self;
     fn push(&mut self, x: T);
     fn pop(&mut self) -> Option<T>;
@@ -53,7 +53,7 @@ pub trait GenericVec<T>: Default + DerefMut<Target = [T]> {
     fn resize_with(&mut self, new_len: usize, f: impl FnMut() -> T);
 
     fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.as_ref().len() == 0
     }
 }
 
@@ -70,6 +70,8 @@ pub struct BitVec<W: BitArray, V: GenericVec<W> = Vec<W>> {
     mask_last_written: W,
 }
 
+pub type DefaultBitVec = BitVec<u32>;
+
 #[derive(Debug)]
 pub struct BitVecIterRev<W: BitArray, V: GenericVec<W> = Vec<W>> {
     inner: BitVec<W, V>,
@@ -83,10 +85,28 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
         Default::default()
     }
 
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub fn with_bit_capacity(bit_capacity: usize) -> Self {
         Self {
-            buf: V::with_capacity((capacity + W::BITS - 1) / W::BITS),
+            buf: V::with_capacity((bit_capacity + W::BITS - 1) / W::BITS),
             mask_last_written: W::zero(),
+        }
+    }
+
+    pub fn from_buf_and_bit_len(buf: V, bit_len: usize) -> Result<Self, ()> {
+        let num_words = (bit_len + W::BITS - 1) / W::BITS;
+        if buf.as_ref().len() != num_words {
+            Err(())
+        } else {
+            let mask_last_written = if num_words == 0 {
+                W::zero()
+            } else {
+                W::one() << ((bit_len - 1) % W::BITS)
+            };
+
+            Ok(Self {
+                buf,
+                mask_last_written,
+            })
         }
     }
 
@@ -96,6 +116,7 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
             if bit {
                 let last_word = self
                     .buf
+                    .as_mut()
                     .last_mut()
                     .expect("buf is not empty since mask_last_written != 0.");
                 *last_word = *last_word | write_mask;
@@ -116,6 +137,7 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
             self.mask_last_written = new_mask;
             let last_word = self
                 .buf
+                .as_mut()
                 .last_mut()
                 .expect("`old_mask != 0`, so `buf` is not empty.");
             let bit = *last_word & old_mask;
@@ -144,7 +166,7 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
     }
 
     pub fn len(&self) -> usize {
-        let capacity = self.buf.len() * W::BITS;
+        let capacity = self.buf.as_ref().len() * W::BITS;
         let unused = if self.mask_last_written == W::zero() {
             0
         } else {
@@ -152,6 +174,10 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
         };
 
         capacity - unused as usize
+    }
+
+    pub fn buf(&self) -> &[W] {
+        self.buf.as_ref()
     }
 
     pub fn clear(&mut self) {
@@ -175,11 +201,11 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
             new_mask = old_mask << (W::BITS - remainder);
         }
 
-        if let Some(new_len) = self.buf.len().checked_sub(num_words) {
+        if let Some(new_len) = self.buf.as_ref().len().checked_sub(num_words) {
             self.buf.resize_with(new_len, W::zero);
             self.mask_last_written = new_mask;
 
-            if let Some(last_word) = self.buf.last_mut() {
+            if let Some(last_word) = self.buf.as_mut().last_mut() {
                 let mask = (new_mask - W::one()) << 1 | W::one();
                 *last_word = *last_word & mask;
             } else {
@@ -230,30 +256,19 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
         self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, codebook)))
     }
 
-    pub fn iter(&self) -> BitVecIter<'_, W> {
+    pub fn iter(&self) -> BitVecIter<W, &[W]> {
         self.into()
     }
-}
 
-impl<W: BitArray, V: GenericVec<W>> From<V> for BitVec<W, V> {
-    fn from(buf: V) -> Self {
-        let mask_last_written = if buf.is_empty() {
-            W::zero()
-        } else {
-            W::one() << (W::BITS - 1)
-        };
-
-        Self {
-            buf,
-            mask_last_written,
-        }
+    pub fn into_iter(self) -> BitVecIter<W, V> {
+        self.into()
     }
 }
 
 impl<W: BitArray, V: GenericVec<W>> FromIterator<bool> for BitVec<W, V> {
     fn from_iter<T: IntoIterator<Item = bool>>(iter: T) -> Self {
         let iter = iter.into_iter();
-        let mut bit_vec = Self::with_capacity(iter.size_hint().0);
+        let mut bit_vec = Self::with_bit_capacity(iter.size_hint().0);
         for bit in iter {
             bit_vec.push(bit)
         }
@@ -296,7 +311,11 @@ impl<W: BitArray, V: GenericVec<W>> Iterator for BitVecIterRev<W, V> {
     where
         Self: Sized,
     {
-        self.inner.buf.first().map(|&x| x & W::one() != W::zero())
+        self.inner
+            .buf
+            .as_ref()
+            .first()
+            .map(|&x| x & W::one() != W::zero())
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
@@ -308,8 +327,8 @@ impl<W: BitArray, V: GenericVec<W>> Iterator for BitVecIterRev<W, V> {
 impl<W: BitArray, V: GenericVec<W>> ExactSizeIterator for BitVecIterRev<W, V> {}
 
 #[derive(Debug)]
-pub struct BitVecIter<'buf, W: BitArray> {
-    buf: &'buf [W],
+pub struct BitVecIter<W: BitArray, B: AsRef<[W]>> {
+    buf: B,
     next_pos: usize,
     last_word_allowed_bits: W,
     current_word: W,
@@ -317,10 +336,10 @@ pub struct BitVecIter<'buf, W: BitArray> {
     mask_next_to_read: W,
 }
 
-impl<'buf, W: BitArray, V: GenericVec<W>> From<&'buf BitVec<W, V>> for BitVecIter<'buf, W> {
+impl<'buf, W: BitArray, V: GenericVec<W>> From<&'buf BitVec<W, V>> for BitVecIter<W, &'buf [W]> {
     fn from(bit_vec: &'buf BitVec<W, V>) -> Self {
         Self {
-            buf: &bit_vec.buf,
+            buf: bit_vec.buf.as_ref(),
             next_pos: 0,
             last_word_allowed_bits: (bit_vec.mask_last_written << 1).wrapping_sub(&W::one()),
             current_word: W::zero(),
@@ -330,7 +349,20 @@ impl<'buf, W: BitArray, V: GenericVec<W>> From<&'buf BitVec<W, V>> for BitVecIte
     }
 }
 
-impl<'buf, W: BitArray> Iterator for BitVecIter<'buf, W> {
+impl<W: BitArray, V: GenericVec<W>> From<BitVec<W, V>> for BitVecIter<W, V> {
+    fn from(bit_vec: BitVec<W, V>) -> Self {
+        Self {
+            buf: bit_vec.buf,
+            next_pos: 0,
+            last_word_allowed_bits: (bit_vec.mask_last_written << 1).wrapping_sub(&W::one()),
+            current_word: W::zero(),
+            current_allowed_bits: W::max_value(),
+            mask_next_to_read: W::zero(),
+        }
+    }
+}
+
+impl<W: BitArray, B: AsRef<[W]>> Iterator for BitVecIter<W, B> {
     type Item = bool;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -340,13 +372,13 @@ impl<'buf, W: BitArray> Iterator for BitVecIter<'buf, W> {
             self.mask_next_to_read = self.mask_next_to_read << 1;
             Some(bit)
         } else if self.mask_next_to_read == W::zero() {
-            if self.next_pos >= self.buf.len() {
+            if self.next_pos >= self.buf.as_ref().len() {
                 None
             } else {
-                self.current_word = self.buf[self.next_pos]; // TODO: use get_unchecked
+                self.current_word = self.buf.as_ref()[self.next_pos]; // TODO: use get_unchecked
                 self.next_pos += 1;
                 self.mask_next_to_read = W::one() << 1;
-                if self.next_pos == self.buf.len() {
+                if self.next_pos == self.buf.as_ref().len() {
                     self.current_allowed_bits = self.last_word_allowed_bits
                 }
                 Some(self.current_word & W::one() != W::zero())
@@ -357,7 +389,7 @@ impl<'buf, W: BitArray> Iterator for BitVecIter<'buf, W> {
     }
 }
 
-impl<'buf, W: BitArray> BitVecIter<'buf, W> {
+impl<W: BitArray, B: AsRef<[W]>> BitVecIter<W, B> {
     pub fn decode_symbol(
         &mut self,
         codebook: impl DecoderCodebook,

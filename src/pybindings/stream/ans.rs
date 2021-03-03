@@ -1,68 +1,3 @@
-//! Wrapper types that expose functionality to Python<'_> 3 code
-//!
-//! This module is only compiled if the feature `pybindings` is turned on, which is
-//! turned off by default.
-//!
-//! # Compiling the Python<'_> Extension Module
-//!
-//! 1. If you haven't already: [install the Rust toolchain](https://rustup.rs/).
-//!     If Rust is already installed on your system then make sure you have the
-//!     latest version:
-//!
-//!     ```bash
-//!     rustup update
-//!     ```
-//!
-//! 2. Build an optimized library *with the `pybindings` feature flag*:
-//!
-//!     ```bash
-//!     cd constriction
-//!     cargo build --release --features pybindings
-//!     ```
-//!
-//! 3. Check if the file `constriction.so` exists in the top level directory. The git
-//!     repository should contain this file, and it should be a symlink that points
-//!     to the library you just compiled:
-//!
-//!     ```bash
-//!     $ ls -l constriction.so
-//!     lrwxrwxrwx 1 user group Date Time constriction.so -> target/release/libconstriction.so
-//!     ```
-//!
-//! # Example
-//!
-//! After compiling the python extension module as described above, `cd` to the
-//! directory that contains the symlink `constriction.so`, open a python REPL, and try it
-//! out:
-//!
-//! ```bash
-//! $ ipython3
-//!
-//! In [1]: import constriction
-//!    ...: import numpy as np
-//!
-//! In [2]: coder = constriction.Ans()
-//!
-//! In [3]: symbols = np.array([2, -1, 0, 2], dtype = np.int32)
-//!    ...: min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-//!    ...: means = np.array([2.3, -1.7, 0.1, 2.2], dtype = np.float64)
-//!    ...: stds = np.array([1.1, 5.3, 3.8, 1.4], dtype = np.float64)
-//!
-//! In [4]: coder.encode_gaussian_symbols_reverse(
-//!    ...:     symbols, min_supported_symbol, max_supported_symbol, means, stds)
-//!
-//! In [5]: print(f"Compressed size (including constant overhead): {coder.num_bits()} bits")
-//! Compressed size (including constant overhead): 64 bits
-//!
-//! In [6]: coder.get_compressed()
-//! Out[6]: array([2372401017,        101], dtype=uint32)
-//!
-//! In [7]: coder.decode_gaussian_symbols(min_supported_symbol, max_supported_symbol, means, stds)
-//! Out[7]: array([ 2, -1,  0,  2], dtype=int32)
-//!
-//! In [8]: assert coder.is_empty()
-//! ```
-
 use std::{error::Error, format, prelude::v1::*, vec};
 
 use numpy::{PyArray1, PyReadonlyArray1};
@@ -78,9 +13,8 @@ use crate::{
 
 use statrs::distribution::Normal;
 
-#[pymodule]
-fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
-    m.add_class::<Ans>()?;
+pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+    module.add_class::<Ans>()?;
     Ok(())
 }
 
@@ -113,17 +47,17 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 /// import constriction
 /// import numpy as np
 ///
-/// ans = constriction.Ans()
+/// ans = constriction.Ans()  # Creates an empty ANS coder when called with no arguments.
 ///
-/// symbols = np.array([2, -1, 0, 2], dtype = np.int32)
+/// symbols = np.array([2, -1, 0, 2, 3], dtype = np.int32)
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-/// means = np.array([2.3, -1.7, 0.1, 2.2], dtype = np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4], dtype = np.float64)
+/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
+/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
 ///
 /// ans.encode_gaussian_symbols_reverse(
 ///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
 ///
-/// print(f"Compressed size (including constant overhead): {ans.num_bits()} bits")
+/// print(f"Compressed size: {ans.num_valid_bits()} bits")
 ///
 /// compressed = ans.get_compressed()
 /// if sys.byteorder == "big":
@@ -139,7 +73,7 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 /// import constriction
 /// import numpy as np
 ///
-/// compressed = np.fromfile("compressed.bin")
+/// compressed = np.fromfile("compressed.bin", dtype=np.uint32)
 /// if sys.byteorder == "big":
 ///     # Convert little endian byte order to native byte order.
 ///     compressed.byteswap(inplace=True)
@@ -147,8 +81,8 @@ fn constriction(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 /// ans = constriction.Ans(compressed)
 ///
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-/// means = np.array([2.3, -1.7, 0.1, 2.2], dtype = np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4], dtype = np.float64)
+/// means = np.array([2.3, -1.7, 0.1, 2.2], -5.1, dtype = np.float64)
+/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
 ///
 /// reconstructed = ans.decode_gaussian_symbols(
 ///     min_supported_symbol, max_supported_symbol, means, stds)
@@ -179,9 +113,9 @@ impl Ans {
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = if let Some(compressed) = compressed {
             crate::stream::ans::Ans::from_compressed(compressed.to_vec()?).map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "Invalid compressed data: ANS compressed data never ends in a zero word."
-                ))
+                pyo3::exceptions::PyValueError::new_err(
+                    "Invalid compressed data: ANS compressed data never ends in a zero word.",
+                )
             })?
         } else {
             crate::stream::ans::Ans::new()
@@ -202,9 +136,14 @@ impl Ans {
         self.inner.num_words()
     }
 
-    /// The current size of the compressed data, in bits.
+    /// The current size of the compressed data, in bits, rounded up to full words.
     pub fn num_bits(&self) -> usize {
         self.inner.num_bits()
+    }
+
+    /// The current size of the compressed data, in bits, not rounded up to full words.
+    pub fn num_valid_bits(&self) -> usize {
+        self.inner.num_valid_bits()
     }
 
     /// Returns `True` iff the coder is in its default initial state.
