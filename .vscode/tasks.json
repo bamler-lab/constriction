@@ -4,14 +4,14 @@
 		{
 			"type": "cargo",
 			"command": "doc",
-			"args": [
-				"--all-features"
-			],
 			"problemMatcher": [
 				"$rustc"
 			],
 			"group": "build",
-			"label": "rust: cargo doc --all-features"
+			"label": "rust: cargo doc",
+			"presentation": {
+				"clear": true
+			},
 		},
 		{
 			"type": "cargo",

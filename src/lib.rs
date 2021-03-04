@@ -1,146 +1,58 @@
-//! Entropy coding primitives in Rust for Rust and/or Python.
+//! Entropy Coding Primitives for Research and Production
 //!
-//! This crate provides high-performance generic lossless compression primitives.
-//! Its main intended use case is for building more specialized lossless or lossy
-//! compression methods on top of these primitives. For this reason, the library can
-//! be used both as a standard Rust crate that one can include in other rust
-//! projects, or one can (optionally) compile this crate as a [Python extension
-//! module] (using `cargo build --release --feature pybindings`). This allows users
-//! to quickly experiment in Python with different compression methods that build on
-//! top of the primitives provided by this library. Once a promising compression
-//! method has been developed, one can implement an optimized version of the method
-//! in Rust building on the same entropy coding primitives provided by this crate.
+//! The `constriction` crate provides a set of composable entropy coding algorithms with a
+//! focus on ease of use, flexibility, compression performance, and computational
+//! efficiency. The goals of `constriction` are to three-fold:
 //!
-//! # Usage
+//! 1. **to facilitate research on novel lossless and lossy compression methods** by
+//!    bridging the gap between declarative tools for data modeling from the machine
+//!    learning community and imperative tools for algorithm design from the source coding
+//!    literature;
+//! 2. **to simplify the transition from research code to production software** by providing
+//!    both an easy-to-use Python API (for rapid iteration on research code) and a highly
+//!    generic Rust API (for turning research code into optimized standalone binary programs
+//!    or libraries with minimal dependencies); and
+//! 3. **to serve as a teaching resource** by providing a wide range of entropy coding
+//!    algorithms within a single consistent framework, thus making the various algorithms
+//!    easily discoverable and comparable on example models and data. [Additional teaching
+//!    material](https://robamler.github.io/teaching/compress21/) will be made publicly
+//!    available as a by-product of an upcoming university course on data compression with
+//!    deep probabilistic models.
 //!
-//! Rust users will likely want to start by encoding some data with a [`Ans`].
+//! # Currently Supported Entropy Coding Algorithms
 //!
-//! Python users will likely want to install this library via `pip install
-//! constriction`, then `import constriction` in their project and construct a
-//! `constriction.Ans`.
+//! The `constriction` crate currently supports the following algorithms:
 //!
-//! # A Primer on Entropy Coding
+//! - **Asymmetric Numeral Systems (ANS):** a highly efficient modern entropy coder with
+//!   near-optimal compression performance that supports advanced use cases like bits-back
+//!   coding;
+//!   - A "split" variant of ANS coding is provided for advanced use cases in hierarchical
+//!     models with cyclic dependencies.
+//! - **Range Coding:** a variant of Arithmetic Coding that is optimized for realistic
+//!   computing hardware; it has similar compression performance and almost the same
+//!   computational performance as ANS. The main practical difference is that Range Coding
+//!   is a queue (FIFO) while ANS is a stack (LIFO).
+//! - **Huffman Coding:** a well-known symbol code, mainly provided here for teaching
+//!   purpose; you'll usually want to use a stream code like ANS or Range Coding instead.
 //!
-//! Entropy coding is an approach to lossless compression that employs a
-//! probabilistic model over the encoded data. This so called *entropy model* allows
-//! an entropy coding algorithm to assign short codewords to data it will likely
-//! see, at the cost of mapping unlikely data to longer codewords. The module
-//! [`models`] provides tools to construct entropy models that you can use
-//! with any coder that implements [`Encode`] or  [`Decode`].
+//! # Quick Start With the Rust API
 //!
-//! The information theoretically optimal (i.e., lowest possible) *expected* bitrate
-//! for entropy coding lies within one bit of the [cross entropy] of the employed
-//! entropy model relative to the true distribution of the encoded data. To achieve
-//! this optimal expected bitrate, an optimal entropy coder has to map each possible
-//! data point to a compressed bitstring whose length is the [information content]
-//! of the data under the entropy model (rounded up to the nearest integer).
+//! You are currently reading the documentation of `constriction`'s Rust API. If Rust is not
+//! your language of choice then head over to the [Python API Documentation](TODO). The Rust
+//! API provides efficient and composable entropy coding primitives with sane default
+//! settings that can be adjusted to a fine degree of detail using type parameters and const
+//! generics. The Python API exposes the most common use cases of these entropy coding
+//! primitives to an environment that feels more natural to many data scientists.
 //!
-//! The entropy coders provided by this library are *asymptotically optimal* in the
-//! sense that they employ approximations to optimize for runtime performance, but
-//! these approximations can be adjusted via generic parameters to get arbitrarily
-//! close to the information theoretically optimal compression performance (in the
-//! limit of large data). The documentation of `Coder` has a [section discussing the
-//! involved tradeoffs](struct.Coder.html#guidance-for-choosing-w-and-precision).
+//! ## System Requirements
 //!
-//! ## Streaming Entropy Coding
+//! `constriction` requires Rust version 1.51 or later for its use of the
+//! `min_const_generics` feature. If you have an older version of Rust, update to the latest
+//! version by running `rustup update stable`.
 //!
-//! The entropy coders provided in this library support what is called "streaming
-//! entropy coding" over a sequence of symbols. This provides better compression
-//! performance (lower bitrates) on large data than well-known alternative methods
-//! such as [Huffman coding], which do not support streaming entropy coding.
+//! ## Example
 //!
-//! To understand the problem that streaming entropy coding solves, one has to look
-//! at practical applications of entropy coding. Data compression is only useful if
-//! one a large amount of data, typically represented as a long sequence of
-//! *symbols* (such as a long sequence of characters when compressing a text
-//! document). Conceptually, the entropy model is then a probability distribution
-//! over the entire sequence of symbols (e.g, a probability distribution over all
-//! possible text documents). In practice, however, dealing with probability
-//! distributions over large amounts of data is difficult, and one therefore
-//! typically factorizes the entropy model into individual models for each symbol
-//! (such a factorization still allows for [modeling correlations](
-//! #encoding-correlated-data) as discussed below).
-//!
-//! Such a factorization of the entropy model would lead to a significant overhead
-//! (in bitrate) in some of the original entropy coding algorithms such as [Huffman
-//! coding]. This is because Huffman coding compresses each symbol into its
-//! individual bitstring. The compressed representation of the entire message is
-//! then formed by concatenating the compressed bitstrings of each symbol (the
-//! bitstrings are formed in a way that makes delimiters unnecessary). This has an
-//! important drawback: each symbol contributes an integer number of bits to the
-//! compressed data, even if its [information content] is not an integer number,
-//! which is the common case (the information content of a symbol is the symbol's
-//! contribution to the length of the compressed bitstring in an *optimal* entropy
-//! coder). For example, consider the problem of compressing a sequence of one
-//! million symbols, where the average information content of each symbol is
-//! 0.1&nbsp;bits (this is a realistic scenario for neural compression methods).
-//! While the information content of the entire message is only 1,000,000 × 0.1 =
-//! 100,000&nbsp;bits, Huffman coding would need at least one full bit for each
-//! symbol, resulting in a compressed bitstring that is at least ten times longer.
-//!
-//! The entropy coders provided by this library do not suffer from this overhead
-//! because they support *streaming* entropy coding, which amortizes over the
-//! information content of several symbols. In the above example, this library would
-//! produce a compressed bitstring that is closer to 100,000&nbsp;bits in length
-//! (the remaining overhead depends on details in the choice of entropy coder used,
-//! which generally trades off compression performance against runtime and memory
-//! performance). This amortization over symbols means that one can no longer map
-//! each symbol to a span of bits in the compressed bitstring. Therefore, jumping
-//! ("seeking") to a given position in the compressed bitstring (see [`Seek::seek`])
-//! requires providing some small additional information aside from the jump
-//! address. The additional information can be thought of as the fractional (i.e.,
-//! sub-bit) part of the jump address
-//!
-//! # Encoding Correlated Data
-//!
-//! The above mentioned factorization of the entropy model into individual models
-//! for each encoded symbol may seem more restrictive than it actually is. It is not
-//! to be confused with a "fully factorized" model, which is not required here. The
-//! entropy model can still model correlations between different symbols in a
-//! message.
-//!
-//! The most straight-forward way to encode correlations is by choosing the entropy
-//! model of each symbol conditionally on other symbols ("autoregressive" entropy
-//! models), as described in the example below. Another way to encode correlations
-//! is via hierarchical probabilistic models and the bits-back algorithm, which can
-//! naturally be implemented on top of a stack-based entropy coder such as the rANS
-//! coder provided by this library.
-//!
-//! For an example of an autoregressive entropy model, consider the task of
-//! compressing a message that consists of a sequence of three symbols
-//! `[s1, s2, s3]`. The full entropy model for this message is a probability
-//! distribution `p(s1, s2, s3)`. Such a distribution can, at least in principle,
-//! always be factorized as `p(s1, s2, s3) = p1(s1) * p2(s2 | s1) *
-//! p3(s3 | s1, s2)`. Here, `p1`, `p2`, and `p3` are entropy models for the
-//! individual symbols `s1`, `s2`, and `s3`, respectively. In this notation, the bar
-//! "`|`" separates the symbol on the left, which is the one that the given entropy
-//! model describes, from the symbols on the right, which one must already know if
-//! one wants to construct the entropy model.
-//!
-//! During encoding, we know the entire message `[s1, s2, s3]`, and so we can
-//! construct all three entropy models `p1`, `p2`, and `p3`. We then use these
-//! entropy models to encode the symbols `s1`, `s2`, and `s3` (in reverse order if a
-//! stack-based entropy coding algorithm such as rANS is used). When decoding the
-//! compressed bitstring, we do not know the symbols `s1`, `s2`, and `s3` upfront,
-//! so we initially cannot construct `p2` or `p3`. But the entropy model `p1` of the
-//! first symbol does not depend on any other symbols, so we can use it to decode
-//! the first symbol `s1`. Using this decoded symbol, we can construct the entropy
-//! model `p2` and use it to decode the second symbol `s2`. Finally, we use both
-//! decoded symbols `s1` and `s2` to construct the entropy model `p3` and we decode
-//! `s3`.
-//!
-//! This technique of autoregressive models can be scaled up to build very
-//! expressive entropy models over complex data types. This is outside the scope of
-//! this library, which only provides the primitive building blocks for constructing
-//! [`models`] over individual symbols and for encoding and decoding data.
-//!
-//! [range Asymmetric Numeral Systems (rANS)]:
-//! https://en.wikipedia.org/wiki/Asymmetric_numeral_systems#Range_variants_(rANS)_and_streaming
-//! [python extension module]: https://docs.python.org/3/extending/extending.html
-//! [cross entropy]: https://en.wikipedia.org/wiki/Cross_entropy
-//! [information content]: https://en.wikipedia.org/wiki/Information_content
-//! [Huffman coding]: https://en.wikipedia.org/wiki/Huffman_coding
-//! [`Ans`]: ans.Ans
+//! TODO
 
 #![no_std]
 #![warn(rust_2018_idioms, missing_debug_implementations)]
@@ -151,7 +63,7 @@ extern crate alloc;
 extern crate std;
 
 #[cfg(feature = "pybindings")]
-pub mod pybindings;
+mod pybindings;
 
 pub mod stream;
 pub mod symbol;

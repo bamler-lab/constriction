@@ -1,68 +1,3 @@
-//! Wrapper types that expose functionality to Python<'_> 3 code
-//!
-//! This module is only compiled if the feature `pybindings` is turned on, which is
-//! turned off by default.
-//!
-//! # Compiling the Python Extension Module
-//!
-//! 1. If you haven't already: [install the Rust toolchain](https://rustup.rs/).
-//!     If Rust is already installed on your system then make sure you have the
-//!     latest version:
-//!
-//!     ```bash
-//!     rustup update
-//!     ```
-//!
-//! 2. Build an optimized library *with the `pybindings` feature flag*:
-//!
-//!     ```bash
-//!     cd constriction
-//!     cargo build --release --features pybindings
-//!     ```
-//!
-//! 3. Check if the file `constriction.so` exists in the top level directory. The git
-//!     repository should contain this file, and it should be a symlink that points
-//!     to the library you just compiled:
-//!
-//!     ```bash
-//!     $ ls -l constriction.so
-//!     lrwxrwxrwx 1 user group Date Time constriction.so -> target/release/libconstriction.so
-//!     ```
-//!
-//! # Example
-//!
-//! After compiling the python extension module as described above, `cd` to the
-//! directory that contains the symlink `constriction.so`, open a python REPL, and try it
-//! out:
-//!
-//! ```bash
-//! $ ipython3
-//!
-//! In [1]: import constriction
-//!    ...: import numpy as np
-//!
-//! In [2]: coder = constriction.Ans()
-//!
-//! In [3]: symbols = np.array([2, -1, 0, 2, 3], dtype=np.int32)
-//!    ...: min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-//!    ...: means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float64)
-//!    ...: stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float64)
-//!
-//! In [4]: coder.encode_gaussian_symbols_reverse(
-//!    ...:     symbols, min_supported_symbol, max_supported_symbol, means, stds)
-//!
-//! In [5]: print(f"Compressed size: {coder.num_valid_bits()} bits")
-//! Compressed size: 34 bits
-//!
-//! In [6]: coder.get_compressed()
-//! Out[6]: array([746415963,         5], dtype=uint32)
-//!
-//! In [7]: coder.decode_gaussian_symbols(min_supported_symbol, max_supported_symbol, means, stds)
-//! Out[7]: array([ 2, -1,  0,  2,  3], dtype=int32)
-//!
-//! In [8]: assert coder.is_empty()
-//! ```
-
 pub mod stream;
 pub mod symbol;
 
@@ -72,35 +7,67 @@ use pyo3::{prelude::*, wrap_pymodule};
 
 /// ## Entropy Coding Primitives for Research and Production
 ///
-/// The `constriction` Python and Rust libraries provide a wide range of efficient entropy
-/// coding primitives that can be combined in flexible ways. Its goal is to facilitate
-/// research on novel lossless and lossy compression methods by providing a simple API for
-/// common algorithms like range coding or asymmetric numeral systems while, at the same,
-/// also enabling specialized use cases like changing the fixed-point precision of entropy
-/// models within a stream of symbols or bits-back coding with cyclic dependencies (TODO:
-/// links).
+/// The `constriction` library provides a set of composable entropy coding algorithms with a
+/// focus on ease of use, flexibility, compression performance, and computational
+/// efficiency. The goals of `constriction` are to three-fold:
 ///
-/// ## Quick Start
+/// 1. **to facilitate research on novel lossless and lossy compression methods** by
+///    bridging the gap between declarative tools for data modeling from the machine
+///    learning community and imperative tools for algorithm design from the source coding
+///    literature;
+/// 2. **to simplify the transition from research code to production software** by providing
+///    both an easy-to-use Python API (rapid iteration on research code) and a highly
+///    generic Rust API (for turning research code into optimized standalone binary programs
+///    or libraries with minimal dependencies); and
+/// 3. **to serve as a teaching resource** by providing a wide range of entropy coding
+///    algorithms within a single consistent framework, thus making the various algorithms
+///    easily discoverable and comparable on example models and data. [Additional teaching
+///    material](https://robamler.github.io/teaching/compress21/) will be made publicly
+///    available as a by-product of an upcoming university course on data compression with
+///    deep probabilistic models.
 ///
-/// If you already have an entropy model and you just want to encode and decode some
-/// sequence of symbols then you probably want to have a look at the [`stream`](stream.html)
-/// submodule, in particular the [Asymmetric Numeral Systems Coder](ans.html#ans.Ans) or the
-/// [Range coder](range.html#range.Range). Or check out the example below.
+/// ## Currently Supported Entropy Coding Algorithms
+///
+/// The `constriction` library currently supports the following algorithms:
+///
+/// - **Asymmetric Numeral Systems (ANS):** a highly efficient modern entropy coder with
+///   near-optimal compression performance that supports advanced use cases like bits-back
+///   coding;
+///     - A "split" variant of ANS coding is provided for advanced use cases in hierarchical
+///       models with cyclic dependencies.
+/// - **Range Coding:** a variant of Arithmetic Coding that is optimized for realistic
+///   computing hardware; it has similar compression performance and almost the same
+///   computational performance as ANS. The main practical difference is that Range Coding
+///   is a queue (FIFO) while ANS is a stack (LIFO).
+/// - **Huffman Coding:** a well-known symbol code, mainly provided here for teaching
+///   purpose; you'll usually want to use a stream code like ANS or Range Coding instead.
+///
+/// ## Quick Start With the Python API
+///
+/// You are currently reading the documentation of `constriction`'s Python API. If Python is
+/// not your language of choice then head over to the [Rust API Documentation](TODO). The
+/// Python API focuses on ease of use and rapid iteration for data scientists and machine
+/// learning researchers. The Rust API provides binary identical implementations of
+/// everything that's available through the Python API. Additionally, the Rust API, provides
+/// optional finer grained control over technical details (such as word size or numerical
+/// precision) using Rust's generic typesystem.
+///
+/// ### Installation
+///
+/// The easiest and recommended way to install `constriction` for Python is via `pip`:
+///
+/// ```bash
+/// pip install constriction
+/// ```
 ///
 /// ### Example
 ///
 /// Let's encode a sequence of symbols and write the compressed data to a binary file. We'll
 /// use a quantized Gaussian distribution as entropy model, with a different mean and
 /// standard deviation of the Gaussian for each symbol so that the example is not too
-/// simplistic.
-///
-/// We'll use an Asymmetric Numeral Systems (ANS) coder here for its speed and compression
-/// performance, but we could as well have used a range coder by replacing, in the example
-/// below, `constriction.stream.ans.Ans` with `constriction.stream.range.Range` and
-/// `coder.encode_gaussian_symbols_reverse` by `coder.encode_gaussian_symbols` (since ANS is
-/// a stack while range coding is a queue). We could also use a symbol code like Huffman
-/// coding (using `constriction.symbol.EncoderHuffmanTree`) but that would have considerably
-/// worse compression performance on larger files.
+/// simplistic. Further, we'll use an Asymmetric Numeral Systems (ANS) coder here for its
+/// speed and compression performance. We'll discuss how to replace the ANS coder with a
+/// range coder or a symbol code like Huffman coding [below](#exercise).
 ///
 /// ```python
 /// import constriction
@@ -117,7 +84,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
 ///
 /// # Encode the data (in reverse order, since ANS is a stack):
-/// coder.encode_gaussian_symbols_reverse(
+/// coder.encode_leaky_gaussian_symbols_reverse(
 ///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
 ///
 /// print(f"Compressed size: {coder.num_bits()} bits")
@@ -153,36 +120,50 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
 ///
 /// # Decode and print the data:
-/// reconstructed = coder.decode_gaussian_symbols(
+/// reconstructed = coder.decode_leaky_gaussian_symbols(
 ///     min_supported_symbol, max_supported_symbol, means, stds)
 /// assert coder.is_empty()
 /// print(reconstructed)  # Should print [23, -15, 78, 43, -69]
 /// ```
 ///
-/// ## Python API vs Rust API
+/// #### Exercise
 ///
-/// This package provides the Python API for many typical use cases of the `constriction`
-/// library. The Python API is meant for rapid experimentation with new entropy models,
-/// e.g., for machine learning based compression methods. Internally, this Python module
-/// runs native code that uses `constriction`'s API for the Rust programming language.
-/// Having both a Python and a Rust API to the same implementation of common entropy coding
-/// primitives provides the following advantages to users:
+/// Try out the above example and verify that decoding reconstructs the original data. Then
+/// see how easy `constriction` makes it to replace the ANS coder with a range coder by
+/// making the following substitutions (TODO: verify that this is actually correct)
 ///
-/// - Encoding and decoding run at native speed, much faster than any pure Python
-///   implementation of the same algorithms could perform.
-/// - Research code that uses `constriction`'s Python API can easily be turned into a
-///   production-ready compression codec. Only the entropy model and any orchestration code
-///   have to be ported to a more efficient and embeddable language (like Rust or to any
-///   other compiled language with a compatible ABI like C or C++). The ported code can then
-///   still use the same `constriction` library for entropy coding, thus maintaining
-///   compatibility with the research code for reading and writing compressed data. This
-///   makes it easy to turn experimental compression codecs into standalone compression
-///   programs or libraries, or to use a specialized compression codec in a web app by
-///   leveraging Rust's excellent tooling for WebAssembly.
-/// - Since the Rust API provides much more fine grained control over details of the
-///   provided entropy coding primitives due to Rust's powerful type system, Python users
-///   with very specific needs can easily extend the Python API to their specialized use
-///   case by copying existing Python wrappers and adjusting type parameters.
+/// **In the encoder,**
+///
+/// - replace `constriction.stream.ans.Ans` with `constriction.stream.range.RangeEncoder`;
+///   and
+/// - replace `coder.encode_leaky_gaussian_symbols_reverse` with
+///   `coder.encode_leaky_gaussian_symbols` (we no longer need to encode symbols in reverse
+///   order since Range coding is a queue, i.e., first-in-first-out; we only had to reverse
+///   the order for the ANS coder since ANS is a stack, i.e., last-in-first-out).
+///
+/// **In the decoder,**
+///
+/// - replace `constriction.stream.ans.Ans` with `constriction.stream.range.RangeDecoder`
+///   (note that range coding distinguishes between an encoder and a decoder since the
+///   encoder writes to the back while the decoder reads from the front; by contrast, ANS
+///   reads and writes at the same position and allows interleaving reads and writes).
+///
+/// You could also use a symbol code like Huffman coding (see submodule `symbol`) but that
+/// would have considerably worse compression performance, especially on large files, since
+/// symbol codes always emit an integer number of bits per compressed symbol, even if the
+/// information content of the symbol is a fractional number (stream codes like ANS and
+/// range coding *effectively* emit a fractional number of bits per symbol since they
+/// amortize over several symbols).
+///
+/// ## Where to Go Next?
+///
+/// If you already have an entropy model and you just want to encode and decode some
+/// sequence of symbols then you can probably start by adjusting the above
+/// [example](#example) to your needs. Or have a closer look at the [`stream`](stream.html)
+/// submodule.
+///
+/// If you're still new to the concept of entropy coding then check out the [teaching
+/// material (TBD)](https://robamler.github.io/teaching/compress21/).
 #[pymodule(constriction)]
 fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(stream))?;
@@ -190,7 +171,7 @@ fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-/// Stream Codes
+/// Stream codes, i.e., entropy codes that amortize compressed bits over several symbols.
 ///
 /// TODO
 #[pymodule]
@@ -198,7 +179,8 @@ fn stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     stream::init_module(py, module)
 }
 
-/// Symbol Codes
+/// Symbol codes. Mainly provided for teaching purpose. You probably want to use a [stream
+/// code](stream.html) instead.
 ///
 /// TODO
 #[pymodule]
