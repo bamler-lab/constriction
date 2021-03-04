@@ -25,8 +25,8 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// Note that this entropy coder is a stack (a "last in first out" data
 /// structure). You can push symbols on the stack using the methods
-/// `encode_gaussian_symbols_reverse` or `encode_iid_categorical_symbols_reverse`, and then pop
-/// them off *in reverse order* using the methods `decode_gaussian_symbols` or
+/// `encode_leaky_gaussian_symbols_reverse` or `encode_iid_categorical_symbols_reverse`, and then pop
+/// them off *in reverse order* using the methods `decode_leaky_gaussian_symbols` or
 /// `decode_iid_categorical_symbols`, respectively.
 ///
 /// To copy out the compressed data that is currently on the stack, call
@@ -54,7 +54,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
 /// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
 ///
-/// ans.encode_gaussian_symbols_reverse(
+/// ans.encode_leaky_gaussian_symbols_reverse(
 ///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
 ///
 /// print(f"Compressed size: {ans.num_valid_bits()} bits")
@@ -84,7 +84,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// means = np.array([2.3, -1.7, 0.1, 2.2], -5.1, dtype = np.float64)
 /// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
 ///
-/// reconstructed = ans.decode_gaussian_symbols(
+/// reconstructed = ans.decode_leaky_gaussian_symbols(
 ///     min_supported_symbol, max_supported_symbol, means, stds)
 /// assert ans.is_empty()
 /// ```
@@ -186,7 +186,7 @@ impl Ans {
     /// The provided numpy arrays `symbols`, `means`, and `stds` must all have the
     /// same size.
     ///
-    /// See method `decode_gaussian_symbols` for a usage example.
+    /// See method `decode_leaky_gaussian_symbols` for a usage example.
     ///
     /// Arguments:
     /// min_supported_symbol -- lower bound of the domain for argument `symbols`
@@ -206,7 +206,7 @@ impl Ans {
     ///     All entries must be strictly positive (i.e., nonzero and nonnegative)
     ///     and finite.
     #[text_signature = "(symbols, min_supported_symbol, max_supported_symbol, means, stds)"]
-    pub fn encode_gaussian_symbols_reverse(
+    pub fn encode_leaky_gaussian_symbols_reverse(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
         min_supported_symbol: i32,
@@ -257,10 +257,10 @@ impl Ans {
     /// stds = np.array([3.2, 1.3, 1.9], dtype=np.float64)
     ///
     /// # Push symbols on the stack:
-    /// coder.encode_gaussian_symbols_reverse(symbols, -10, 10, means, stds, True)
+    /// coder.encode_leaky_gaussian_symbols_reverse(symbols, -10, 10, means, stds, True)
     ///
     /// # Pop symbols off the stack in reverse order:
-    /// coder.decode_gaussian_symbols(-10, 10, means, stds, decoded, True)
+    /// coder.decode_leaky_gaussian_symbols(-10, 10, means, stds, decoded, True)
     ///
     /// # Verify that the decoded symbols match the encoded ones.
     /// assert np.all(symbols == decoded)
@@ -278,7 +278,7 @@ impl Ans {
     /// stds -- the standard deviations of the Gaussian entropy models for each
     ///     symbol. Must be a contiguous one-dimensional numpy array with dtype
     ///     `float64` and with the exact same length as the argument `symbols_out`.
-    pub fn decode_gaussian_symbols<'p>(
+    pub fn decode_leaky_gaussian_symbols<'p>(
         &mut self,
         min_supported_symbol: i32,
         max_supported_symbol: i32,
@@ -306,7 +306,7 @@ impl Ans {
 
     /// Encodes a sequence of symbols using a fixed categorical entropy model.
     ///
-    /// This method is analogous to the method `encode_gaussian_symbols_reverse` except that
+    /// This method is analogous to the method `encode_leaky_gaussian_symbols_reverse` except that
     /// - all symbols are encoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian distribution.
     ///
@@ -347,12 +347,12 @@ impl Ans {
 
     /// Decodes a sequence of categorically distributed symbols *in reverse order*.
     ///
-    /// This method is analogous to the method `decode_gaussian_symbols` except that
+    /// This method is analogous to the method `decode_leaky_gaussian_symbols` except that
     /// - all symbols are decoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian model.
     ///
     /// See documentation of `encode_iid_categorical_symbols_reverse` for details of the
-    /// categorical entropy model. See documentation of `decode_gaussian_symbols` for a
+    /// categorical entropy model. See documentation of `decode_leaky_gaussian_symbols` for a
     /// discussion of the reverse order of decoding, and for a related usage
     /// example.
     pub fn decode_iid_categorical_symbols<'p>(
