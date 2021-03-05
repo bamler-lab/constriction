@@ -75,7 +75,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// import sys
 ///
 /// # Create an empty Asymmetric Numeral Systems (ANS) Coder:
-/// coder = constriction.stream.ans.Ans()
+/// coder = constriction.stream.ans.AnsCoder()
 ///
 /// # Some made up data and entropy models for demonstration purpose:
 /// min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
@@ -112,7 +112,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///     compressed.byteswap(inplace=True)
 ///
 /// # Initialize an ANS coder from the compressed bit string:
-/// coder = constriction.stream.ans.Ans(compressed)
+/// coder = constriction.stream.ans.AnsCoder(compressed)
 ///
 /// # Use the same entropy models that we used for encoding:
 /// min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
@@ -134,7 +134,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// **In the encoder,**
 ///
-/// - replace `constriction.stream.ans.Ans` with `constriction.stream.range.RangeEncoder`;
+/// - replace `constriction.stream.ans.AnsCoder` with `constriction.stream.range.RangeEncoder`;
 ///   and
 /// - replace `coder.encode_leaky_gaussian_symbols_reverse` with
 ///   `coder.encode_leaky_gaussian_symbols` (we no longer need to encode symbols in reverse
@@ -143,7 +143,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// **In the decoder,**
 ///
-/// - replace `constriction.stream.ans.Ans` with `constriction.stream.range.RangeDecoder`
+/// - replace `constriction.stream.ans.AnsCoder` with `constriction.stream.range.RangeDecoder`
 ///   (note that Range Coding distinguishes between an encoder and a decoder since the
 ///   encoder writes to the back while the decoder reads from the front; by contrast, ANS
 ///   Coding reads and writes at the same position and allows interleaving reads and

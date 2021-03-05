@@ -173,9 +173,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::Categorical, ans::DefaultAns, Decode};
+    /// use constriction::stream::{models::Categorical, ans::DefaultAnsCoder, Decode};
     ///
-    /// let mut coder = DefaultAns::new();
+    /// let mut coder = DefaultAnsCoder::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];

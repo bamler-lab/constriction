@@ -112,7 +112,7 @@ where
 /// # Example
 ///
 /// ```
-/// use constriction::stream::{models::LeakyQuantizer, ans::DefaultAns, Encode};
+/// use constriction::stream::{models::LeakyQuantizer, ans::DefaultAnsCoder, Encode};
 ///
 /// // Get a quantizer that supports integer symbols from -5 to 20 (inclusively),
 /// // representing probabilities with 24 bit precision backed by `u32`s.
@@ -127,7 +127,7 @@ where
 /// let discrete_distribution2 = quantizer.quantize(continuous_distribution2);
 ///
 /// // Use the discrete distributions with a `Code`.
-/// let mut ans = DefaultAns::new();
+/// let mut ans = DefaultAnsCoder::new();
 /// ans.encode_symbol(4, discrete_distribution1);
 /// ans.encode_symbol(-3, discrete_distribution2);
 /// ```

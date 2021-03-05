@@ -899,7 +899,7 @@ mod test {
     use std::{string::String, vec};
 
     use super::super::super::{
-        ans::DefaultAns,
+        ans::DefaultAnsCoder,
         models::{DecoderModel, EncoderModel},
         Decode,
     };
@@ -942,7 +942,7 @@ mod test {
 
         // Test encoding and decoding a few symbols.
         let symbols = "axcxcyaac";
-        let mut ans = DefaultAns::new();
+        let mut ans = DefaultAnsCoder::new();
         ans.encode_iid_symbols_reverse(symbols.chars(), &encoder_model)
             .unwrap();
         assert!(!ans.is_empty());
@@ -987,7 +987,7 @@ mod test {
 
         // Test encoding and decoding a few symbols.
         let symbols = vec![0, 3, 2, 3, 1, 3, 2, 0, 3];
-        let mut ans = DefaultAns::new();
+        let mut ans = DefaultAnsCoder::new();
         ans.encode_iid_symbols_reverse(&symbols, &encoder_model)
             .unwrap();
         assert!(!ans.is_empty());

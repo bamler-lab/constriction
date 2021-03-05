@@ -14,13 +14,13 @@ use crate::{
 use statrs::distribution::Normal;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
-    module.add_class::<Ans>()?;
+    module.add_class::<AnsCoder>()?;
     Ok(())
 }
 
 /// An entropy coder based on [Asymmetric Numeral Systems (ANS)].
 ///
-/// This is a wrapper around the Rust type [`constriction::stream::ans::DefaultAns`]
+/// This is a wrapper around the Rust type [`constriction::stream::ans::DefaultAnsCoder`]
 /// with python bindings.
 ///
 /// Note that this entropy coder is a stack (a "last in first out" data
@@ -32,7 +32,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// To copy out the compressed data that is currently on the stack, call
 /// `get_compressed`. You would typically want write this to a binary file in some
 /// well-documented byte order. After reading it back in at a later time, you can
-/// decompress it by constructing an `constriction.Ans` where you pass in the compressed
+/// decompress it by constructing an `constriction.AnsCoder` where you pass in the compressed
 /// data as an argument to the constructor.
 ///
 /// If you're only interested in the compressed file size, calling `num_bits` will
@@ -47,7 +47,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// import constriction
 /// import numpy as np
 ///
-/// ans = constriction.Ans()  # Creates an empty ANS coder when called with no arguments.
+/// ans = constriction.AnsCoder()  # Creates an empty ANS coder when called with no arguments.
 ///
 /// symbols = np.array([2, -1, 0, 2, 3], dtype = np.int32)
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
@@ -78,7 +78,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///     # Convert little endian byte order to native byte order.
 ///     compressed.byteswap(inplace=True)
 ///
-/// ans = constriction.Ans(compressed)
+/// ans = constriction.AnsCoder(compressed)
 ///
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
 /// means = np.array([2.3, -1.7, 0.1, 2.2], -5.1, dtype = np.float64)
@@ -91,34 +91,34 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// # Constructor
 ///
-/// Ans(compressed)
+/// AnsCoder(compressed)
 ///
 /// Arguments:
 /// compressed (optional) -- initial compressed data, as a numpy array with
 ///     dtype `uint32`.
 ///
 /// [Asymmetric Numeral Systems (ANS)]: https://en.wikipedia.org/wiki/Asymmetric_numeral_systems
-/// [`constriction::stream::ans::DefaultAns`]: crate::stream::ans::DefaultAns
+/// [`constriction::stream::ans::DefaultAnsCoder`]: crate::stream::ans::DefaultAnsCoder
 #[pyclass]
 #[text_signature = "(compressed)"]
 #[derive(Debug)]
-pub struct Ans {
-    inner: crate::stream::ans::DefaultAns,
+pub struct AnsCoder {
+    inner: crate::stream::ans::DefaultAnsCoder,
 }
 
 #[pymethods]
-impl Ans {
+impl AnsCoder {
     /// Constructs a new entropy coder, optionally passing initial compressed data.
     #[new]
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = if let Some(compressed) = compressed {
-            crate::stream::ans::Ans::from_compressed(compressed.to_vec()?).map_err(|_| {
+            crate::stream::ans::AnsCoder::from_compressed(compressed.to_vec()?).map_err(|_| {
                 pyo3::exceptions::PyValueError::new_err(
                     "Invalid compressed data: ANS compressed data never ends in a zero word.",
                 )
             })?
         } else {
-            crate::stream::ans::Ans::new()
+            crate::stream::ans::AnsCoder::new()
         };
 
         Ok(Self { inner })
@@ -164,7 +164,7 @@ impl Ans {
     /// Example:
     ///
     /// ```python
-    /// coder = constriction.Ans()
+    /// coder = constriction.AnsCoder()
     /// # ... push some symbols on coder ...
     /// compressed_len = coder.num_words()
     /// compressed = np.empty((compressed_len,), dtype=np.uint32)
@@ -250,7 +250,7 @@ impl Ans {
     /// reverseorder so as to simplify usage, e.g.:
     ///
     /// ```python
-    /// coder = constriction.Ans()
+    /// coder = constriction.AnsCoder()
     /// symbols = np.array([2, 8, -5], dtype=np.int32)
     /// decoded = np.empty((3,), dtype=np.int32)
     /// means = np.array([0.1, 10.3, -3.2], dtype=np.float64)

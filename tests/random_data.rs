@@ -140,37 +140,37 @@ fn grid() {
 
     for amt in amts.iter().cloned() {
         {
-            batch!(ans::Ans<u64, u128>; range::Encoder<u64, u128>; u32; 8, 12, 16, 24, 32; amt);
-            batch!(ans::Ans<u64, u128>; range::Encoder<u64, u128>; u16; 8, 12, 16; amt);
-            batch!(ans::Ans<u64, u128>; range::Encoder<u64, u128>; u8; 8; amt);
+            batch!(ans::AnsCoder<u64, u128>; range::Encoder<u64, u128>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(ans::AnsCoder<u64, u128>; range::Encoder<u64, u128>; u16; 8, 12, 16; amt);
+            batch!(ans::AnsCoder<u64, u128>; range::Encoder<u64, u128>; u8; 8; amt);
 
-            batch!(ans::Ans<u32, u128>; range::Encoder<u32, u128>; u32; 8, 12, 16, 24, 32; amt);
-            batch!(ans::Ans<u32, u128>; range::Encoder<u32, u128>; u16; 8, 12, 16; amt);
-            batch!(ans::Ans<u32, u128>; range::Encoder<u32, u128>; u8; 8; amt);
+            batch!(ans::AnsCoder<u32, u128>; range::Encoder<u32, u128>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(ans::AnsCoder<u32, u128>; range::Encoder<u32, u128>; u16; 8, 12, 16; amt);
+            batch!(ans::AnsCoder<u32, u128>; range::Encoder<u32, u128>; u8; 8; amt);
 
-            batch!(ans::Ans<u16, u128>; range::Encoder<u16, u128>; u16; 8, 12, 16; amt);
-            batch!(ans::Ans<u16, u128>; range::Encoder<u16, u128>; u8; 8; amt);
+            batch!(ans::AnsCoder<u16, u128>; range::Encoder<u16, u128>; u16; 8, 12, 16; amt);
+            batch!(ans::AnsCoder<u16, u128>; range::Encoder<u16, u128>; u8; 8; amt);
 
-            batch!(ans::Ans<u8, u128>; range::Encoder<u8, u128>; u8; 8; amt);
+            batch!(ans::AnsCoder<u8, u128>; range::Encoder<u8, u128>; u8; 8; amt);
         }
         {
-            batch!(ans::Ans<u32, u64>; range::Encoder<u32, u64>; u32; 8, 12, 16, 24, 32; amt);
-            batch!(ans::Ans<u32, u64>; range::Encoder<u32, u64>; u16; 8, 12, 16; amt);
-            batch!(ans::Ans<u32, u64>; range::Encoder<u32, u64>; u8; 8; amt);
+            batch!(ans::AnsCoder<u32, u64>; range::Encoder<u32, u64>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(ans::AnsCoder<u32, u64>; range::Encoder<u32, u64>; u16; 8, 12, 16; amt);
+            batch!(ans::AnsCoder<u32, u64>; range::Encoder<u32, u64>; u8; 8; amt);
 
-            batch!(ans::Ans<u16, u64>; range::Encoder<u16, u64>; u16; 8, 12, 16; amt);
-            batch!(ans::Ans<u16, u64>; range::Encoder<u16, u64>; u8; 8; amt);
+            batch!(ans::AnsCoder<u16, u64>; range::Encoder<u16, u64>; u16; 8, 12, 16; amt);
+            batch!(ans::AnsCoder<u16, u64>; range::Encoder<u16, u64>; u8; 8; amt);
 
-            batch!(ans::Ans<u8, u64>; range::Encoder<u8, u64>; u8; 8; amt);
+            batch!(ans::AnsCoder<u8, u64>; range::Encoder<u8, u64>; u8; 8; amt);
         }
         {
-            batch!(ans::Ans<u16, u32>; range::Encoder<u16, u32>; u16; 8, 12, 16; amt);
-            batch!(ans::Ans<u16, u32>; range::Encoder<u16, u32>; u8; 8; amt);
+            batch!(ans::AnsCoder<u16, u32>; range::Encoder<u16, u32>; u16; 8, 12, 16; amt);
+            batch!(ans::AnsCoder<u16, u32>; range::Encoder<u16, u32>; u8; 8; amt);
 
-            batch!(ans::Ans<u8, u32>; range::Encoder<u8, u32>; u8; 8; amt);
+            batch!(ans::AnsCoder<u8, u32>; range::Encoder<u8, u32>; u8; 8; amt);
         }
         {
-            batch!(ans::Ans<u8, u16>; range::Encoder<u8, u16>; u8; 8; amt);
+            batch!(ans::AnsCoder<u8, u16>; range::Encoder<u8, u16>; u8; 8; amt);
         }
     }
 }

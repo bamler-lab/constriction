@@ -76,12 +76,12 @@
 //! [below](#exercise).
 //!
 //! ```
-//! use constriction::stream::{ans::DefaultAns, models::DefaultLeakyQuantizer};
+//! use constriction::stream::{ans::DefaultAnsCoder, models::DefaultLeakyQuantizer};
 //! use statrs::distribution::Normal;
 //!
 //! fn encode_sample_data() -> Vec<u32> {
 //!     // Create an empty ANS Coder with default word and state size:
-//!     let mut coder = DefaultAns::new();
+//!     let mut coder = DefaultAnsCoder::new();
 //!
 //!     // Some made up data and entropy models for demonstration purpose:
 //!     let symbols = [23i32, -15, 78, 43, -69];
@@ -110,14 +110,14 @@
 //! Now let's reconstruct the sample data from its compressed representation.
 //!
 //! ```
-//! use constriction::stream::{ans::DefaultAns, models::DefaultLeakyQuantizer, Decode};
+//! use constriction::stream::{ans::DefaultAnsCoder, models::DefaultLeakyQuantizer, Decode};
 //! use statrs::distribution::Normal;
 //!
 //! fn decode_sample_data(compressed: Vec<u32>) -> Vec<i32> {
 //!     // Create an ANS Coder with default word and state size from the compressed data:
 //!     // (ANS uses the same type for encoding and decoding, which makes the method very flexible
 //!     // and allows interleaving small encoding and decoding chunks, e.g., for bits-back coding.)
-//!     let mut coder = DefaultAns::from_compressed(compressed).unwrap();
+//!     let mut coder = DefaultAnsCoder::from_compressed(compressed).unwrap();
 //!
 //!     // Same entropy models and quantizer we used for encoding:
 //!     let means = [35.2, -1.7, 30.1, 71.2, -75.1];
@@ -142,7 +142,7 @@
 //!
 //! **In the encoder,**
 //!
-//! - replace `constriction::stream::ans::DefaultAns` with
+//! - replace `constriction::stream::ans::DefaultAnsCoder` with
 //!   `constriction::stream::range::DefaultRangeEncoder`; and
 //! - replace `coder.encode_symbols_reverse` with `coder.encode_symbols` (you no longer need
 //!   to encode symbols in reverse order since Range Coding operates as a queue, i.e.,
@@ -151,7 +151,7 @@
 //!
 //! **In the decoder,**
 //!
-//! - replace `constriction::stream::ans::DefaultAns` with
+//! - replace `constriction::stream::ans::DefaultAnsCoder` with
 //!   `constriction::stream::range::DefaultRangeDecoder` (note that Range Coding
 //!   distinguishes between an encoder and a decoder since the encoder writes to the back
 //!   while the decoder reads from the front; by contrast, ANS Coding reads and writes at

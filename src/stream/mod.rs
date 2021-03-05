@@ -130,24 +130,24 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// The error type for [`decode_symbol`].
     ///
     /// This is an associated type because [`decode_symbol`] is infallible for some
-    /// decoders (e.g., for a [`Ans`]). These decoders set the `DecodingError`
+    /// decoders (e.g., for a [`AnsCoder`]). These decoders set the `DecodingError`
     /// type to [`core::convert::Infallible`] so that the compiler can optimize away
     /// error checks.
     ///
     /// [`decode_symbol`]: #tymethod.decode_symbol
-    /// [`Ans`]: ans.Ans
+    /// [`AnsCoder`]: ans.AnsCoder
     #[cfg(not(feature = "std"))]
     type DecodingError: Debug;
 
     /// The error type for [`decode_symbol`].
     ///
     /// This is an associated type because [`decode_symbol`] is infallible for some
-    /// decoders (e.g., for a [`Ans`]). These decoders set the `DecodingError`
+    /// decoders (e.g., for a [`AnsCoder`]). These decoders set the `DecodingError`
     /// type to [`core::convert::Infallible`] so that the compiler can optimize away
     /// error checks.
     ///
     /// [`decode_symbol`]: #tymethod.decode_symbol
-    /// [`Ans`]: ans.Ans
+    /// [`AnsCoder`]: ans.AnsCoder
     #[cfg(feature = "std")]
     type DecodingError: Error;
 
@@ -271,7 +271,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// # #![feature(min_const_generics)]
 /// # use constriction::stream::{
 /// #     models::{EncoderModel, DecoderModel, LeakyQuantizer},
-/// #     ans::DefaultAns,
+/// #     ans::DefaultAnsCoder,
 /// #     Decode, Encode, IntoDecoder
 /// # };
 /// #
@@ -295,7 +295,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// }
 ///
 /// // Usage example:
-/// let encoder = DefaultAns::new();
+/// let encoder = DefaultAnsCoder::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
 /// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
 /// encode_and_decode(encoder, model);
@@ -354,7 +354,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// # #![feature(min_const_generics)]
 /// # use constriction::stream::{
 /// #     models::{EncoderModel, DecoderModel, LeakyQuantizer},
-/// #     ans::DefaultAns,
+/// #     ans::DefaultAnsCoder,
 /// #     Decode, Encode, AsDecoder
 /// # };
 /// #
@@ -379,7 +379,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// }
 ///
 /// // Usage example:
-/// let mut encoder = DefaultAns::new();
+/// let mut encoder = DefaultAnsCoder::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
 /// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
 /// encode_decode_encode(&mut encoder, model);
@@ -419,10 +419,10 @@ pub trait Pos: Code {
     /// Returns the position in the compressed data, in units of `CompressedWord`s.
     ///
     /// It is up to the entropy coder to define what constitutes the beginning and end
-    /// positions within the compressed data (for example, a [`Ans`] begins encoding
+    /// positions within the compressed data (for example, a [`AnsCoder`] begins encoding
     /// at position zero but it begins decoding at position `ans.buf().len()`).
     ///
-    /// [`Ans`]: ans::Ans
+    /// [`AnsCoder`]: ans::AnsCoder
     fn pos(&self) -> usize;
 
     /// Convenience method that returns both parts of a snapshot expected by
@@ -442,10 +442,10 @@ pub trait Pos: Code {
 /// recorded snapshots.
 ///
 /// Not all entropy coders that implement `Pos` also implement `Seek`. For example,
-/// [`DefaultAns`] implements `Pos` but it doesn't implement `Seek` because it
+/// [`DefaultAnsCoder`] implements `Pos` but it doesn't implement `Seek` because it
 /// supports both encoding and decoding and therefore always operates at the head. In
 /// such a case one can usually obtain a seekable entropy coder in return for
-/// surrendering some other property. For example, `DefaultAns` provides the methods
+/// surrendering some other property. For example, `DefaultAnsCoder` provides the methods
 /// [`seekable_decoder`] and [`into_seekable_decoder`] that return a decoder which
 /// implements `Seek` but which can no longer be used for encoding (i.e., it doesn't
 /// implement [`Encode`]).
@@ -453,10 +453,10 @@ pub trait Pos: Code {
 /// # Example
 ///
 /// ```
-/// use constriction::stream::{models::Categorical, ans::DefaultAns, Decode, Pos, Seek};
+/// use constriction::stream::{models::Categorical, ans::DefaultAnsCoder, Decode, Pos, Seek};
 ///
-/// // Create a `Ans` encoder and an entropy model:
-/// let mut ans = DefaultAns::new();
+/// // Create a `AnsCoder` encoder and an entropy model:
+/// let mut ans = DefaultAnsCoder::new();
 /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
 /// let entropy_model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
 ///     .unwrap();
@@ -470,10 +470,10 @@ pub trait Pos: Code {
 /// ans.encode_iid_symbols_reverse(&symbols2, &entropy_model).unwrap();
 /// let snapshot2 = ans.pos_and_state();
 ///
-/// // As discussed above, `DefaultAns` doesn't impl `Seek` but we can get a decoder that does:
+/// // As discussed above, `DefaultAnsCoder` doesn't impl `Seek` but we can get a decoder that does:
 /// let mut seekable_decoder = ans.seekable_decoder();
 ///
-/// // `seekable_decoder` is still a `Ans`, so decoding would start with the items we encoded
+/// // `seekable_decoder` is still a `AnsCoder`, so decoding would start with the items we encoded
 /// // last. But since it implements `Seek` we can jump ahead to our first snapshot:
 /// seekable_decoder.seek(snapshot1);
 /// let decoded1 = seekable_decoder
@@ -494,9 +494,9 @@ pub trait Pos: Code {
 /// assert!(seekable_decoder.is_empty()); // <-- We've reached the end again.
 /// ```
 ///
-/// [`DefaultAns`]: ans::DefaultAns
-/// [`seekable_decoder`]: ans::Ans::seekable_decoder
-/// [`into_seekable_decoder`]: ans::Ans::into_seekable_decoder
+/// [`DefaultAnsCoder`]: ans::DefaultAnsCoder
+/// [`seekable_decoder`]: ans::AnsCoder::seekable_decoder
+/// [`into_seekable_decoder`]: ans::AnsCoder::into_seekable_decoder
 pub trait Seek: Code {
     /// Jumps to a given position in the compressed data.
     ///
@@ -517,8 +517,8 @@ pub trait Seek: Code {
     ///
     /// ```
     /// // Step 1: Obtain an encoder and encode some data (omitted for brevity) ...
-    /// # use constriction::stream::{ans::DefaultAns, Pos, Seek};
-    /// # let encoder = DefaultAns::new();
+    /// # use constriction::stream::{ans::DefaultAnsCoder, Pos, Seek};
+    /// # let encoder = DefaultAnsCoder::new();
     ///
     /// // Step 2: Take a snapshot by calling `Pos::pos_and_state`:
     /// let snapshot = encoder.pos_and_state(); // <-- Returns a tuple `(pos, state)`.
@@ -531,7 +531,7 @@ pub trait Seek: Code {
     /// ```
     ///
     /// For more fine-grained control, one may want to assemble the tuple
-    /// `pos_and_state` manually. For example, a [`DefaultAns`] encodes data from
+    /// `pos_and_state` manually. For example, a [`DefaultAnsCoder`] encodes data from
     /// front to back and then decodes the data in the reverse direction from back to
     /// front. Decoding from back to front may be inconvenient in some use cases, so one
     /// might prefer to instead reverse the order of the `CompressedWord`s once encoding
@@ -543,12 +543,12 @@ pub trait Seek: Code {
     /// ```
     /// use constriction::stream::{
     ///     models::LeakyQuantizer,
-    ///     ans::{backend::ReadCursorForward, DefaultAns, Ans},
+    ///     ans::{backend::ReadCursorForward, DefaultAnsCoder, AnsCoder},
     ///     Decode, Pos, Seek
     /// };
     ///
-    /// // Construct a `DefaultAns` for encoding and an entropy model:
-    /// let mut encoder = DefaultAns::new();
+    /// // Construct a `DefaultAnsCoder` for encoding and an entropy model:
+    /// let mut encoder = DefaultAnsCoder::new();
     /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
     /// let entropy_model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
     ///
@@ -561,7 +561,7 @@ pub trait Seek: Code {
     /// let mut compressed = encoder.into_compressed();
     /// compressed.reverse();
     /// snapshot_pos = compressed.len() - snapshot_pos; // <-- Adjusts the snapshot position.
-    /// let mut decoder = Ans::from_compressed(ReadCursorForward::new(compressed)).unwrap();
+    /// let mut decoder = AnsCoder::from_compressed(ReadCursorForward::new(compressed)).unwrap();
     ///
     /// // Since we chose to encode onto a stack, decoding yields the last encoded chunk first:
     /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 50);
@@ -573,7 +573,7 @@ pub trait Seek: Code {
     /// assert!(decoder.is_empty()); // <-- We've reached the end of the compressed data.
     /// ```
     ///
-    /// [`DefaultAns`]: ans::DefaultAns
+    /// [`DefaultAnsCoder`]: ans::DefaultAnsCoder
     fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()>;
 }
 

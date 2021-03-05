@@ -1,7 +1,7 @@
 use std::any::type_name;
 
 use constriction::{
-    stream::{ans::Ans, models::lookup::EncoderHashLookupTable, Code, Decode, Pos, Seek},
+    stream::{ans::AnsCoder, models::lookup::EncoderHashLookupTable, Code, Decode, Pos, Seek},
     BitArray,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -44,7 +44,7 @@ where
     .unwrap();
 
     let data = make_data(&symbols, 10_000);
-    let mut encoder = Ans::<u16, u32>::new();
+    let mut encoder = AnsCoder::<u16, u32>::new();
 
     let label_suffix = format!("u16_u32_{}_{}", type_name::<Probability>(), PRECISION);
     c.bench_function(&format!("encoding_{}", label_suffix), |b| {
