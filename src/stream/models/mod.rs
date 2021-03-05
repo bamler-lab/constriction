@@ -17,6 +17,10 @@ use super::BitArray;
 /// A trait for probability distributions that can be used as entropy models.
 ///
 /// TODO: document how `PRECISION` is (not) enforced.
+///
+/// TODO: add trait `EnumerableEntropyModel: EntropyModel` that can enumerate its symbols
+/// and thus be turned into a Huffman tree (probably need to generalize the symbol type of
+/// Huffman trees).
 pub trait EntropyModel<const PRECISION: usize> {
     /// The type of data over which the entropy model is defined.
     ///
@@ -143,6 +147,8 @@ pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
     free_weight: F,
     phantom: PhantomData<Probability>,
 }
+
+pub type DefaultLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u32, 24>;
 
 impl<F, Symbol, Probability, const PRECISION: usize>
     LeakyQuantizer<F, Symbol, Probability, PRECISION>

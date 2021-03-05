@@ -33,8 +33,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// - **Asymmetric Numeral Systems (ANS):** a highly efficient modern entropy coder with
 ///   near-optimal compression performance that supports advanced use cases like bits-back
 ///   coding;
-///     - A "split" variant of ANS coding is provided for advanced use cases in hierarchical
-///       models with cyclic dependencies.
+///   - A "split" variant of ANS coding is provided for advanced use cases in hierarchical
+///     models with cyclic dependencies.
 /// - **Range Coding:** a variant of Arithmetic Coding that is optimized for realistic
 ///   computing hardware; it has similar compression performance and almost the same
 ///   computational performance as ANS. The main practical difference is that Range Coding
@@ -77,7 +77,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// # Create an empty Asymmetric Numeral Systems (ANS) Coder:
 /// coder = constriction.stream.ans.Ans()
 ///
-/// # Some made up data with some made up entropy models:
+/// # Some made up data and entropy models for demonstration purpose:
 /// min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
 /// symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)
 /// means = np.array([35.2, -1.7, 30.1, 71.2, -75.1], dtype=np.float64)
@@ -138,21 +138,22 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///   and
 /// - replace `coder.encode_leaky_gaussian_symbols_reverse` with
 ///   `coder.encode_leaky_gaussian_symbols` (we no longer need to encode symbols in reverse
-///   order since Range coding is a queue, i.e., first-in-first-out; we only had to reverse
+///   order since Range Coding is a queue, i.e., first-in-first-out; we only had to reverse
 ///   the order for the ANS coder since ANS is a stack, i.e., last-in-first-out).
 ///
 /// **In the decoder,**
 ///
 /// - replace `constriction.stream.ans.Ans` with `constriction.stream.range.RangeDecoder`
-///   (note that range coding distinguishes between an encoder and a decoder since the
+///   (note that Range Coding distinguishes between an encoder and a decoder since the
 ///   encoder writes to the back while the decoder reads from the front; by contrast, ANS
-///   reads and writes at the same position and allows interleaving reads and writes).
+///   Coding reads and writes at the same position and allows interleaving reads and
+///   writes).
 ///
-/// You could also use a symbol code like Huffman coding (see submodule `symbol`) but that
+/// You could also use a symbol code like Huffman Coding (see submodule `symbol`) but that
 /// would have considerably worse compression performance, especially on large files, since
 /// symbol codes always emit an integer number of bits per compressed symbol, even if the
 /// information content of the symbol is a fractional number (stream codes like ANS and
-/// range coding *effectively* emit a fractional number of bits per symbol since they
+/// Range Coding *effectively* emit a fractional number of bits per symbol since they
 /// amortize over several symbols).
 ///
 /// ## Where to Go Next?

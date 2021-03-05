@@ -38,11 +38,20 @@
 //! # Quick Start With the Rust API
 //!
 //! You are currently reading the documentation of `constriction`'s Rust API. If Rust is not
-//! your language of choice then head over to the [Python API Documentation](TODO). The Rust
-//! API provides efficient and composable entropy coding primitives with sane default
-//! settings that can be adjusted to a fine degree of detail using type parameters and const
-//! generics. The Python API exposes the most common use cases of these entropy coding
-//! primitives to an environment that feels more natural to many data scientists.
+//! your language of choice then head over to the [Python API
+//! Documentation](https://bamler-lab.github.io/constriction/apidoc/python/). The Rust API
+//! provides efficient and composable entropy coding primitives that can be adjusted to a
+//! fine degree of detail using type parameters and const generics (type aliases with sane
+//! defaults for all generic parameters are provided as a guidance). The Python API exposes
+//! the most common use cases of these entropy coding primitives to an environment that
+//! feels more natural to many data scientists.
+//!
+//! To use `constriction` in your Rust project, just add the following line to the
+//! `[dependencies]` section of your `Cargo.toml`:
+//!
+//! ```toml
+//! constriction = "0.2"
+//! ```
 //!
 //! ## System Requirements
 //!
@@ -50,9 +59,110 @@
 //! `min_const_generics` feature. If you have an older version of Rust, update to the latest
 //! version by running `rustup update stable`.
 //!
-//! ## Example
+//! ## Encoding Example
 //!
-//! TODO
+//! In this example, we'll encode some symbols using a quantized Gaussian distribution as
+//! entropy model, with a different mean and standard deviation of the Gaussian for each
+//! symbol so that the example is not too simplistic. We'll use the `statrs` crate for the
+//! Gaussian distributions, so also add the following dependency to your `Cargo.toml`:
+//!
+//! ```toml
+//! statrs = "0.13"
+//! ```
+//!
+//! Now, let's encode (i.e., compress) some symbols. We'll use an Asymmetric Numeral Systems
+//! (ANS) coder here for its speed and compression performance. We'll discuss how to replace
+//! the ANS coder with a range coder or a symbol code like Huffman coding
+//! [below](#exercise).
+//!
+//! ```
+//! use constriction::stream::{ans::DefaultAns, models::DefaultLeakyQuantizer};
+//! use statrs::distribution::Normal;
+//!
+//! fn encode_sample_data() -> Vec<u32> {
+//!     // Create an empty ANS Coder with default word and state size:
+//!     let mut coder = DefaultAns::new();
+//!
+//!     // Some made up data and entropy models for demonstration purpose:
+//!     let symbols = [23i32, -15, 78, 43, -69];
+//!     let means = [35.2, -1.7, 30.1, 71.2, -75.1];
+//!     let stds = [10.1, 25.3, 23.8, 35.4, 3.9];
+//!
+//!     // Create an adapter that maps 1-d probability distributions from floating point to fixed
+//!     // point precision, and that guarantees nonzero probabilities on the range `-100..=100`:
+//!     let quantizer = DefaultLeakyQuantizer::new(-100..=100);
+//!
+//!     // Encode the data (in reverse order, since ANS Coding operates as a stack):
+//!     coder.encode_symbols_reverse(
+//!         symbols.iter().zip(&means).zip(&stds).map(
+//!             |((&sym, &mean), &std)| (sym, quantizer.quantize(Normal::new(mean, std).unwrap()))
+//!     )).unwrap();
+//!
+//!     // Retrieve the compressed representation (filling it up to full words with zero bits).
+//!     coder.into_compressed()
+//! }
+//!
+//! assert_eq!(encode_sample_data(), [0x421C_7EC3, 0x000B_8ED1]);
+//! ```
+//!
+//! ## Decoding Example
+//!
+//! Now let's reconstruct the sample data from its compressed representation.
+//!
+//! ```
+//! use constriction::stream::{ans::DefaultAns, models::DefaultLeakyQuantizer, Decode};
+//! use statrs::distribution::Normal;
+//!
+//! fn decode_sample_data(compressed: Vec<u32>) -> Vec<i32> {
+//!     // Create an ANS Coder with default word and state size from the compressed data:
+//!     // (ANS uses the same type for encoding and decoding, which makes the method very flexible
+//!     // and allows interleaving small encoding and decoding chunks, e.g., for bits-back coding.)
+//!     let mut coder = DefaultAns::from_compressed(compressed).unwrap();
+//!
+//!     // Same entropy models and quantizer we used for encoding:
+//!     let means = [35.2, -1.7, 30.1, 71.2, -75.1];
+//!     let stds = [10.1, 25.3, 23.8, 35.4, 3.9];
+//!     let quantizer = DefaultLeakyQuantizer::new(-100..=100);
+//!
+//!     // Encode the data (in reverse order, since ANS is a stack):
+//!     coder.decode_symbols(
+//!         means.iter().zip(&stds).map(
+//!             |(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())
+//!     )).collect::<Result<Vec<_>, _>>().unwrap()
+//! }
+//!
+//! assert_eq!(decode_sample_data(vec![0x421C_7EC3, 0x000B_8ED1]), [23, -15, 78, 43, -69]);
+//! ```
+//!
+//! ## Exercise
+//!
+//! Try out the above examples and verify that decoding reconstructs the original data. Then
+//! see how easy `constriction` makes it to replace the ANS coder with a range coder by
+//! making the following substitutions (TODO: verify that this is actually correct)
+//!
+//! **In the encoder,**
+//!
+//! - replace `constriction::stream::ans::DefaultAns` with
+//!   `constriction::stream::range::DefaultRangeEncoder`; and
+//! - replace `coder.encode_symbols_reverse` with `coder.encode_symbols` (you no longer need
+//!   to encode symbols in reverse order since Range Coding operates as a queue, i.e.,
+//!   first-in-first-out). You'll also have to add the line `use
+//!   constriction::stream::Encode;` to bring the trait method `encode_symbols` into scope.
+//!
+//! **In the decoder,**
+//!
+//! - replace `constriction::stream::ans::DefaultAns` with
+//!   `constriction::stream::range::DefaultRangeDecoder` (note that Range Coding
+//!   distinguishes between an encoder and a decoder since the encoder writes to the back
+//!   while the decoder reads from the front; by contrast, ANS Coding reads and writes at
+//!   the same position and allows interleaving reads and writes).
+//!
+//! You could also use a symbol code like Huffman Coding (see module [`symbol`]) but that
+//! would have considerably worse compression performance, especially on large files, since
+//! symbol codes always emit an integer number of bits per compressed symbol, even if the
+//! information content of the symbol is a fractional number (stream codes like ANS and
+//! Range Coding *effectively* emit a fractional number of bits per symbol since they
+//! amortize over several symbols).
 
 #![no_std]
 #![warn(rust_2018_idioms, missing_debug_implementations)]
