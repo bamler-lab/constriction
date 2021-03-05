@@ -37,15 +37,15 @@ impl<CompressedWord: BitArray, State: BitArray> Default for CoderState<Compresse
     }
 }
 
-pub struct Encoder<CompressedWord: BitArray, State: BitArray> {
+pub struct RangeEncoder<CompressedWord: BitArray, State: BitArray> {
     buf: Vec<CompressedWord>,
     state: CoderState<CompressedWord, State>,
 }
 
 /// Type alias for an [`Encoder`] with sane parameters for typical use cases.
-pub type DefaultEncoder = Encoder<u32, u64>;
+pub type DefaultRangeEncoder = RangeEncoder<u32, u64>;
 
-impl<CompressedWord, State> Debug for Encoder<CompressedWord, State>
+impl<CompressedWord, State> Debug for RangeEncoder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -55,7 +55,7 @@ where
     }
 }
 
-impl<CompressedWord, State> Code for Encoder<CompressedWord, State>
+impl<CompressedWord, State> Code for RangeEncoder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -72,7 +72,7 @@ where
     }
 }
 
-impl<CompressedWord, State> Default for Encoder<CompressedWord, State>
+impl<CompressedWord, State> Default for RangeEncoder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -82,7 +82,7 @@ where
     }
 }
 
-impl<CompressedWord, State> Encoder<CompressedWord, State>
+impl<CompressedWord, State> RangeEncoder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -112,7 +112,7 @@ where
 
     /// Same as IntoDecoder::into_decoder(self) but can be used for any `PRECISION`
     /// and therefore doesn't require type arguments on the caller side.
-    pub fn into_decoder(self) -> Decoder<CompressedWord, State, Vec<CompressedWord>> {
+    pub fn into_decoder(self) -> RangeDecoder<CompressedWord, State, Vec<CompressedWord>> {
         self.into()
     }
 
@@ -120,8 +120,8 @@ where
     /// and therefore doesn't require type arguments on the caller side.
     pub fn decoder(
         &mut self, // TODO: document why we need mutable access (because encoder has to temporary flush its state)
-    ) -> Decoder<CompressedWord, State, CoderGuard<'_, CompressedWord, State>> {
-        Decoder::new(self.get_compressed())
+    ) -> RangeDecoder<CompressedWord, State, CoderGuard<'_, CompressedWord, State>> {
+        RangeDecoder::new(self.get_compressed())
     }
 
     pub fn into_compressed(mut self) -> Vec<CompressedWord> {
@@ -245,16 +245,16 @@ where
 }
 
 impl<CompressedWord, State, const PRECISION: usize> IntoDecoder<PRECISION>
-    for Encoder<CompressedWord, State>
+    for RangeEncoder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type IntoDecoder = Decoder<CompressedWord, State, Vec<CompressedWord>>;
+    type IntoDecoder = RangeDecoder<CompressedWord, State, Vec<CompressedWord>>;
 }
 
 impl<CompressedWord, State, const PRECISION: usize> Encode<PRECISION>
-    for Encoder<CompressedWord, State>
+    for RangeEncoder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -315,7 +315,7 @@ where
     }
 }
 
-pub struct Decoder<CompressedWord: BitArray, State: BitArray, Buf: AsRef<[CompressedWord]>> {
+pub struct RangeDecoder<CompressedWord: BitArray, State: BitArray, Buf: AsRef<[CompressedWord]>> {
     buf: Buf,
 
     /// Points to the next word in `buf` to be read if `state` underflows.
@@ -327,9 +327,9 @@ pub struct Decoder<CompressedWord: BitArray, State: BitArray, Buf: AsRef<[Compre
 }
 
 /// Type alias for a [`Decoder`] with sane parameters for typical use cases.
-pub type DefaultDecoder<Buf> = Decoder<u32, u64, Buf>;
+pub type DefaultRangeDecoder<Buf> = RangeDecoder<u32, u64, Buf>;
 
-impl<CompressedWord, State, Buf> Debug for Decoder<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Debug for RangeDecoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -345,7 +345,7 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Code for Decoder<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> Code for RangeDecoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -365,7 +365,7 @@ where
     }
 }
 
-impl<CompressedWord, State, Buf> Decoder<CompressedWord, State, Buf>
+impl<CompressedWord, State, Buf> RangeDecoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -403,30 +403,30 @@ where
     }
 }
 
-impl<CompressedWord, State> From<Encoder<CompressedWord, State>>
-    for Decoder<CompressedWord, State, Vec<CompressedWord>>
+impl<CompressedWord, State> From<RangeEncoder<CompressedWord, State>>
+    for RangeDecoder<CompressedWord, State, Vec<CompressedWord>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn from(encoder: Encoder<CompressedWord, State>) -> Self {
+    fn from(encoder: RangeEncoder<CompressedWord, State>) -> Self {
         Self::new(encoder.into_compressed())
     }
 }
 
-impl<'encoder, CompressedWord, State> From<&'encoder mut Encoder<CompressedWord, State>>
-    for Decoder<CompressedWord, State, CoderGuard<'encoder, CompressedWord, State>>
+impl<'encoder, CompressedWord, State> From<&'encoder mut RangeEncoder<CompressedWord, State>>
+    for RangeDecoder<CompressedWord, State, CoderGuard<'encoder, CompressedWord, State>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn from(encoder: &'encoder mut Encoder<CompressedWord, State>) -> Self {
+    fn from(encoder: &'encoder mut RangeEncoder<CompressedWord, State>) -> Self {
         encoder.decoder()
     }
 }
 
 impl<CompressedWord, State, Buf, const PRECISION: usize> Decode<PRECISION>
-    for Decoder<CompressedWord, State, Buf>
+    for RangeDecoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -534,7 +534,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    inner: &'a mut Encoder<CompressedWord, State>,
+    inner: &'a mut RangeEncoder<CompressedWord, State>,
 }
 
 impl<CompressedWord, State> Debug for CoderGuard<'_, CompressedWord, State>
@@ -552,7 +552,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn new(encoder: &'a mut Encoder<CompressedWord, State>) -> Self {
+    fn new(encoder: &'a mut RangeEncoder<CompressedWord, State>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         if !encoder.is_empty() {
             let word = (encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
@@ -605,7 +605,7 @@ impl<'a, CompressedWord> IterCompressed<'a, CompressedWord>
 where
     CompressedWord: BitArray,
 {
-    fn new<State>(coder: &'a Encoder<CompressedWord, State>) -> Self
+    fn new<State>(coder: &'a RangeEncoder<CompressedWord, State>) -> Self
     where
         CompressedWord: Into<State>,
         State: BitArray + AsPrimitive<CompressedWord>,
@@ -690,12 +690,12 @@ mod tests {
 
     #[test]
     fn compress_none() {
-        let encoder = DefaultEncoder::new();
+        let encoder = DefaultRangeEncoder::new();
         assert!(encoder.is_empty());
         let compressed = encoder.into_compressed();
         assert!(compressed.is_empty());
 
-        let decoder = DefaultDecoder::new(&compressed);
+        let decoder = DefaultRangeDecoder::new(&compressed);
         assert!(decoder.maybe_empty());
     }
 
@@ -726,7 +726,7 @@ mod tests {
     {
         let symbols = symbols.into_iter();
 
-        let mut encoder = DefaultEncoder::new();
+        let mut encoder = DefaultRangeEncoder::new();
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
         let model = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
@@ -734,7 +734,7 @@ mod tests {
         let compressed = encoder.into_compressed();
         assert_eq!(compressed.len(), expected_size);
 
-        let mut decoder = DefaultDecoder::new(&compressed);
+        let mut decoder = DefaultRangeDecoder::new(&compressed);
         for symbol in symbols {
             assert_eq!(decoder.decode_symbol(&model).unwrap(), symbol);
         }
@@ -840,7 +840,7 @@ mod tests {
             symbols_categorical.push(symbol);
         }
 
-        let mut encoder = Encoder::<CompressedWord, State>::new();
+        let mut encoder = RangeEncoder::<CompressedWord, State>::new();
 
         encoder
             .encode_iid_symbols(&symbols_categorical, &categorical)
