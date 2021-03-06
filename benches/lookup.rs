@@ -1,7 +1,10 @@
 use std::any::type_name;
 
 use constriction::{
-    stream::{ans::AnsCoder, models::lookup::EncoderHashLookupTable, Code, Decode, Pos, Seek},
+    stream::{
+        ans::AnsCoder, models::lookup::EncoderHashLookupTable, range::RangeEncoder, Code, Decode,
+        Encode, Pos, Seek,
+    },
     BitArray,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -11,29 +14,48 @@ use rand_xoshiro::Xoshiro256StarStar;
 
 criterion_group!(
     benches,
+    round_trip_u32_u64_u16_16,
     round_trip_u16_u32_u8_8,
     round_trip_u16_u32_u16_8,
     round_trip_u16_u32_u16_12
 );
 criterion_main!(benches);
 
+fn round_trip_u32_u64_u16_16(c: &mut Criterion) {
+    round_trip::<u32, u64, u16, 16>(c);
+}
+
 fn round_trip_u16_u32_u8_8(c: &mut Criterion) {
-    round_trip_u16_u32_ux_y::<u8, 8>(c)
+    round_trip::<u16, u32, u8, 8>(c);
 }
 
 fn round_trip_u16_u32_u16_8(c: &mut Criterion) {
-    round_trip_u16_u32_ux_y::<u16, 8>(c)
+    round_trip::<u16, u32, u16, 8>(c);
 }
 
 fn round_trip_u16_u32_u16_12(c: &mut Criterion) {
-    round_trip_u16_u32_ux_y::<u16, 12>(c)
+    round_trip::<u16, u32, u16, 12>(c);
 }
 
-fn round_trip_u16_u32_ux_y<Probability, const PRECISION: usize>(c: &mut Criterion)
+fn round_trip<CompressedWord, State, Probability, const PRECISION: usize>(c: &mut Criterion)
 where
     Probability: BitArray,
     u32: AsPrimitive<Probability>,
-    u16: AsPrimitive<Probability> + From<Probability>,
+    CompressedWord: BitArray + AsPrimitive<Probability> + From<Probability>,
+    State: BitArray + AsPrimitive<CompressedWord> + AsPrimitive<usize> + From<CompressedWord>,
+    u64: From<Probability>,
+    usize: From<Probability> + AsPrimitive<Probability>,
+{
+    ans_round_trip::<CompressedWord, State, Probability, PRECISION>(c);
+    range_round_trip::<CompressedWord, State, Probability, PRECISION>(c);
+}
+
+fn ans_round_trip<CompressedWord, State, Probability, const PRECISION: usize>(c: &mut Criterion)
+where
+    Probability: BitArray,
+    u32: AsPrimitive<Probability>,
+    CompressedWord: BitArray + AsPrimitive<Probability> + From<Probability>,
+    State: BitArray + AsPrimitive<CompressedWord> + AsPrimitive<usize> + From<CompressedWord>,
     u64: From<Probability>,
     usize: From<Probability> + AsPrimitive<Probability>,
 {
@@ -44,18 +66,24 @@ where
     .unwrap();
 
     let data = make_data(&symbols, 10_000);
-    let mut encoder = AnsCoder::<u16, u32>::new();
+    let mut encoder = AnsCoder::<CompressedWord, State>::new();
 
-    let label_suffix = format!("u16_u32_{}_{}", type_name::<Probability>(), PRECISION);
-    c.bench_function(&format!("encoding_{}", label_suffix), |b| {
+    let label_suffix = format!(
+        "{}_{}_{}_{}",
+        type_name::<CompressedWord>(),
+        type_name::<State>(),
+        type_name::<Probability>(),
+        PRECISION
+    );
+    c.bench_function(&format!("ans_encoding_{}", label_suffix), |b| {
         b.iter(|| {
             encoder.clear();
             encoder
                 .encode_iid_symbols_reverse(black_box(&data), &encoder_model)
                 .unwrap();
 
-            // Access `ans.state()` and `ans.buf()` at an unpredictable position.
-            let index = encoder.state() as usize % encoder.buf().len();
+            // Access `encoder.state()` and `encoder.buf()` at an unpredictable position.
+            let index = AsPrimitive::<usize>::as_(encoder.state()) % encoder.buf().len();
             black_box(encoder.buf()[index]);
         })
     });
@@ -65,7 +93,7 @@ where
     let mut backward_decoder = encoder.into_seekable_decoder();
     let reset_snapshot = backward_decoder.pos_and_state();
 
-    c.bench_function(&format!("backward_decoding_{}", label_suffix), |b| {
+    c.bench_function(&format!("ans_backward_decoding_{}", label_suffix), |b| {
         b.iter(|| {
             backward_decoder.seek(black_box(reset_snapshot)).unwrap();
             let mut checksum = 1234u16;
@@ -88,7 +116,7 @@ where
     let mut forward_decoder = backward_decoder.into_reversed();
     let reset_snapshot = forward_decoder.pos_and_state();
 
-    c.bench_function(&format!("forward_decoding_{}", label_suffix), |b| {
+    c.bench_function(&format!("ans_forward_decoding_{}", label_suffix), |b| {
         b.iter(|| {
             forward_decoder.seek(black_box(reset_snapshot)).unwrap();
             let mut checksum = 1234u16;
@@ -106,6 +134,69 @@ where
         .collect::<Vec<_>>();
     assert_eq!(decoded, data);
     assert!(forward_decoder.is_empty());
+}
+
+fn range_round_trip<CompressedWord, State, Probability, const PRECISION: usize>(c: &mut Criterion)
+where
+    Probability: BitArray,
+    u32: AsPrimitive<Probability>,
+    CompressedWord: BitArray + AsPrimitive<Probability> + From<Probability>,
+    State: BitArray + AsPrimitive<CompressedWord> + AsPrimitive<usize> + From<CompressedWord>,
+    u64: From<Probability>,
+    usize: From<Probability> + AsPrimitive<Probability>,
+{
+    let (symbols, probabilities) = make_symbols_and_probabilities(PRECISION, 100);
+    let encoder_model = EncoderHashLookupTable::<u16, Probability, PRECISION>::new(
+        symbols.iter().cloned().zip(probabilities),
+    )
+    .unwrap();
+
+    let data = make_data(&symbols, 10_000);
+    let mut encoder = RangeEncoder::<CompressedWord, State>::new();
+
+    let label_suffix = format!(
+        "{}_{}_{}_{}",
+        type_name::<CompressedWord>(),
+        type_name::<State>(),
+        type_name::<Probability>(),
+        PRECISION
+    );
+    c.bench_function(&format!("range_encoding_{}", label_suffix), |b| {
+        b.iter(|| {
+            encoder.clear();
+            encoder
+                .encode_iid_symbols(black_box(&data), &encoder_model)
+                .unwrap();
+
+            // Access `encoder.state()` and `encoder.buf()` at an unpredictable position.
+            let index = AsPrimitive::<usize>::as_(encoder.state().lower()) % encoder.buf().len();
+            black_box(encoder.buf()[index]);
+        })
+    });
+
+    let decoder_model = encoder_model.to_decoder_model();
+
+    let mut decoder = encoder.into_decoder();
+    let reset_snapshot = decoder.pos_and_state();
+
+    c.bench_function(&format!("range_decoding_{}", label_suffix), |b| {
+        b.iter(|| {
+            decoder.seek(black_box(reset_snapshot)).unwrap();
+            let mut checksum = 1234u16;
+            for symbol in decoder.decode_iid_symbols(data.len(), &decoder_model) {
+                checksum ^= symbol.unwrap();
+            }
+            black_box(checksum);
+        })
+    });
+
+    decoder.seek(reset_snapshot).unwrap();
+    let decoded = decoder
+        .decode_iid_symbols(data.len(), &encoder_model.to_decoder_model())
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    assert_eq!(decoded, data);
+    assert!(decoder.maybe_empty());
 }
 
 fn make_symbols_and_probabilities<Probability>(
