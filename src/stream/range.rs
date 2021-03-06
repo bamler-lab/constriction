@@ -5,14 +5,12 @@ use num::cast::AsPrimitive;
 
 use super::{
     models::{DecoderModel, EncoderModel},
-    Code, Decode, Encode, IntoDecoder,
+    Code, Decode, Encode, IntoDecoder, Pos, Seek,
 };
 use crate::{bit_array_from_chunks, bit_array_to_chunks_exact, BitArray, EncodingError};
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
 /// [`Decoder<CompressedWord, State>`]. Relevant for [`Seek`]ing.
-///
-/// TODO: actually implement seeking.
 ///
 /// [`Seek`]: crate::Seek
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +25,18 @@ pub struct CoderState<CompressedWord, State> {
     /// We keep track of the `CompressedWord` type so that we can statically enforce
     /// the invariants for `lower` and `range`.
     phantom: PhantomData<CompressedWord>,
+}
+
+impl<CompressedWord, State: BitArray> CoderState<CompressedWord, State> {
+    /// Get the lower bound of the current range (inclusive)
+    pub fn lower(&self) -> State {
+        self.lower
+    }
+
+    /// Get the size of the current range
+    pub fn range(&self) -> State {
+        self.range
+    }
 }
 
 impl<CompressedWord: BitArray, State: BitArray> Default for CoderState<CompressedWord, State> {
@@ -71,6 +81,16 @@ where
 
     fn maybe_empty(&self) -> bool {
         self.is_empty()
+    }
+}
+
+impl<CompressedWord, State> Pos for RangeEncoder<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn pos(&self) -> usize {
+        self.buf.len()
     }
 }
 
@@ -244,6 +264,10 @@ where
     pub fn num_bits(&self) -> usize {
         CompressedWord::BITS * self.num_words()
     }
+
+    pub fn buf(&self) -> &[CompressedWord] {
+        &self.buf
+    }
 }
 
 impl<CompressedWord, State, const PRECISION: usize> IntoDecoder<PRECISION>
@@ -361,9 +385,61 @@ where
     }
 
     fn maybe_empty(&self) -> bool {
-        self.pos == self.buf.as_ref().len()
+        self.pos >= self.buf.as_ref().len()
             && self.point.wrapping_sub(&self.state.lower)
                 < State::one() << (State::BITS - CompressedWord::BITS)
+    }
+}
+
+impl<CompressedWord, State, Buf> Pos for RangeDecoder<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]>,
+{
+    fn pos(&self) -> usize {
+        self.pos.saturating_sub(State::BITS / CompressedWord::BITS)
+    }
+}
+
+impl<CompressedWord, State, Buf> Seek for RangeDecoder<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]>,
+{
+    fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()> {
+        let (pos, state) = pos_and_state;
+        let remainder = self.buf.as_ref().get(pos..).ok_or(())?;
+        let mut point = bit_array_from_chunks(remainder.iter().cloned());
+
+        let pos_shift = if remainder.len() < State::BITS / CompressedWord::BITS {
+            // A very short amount of compressed data is left, and therefore `point` is still
+            // right-aligned. Shift it over so it's left-aligned and fill it up with ones.
+            if remainder.is_empty() {
+                if self.buf.as_ref().is_empty() && state == Self::State::default() {
+                    // Special case: seeking to the beginning of no compressed data. Let's do
+                    // the same what `from_compressed` does in this case.
+                    point = State::max_value() >> CompressedWord::BITS;
+                } else {
+                    // Tried to either seek past EOF or to EOF of empty buffer with wrong state.
+                    return Err(());
+                }
+            } else {
+                point = point << (State::BITS - remainder.len() * CompressedWord::BITS)
+                    | State::max_value() >> remainder.len() * CompressedWord::BITS;
+            }
+
+            remainder.len()
+        } else {
+            State::BITS / CompressedWord::BITS
+        };
+
+        self.point = point;
+        self.pos = pos + pos_shift;
+        self.state = state;
+
+        Ok(())
     }
 }
 
@@ -381,7 +457,7 @@ where
 
         let pos = if compressed.as_ref().len() < State::BITS / CompressedWord::BITS {
             // A very short compressed buffer was provided, and therefore `point` is still
-            // right-aligned. Shift it over so it's left-aligned and fill it up with ones
+            // right-aligned. Shift it over so it's left-aligned and fill it up with ones.
             if compressed.as_ref().len() == 0 {
                 // Special case: an empty compressed stream is treated like one with a single
                 // `CompressedWord` of value zero.
@@ -466,6 +542,7 @@ where
             // This can only happen if both of the following conditions apply:
             // (i) we are decoding invalid compressed data; and
             // (ii) we use entropy models with varying `PRECISION`s.
+            // TODO: Is (ii) necessary? Aren't there always unreachable pockets due to rounding?
             return Err(DecodingError::InvalidCompressedData);
         }
 
@@ -497,7 +574,14 @@ where
                 self.point = self.point | word.into();
                 self.pos += 1;
             } else {
-                self.point = self.point | CompressedWord::max_value().into()
+                self.point = self.point | CompressedWord::max_value().into();
+                if self.pos < self.buf.as_ref().len() + State::BITS / CompressedWord::BITS - 1 {
+                    // We allow `pos` to be up to `State::BITS / CompressedWord::BITS - 1` words
+                    // past the end of `buf` so that `point` always contains at least one word from
+                    // `buf`. We don't increase `pos` further so that it doesn't wrap around when
+                    // the decoder is misused, which would cause `maybe_empty` to misbehave.
+                    self.pos += 1;
+                }
             }
         }
 
@@ -881,5 +965,68 @@ mod tests {
 
         assert_eq!(symbols_categorical, reconstructed_categorical);
         assert_eq!(symbols_gaussian, reconstructed_gaussian);
+    }
+
+    #[test]
+    fn seek() {
+        const NUM_CHUNKS: usize = 100;
+        const SYMBOLS_PER_CHUNK: usize = 100;
+
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
+        let model = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
+
+        let mut encoder = DefaultRangeEncoder::new();
+
+        let mut rng = Xoshiro256StarStar::seed_from_u64(123);
+        let mut symbols = Vec::with_capacity(NUM_CHUNKS);
+        let mut jump_table = Vec::with_capacity(NUM_CHUNKS);
+
+        for _ in 0..NUM_CHUNKS {
+            jump_table.push(encoder.pos_and_state());
+            let chunk = (0..SYMBOLS_PER_CHUNK)
+                .map(|_| model.quantile_function(rng.next_u32() % (1 << 24)).0)
+                .collect::<Vec<_>>();
+            encoder.encode_iid_symbols(&chunk, &model).unwrap();
+            symbols.push(chunk);
+        }
+        let final_pos_and_state = encoder.pos_and_state();
+
+        let mut decoder = encoder.decoder();
+
+        // Verify that decoding leads to the same positions and states.
+        for (chunk, &pos_and_state) in symbols.iter().zip(&jump_table) {
+            assert_eq!(decoder.pos_and_state(), pos_and_state);
+            let decoded = decoder
+                .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(&decoded, chunk);
+        }
+        assert_eq!(decoder.pos_and_state(), final_pos_and_state);
+        assert!(decoder.maybe_empty());
+
+        // Seek to some random offsets in the jump table and decode one chunk
+        for i in 0..100 {
+            let chunk_index = if i == 3 {
+                // Make sure we test jumping to beginning at least once.
+                0
+            } else {
+                rng.next_u32() as usize % NUM_CHUNKS
+            };
+
+            let pos_and_state = jump_table[chunk_index];
+            decoder.seek(pos_and_state).unwrap();
+            let decoded = decoder
+                .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(&decoded, &symbols[chunk_index])
+        }
+
+        // Test jumping to end (but first make sure we're not already at the end).
+        decoder.seek(jump_table[0]).unwrap();
+        assert!(!decoder.maybe_empty());
+        decoder.seek(final_pos_and_state).unwrap();
+        assert!(decoder.maybe_empty());
     }
 }

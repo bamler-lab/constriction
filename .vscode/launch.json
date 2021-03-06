@@ -1,0 +1,65 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'constriction'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=constriction"
+                ],
+                "filter": {
+                    "name": "constriction",
+                    "kind": "rlib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'random_data'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=random_data",
+                    "--package=constriction"
+                ],
+                "filter": {
+                    "name": "random_data",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug benchmark 'lookup'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bench=lookup",
+                    "--package=constriction"
+                ],
+                "filter": {
+                    "name": "lookup",
+                    "kind": "bench"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
