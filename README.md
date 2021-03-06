@@ -28,15 +28,17 @@ coding algorithms:
 - **Asymmetric Numeral Systems (ANS):** a highly efficient modern entropy coder with
   near-optimal compression performance that supports advanced use cases like bits-back
   coding;
-  - A "split" variant of ANS Coding is provided for advanced use cases in hierarchical
+  - A "split" variant of ANS coding is provided for advanced use cases in hierarchical
     models with cyclic dependencies.
 - **Range Coding:** a variant of Arithmetic Coding that is optimized for realistic computing
   hardware; it has similar compression performance and almost the same computational
-  performance as ANS Coding. The main practical difference is that Range Coding operates as
-  a queue (first-in-first-out, which is useful for autoregressive entropy models) while ANS
-  Coding operates as a stack (last-in-first-out, which is useful for hierarchical models).
+  performance as ANS Coding. The main practical difference is that Range Coding is a queue
+  (first-in-first-out) while ANS Coding is a stack (last-in-first-out), which makes Range
+  Coding preferable for autoregressive models and ANS Coding preferable for hierarchical
+  models (since bits-back coding is easier on a stack).
 - **Huffman Coding:** a well-known symbol code, mainly provided here for teaching purpose;
-  you'll usually want to use a stream code like ANS or Range Coding instead.
+  you'll usually want to use a stream code like ANS or Range Coding instead since they have
+  better compression performance and are at least as fast.
 
 Further, `constriction` provides implementations of common probability distributions in
 fixed-point arithmetic, which can be used as entropy models for all of the above entropy

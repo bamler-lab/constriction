@@ -19,9 +19,10 @@
 //!    available as a by-product of an upcoming university course on data compression with
 //!    deep probabilistic models.
 //!
-//! # Currently Supported Entropy Coding Algorithms
+//! ## Crate Status
 //!
-//! The `constriction` crate currently supports the following algorithms:
+//! The `constriction` crate currently provides solid implementations of the following
+//! entropy coding algorithms:
 //!
 //! - **Asymmetric Numeral Systems (ANS):** a highly efficient modern entropy coder with
 //!   near-optimal compression performance that supports advanced use cases like bits-back
@@ -30,10 +31,25 @@
 //!     models with cyclic dependencies.
 //! - **Range Coding:** a variant of Arithmetic Coding that is optimized for realistic
 //!   computing hardware; it has similar compression performance and almost the same
-//!   computational performance as ANS. The main practical difference is that Range Coding
-//!   is a queue (FIFO) while ANS is a stack (LIFO).
+//!   computational performance as ANS Coding. The main practical difference is that Range
+//!   Coding is a queue (first-in-first-out) while ANS Coding is a stack
+//!   (last-in-first-out), which makes Range Coding preferable for autoregressive models and
+//!   ANS Coding preferable for hierarchical models (since bits-back coding is easier on a
+//!   stack).
 //! - **Huffman Coding:** a well-known symbol code, mainly provided here for teaching
-//!   purpose; you'll usually want to use a stream code like ANS or Range Coding instead.
+//!   purpose; you'll usually want to use a stream code like ANS or Range Coding instead
+//!   since they have better compression performance and are at least as fast.
+//!
+//! Further, `constriction` provides implementations of common probability distributions in
+//! fixed-point arithmetic, which can be used as entropy models for all of the above entropy
+//! coding algorithms.
+//!
+//! The provided implementations of entropy coding algorithms and probability distributions
+//! are extensively tested and should be considered reliable. However, their APIs may change
+//! in future versions of `constriction` if more user experience reveals any unnecessary
+//! restrictions or repetitiveness of the current APIs. Please [file an
+//! issue](https://github.com/bamler-lab/constriction/issues) if you run into a scenario
+//! where the current APIs are suboptimal.
 //!
 //! # Quick Start With the Rust API
 //!
@@ -71,8 +87,8 @@
 //! ```
 //!
 //! Now, let's encode (i.e., compress) some symbols. We'll use an Asymmetric Numeral Systems
-//! (ANS) coder here for its speed and compression performance. We'll discuss how to replace
-//! the ANS coder with a range coder or a symbol code like Huffman coding
+//! (ANS) coder here for its speed and compression performance. We'll discuss how you could
+//! replace the ANS coder with a range coder or a symbol code like Huffman coding
 //! [below](#exercise).
 //!
 //! ```
@@ -88,8 +104,9 @@
 //!     let means = [35.2, -1.7, 30.1, 71.2, -75.1];
 //!     let stds = [10.1, 25.3, 23.8, 35.4, 3.9];
 //!
-//!     // Create an adapter that maps 1-d probability distributions from floating point to fixed
-//!     // point precision, and that guarantees nonzero probabilities on the range `-100..=100`:
+//!     // Create an adapter that integrates 1-d probability density functions over bins
+//!     // `[n - 0.5, n + 0.5)` for all integers `n` from `-100` to `100` using fixed point
+//!     // arithmetic with default precision, guaranteeing a nonzero probability for each bin:
 //!     let quantizer = DefaultLeakyQuantizer::new(-100..=100);
 //!
 //!     // Encode the data (in reverse order, since ANS Coding operates as a stack):
@@ -124,7 +141,7 @@
 //!     let stds = [10.1, 25.3, 23.8, 35.4, 3.9];
 //!     let quantizer = DefaultLeakyQuantizer::new(-100..=100);
 //!
-//!     // Encode the data (in reverse order, since ANS is a stack):
+//!     // Decode the data:
 //!     coder.decode_symbols(
 //!         means.iter().zip(&stds).map(
 //!             |(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())
@@ -153,9 +170,9 @@
 //!
 //! - replace `constriction::stream::ans::DefaultAnsCoder` with
 //!   `constriction::stream::range::DefaultRangeDecoder` (note that Range Coding
-//!   distinguishes between an encoder and a decoder since the encoder writes to the back
-//!   while the decoder reads from the front; by contrast, ANS Coding reads and writes at
-//!   the same position and allows interleaving reads and writes).
+//!   distinguishes between an encoder and a decoder type since the encoder writes to the
+//!   back while the decoder reads from the front; by contrast, ANS Coding reads and writes
+//!   at the same position and allows interleaving reads and writes).
 //!
 //! You could also use a symbol code like Huffman Coding (see module [`symbol`]) but that
 //! would have considerably worse compression performance, especially on large files, since
@@ -163,6 +180,72 @@
 //! information content of the symbol is a fractional number (stream codes like ANS and
 //! Range Coding *effectively* emit a fractional number of bits per symbol since they
 //! amortize over several symbols).
+//!
+//! The above replacements should lead you to something like this:
+//!
+//! ```
+//! use constriction::stream::{
+//!     models::DefaultLeakyQuantizer,
+//!     range::{DefaultRangeEncoder, DefaultRangeDecoder},
+//!     Encode, Decode,
+//! };
+//! use statrs::distribution::Normal;
+//!
+//! fn encode_sample_data() -> Vec<u32> {
+//!     // Create an empty Range Encoder with default word and state size:
+//!     let mut encoder = DefaultRangeEncoder::new();
+//!
+//!     // Same made up data, entropy models, and quantizer as in the ANS Coding example above:
+//!     let symbols = [23i32, -15, 78, 43, -69];
+//!     let means = [35.2, -1.7, 30.1, 71.2, -75.1];
+//!     let stds = [10.1, 25.3, 23.8, 35.4, 3.9];
+//!     let quantizer = DefaultLeakyQuantizer::new(-100..=100);
+//!
+//!     // Encode the data (this time in normal order, since Range Coding is a queue):
+//!     encoder.encode_symbols(
+//!         symbols.iter().zip(&means).zip(&stds).map(
+//!             |((&sym, &mean), &std)| (sym, quantizer.quantize(Normal::new(mean, std).unwrap()))
+//!     )).unwrap();
+//!
+//!     // Retrieve the (sealed up) compressed representation.
+//!     encoder.into_compressed()
+//! }
+//!
+//! fn decode_sample_data(compressed: Vec<u32>) -> Vec<i32> {
+//!     // Create a Range Decoder with default word and state size from the compressed data:
+//!     let mut decoder = DefaultRangeDecoder::from_compressed(compressed);
+//!
+//!     // Same entropy models and quantizer we used for encoding:
+//!     let means = [35.2, -1.7, 30.1, 71.2, -75.1];
+//!     let stds = [10.1, 25.3, 23.8, 35.4, 3.9];
+//!     let quantizer = DefaultLeakyQuantizer::new(-100..=100);
+//!
+//!     // Decode the data:
+//!     decoder.decode_symbols(
+//!         means.iter().zip(&stds).map(
+//!             |(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())
+//!     )).collect::<Result<Vec<_>, _>>().unwrap()
+//! }
+//!
+//! let compressed = encode_sample_data();
+//!
+//! // We'll get a different compressed representation than in the ANS Coding
+//! // example because we're using a different entropy coding algorithm ...
+//! assert_eq!(compressed, [0x1C31EFEB, 0x87B430DA]);
+//!
+//! // ... but as long as we decode with the matching algorithm we can still reconstruct the data:
+//! assert_eq!(decode_sample_data(compressed), [23, -15, 78, 43, -69]);
+//! ```
+//!
+//! # Where to Go Next?
+//!
+//! If you already have an entropy model and you just want to encode and decode some
+//! sequence of symbols then you can probably start by adjusting the above
+//! [examples](#encoding-example) to your needs. Or have a closer look at the [`stream`]
+//! module.
+//!
+//! If you're still new to the concept of entropy coding then check out the [teaching
+//! material (TBD)](https://robamler.github.io/teaching/compress21/).
 
 #![no_std]
 #![warn(rust_2018_idioms, missing_debug_implementations)]

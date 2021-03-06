@@ -1,3 +1,5 @@
+//! Symbol Codes (mainly provided for teaching purpose; typically inferior to stream codes)
+
 pub mod huffman;
 
 use smallvec::SmallVec;

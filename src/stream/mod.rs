@@ -1,3 +1,143 @@
+//! Stream Codes (entropy codes that amortize compressed bits over several symbols)
+//!
+//! This module provides implementations of stream codes and utilities for defining entropy
+//! models for stream codes. Currently, two different stream codes are implemented (see
+//! below for a [comparison](#comparison-of-the-implemented-algorithms)):
+//!
+//! - **Asymmetric Numeral Systems (ANS):** a modern stack-based stream code; see submodule
+//!   [`ans`]; and
+//! - **Range Coding:** a queue-based stream code that is a variant of Arithmetic Coding;
+//!   see submodule [`range`].
+//!
+//! Both of these stream codes are provided through types that implement the [`Encode`] and
+//! [`Decode`] traits defined in this module. To encode or decode a sequence of symbols, you
+//! have to provide an [`EntropyModel`] for each symbol, for which the submodule [`models`]
+//! provides the necessary utilities.
+//!
+//! # What's a Stream Code?
+//!
+//! A stream code is an entropy coding algorithm that encodes a sequence of symbols into a
+//! compressed bit string, one symbol at a time, in a way that amortizes compressed bits
+//! over several symbols, thus effectively using up a non-integer number of bits for each
+//! symbol. This amortization allows stream codes to reach near-optimal compression
+//! performance without giving up computational efficiency. In experiments, the default
+//! variants of both provided implementations of stream codes showed about 0.1&nbsp;%
+//! relative overhead over the theoretical bound on the bitrate (the overhead is due to
+//! finite numerical precision and state size, which can even be increased further from
+//! their default values via type parameters).
+//!
+//! The near-optimal compression performance of stream codes is to be seen in contrast to
+//! symbol codes, which do not amortize over symbols, i.e., they map each symbol to an
+//! integer number of bits, thus leading to a typical overhead of 0.5&nbsp;bits *per symbol*
+//! in the best case, and reaching almost 1&nbsp;bit of overhead per symbol for entropy
+//! models with very little (<&nbsp;1&nbsp;bit of) entropy per symbol (a common case in deep
+//! learning based entropy models). The computational efficiency of stream codes is to be
+//! seen in contrast to block codes (used in many popular compression codecs), which encode
+//! a block of several symbols at once with computational cost exponential in the block
+//! size.
+//!
+//! # Highly Customizable Implementations With Sane Defaults
+//!
+//! TODO: define term "word".
+//!
+//! # Comparison of the Implemented Algorithms
+//!
+//! The list below compares several aspects of the two currently implemented stream codes
+//! (ANS and Range Coding).
+//!
+//! **TL;DR:** Don't overthink it. For many practical use cases, both ANS and Range Coding
+//! will probably do the job, and `constriction` makes it easy to switch between the two
+//! should you realize you've painted yourself into a corner. If you want to use the
+//! bits-back trick or similar advanced techniques, then definitely use ANS Coding since
+//! the provided Range Coder is not surjective. If you have an autoregressive entropy model
+//! then you might prefer Range Coding. In any other case, a possibly biased recommendation
+//! from the author of this paragraph is to use ANS Coding by default for its simplicity.
+//!
+//! Here's the more detailed comparison:
+//!
+//! - **API:** The main practical difference between the two implemented algorithms is that
+//!   ANS Coding operates as a stack (last-in-first-out) whereas Range Coding operates as a
+//!   queue (first-in-first-out). This has a number of implications:
+//!   - **Autoregressive entropy models: point for Range Coding.** If you use an ANS coder
+//!     to encode a sequence of symbols then it is advisable to use the method
+//!     [`AnsCoder::encode_symbols_reverse`]. As the name suggests, this method encodes the
+//!     symbols onto the stack in *reverse* order so that, when you decode them at a later
+//!     time, you'll recover them in original order. However, iterating over symbols and, in
+//!     particular, over their associated entropy models in reverse order may be
+//!     inconvenient for autoregressive models with long term memory. Using an ANS coder
+//!     with such a model means that you may end up having to first build up the full
+//!     autoregressive model in memory front-to-back and only then iterate over it
+//!     back-to-front for encoding (the *decoder* can still iterate as normal,
+//!     front-to-back). Range Coding makes this easier since both encoding and decoding can
+//!     iterate in the natural front-to-back direction.
+//!   - **Hierarchical entropy models: point for ANS Coding:** Sometimes a stack (as in ANS
+//!     Coding) is just what you want because having only a single "open end" at the top of
+//!     the stack makes things easier. By contrast, a queue (as in Range Coding) has two
+//!     separate open ends for reading and writing, respectively. This leads to a number of
+//!     corner cases when the two ends come close to each other (which can happen either
+//!     within a single word or on two neighboring words). To avoid the computational
+//!     overhead for checking for these corner cases on every encoded or decoded symbol, the
+//!     provided Range Coder strictly distinguishes between a `RangeEncoder` and a
+//!     `RangeDecoder` type. Switching from a `RangeEncoder` to a `RangeDecoder` requires
+//!     "sealing" the write end and "opening up" the read end, both of which are
+//!     irreversible operations, i.e., you can't switch back from a `RangeDecoder` with
+//!     partially consumed data to a `RangeEncoder` to continue writing to it. By contrast,
+//!     the provided ANS Coder just has a single `AnsCoder` type that supports arbitrary
+//!     sequences of read and write operations. Being able to interleave reads and writes is
+//!     important for bits-back coding, a useful method for hierarchical entropy models.
+//! - **Surjectivity: point for ANS Coding.** This is another property that is important for
+//!   bits-back coding, and that only ANS Coding satisfies: an ANS Coder can decode any
+//!   arbitrary bit string with any sequence of entropy models, even if the bit string was
+//!   not generated by encoding a sequence of symbols with the same entropy models. The API
+//!   expresses this property by the fact that the error type `AnsCoder::DecodingError` is
+//!   declared as [`Infallible`]. If the bit string you decode is uniform random and there
+//!   is still at least about one word of compressed data left after decoding, then the
+//!   decoded symbols are, to a good approximation, independent random draws from their
+//!   respective entropy models. By contrast, Range Coding is not surjective. It has some
+//!   (small) pockets of unrealizable bit strings for any given sequence of entropy models.
+//!   Trying to decode such an unrealizable bit string would return the error variant
+//!   [`range::DecodingError::InvalidCompressedData`].
+//! - **Serialization: point for ANS Coding.** The state of an ANS Coder is uniquely
+//!   described by the compressed bit string. This means that you can interrupt encoding
+//!   and/or decoding with an ANS Coder at any time, take a snapshot of the ANS Coder's
+//!   state, and then recover the state at a later time to seamlessly continue encoding
+//!   and/or decoding. The serialized form of the ANS Coder is simply the string of
+//!   compressed bits that the Coder has accumulated so far. By contrast, a Range Coder has
+//!   some additional internal state that is not needed for decoding and therefore not part
+//!   of the compressed bit string, but that you would need if you wanted to continue to
+//!   append more symbols to a serialized-deserialized Range Coder.
+//! - **Random access decoding: point for ANS Coding.** Both ANS and Range Coding support
+//!   decoding with random access via the [`Seek`] trait, but it comes at a different cost.
+//!   In order to jump ("[`seek`]") to a given location in a slice of compressed data, you
+//!   have to provide a position in the slice and an internal decoder state (which you can
+//!   get via from [`Code::state`]). While the type of the internal coder state can be
+//!   controlled through type parameters, its minimal (and also typical) size is two words
+//!   for ANS Coding and four words for Range Coding. Thus, if you're developing a container
+//!   file format that contains a jump table for random access, then choosing ANS Coding
+//!   over Range Coding will allow you to reduce the memory footprint of the jump table.
+//!   Whether or not this is significant depends on how fine grained your jump table is.
+//! - **Compression performance: virtually no difference unless misused.** With the default
+//!   settings, the compression performance of both ANS Coding and Range Coding is very
+//!   close to the theoretical bound for entropy coding. The lack of surjectivity in Range
+//!   Coding leaves a little bit of performance on the table, but it seems to be roughly
+//!   countered by a slightly larger rounding overhead in ANS Coding. Keep in mind, however,
+//!   that deviating from the default type parameter settings (for word size, state size,
+//!   and numerical precision) can considerably degrade compression performance if not done
+//!   carefully. It is strongly recommended to always start with the `DefaultXxx` type
+//!   aliases (for either ANS or Range Coding), which use well-tested settings, before
+//!   experimenting with deviations from the defaults.
+//! - **Code complexity and computational efficiency: minor point for ANS Coding.** ANS
+//!   Coding is a simpler algorithm than Range Coding, which manifests itself in fewer
+//!   branches and a smaller internal coder state. In principle, one should expect simpler
+//!   code to run faster. But, in practice, the computational bottleneck will often be the
+//!   entropy models, unless the highly optimized [lookup models] are used. (TODO: add Range
+//!   Coder to existing benchmarks of lookup models so we can compare empirically)
+//!
+//! [`AnsCoder::encode_symbols_reverse`]: ans::AnsCoder::encode_symbols_reverse
+//! [`Infallible`]: core::convert::Infallible
+//! [`seek`]: Seek::seek
+//! [lookup models]: models::lookup
+
 pub mod ans;
 pub mod models;
 pub mod range;

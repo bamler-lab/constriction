@@ -66,8 +66,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// use a quantized Gaussian distribution as entropy model, with a different mean and
 /// standard deviation of the Gaussian for each symbol so that the example is not too
 /// simplistic. Further, we'll use an Asymmetric Numeral Systems (ANS) coder here for its
-/// speed and compression performance. We'll discuss how to replace the ANS coder with a
-/// range coder or a symbol code like Huffman coding [below](#exercise).
+/// speed and compression performance. We'll discuss how you could replace the ANS coder
+/// with a range coder or a symbol code like Huffman coding [below](#exercise).
 ///
 /// ```python
 /// import constriction
@@ -123,10 +123,10 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// reconstructed = coder.decode_leaky_gaussian_symbols(
 ///     min_supported_symbol, max_supported_symbol, means, stds)
 /// assert coder.is_empty()
-/// print(reconstructed)  # Should print [23, -15, 78, 43, -69]
+/// print(reconstructed)  # Should print [23, -15, 78, 43, -69].
 /// ```
 ///
-/// #### Exercise
+/// ### Exercise
 ///
 /// Try out the above example and verify that decoding reconstructs the original data. Then
 /// see how easy `constriction` makes it to replace the ANS coder with a range coder by
@@ -134,8 +134,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// **In the encoder,**
 ///
-/// - replace `constriction.stream.ans.AnsCoder` with `constriction.stream.range.RangeEncoder`;
-///   and
+/// - replace `constriction.stream.ans.AnsCoder` with
+///   `constriction.stream.range.RangeEncoder`; and
 /// - replace `coder.encode_leaky_gaussian_symbols_reverse` with
 ///   `coder.encode_leaky_gaussian_symbols` (we no longer need to encode symbols in reverse
 ///   order since Range Coding is a queue, i.e., first-in-first-out; we only had to reverse
@@ -143,11 +143,11 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// **In the decoder,**
 ///
-/// - replace `constriction.stream.ans.AnsCoder` with `constriction.stream.range.RangeDecoder`
-///   (note that Range Coding distinguishes between an encoder and a decoder since the
-///   encoder writes to the back while the decoder reads from the front; by contrast, ANS
-///   Coding reads and writes at the same position and allows interleaving reads and
-///   writes).
+/// - replace `constriction.stream.ans.AnsCoder` with
+///   `constriction.stream.range.RangeDecoder` (note that Range Coding distinguishes between
+///   an encoder and a decoder type since the encoder writes to the back while the decoder
+///   reads from the front; by contrast, ANS Coding reads and writes at the same position
+///   and allows interleaving reads and writes).
 ///
 /// You could also use a symbol code like Huffman Coding (see submodule `symbol`) but that
 /// would have considerably worse compression performance, especially on large files, since
@@ -156,15 +156,43 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// Range Coding *effectively* emit a fractional number of bits per symbol since they
 /// amortize over several symbols).
 ///
-/// ## Where to Go Next?
+/// The above replacements should lead you to something like the following:
 ///
-/// If you already have an entropy model and you just want to encode and decode some
-/// sequence of symbols then you can probably start by adjusting the above
-/// [example](#example) to your needs. Or have a closer look at the [`stream`](stream.html)
-/// submodule.
+/// ```python
+/// import constriction
+/// import numpy as np
+/// import sys
 ///
-/// If you're still new to the concept of entropy coding then check out the [teaching
-/// material (TBD)](https://robamler.github.io/teaching/compress21/).
+/// # Create an empty Range Encoder:
+/// encoder = constriction.stream.range.RangeEncoder()
+///
+/// # Same made up data and entropy models as in the ANS Coding example above:
+/// min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
+/// symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)
+/// means = np.array([35.2, -1.7, 30.1, 71.2, -75.1], dtype=np.float64)
+/// stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
+///
+/// # Encode the data (this time in normal order, since Range Coding is a queue):
+/// encoder.encode_leaky_gaussian_symbols(
+///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
+///
+/// print(f"Compressed size: {encoder.num_bits()} bits")
+/// print(f"(without sealing up to full words: {encoder.num_valid_bits()} bits)")
+///
+/// # Get the compressed bit string (sealed up to full words):
+/// compressed = encoder.get_compressed()
+///
+/// # ... writing and reading from file same as above (skipped here) ...
+///
+/// # Initialize a Range Decoder from the compressed bit string:
+/// decoder = constriction.stream.range.RangeDecoder(compressed)
+///
+/// # Decode the data and verify it's correct:
+/// reconstructed = decoder.decode_leaky_gaussian_symbols(
+///     min_supported_symbol, max_supported_symbol, means, stds)
+/// assert decoder.is_empty()
+/// assert np.all(reconstructed == symbols)
+/// ```
 #[pymodule(constriction)]
 fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(stream))?;

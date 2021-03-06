@@ -1038,6 +1038,8 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: ReadItems<CompressedWord>,
 {
+    /// ANS coding is surjective, and we (deliberately) allow decoding past EOF (in a
+    /// deterministic way) for consistency. Therefore, decoding cannot fail.
     type DecodingError = core::convert::Infallible;
 
     /// Decodes a single symbol and pops it off the compressed data.

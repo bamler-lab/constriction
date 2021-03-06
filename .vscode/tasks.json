@@ -10,7 +10,8 @@
 			"group": "build",
 			"label": "rust: cargo doc",
 			"presentation": {
-				"clear": true
+				"clear": true,
+				"reveal": "silent"
 			},
 		},
 		{

@@ -12,6 +12,8 @@ use crate::{bit_array_from_chunks, bit_array_to_chunks_exact, BitArray, Encoding
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
 /// [`Decoder<CompressedWord, State>`]. Relevant for [`Seek`]ing.
 ///
+/// TODO: actually implement seeking.
+///
 /// [`Seek`]: crate::Seek
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CoderState<CompressedWord, State> {
@@ -121,7 +123,7 @@ where
     pub fn decoder(
         &mut self, // TODO: document why we need mutable access (because encoder has to temporary flush its state)
     ) -> RangeDecoder<CompressedWord, State, CoderGuard<'_, CompressedWord, State>> {
-        RangeDecoder::new(self.get_compressed())
+        RangeDecoder::from_compressed(self.get_compressed())
     }
 
     pub fn into_compressed(mut self) -> Vec<CompressedWord> {
@@ -371,8 +373,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Buf: AsRef<[CompressedWord]>,
 {
-    /// Creates an empty encoder for range coding.
-    pub fn new(compressed: Buf) -> Self {
+    pub fn from_compressed(compressed: Buf) -> Self {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
         assert_eq!(State::BITS % CompressedWord::BITS, 0);
 
@@ -410,7 +411,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
 {
     fn from(encoder: RangeEncoder<CompressedWord, State>) -> Self {
-        Self::new(encoder.into_compressed())
+        Self::from_compressed(encoder.into_compressed())
     }
 }
 
@@ -695,7 +696,7 @@ mod tests {
         let compressed = encoder.into_compressed();
         assert!(compressed.is_empty());
 
-        let decoder = DefaultRangeDecoder::new(&compressed);
+        let decoder = DefaultRangeDecoder::from_compressed(&compressed);
         assert!(decoder.maybe_empty());
     }
 
@@ -734,7 +735,7 @@ mod tests {
         let compressed = encoder.into_compressed();
         assert_eq!(compressed.len(), expected_size);
 
-        let mut decoder = DefaultRangeDecoder::new(&compressed);
+        let mut decoder = DefaultRangeDecoder::from_compressed(&compressed);
         for symbol in symbols {
             assert_eq!(decoder.decode_symbol(&model).unwrap(), symbol);
         }
