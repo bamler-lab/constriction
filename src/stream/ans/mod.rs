@@ -216,6 +216,21 @@ where
 /// sane values for many typical use cases.
 pub type DefaultAnsCoder = AnsCoder<u32, u64>;
 
+/// Type alias for an [`AnsCoder`] for use with [lookup models]
+///
+/// This encoder has a smaller word size and internal state than [`AnsCoder`]. It is
+/// optimized for use with lookup entropy models, in particular a
+/// [`DefaultEncoderArrayLookupTable`] or [`DefaultEncoderHashLookupTable`] for encoding, or
+/// a [`DefaultDecoderIndexLookupTable`] or [`DefaultDecoderGenericLookupTable`] for
+/// decoding.
+///
+/// [lookup models]: super::models::lookup
+/// [`DefaultEncoderArrayLookupTable`]: super::models::lookup::DefaultEncoderArrayLookupTable
+/// [`DefaultEncoderHashLookupTable`]: super::models::lookup::DefaultEncoderHashLookupTable
+/// [`DefaultDecoderIndexLookupTable`]: super::models::lookup::DefaultDecoderIndexLookupTable
+/// [`DefaultDecoderGenericLookupTable`]: super::models::lookup::DefaultDecoderGenericLookupTable
+pub type SmallAnsCoder = AnsCoder<u16, u32>;
+
 impl<CompressedWord, State, Buf> Debug for AnsCoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,

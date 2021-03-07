@@ -54,8 +54,23 @@ pub struct RangeEncoder<CompressedWord: BitArray, State: BitArray> {
     state: CoderState<CompressedWord, State>,
 }
 
-/// Type alias for an [`Encoder`] with sane parameters for typical use cases.
+/// Type alias for an [`RangeEncoder`] with sane parameters for typical use cases.
 pub type DefaultRangeEncoder = RangeEncoder<u32, u64>;
+
+/// Type alias for a [`RangeEncoder`] for use with [lookup models]
+///
+/// This encoder has a smaller word size and internal state than [`DefaultRangeEncoder`]. It
+/// is optimized for use with lookup entropy models, in particular a
+/// [`DefaultEncoderArrayLookupTable`] or a [`DefaultEncoderHashLookupTable`].
+///
+/// # See also
+///
+/// - [`SmallRangeDecoder`]
+///
+/// [lookup models]: super::models::lookup
+/// [`DefaultEncoderArrayLookupTable`]: super::models::lookup::DefaultEncoderArrayLookupTable
+/// [`DefaultEncoderHashLookupTable`]: super::models::lookup::DefaultEncoderHashLookupTable
+pub type SmallRangeEncoder = RangeEncoder<u16, u32>;
 
 impl<CompressedWord, State> Debug for RangeEncoder<CompressedWord, State>
 where
@@ -354,6 +369,23 @@ pub struct RangeDecoder<CompressedWord: BitArray, State: BitArray, Buf: AsRef<[C
 
 /// Type alias for a [`Decoder`] with sane parameters for typical use cases.
 pub type DefaultRangeDecoder<Buf> = RangeDecoder<u32, u64, Buf>;
+
+/// Type alias for a [`RangeDecoder`] for use with [lookup models]
+///
+/// This encoder has a smaller word size and internal state than [`DefaultRangeDecoder`]. It
+/// is optimized for use with lookup entropy models, in particular a
+/// [`DefaultDecoderIndexLookupTable`] or a [`DefaultDecoderGenericLookupTable`].
+///
+/// # See also
+///
+/// - [`SmallRangeEncoder`]
+///
+/// [lookup models]: super::models::lookup
+/// [`DefaultEncoderArrayLookupTable`]: super::models::lookup::DefaultEncoderArrayLookupTable
+/// [`DefaultEncoderHashLookupTable`]: super::models::lookup::DefaultEncoderHashLookupTable
+/// [`DefaultDecoderIndexLookupTable`]: super::models::lookup::DefaultDecoderIndexLookupTable
+/// [`DefaultDecoderGenericLookupTable`]: super::models::lookup::DefaultDecoderGenericLookupTable
+pub type SmallRangeDecoder<Buf> = RangeDecoder<u16, u32, Buf>;
 
 impl<CompressedWord, State, Buf> Debug for RangeDecoder<CompressedWord, State, Buf>
 where

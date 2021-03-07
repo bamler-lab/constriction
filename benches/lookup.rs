@@ -14,12 +14,17 @@ use rand_xoshiro::Xoshiro256StarStar;
 
 criterion_group!(
     benches,
+    round_trip_u32_u64_u16_12,
     round_trip_u32_u64_u16_16,
     round_trip_u16_u32_u8_8,
     round_trip_u16_u32_u16_8,
     round_trip_u16_u32_u16_12
 );
 criterion_main!(benches);
+
+fn round_trip_u32_u64_u16_12(c: &mut Criterion) {
+    round_trip::<u32, u64, u16, 12>(c);
+}
 
 fn round_trip_u32_u64_u16_16(c: &mut Criterion) {
     round_trip::<u32, u64, u16, 16>(c);
