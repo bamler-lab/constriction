@@ -214,7 +214,7 @@ where
 ///
 /// This type alias sets the generic type arguments `CompressedWord` and `State` to
 /// sane values for many typical use cases.
-pub type DefaultAnsCoder = AnsCoder<u32, u64>;
+pub type DefaultAnsCoder<Buf = Vec<u32>> = AnsCoder<u32, u64, Buf>;
 
 /// Type alias for an [`AnsCoder`] for use with [lookup models]
 ///
@@ -314,18 +314,7 @@ where
         AnsCoder<CompressedWord, State, ReadCursor<CompressedWord, &'a [CompressedWord], Dir>>;
 }
 
-impl<CompressedWord, State, Buf> Default for AnsCoder<CompressedWord, State, Buf>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: Default,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<CompressedWord, State, Buf> AnsCoder<CompressedWord, State, Buf>
+impl<CompressedWord, State> AnsCoder<CompressedWord, State, Vec<CompressedWord>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
@@ -344,10 +333,18 @@ where
     /// // Finally, get the compressed data.
     /// let compressed = ans.into_compressed();
     /// ```
-    pub fn new() -> Self
-    where
-        Buf: Default,
-    {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<CompressedWord, State, Buf> Default for AnsCoder<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: Default,
+{
+    fn default() -> Self {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
 
         Self {
@@ -356,7 +353,13 @@ where
             phantom: PhantomData,
         }
     }
+}
 
+impl<CompressedWord, State, Buf> AnsCoder<CompressedWord, State, Buf>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
     pub fn with_state_and_empty_buf(state: State) -> Self
     where
         Buf: Default,
@@ -410,10 +413,9 @@ where
             }
 
             let mut state = first_word.into();
-            let num_full_words = State::BITS / CompressedWord::BITS;
             while let Some(word) = compressed.pop() {
                 state = state << CompressedWord::BITS | word.into();
-                if state >= State::one() << (num_full_words - 1) * CompressedWord::BITS {
+                if state >= State::one() << (State::BITS - CompressedWord::BITS) {
                     break;
                 }
             }
@@ -530,11 +532,12 @@ where
     /// Note that you can still pop symbols off an empty stack, but this is only
     /// useful in rare edge cases, see documentation of
     /// [`decode_symbol`](#method.decode_symbol).
-    pub fn is_empty(&self) -> bool
-    where
-        Buf: ReadLookaheadItems<CompressedWord>,
-    {
-        self.buf.is_at_end() && self.state == State::zero()
+    pub fn is_empty(&self) -> bool {
+        // We don't need to check if `buf` is empty (which would require an additional type
+        // type bound `Buf: ReadLookaheadItems<CompressedWord>` because we keep up the
+        // invariant that `state >= State::one() << (State::BITS - CompressedWord::BITS))`
+        // when `buf` is not empty.
+        self.state == State::zero()
     }
 
     /// Assembles the current compressed data into a single slice.
@@ -764,22 +767,34 @@ where
     }
 }
 
-impl<'buf, CompressedWord, State>
-    AnsCoder<
-        CompressedWord,
-        State,
-        backend::ReadCursorForward<CompressedWord, &'buf [CompressedWord]>,
-    >
+impl<CompressedWord, State, Buf>
+    AnsCoder<CompressedWord, State, backend::ReadCursorForward<CompressedWord, Buf>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Buf: AsRef<[CompressedWord]>,
 {
-    pub fn from_reversed_compressed_slice(compressed: &'buf [CompressedWord]) -> Result<Self, ()> {
+    pub fn from_reversed_compressed(compressed: Buf) -> Result<Self, ()> {
         Self::from_compressed(backend::ReadCursorForward::new(compressed)).map_err(|_| ())
     }
 
-    pub fn from_reversed_binary_slice(data: &'buf [CompressedWord]) -> Self {
+    pub fn from_reversed_binary(data: Buf) -> Self {
         Self::from_binary(backend::ReadCursorForward::new(data))
+    }
+}
+
+impl<CompressedWord, State, Iter> AnsCoder<CompressedWord, State, backend::ReadFromIter<Iter>>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Iter: Iterator<Item = CompressedWord>,
+{
+    pub fn from_reversed_compressed_iter(compressed: Iter) -> Result<Self, ()> {
+        Self::from_compressed(backend::ReadFromIter::new(compressed)).map_err(|_| ())
+    }
+
+    pub fn from_reversed_binary_iter(data: Iter) -> Self {
+        Self::from_binary(backend::ReadFromIter::new(data))
     }
 }
 
@@ -999,10 +1014,7 @@ where
     }
 
     fn maybe_empty(&self) -> bool {
-        true
-        // TODO: the following only works if `Buf: ReadLookaheadItems<CompressedWord>.
-        // This would need specialization.
-        // self.is_at_read_end()
+        self.is_empty()
     }
 }
 
