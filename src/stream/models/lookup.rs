@@ -358,7 +358,7 @@ where
 
         for (symbol, probability) in symbols_and_probabilities {
             if probability != Probability::zero() {
-                let index = quantile_to_index.len().as_();
+                let index = left_sided_cumulative_and_symbol.len().as_();
                 left_sided_cumulative_and_symbol.push((quantile_to_index.len().as_(), symbol));
                 quantile_to_index.resize(quantile_to_index.len() + probability.into(), index);
             }
