@@ -65,10 +65,11 @@ where
     usize: From<Probability> + AsPrimitive<Probability>,
 {
     let (symbols, probabilities) = make_symbols_and_probabilities(PRECISION, 100);
-    let encoder_model = EncoderHashLookupTable::<u16, Probability, PRECISION>::new(
-        symbols.iter().cloned().zip(probabilities),
-    )
-    .unwrap();
+    let encoder_model =
+        EncoderHashLookupTable::<u16, Probability, PRECISION>::from_symbols_and_probabilities(
+            symbols.iter().cloned().zip(probabilities),
+        )
+        .unwrap();
 
     let data = make_data(&symbols, 10_000);
     let mut encoder = AnsCoder::<CompressedWord, State>::new();
@@ -151,10 +152,11 @@ where
     usize: From<Probability> + AsPrimitive<Probability>,
 {
     let (symbols, probabilities) = make_symbols_and_probabilities(PRECISION, 100);
-    let encoder_model = EncoderHashLookupTable::<u16, Probability, PRECISION>::new(
-        symbols.iter().cloned().zip(probabilities),
-    )
-    .unwrap();
+    let encoder_model =
+        EncoderHashLookupTable::<u16, Probability, PRECISION>::from_symbols_and_probabilities(
+            symbols.iter().cloned().zip(probabilities),
+        )
+        .unwrap();
 
     let data = make_data(&symbols, 10_000);
     let mut encoder = RangeEncoder::<CompressedWord, State>::new();

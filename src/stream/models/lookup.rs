@@ -35,13 +35,68 @@ where
     symbol_to_left_cumulative_and_probability: HashMap<Symbol, (Probability, Probability)>,
 }
 
+/// Type alias for an [`EncoderHashLookupTable`] with sane settings.
+///
+/// This hash lookup table can be used with a [`SmallAnsCoder`] or a [`SmallRangeEncoder`]
+/// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeEncoder`]).
+///
+/// # Example
+///
+/// ```
+/// use constriction::stream::{
+///     models::lookup::DefaultEncoderHashLookupTable,
+///     ans::{SmallAnsCoder, DefaultAnsCoder},
+///     range::{SmallRangeEncoder, DefaultRangeEncoder},
+///     Encode,
+/// };
+///
+/// let allowed_symbols = "Misp";
+/// let probabilities = [373, 1489, 1489, 745];
+/// let encoder_model = DefaultEncoderHashLookupTable::from_symbols_and_probabilities(
+///     allowed_symbols.chars().zip(probabilities.iter().cloned())
+/// )
+/// .unwrap();
+///
+/// let original = "Mississippi";
+///
+/// let mut small_ans_coder = SmallAnsCoder::new();
+/// small_ans_coder.encode_iid_symbols_reverse(original.chars(), &encoder_model).unwrap();
+/// assert_eq!(small_ans_coder.into_compressed(), [20510u16, 3988]);
+///
+/// let mut default_ans_coder = DefaultAnsCoder::new();
+/// default_ans_coder.encode_iid_symbols_reverse(original.chars(), &encoder_model).unwrap();
+/// assert_eq!(default_ans_coder.into_compressed(), [261378078u32]);
+///
+/// let mut small_range_encoder = SmallRangeEncoder::new();
+/// small_range_encoder.encode_iid_symbols(original.chars(), &encoder_model).unwrap();
+/// assert_eq!(small_range_encoder.into_compressed(), [1984u16, 56408]);
+///
+/// let mut default_range_encoder = DefaultRangeEncoder::new();
+/// default_range_encoder.encode_iid_symbols(original.chars(), &encoder_model).unwrap();
+/// assert_eq!(default_range_encoder.into_compressed(), [130092885u32]);
+/// ```
+///
+/// See example in [`DefaultDecoderGenericLookupTable`] for decoding the above compressed
+/// bit strings.
+///
+/// # See also
+///
+/// - [`DefaultEncoderArrayLookupTable`]
+/// - [`DefaultDecoderGenericLookupTable`]
+///
+/// [`SmallAnsCoder`]: super::super::ans::SmallAnsCoder
+/// [`SmallRangeEncoder`]: super::super::range::SmallRangeEncoder
+/// [`DefaultAnsCoder`]: super::super::ans::DefaultAnsCoder
+/// [`DefaultRangeEncoder`]: super::super::range::DefaultRangeEncoder
+pub type DefaultEncoderHashLookupTable<Symbol> = EncoderHashLookupTable<Symbol, u16, 12>;
+
 impl<Symbol, Probability, const PRECISION: usize>
     EncoderHashLookupTable<Symbol, Probability, PRECISION>
 where
     Symbol: Hash + Eq,
     Probability: BitArray,
 {
-    pub fn new(
+    pub fn from_symbols_and_probabilities(
         symbols_and_probabilities: impl IntoIterator<Item = (Symbol, Probability)>,
     ) -> Result<Self, ()> {
         assert!(PRECISION > 0);
@@ -73,9 +128,9 @@ where
         })
     }
 
-    pub fn with_inferred_last_probability(
+    pub fn from_symbols_and_partial_probabilities(
         symbols: impl IntoIterator<Item = Symbol>,
-        probabilities: impl IntoIterator<Item = Probability>,
+        partial_probabilities: impl IntoIterator<Item = Probability>,
     ) -> Result<Self, ()> {
         assert!(PRECISION > 0);
         assert!(PRECISION <= Probability::BITS);
@@ -83,15 +138,17 @@ where
         let mut symbols = symbols.into_iter();
         let cap = symbols.size_hint().0;
         let mut error = false;
-        let error_reporting_zip = probabilities.into_iter().scan((), |(), probability| {
-            if let Some(symbol) = symbols.next() {
-                Some((symbol, probability))
-            } else {
-                // Fewer symbols than probabilities were provided; terminate and report error.
-                error = true;
-                None
-            }
-        });
+        let error_reporting_zip = partial_probabilities
+            .into_iter()
+            .scan((), |(), probability| {
+                if let Some(symbol) = symbols.next() {
+                    Some((symbol, probability))
+                } else {
+                    // Fewer symbols than probabilities were provided; terminate and report error.
+                    error = true;
+                    None
+                }
+            });
 
         let mut symbol_to_left_cumulative_and_probability = HashMap::with_capacity(cap);
 
@@ -146,7 +203,7 @@ where
         Symbol,
         Probability,
         Box<[Probability]>,
-        ExplicitSymbolTable<Box<[(Probability, Symbol)]>>,
+        GenericSymbolTable<Box<[(Probability, Symbol)]>>,
         PRECISION,
     >
     where
@@ -168,12 +225,69 @@ where
     phantom: PhantomData<(usize, Probability)>,
 }
 
+/// Type alias for an [`EncoderArrayLookupTable`] with sane settings.
+///
+/// This array lookup table can be used with a [`SmallAnsCoder`] or a [`SmallRangeEncoder`]
+/// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeEncoder`]).
+///
+/// # Example
+///
+/// ```
+/// use constriction::stream::{
+///     models::lookup::DefaultEncoderArrayLookupTable,
+///     ans::{SmallAnsCoder, DefaultAnsCoder},
+///     range::{SmallRangeEncoder, DefaultRangeEncoder},
+///     Encode,
+/// };
+///
+/// let probabilities = [1489, 745, 1489, 373];
+/// let encoder_model = DefaultEncoderArrayLookupTable::from_probabilities(
+///     probabilities.iter().cloned()
+/// )
+/// .unwrap();
+///
+/// let original = [2, 1, 3, 0, 0, 2, 0, 2, 1, 0, 2];
+///
+/// let mut small_ans_coder = SmallAnsCoder::new();
+/// small_ans_coder.encode_iid_symbols_reverse(&original, &encoder_model).unwrap();
+/// assert_eq!(small_ans_coder.into_compressed(), [55942u16, 10569]);
+///
+/// let mut default_ans_coder = DefaultAnsCoder::new();
+/// default_ans_coder.encode_iid_symbols_reverse(&original, &encoder_model).unwrap();
+/// assert_eq!(default_ans_coder.into_compressed(), [692705926u32]);
+///
+/// let mut small_range_encoder = SmallRangeEncoder::new();
+/// small_range_encoder.encode_iid_symbols(&original, &encoder_model).unwrap();
+/// assert_eq!(small_range_encoder.into_compressed(), [48376u16, 16073]);
+///
+/// let mut default_range_encoder = DefaultRangeEncoder::new();
+/// default_range_encoder.encode_iid_symbols(&original, &encoder_model).unwrap();
+/// assert_eq!(default_range_encoder.into_compressed(), [3170399034u32]);
+/// ```
+///
+/// See example in [`DefaultDecoderIndexLookupTable`] for decoding the above compressed bit
+/// strings.
+///
+/// # See also
+///
+/// - [`DefaultEncoderHashLookupTable`]
+/// - [`DefaultDecoderIndexLookupTable`]
+///
+/// [`SmallAnsCoder`]: super::super::ans::SmallAnsCoder
+/// [`SmallRangeEncoder`]: super::super::range::SmallRangeEncoder
+/// [`DefaultAnsCoder`]: super::super::ans::DefaultAnsCoder
+/// [`DefaultRangeEncoder`]: super::super::range::DefaultRangeEncoder
+pub type DefaultEncoderArrayLookupTable<Symbol> =
+    EncoderArrayLookupTable<Symbol, Box<[(u16, u16)]>, 12>;
+
 impl<Probability, const PRECISION: usize>
     EncoderArrayLookupTable<Probability, Box<[(Probability, Probability)]>, PRECISION>
 where
     Probability: BitArray,
 {
-    pub fn new<'a>(probabilities: impl IntoIterator<Item = &'a Probability>) -> Result<Self, ()> {
+    pub fn from_probabilities(
+        probabilities: impl IntoIterator<Item = Probability>,
+    ) -> Result<Self, ()> {
         assert!(PRECISION > 0);
         assert!(PRECISION <= Probability::BITS);
 
@@ -201,7 +315,7 @@ where
         })
     }
 
-    pub fn with_inferred_last_probability<I>(probabilities: I) -> Result<Self, ()>
+    pub fn from_partial_probabilities<I>(partial_probabilities: I) -> Result<Self, ()>
     where
         I: IntoIterator,
         I::Item: AsRef<Probability>,
@@ -209,7 +323,7 @@ where
         assert!(PRECISION > 0);
         assert!(PRECISION <= Probability::BITS);
 
-        let probabilities = probabilities.into_iter();
+        let probabilities = partial_probabilities.into_iter();
         let mut symbol_to_left_cumulative_and_probability =
             Vec::with_capacity(probabilities.size_hint().0);
 
@@ -263,7 +377,7 @@ where
         usize,
         Probability,
         Box<[Probability]>,
-        ImplicitSymbolTable<Box<[(Probability, ())]>>,
+        IndexSymbolTable<Box<[(Probability, ())]>>,
         PRECISION,
     >
     where
@@ -306,10 +420,10 @@ where
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct ExplicitSymbolTable<Table>(Table);
+pub struct GenericSymbolTable<Table>(Table);
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct ImplicitSymbolTable<Table>(Table);
+pub struct IndexSymbolTable<Table>(Table);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecoderLookupTable<Symbol, Probability, Table1, Table2, const PRECISION: usize>
@@ -325,28 +439,227 @@ where
     /// == *quantile_to_index.as_ref().iter().max() as usize + 2`
     left_sided_cumulative_and_symbol: Table2,
 
-    phantom: PhantomData<(Symbol, Probability)>,
+    phantom: PhantomData<(Probability, Symbol)>,
 }
+
+/// Type alias for a [`DecoderLookupTable`] over symbols `{0, 1, ..., n-1}` with sane settings.
+///
+/// This array lookup table can be used with a [`SmallAnsCoder`] or a [`SmallRangeDecoder`]
+/// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeDecoder`]).
+///
+/// # Example
+///
+/// Let's decode the compressed bit strings we generated in the example for
+/// [`DefaultEncoderArrayLookupTable`].
+///
+/// ```
+/// use constriction::stream::{
+///     models::lookup::DefaultDecoderIndexLookupTable,
+///     ans::{SmallAnsCoder, DefaultAnsCoder},
+///     range::{SmallRangeDecoder, DefaultRangeDecoder},
+///     Decode, Code,
+/// };
+///
+/// let probabilities = [1489, 745, 1489, 373];
+/// let decoder_model = DefaultDecoderIndexLookupTable::from_probabilities(
+///     probabilities.iter().cloned()
+/// )
+/// .unwrap();
+///
+/// let expected = [2, 1, 3, 0, 0, 2, 0, 2, 1, 0, 2];
+///
+/// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![55942, 10569]).unwrap();
+/// let reconstructed = small_ans_coder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+/// assert!(small_ans_coder.is_empty());
+/// assert_eq!(reconstructed, expected);
+///
+/// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![692705926]).unwrap();
+/// let reconstructed = default_ans_decoder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+/// assert!(default_ans_decoder.is_empty());
+/// assert_eq!(reconstructed, expected);
+///
+/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![48376, 16073]);
+/// let reconstructed = small_range_decoder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+/// assert!(small_range_decoder.maybe_empty());
+/// assert_eq!(reconstructed, expected);
+///
+/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![3170399034]);
+/// let reconstructed = default_range_decoder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+/// assert!(default_range_decoder.maybe_empty());
+/// assert_eq!(reconstructed, expected);
+/// ```
+///
+/// # See also
+///
+/// - [`DefaultDecoderGenericLookupTable`]
+/// - [`DefaultEncoderArrayLookupTable`]
+///
+/// [`SmallAnsCoder`]: super::super::ans::SmallAnsCoder
+/// [`SmallRangeDecoder`]: super::super::range::SmallRangeDecoder
+/// [`DefaultAnsCoder`]: super::super::ans::DefaultAnsCoder
+/// [`DefaultRangeDecoder`]: super::super::range::DefaultRangeDecoder
+pub type DefaultDecoderIndexLookupTable<Symbol> =
+    DecoderLookupTable<Symbol, u16, Box<[u16]>, IndexSymbolTable<Box<[(u16, ())]>>, 12>;
+
+/// Type alias for a [`DecoderLookupTable`] over arbitrary symbols with sane settings.
+///
+/// This array lookup table can be used with a [`SmallAnsCoder`] or a [`SmallRangeDecoder`]
+/// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeDecoder`]).
+///
+/// # Example
+///
+/// Let's decode the compressed bit strings we generated in the example for
+/// [`DefaultEncoderHashLookupTable`].
+///
+/// ```
+/// use constriction::stream::{
+///     models::lookup::DefaultDecoderGenericLookupTable,
+///     ans::{SmallAnsCoder, DefaultAnsCoder},
+///     range::{SmallRangeDecoder, DefaultRangeDecoder},
+///     Decode, Code,
+/// };
+///
+/// let allowed_symbols = "Misp";
+/// let probabilities = [373, 1489, 1489, 745];
+/// let decoder_model = DefaultDecoderGenericLookupTable::from_symbols_and_probabilities(
+///     allowed_symbols.chars().zip(probabilities.iter().cloned())
+/// )
+/// .unwrap();
+///
+/// let expected = "Mississippi";
+///
+/// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![20510, 3988]).unwrap();
+/// let reconstructed = small_ans_coder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
+/// assert!(small_ans_coder.is_empty());
+/// assert_eq!(reconstructed, expected);
+///
+/// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![261378078]).unwrap();
+/// let reconstructed = default_ans_decoder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
+/// assert!(default_ans_decoder.is_empty());
+/// assert_eq!(reconstructed, expected);
+///
+/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![1984, 56408]);
+/// let reconstructed = small_range_decoder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
+/// assert!(small_range_decoder.maybe_empty());
+/// assert_eq!(reconstructed, expected);
+///
+/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![130092885]);
+/// let reconstructed = default_range_decoder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
+/// assert!(default_range_decoder.maybe_empty());
+/// assert_eq!(reconstructed, expected);
+/// ```
+///
+/// # See also
+///
+/// - [`DefaultDecoderIndexLookupTable`]
+/// - [`DefaultEncoderArrayLookupTable`]
+///
+/// [`SmallAnsCoder`]: super::super::ans::SmallAnsCoder
+/// [`SmallRangeDecoder`]: super::super::range::SmallRangeDecoder
+/// [`DefaultAnsCoder`]: super::super::ans::DefaultAnsCoder
+/// [`DefaultRangeDecoder`]: super::super::range::DefaultRangeDecoder
+pub type DefaultDecoderGenericLookupTable<Symbol> =
+    DecoderLookupTable<Symbol, u16, Box<[u16]>, GenericSymbolTable<Box<[(u16, Symbol)]>>, 12>;
 
 impl<Symbol, Probability, const PRECISION: usize>
     DecoderLookupTable<
         Symbol,
         Probability,
         Box<[Probability]>,
-        ExplicitSymbolTable<Box<[(Probability, Symbol)]>>,
+        GenericSymbolTable<Box<[(Probability, Symbol)]>>,
         PRECISION,
     >
 where
-    Probability: BitArray,
+    Probability: BitArray + Into<usize>,
+    usize: AsPrimitive<Probability>,
+    Symbol: Copy,
 {
-    pub fn new(
+    pub fn from_symbols_and_probabilities(
         symbols_and_probabilities: impl IntoIterator<Item = (Symbol, Probability)>,
+    ) -> Result<Self, ()>
+where {
+        Self::generic_from_symbols_and_probabilities(symbols_and_probabilities)
+    }
+
+    pub fn from_symbols_and_partial_probabilities(
+        symbols: impl IntoIterator<Item = Symbol>,
+        partial_probabilities: impl IntoIterator<Item = Probability>,
     ) -> Result<Self, ()>
     where
         usize: AsPrimitive<Probability>,
         Probability: Into<usize>,
         Symbol: Clone,
     {
+        Self::generic_from_symbols_and_partial_probabilities(symbols, partial_probabilities, false)
+    }
+}
+
+impl<Probability, const PRECISION: usize>
+    DecoderLookupTable<
+        usize,
+        Probability,
+        Box<[Probability]>,
+        IndexSymbolTable<Box<[(Probability, ())]>>,
+        PRECISION,
+    >
+where
+    Probability: BitArray + Into<usize>,
+    usize: AsPrimitive<Probability>,
+{
+    pub fn from_probabilities(
+        probabilities: impl IntoIterator<Item = Probability>,
+    ) -> Result<Self, ()>
+where {
+        Self::generic_from_symbols_and_probabilities(
+            probabilities
+                .into_iter()
+                .map(|probability| ((), probability)),
+        )
+    }
+
+    pub fn from_partial_probabilities(
+        partial_probabilities: impl IntoIterator<Item = Probability>,
+    ) -> Result<Self, ()>
+    where
+        usize: AsPrimitive<Probability>,
+        Probability: Into<usize>,
+    {
+        Self::generic_from_symbols_and_partial_probabilities(
+            core::iter::repeat(()),
+            partial_probabilities,
+            true,
+        )
+    }
+}
+
+impl<Symbol, Probability, Table, const PRECISION: usize>
+    DecoderLookupTable<Symbol, Probability, Box<[Probability]>, Table, PRECISION>
+where
+    Probability: BitArray + Into<usize>,
+    usize: AsPrimitive<Probability>,
+    Symbol: Copy,
+    Table: SymbolTable<
+        Symbol,
+        Probability,
+        Inner = Box<
+            [(
+                Probability,
+                <Table as SymbolTable<Symbol, Probability>>::SymbolRepresentation,
+            )],
+        >,
+    >,
+{
+    fn generic_from_symbols_and_probabilities(
+        symbols_and_probabilities: impl IntoIterator<Item = (Table::SymbolRepresentation, Probability)>,
+    ) -> Result<Self, ()> {
         assert!(PRECISION > 0);
         assert!(PRECISION <= Probability::BITS);
         assert!(1usize << PRECISION != 0);
@@ -376,7 +689,7 @@ where
 
             Ok(Self {
                 quantile_to_index: quantile_to_index.into_boxed_slice(),
-                left_sided_cumulative_and_symbol: ExplicitSymbolTable(
+                left_sided_cumulative_and_symbol: Table::new(
                     left_sided_cumulative_and_symbol.into_boxed_slice(),
                 ),
                 phantom: PhantomData,
@@ -384,15 +697,11 @@ where
         }
     }
 
-    pub fn with_inferred_last_probability(
-        symbols: impl IntoIterator<Item = Symbol>,
-        probabilities: impl IntoIterator<Item = Probability>,
-    ) -> Result<Self, ()>
-    where
-        usize: AsPrimitive<Probability>,
-        Probability: Into<usize>,
-        Symbol: Clone,
-    {
+    fn generic_from_symbols_and_partial_probabilities(
+        symbols: impl IntoIterator<Item = Table::SymbolRepresentation>,
+        partial_probabilities: impl IntoIterator<Item = Probability>,
+        allow_excess_symbols: bool,
+    ) -> Result<Self, ()> {
         assert!(PRECISION > 0);
         assert!(PRECISION <= Probability::BITS);
         assert!(1usize << PRECISION != 0);
@@ -401,7 +710,7 @@ where
         let mut quantile_to_index = Vec::with_capacity(1 << PRECISION);
         let mut left_sided_cumulative_and_symbol = Vec::with_capacity(symbols.size_hint().0 + 1);
 
-        for probability in probabilities.into_iter() {
+        for probability in partial_probabilities.into_iter() {
             if let Some(symbol) = symbols.next() {
                 if probability != Probability::zero() {
                     let index = left_sided_cumulative_and_symbol.len().as_();
@@ -415,7 +724,13 @@ where
         }
 
         let remainder = (1usize << PRECISION).checked_sub(quantile_to_index.len());
-        if let (Some(symbol), None, Some(remainder)) = (symbols.next(), symbols.next(), remainder) {
+        if let (Some(symbol), excess_symbol, Some(remainder)) =
+            (symbols.next(), symbols.next(), remainder)
+        {
+            if !allow_excess_symbols && excess_symbol.is_some() {
+                return Err(());
+            }
+
             if remainder != 0 {
                 let index = left_sided_cumulative_and_symbol.len().as_();
                 left_sided_cumulative_and_symbol
@@ -429,7 +744,7 @@ where
 
             Ok(Self {
                 quantile_to_index: quantile_to_index.into_boxed_slice(),
-                left_sided_cumulative_and_symbol: ExplicitSymbolTable(
+                left_sided_cumulative_and_symbol: Table::new(
                     left_sided_cumulative_and_symbol.into_boxed_slice(),
                 ),
                 phantom: PhantomData,
@@ -453,7 +768,7 @@ where
 }
 
 impl<Symbol, Probability, Table1, Table2, const PRECISION: usize>
-    DecoderLookupTable<Symbol, Probability, Table1, ExplicitSymbolTable<Table2>, PRECISION>
+    DecoderLookupTable<Symbol, Probability, Table1, GenericSymbolTable<Table2>, PRECISION>
 where
     Probability: BitArray,
     Table1: AsRef<[Probability]>,
@@ -485,7 +800,7 @@ where
 }
 
 impl<Probability, Table1, Table2, const PRECISION: usize>
-    DecoderLookupTable<usize, Probability, Table1, ImplicitSymbolTable<Table2>, PRECISION>
+    DecoderLookupTable<usize, Probability, Table1, IndexSymbolTable<Table2>, PRECISION>
 where
     Probability: BitArray,
     Table1: AsRef<[Probability]>,
@@ -581,17 +896,29 @@ where
 }
 
 pub trait SymbolTable<Symbol, Probability> {
+    type SymbolRepresentation: Clone;
+    type Inner: AsRef<[(Probability, Self::SymbolRepresentation)]>;
+
+    fn new(inner: Self::Inner) -> Self;
+
     unsafe fn get_unchecked(&self, index: usize) -> (Probability, Symbol);
 
     fn num_symbols(&self) -> usize;
 }
 
-impl<Symbol, Probability, Table> SymbolTable<Symbol, Probability> for ExplicitSymbolTable<Table>
+impl<Symbol, Probability, Table> SymbolTable<Symbol, Probability> for GenericSymbolTable<Table>
 where
     Symbol: Clone,
     Probability: Clone,
     Table: AsRef<[(Probability, Symbol)]>,
 {
+    type SymbolRepresentation = Symbol;
+    type Inner = Table;
+
+    fn new(inner: Self::Inner) -> Self {
+        Self(inner)
+    }
+
     #[inline(always)]
     unsafe fn get_unchecked(&self, index: usize) -> (Probability, Symbol) {
         self.0.as_ref().get_unchecked(index).clone()
@@ -602,11 +929,18 @@ where
     }
 }
 
-impl<Probability, Table> SymbolTable<usize, Probability> for ImplicitSymbolTable<Table>
+impl<Probability, Table> SymbolTable<usize, Probability> for IndexSymbolTable<Table>
 where
     Probability: Clone,
     Table: AsRef<[(Probability, ())]>,
 {
+    type SymbolRepresentation = ();
+    type Inner = Table;
+
+    fn new(inner: Self::Inner) -> Self {
+        Self(inner)
+    }
+
     #[inline(always)]
     unsafe fn get_unchecked(&self, index: usize) -> (Probability, usize) {
         (self.0.as_ref().get_unchecked(index).0.clone(), index)
@@ -671,7 +1005,7 @@ impl<Symbol, Probability, const PRECISION: usize>
         Symbol,
         Probability,
         Box<[Probability]>,
-        ExplicitSymbolTable<Box<[(Probability, Symbol)]>>,
+        GenericSymbolTable<Box<[(Probability, Symbol)]>>,
         PRECISION,
     >
 where
@@ -699,7 +1033,7 @@ where
         );
 
         Self {
-            left_sided_cumulative_and_symbol: ExplicitSymbolTable(left_sided_cumulative_and_symbol),
+            left_sided_cumulative_and_symbol: GenericSymbolTable(left_sided_cumulative_and_symbol),
             quantile_to_index,
             phantom: PhantomData,
         }
@@ -712,7 +1046,7 @@ impl<Table, Probability, const PRECISION: usize>
         usize,
         Probability,
         Box<[Probability]>,
-        ImplicitSymbolTable<Box<[(Probability, ())]>>,
+        IndexSymbolTable<Box<[(Probability, ())]>>,
         PRECISION,
     >
 where
@@ -738,7 +1072,7 @@ where
         );
 
         Self {
-            left_sided_cumulative_and_symbol: ImplicitSymbolTable(left_sided_cumulative_and_symbol),
+            left_sided_cumulative_and_symbol: IndexSymbolTable(left_sided_cumulative_and_symbol),
             quantile_to_index,
             phantom: PhantomData,
         }
@@ -814,9 +1148,8 @@ where
 }
 
 impl<Symbol, Probability, Table1, Table2, const PRECISION: usize>
-    TryFrom<
-        &DecoderLookupTable<Symbol, Probability, Table1, ExplicitSymbolTable<Table2>, PRECISION>,
-    > for EncoderHashLookupTable<Symbol, Probability, PRECISION>
+    TryFrom<&DecoderLookupTable<Symbol, Probability, Table1, GenericSymbolTable<Table2>, PRECISION>>
+    for EncoderHashLookupTable<Symbol, Probability, PRECISION>
 where
     Probability: BitArray,
     Symbol: Clone + Hash + Eq,
@@ -830,7 +1163,7 @@ where
             Symbol,
             Probability,
             Table1,
-            ExplicitSymbolTable<Table2>,
+            GenericSymbolTable<Table2>,
             PRECISION,
         >,
     ) -> Result<Self, ()> {
@@ -854,7 +1187,7 @@ where
 }
 
 impl<Probability, Table1, Table2, const PRECISION: usize>
-    TryFrom<&DecoderLookupTable<usize, Probability, Table1, ImplicitSymbolTable<Table2>, PRECISION>>
+    TryFrom<&DecoderLookupTable<usize, Probability, Table1, IndexSymbolTable<Table2>, PRECISION>>
     for EncoderArrayLookupTable<Probability, Box<[(Probability, Probability)]>, PRECISION>
 where
     Probability: BitArray,
@@ -868,7 +1201,7 @@ where
             usize,
             Probability,
             Table1,
-            ImplicitSymbolTable<Table2>,
+            IndexSymbolTable<Table2>,
             PRECISION,
         >,
     ) -> Result<Self, ()> {
@@ -910,9 +1243,10 @@ mod test {
     fn minimal_hash() {
         let symbols = "axcy";
         let probabilities = vec![3u8, 18, 1, 42];
-        let encoder_model =
-            EncoderHashLookupTable::<_, _, 6>::new(symbols.chars().zip(probabilities.into_iter()))
-                .unwrap();
+        let encoder_model = EncoderHashLookupTable::<_, _, 6>::from_symbols_and_probabilities(
+            symbols.chars().zip(probabilities.into_iter()),
+        )
+        .unwrap();
         let decoder_model = encoder_model.to_decoder_model();
         assert_eq!(encoder_model, decoder_model.to_encoder_model().unwrap());
 
@@ -957,7 +1291,9 @@ mod test {
     #[test]
     fn minimal_array() {
         let probabilities = vec![3u8, 18, 1, 42];
-        let encoder_model = EncoderArrayLookupTable::<_, _, 6>::new(&probabilities).unwrap();
+        let encoder_model =
+            EncoderArrayLookupTable::<_, _, 6>::from_probabilities(probabilities.iter().cloned())
+                .unwrap();
         let decoder_model = encoder_model.to_decoder_model();
         assert_eq!(encoder_model, decoder_model.to_encoder_model().unwrap());
 
