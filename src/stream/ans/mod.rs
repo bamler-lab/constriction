@@ -210,7 +210,7 @@ where
     phantom: PhantomData<CompressedWord>,
 }
 
-/// Type alias for a [`AnsCoder`] with sane parameters for typical use cases.
+/// Type alias for an [`AnsCoder`] with sane parameters for typical use cases.
 ///
 /// This type alias sets the generic type arguments `CompressedWord` and `State` to
 /// sane values for many typical use cases.
@@ -219,10 +219,15 @@ pub type DefaultAnsCoder = AnsCoder<u32, u64>;
 /// Type alias for an [`AnsCoder`] for use with [lookup models]
 ///
 /// This encoder has a smaller word size and internal state than [`AnsCoder`]. It is
-/// optimized for use with lookup entropy models, in particular a
+/// optimized for use with lookup entropy models, in particular with a
 /// [`DefaultEncoderArrayLookupTable`] or [`DefaultEncoderHashLookupTable`] for encoding, or
-/// a [`DefaultDecoderIndexLookupTable`] or [`DefaultDecoderGenericLookupTable`] for
+/// with a [`DefaultDecoderIndexLookupTable`] or [`DefaultDecoderGenericLookupTable`] for
 /// decoding.
+///
+/// # Examples
+///
+/// See [`DefaultEncoderArrayLookupTable`], [`DefaultEncoderHashLookupTable`],
+/// [`DefaultDecoderIndexLookupTable`], and [`DefaultDecoderGenericLookupTable`].
 ///
 /// [lookup models]: super::models::lookup
 /// [`DefaultEncoderArrayLookupTable`]: super::models::lookup::DefaultEncoderArrayLookupTable
@@ -385,7 +390,7 @@ where
     /// symbols to an existing compressed buffer of data.
     ///
     /// Returns `Err(compressed)` if `compressed` is not empty and its last entry is
-    /// zero, since a `AnsCoder` cannot represent trailing zero words. This error cannot
+    /// zero, since an `AnsCoder` cannot represent trailing zero words. This error cannot
     /// occur if `compressed` was obtained from [`into_compressed`], which never returns
     /// data with a trailing zero word. If you want to construct a `AnsCoder` from an
     /// unknown source of binary data (e.g., to decode some side information into latent
@@ -399,13 +404,23 @@ where
     {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
 
-        if compressed.peek() == Some(&CompressedWord::zero()) {
-            return Err(compressed);
-        }
+        let state = if let Some(first_word) = compressed.pop() {
+            if first_word == CompressedWord::zero() {
+                return Err(compressed);
+            }
 
-        let state = bit_array_from_chunks(
-            core::iter::repeat_with(|| compressed.pop()).scan((), |(), chunk| chunk),
-        );
+            let mut state = first_word.into();
+            let num_full_words = State::BITS / CompressedWord::BITS;
+            while let Some(word) = compressed.pop() {
+                state = state << CompressedWord::BITS | word.into();
+                if state >= State::one() << (num_full_words - 1) * CompressedWord::BITS {
+                    break;
+                }
+            }
+            state
+        } else {
+            State::zero()
+        };
 
         Ok(Self {
             buf: compressed,
@@ -727,6 +742,44 @@ where
         D::Probability: Into<CompressedWord>,
     {
         self.state = self.state * probability.into().into() + remainder.into().into();
+    }
+}
+
+impl<'buf, CompressedWord, State>
+    AnsCoder<
+        CompressedWord,
+        State,
+        backend::ReadCursorBackward<CompressedWord, &'buf [CompressedWord]>,
+    >
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    pub fn from_compressed_slice(compressed: &'buf [CompressedWord]) -> Result<Self, ()> {
+        Self::from_compressed(backend::ReadCursorBackward::new(compressed)).map_err(|_| ())
+    }
+
+    pub fn from_binary_slice(data: &'buf [CompressedWord]) -> Self {
+        Self::from_binary(backend::ReadCursorBackward::new(data))
+    }
+}
+
+impl<'buf, CompressedWord, State>
+    AnsCoder<
+        CompressedWord,
+        State,
+        backend::ReadCursorForward<CompressedWord, &'buf [CompressedWord]>,
+    >
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    pub fn from_reversed_compressed_slice(compressed: &'buf [CompressedWord]) -> Result<Self, ()> {
+        Self::from_compressed(backend::ReadCursorForward::new(compressed)).map_err(|_| ())
+    }
+
+    pub fn from_reversed_binary_slice(data: &'buf [CompressedWord]) -> Self {
+        Self::from_binary(backend::ReadCursorForward::new(data))
     }
 }
 

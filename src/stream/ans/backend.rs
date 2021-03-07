@@ -7,7 +7,6 @@ pub trait Backend<Item> {}
 
 pub trait ReadItems<Item>: Backend<Item> {
     fn pop(&mut self) -> Option<Item>;
-    fn peek(&self) -> Option<&Item>;
 }
 
 pub trait ReadLookaheadItems<Item>: Backend<Item> {
@@ -41,11 +40,6 @@ impl<Item> ReadItems<Item> for Vec<Item> {
     #[inline(always)]
     fn pop(&mut self) -> Option<Item> {
         self.pop()
-    }
-
-    #[inline(always)]
-    fn peek(&self) -> Option<&Item> {
-        self.last()
     }
 }
 
@@ -236,22 +230,6 @@ impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadItems<Item>
                     // just decreased `self.pos` (making sure it doesn't wrap around), so we now have
                     // `self.pos < self.buf.as_ref().len()`.
                     Some(self.buf.as_ref().get_unchecked(self.pos).clone())
-                }
-            }
-        }
-    }
-
-    fn peek(&self) -> Option<&Item> {
-        if Dir::FORWARD {
-            self.buf.as_ref().get(self.pos)
-        } else {
-            if self.pos == 0 {
-                None
-            } else {
-                unsafe {
-                    // SAFETY: We maintain the invariant `self.pos <=self.buf.as_ref().len()` and we
-                    // ensured that `self.pos != 0`, thus `self.pos - 1 < self.buf.as_ref().len()`.
-                    Some(self.buf.as_ref().get_unchecked(self.pos - 1))
                 }
             }
         }
