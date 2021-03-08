@@ -99,7 +99,7 @@
 //!   respective entropy models. By contrast, Range Coding is not surjective. It has some
 //!   (small) pockets of unrealizable bit strings for any given sequence of entropy models.
 //!   Trying to decode such an unrealizable bit string would return the error variant
-//!   [`range::DecodingError::InvalidCompressedData`].
+//!   [`queue::DecodingError::InvalidCompressedData`].
 //! - **Compression performance: virtually no difference unless misused.** With the default
 //!   settings, the compression performance of both ANS Coding and Range Coding is very
 //!   close to the theoretical bound for entropy coding. The lack of surjectivity in Range
@@ -145,13 +145,13 @@
 //!   compressed bit string, but that you would need if you wanted to continue to append
 //!   more symbols to a serialized-deserialized Range Coder.
 //!
-//! [`AnsCoder::encode_symbols_reverse`]: ans::AnsCoder::encode_symbols_reverse
+//! [`AnsCoder::encode_symbols_reverse`]: stack::AnsCoder::encode_symbols_reverse
 //! [`Infallible`]: core::convert::Infallible
 //! [`seek`]: Seek::seek
 
-pub mod ans;
 pub mod models;
-pub mod range;
+pub mod queue;
+pub mod stack;
 
 #[cfg(feature = "std")]
 use std::error::Error;
@@ -422,7 +422,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// # #![feature(min_const_generics)]
 /// # use constriction::stream::{
 /// #     models::{EncoderModel, DecoderModel, LeakyQuantizer},
-/// #     ans::DefaultAnsCoder,
+/// #     stack::DefaultAnsCoder,
 /// #     Decode, Encode, IntoDecoder
 /// # };
 /// #
@@ -505,7 +505,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// # #![feature(min_const_generics)]
 /// # use constriction::stream::{
 /// #     models::{EncoderModel, DecoderModel, LeakyQuantizer},
-/// #     ans::DefaultAnsCoder,
+/// #     stack::DefaultAnsCoder,
 /// #     Decode, Encode, AsDecoder
 /// # };
 /// #
@@ -573,7 +573,7 @@ pub trait Pos: Code {
     /// positions within the compressed data (for example, a [`AnsCoder`] begins encoding
     /// at position zero but it begins decoding at position `ans.buf().len()`).
     ///
-    /// [`AnsCoder`]: ans::AnsCoder
+    /// [`AnsCoder`]: stack::AnsCoder
     fn pos(&self) -> usize;
 
     /// Convenience method that returns both parts of a snapshot expected by
@@ -604,7 +604,7 @@ pub trait Pos: Code {
 /// # Example
 ///
 /// ```
-/// use constriction::stream::{models::Categorical, ans::DefaultAnsCoder, Decode, Pos, Seek};
+/// use constriction::stream::{models::Categorical, stack::DefaultAnsCoder, Decode, Pos, Seek};
 ///
 /// // Create a `AnsCoder` encoder and an entropy model:
 /// let mut ans = DefaultAnsCoder::new();
@@ -645,9 +645,9 @@ pub trait Pos: Code {
 /// assert!(seekable_decoder.is_empty()); // <-- We've reached the end again.
 /// ```
 ///
-/// [`DefaultAnsCoder`]: ans::DefaultAnsCoder
-/// [`seekable_decoder`]: ans::AnsCoder::seekable_decoder
-/// [`into_seekable_decoder`]: ans::AnsCoder::into_seekable_decoder
+/// [`DefaultAnsCoder`]: stack::DefaultAnsCoder
+/// [`seekable_decoder`]: stack::AnsCoder::seekable_decoder
+/// [`into_seekable_decoder`]: stack::AnsCoder::into_seekable_decoder
 pub trait Seek: Code {
     /// Jumps to a given position in the compressed data.
     ///
@@ -668,7 +668,7 @@ pub trait Seek: Code {
     ///
     /// ```
     /// // Step 1: Obtain an encoder and encode some data (omitted for brevity) ...
-    /// # use constriction::stream::{ans::DefaultAnsCoder, Pos, Seek};
+    /// # use constriction::stream::{stack::DefaultAnsCoder, Pos, Seek};
     /// # let encoder = DefaultAnsCoder::new();
     ///
     /// // Step 2: Take a snapshot by calling `Pos::pos_and_state`:
@@ -694,7 +694,7 @@ pub trait Seek: Code {
     /// ```
     /// use constriction::stream::{
     ///     models::LeakyQuantizer,
-    ///     ans::{backend::ReadCursorForward, DefaultAnsCoder, AnsCoder},
+    ///     stack::{backend::ReadCursorForward, DefaultAnsCoder, AnsCoder},
     ///     Decode, Pos, Seek
     /// };
     ///
@@ -724,7 +724,7 @@ pub trait Seek: Code {
     /// assert!(decoder.is_empty()); // <-- We've reached the end of the compressed data.
     /// ```
     ///
-    /// [`DefaultAnsCoder`]: ans::DefaultAnsCoder
+    /// [`DefaultAnsCoder`]: stack::DefaultAnsCoder
     fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()>;
 }
 

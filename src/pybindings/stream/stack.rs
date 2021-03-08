@@ -20,7 +20,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 
 /// An entropy coder based on [Asymmetric Numeral Systems (ANS)].
 ///
-/// This is a wrapper around the Rust type [`constriction::stream::ans::DefaultAnsCoder`]
+/// This is a wrapper around the Rust type [`constriction::stream::stack::DefaultAnsCoder`]
 /// with python bindings.
 ///
 /// Note that this entropy coder is a stack (a "last in first out" data
@@ -98,12 +98,12 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///     dtype `uint32`.
 ///
 /// [Asymmetric Numeral Systems (ANS)]: https://en.wikipedia.org/wiki/Asymmetric_numeral_systems
-/// [`constriction::stream::ans::DefaultAnsCoder`]: crate::stream::ans::DefaultAnsCoder
+/// [`constriction::stream::ans::DefaultAnsCoder`]: crate::stream::stack::DefaultAnsCoder
 #[pyclass]
 #[text_signature = "(compressed)"]
 #[derive(Debug)]
 pub struct AnsCoder {
-    inner: crate::stream::ans::DefaultAnsCoder,
+    inner: crate::stream::stack::DefaultAnsCoder,
 }
 
 #[pymethods]
@@ -112,13 +112,13 @@ impl AnsCoder {
     #[new]
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = if let Some(compressed) = compressed {
-            crate::stream::ans::AnsCoder::from_compressed(compressed.to_vec()?).map_err(|_| {
+            crate::stream::stack::AnsCoder::from_compressed(compressed.to_vec()?).map_err(|_| {
                 pyo3::exceptions::PyValueError::new_err(
                     "Invalid compressed data: ANS compressed data never ends in a zero word.",
                 )
             })?
         } else {
-            crate::stream::ans::AnsCoder::new()
+            crate::stream::stack::AnsCoder::new()
         };
 
         Ok(Self { inner })

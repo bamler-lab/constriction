@@ -214,7 +214,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::Categorical, ans::DefaultAnsCoder, Decode};
+    /// use constriction::stream::{models::Categorical, stack::DefaultAnsCoder, Decode};
     ///
     /// let mut coder = DefaultAnsCoder::new();
     ///

@@ -8,7 +8,7 @@ use rand_pcg::Pcg64Mcg;
 use statrs::distribution::Normal;
 
 use constriction::{
-    stream::{ans, models::LeakyQuantizer, range, Decode, Encode, IntoDecoder},
+    stream::{stack, models::LeakyQuantizer, queue, Decode, Encode, IntoDecoder},
     BitArray,
 };
 
@@ -140,37 +140,37 @@ fn grid() {
 
     for amt in amts.iter().cloned() {
         {
-            batch!(ans::AnsCoder<u64, u128>; range::RangeEncoder<u64, u128>; u32; 8, 12, 16, 24, 32; amt);
-            batch!(ans::AnsCoder<u64, u128>; range::RangeEncoder<u64, u128>; u16; 8, 12, 16; amt);
-            batch!(ans::AnsCoder<u64, u128>; range::RangeEncoder<u64, u128>; u8; 8; amt);
+            batch!(stack::AnsCoder<u64, u128>; queue::RangeEncoder<u64, u128>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(stack::AnsCoder<u64, u128>; queue::RangeEncoder<u64, u128>; u16; 8, 12, 16; amt);
+            batch!(stack::AnsCoder<u64, u128>; queue::RangeEncoder<u64, u128>; u8; 8; amt);
 
-            batch!(ans::AnsCoder<u32, u128>; range::RangeEncoder<u32, u128>; u32; 8, 12, 16, 24, 32; amt);
-            batch!(ans::AnsCoder<u32, u128>; range::RangeEncoder<u32, u128>; u16; 8, 12, 16; amt);
-            batch!(ans::AnsCoder<u32, u128>; range::RangeEncoder<u32, u128>; u8; 8; amt);
+            batch!(stack::AnsCoder<u32, u128>; queue::RangeEncoder<u32, u128>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(stack::AnsCoder<u32, u128>; queue::RangeEncoder<u32, u128>; u16; 8, 12, 16; amt);
+            batch!(stack::AnsCoder<u32, u128>; queue::RangeEncoder<u32, u128>; u8; 8; amt);
 
-            batch!(ans::AnsCoder<u16, u128>; range::RangeEncoder<u16, u128>; u16; 8, 12, 16; amt);
-            batch!(ans::AnsCoder<u16, u128>; range::RangeEncoder<u16, u128>; u8; 8; amt);
+            batch!(stack::AnsCoder<u16, u128>; queue::RangeEncoder<u16, u128>; u16; 8, 12, 16; amt);
+            batch!(stack::AnsCoder<u16, u128>; queue::RangeEncoder<u16, u128>; u8; 8; amt);
 
-            batch!(ans::AnsCoder<u8, u128>; range::RangeEncoder<u8, u128>; u8; 8; amt);
+            batch!(stack::AnsCoder<u8, u128>; queue::RangeEncoder<u8, u128>; u8; 8; amt);
         }
         {
-            batch!(ans::AnsCoder<u32, u64>; range::RangeEncoder<u32, u64>; u32; 8, 12, 16, 24, 32; amt);
-            batch!(ans::AnsCoder<u32, u64>; range::RangeEncoder<u32, u64>; u16; 8, 12, 16; amt);
-            batch!(ans::AnsCoder<u32, u64>; range::RangeEncoder<u32, u64>; u8; 8; amt);
+            batch!(stack::AnsCoder<u32, u64>; queue::RangeEncoder<u32, u64>; u32; 8, 12, 16, 24, 32; amt);
+            batch!(stack::AnsCoder<u32, u64>; queue::RangeEncoder<u32, u64>; u16; 8, 12, 16; amt);
+            batch!(stack::AnsCoder<u32, u64>; queue::RangeEncoder<u32, u64>; u8; 8; amt);
 
-            batch!(ans::AnsCoder<u16, u64>; range::RangeEncoder<u16, u64>; u16; 8, 12, 16; amt);
-            batch!(ans::AnsCoder<u16, u64>; range::RangeEncoder<u16, u64>; u8; 8; amt);
+            batch!(stack::AnsCoder<u16, u64>; queue::RangeEncoder<u16, u64>; u16; 8, 12, 16; amt);
+            batch!(stack::AnsCoder<u16, u64>; queue::RangeEncoder<u16, u64>; u8; 8; amt);
 
-            batch!(ans::AnsCoder<u8, u64>; range::RangeEncoder<u8, u64>; u8; 8; amt);
+            batch!(stack::AnsCoder<u8, u64>; queue::RangeEncoder<u8, u64>; u8; 8; amt);
         }
         {
-            batch!(ans::AnsCoder<u16, u32>; range::RangeEncoder<u16, u32>; u16; 8, 12, 16; amt);
-            batch!(ans::AnsCoder<u16, u32>; range::RangeEncoder<u16, u32>; u8; 8; amt);
+            batch!(stack::AnsCoder<u16, u32>; queue::RangeEncoder<u16, u32>; u16; 8, 12, 16; amt);
+            batch!(stack::AnsCoder<u16, u32>; queue::RangeEncoder<u16, u32>; u8; 8; amt);
 
-            batch!(ans::AnsCoder<u8, u32>; range::RangeEncoder<u8, u32>; u8; 8; amt);
+            batch!(stack::AnsCoder<u8, u32>; queue::RangeEncoder<u8, u32>; u8; 8; amt);
         }
         {
-            batch!(ans::AnsCoder<u8, u16>; range::RangeEncoder<u8, u16>; u8; 8; amt);
+            batch!(stack::AnsCoder<u8, u16>; queue::RangeEncoder<u8, u16>; u8; 8; amt);
         }
     }
 }

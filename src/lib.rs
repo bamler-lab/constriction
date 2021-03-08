@@ -92,7 +92,7 @@
 //! [below](#exercise).
 //!
 //! ```
-//! use constriction::stream::{ans::DefaultAnsCoder, models::DefaultLeakyQuantizer};
+//! use constriction::stream::{stack::DefaultAnsCoder, models::DefaultLeakyQuantizer};
 //! use statrs::distribution::Normal;
 //!
 //! fn encode_sample_data() -> Vec<u32> {
@@ -127,7 +127,7 @@
 //! Now let's reconstruct the sample data from its compressed representation.
 //!
 //! ```
-//! use constriction::stream::{ans::DefaultAnsCoder, models::DefaultLeakyQuantizer, Decode};
+//! use constriction::stream::{stack::DefaultAnsCoder, models::DefaultLeakyQuantizer, Decode};
 //! use statrs::distribution::Normal;
 //!
 //! fn decode_sample_data(compressed: Vec<u32>) -> Vec<i32> {
@@ -159,8 +159,8 @@
 //!
 //! **In the encoder,**
 //!
-//! - replace `constriction::stream::ans::DefaultAnsCoder` with
-//!   `constriction::stream::range::DefaultRangeEncoder`; and
+//! - replace `constriction::stream::stack::DefaultAnsCoder` with
+//!   `constriction::stream::queue::DefaultRangeEncoder`; and
 //! - replace `coder.encode_symbols_reverse` with `coder.encode_symbols` (you no longer need
 //!   to encode symbols in reverse order since Range Coding operates as a queue, i.e.,
 //!   first-in-first-out). You'll also have to add the line `use
@@ -168,8 +168,8 @@
 //!
 //! **In the decoder,**
 //!
-//! - replace `constriction::stream::ans::DefaultAnsCoder` with
-//!   `constriction::stream::range::DefaultRangeDecoder` (note that Range Coding
+//! - replace `constriction::stream::stack::DefaultAnsCoder` with
+//!   `constriction::stream::queue::DefaultRangeDecoder` (note that Range Coding
 //!   distinguishes between an encoder and a decoder type since the encoder writes to the
 //!   back while the decoder reads from the front; by contrast, ANS Coding reads and writes
 //!   at the same position and allows interleaving reads and writes).
@@ -186,7 +186,7 @@
 //! ```
 //! use constriction::stream::{
 //!     models::DefaultLeakyQuantizer,
-//!     range::{DefaultRangeEncoder, DefaultRangeDecoder},
+//!     queue::{DefaultRangeEncoder, DefaultRangeDecoder},
 //!     Encode, Decode,
 //! };
 //! use statrs::distribution::Normal;

@@ -44,7 +44,7 @@ use self::backend::{
 /// [`encode_symbols`] or [`encode_iid_symbols`].
 ///
 /// ```
-/// use constriction::stream::{models::LeakyQuantizer, ans::DefaultAnsCoder, Decode};
+/// use constriction::stream::{models::LeakyQuantizer, stack::DefaultAnsCoder, Decode};
 ///
 /// // `DefaultAnsCoder` is a type alias to `AnsCoder` with sane generic parameters.
 /// let mut ans = DefaultAnsCoder::new();
@@ -326,7 +326,7 @@ where
     /// # Example
     ///
     /// ```
-    /// let mut ans = constriction::stream::ans::DefaultAnsCoder::new();
+    /// let mut ans = constriction::stream::stack::DefaultAnsCoder::new();
     ///
     /// // ... push some symbols onto the ANS coder's stack ...
     ///
@@ -443,7 +443,7 @@ where
     /// empty):
     ///
     /// ```
-    /// use constriction::stream::ans::DefaultAnsCoder;
+    /// use constriction::stream::stack::DefaultAnsCoder;
     ///
     /// let stack1 = DefaultAnsCoder::from_binary(Vec::new());
     /// assert!(!stack1.is_empty()); // <-- stack1 is *not* empty.
@@ -559,7 +559,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::Categorical, ans::DefaultAnsCoder, Decode};
+    /// use constriction::stream::{models::Categorical, stack::DefaultAnsCoder, Decode};
     ///
     /// let mut ans = DefaultAnsCoder::new();
     ///
@@ -601,7 +601,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::{Categorical, LeakyQuantizer}, ans::DefaultAnsCoder, Encode};
+    /// use constriction::stream::{models::{Categorical, LeakyQuantizer}, stack::DefaultAnsCoder, Encode};
     ///
     /// // Create a stack and encode some stuff.
     /// let mut ans = DefaultAnsCoder::new();
@@ -869,7 +869,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::Categorical, ans::DefaultAnsCoder, Decode};
+    /// use constriction::stream::{models::Categorical, stack::DefaultAnsCoder, Decode};
     ///
     /// let mut ans = DefaultAnsCoder::new();
     ///
@@ -923,7 +923,7 @@ where
     ///
     /// // Constructing a `AnsCoder` with `from_binary` indicates that all bits of `data` are
     /// // considered part of the information-carrying payload.
-    /// let stack1 = constriction::stream::ans::DefaultAnsCoder::from_binary(data.clone());
+    /// let stack1 = constriction::stream::stack::DefaultAnsCoder::from_binary(data.clone());
     /// assert_eq!(stack1.clone().into_binary().unwrap(), data); // <-- Retrieves the original `data`.
     ///
     /// // By contrast, if we construct a `AnsCoder` with `from_compressed`, we indicate that
@@ -934,7 +934,7 @@ where
     /// //   also not considered part of the payload.
     /// // Therefore, `stack2` below only contains `32 * 2 - 7 - 1 = 56` bits of payload,
     /// // which cannot be exported into an integer number of `u32` words:
-    /// let stack2 = constriction::stream::ans::DefaultAnsCoder::from_compressed(data.clone()).unwrap();
+    /// let stack2 = constriction::stream::stack::DefaultAnsCoder::from_compressed(data.clone()).unwrap();
     /// assert!(stack2.clone().into_binary().is_err()); // <-- Returns an error.
     ///
     /// // Use `into_compressed` to retrieve the data in this case:

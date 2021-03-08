@@ -23,7 +23,7 @@
 //!
 //! ```
 //! use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-//! use constriction::stream::{ans::DefaultAnsCoder, models::DefaultLeakyQuantizer, Code, Decode};
+//! use constriction::stream::{stack::DefaultAnsCoder, models::DefaultLeakyQuantizer, Code, Decode};
 //! use statrs::distribution::Normal;
 //! use std::{fs::File, io::{BufReader, BufWriter}};
 //!

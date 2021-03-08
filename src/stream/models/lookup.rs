@@ -45,8 +45,8 @@ where
 /// ```
 /// use constriction::stream::{
 ///     models::lookup::DefaultEncoderHashLookupTable,
-///     ans::{SmallAnsCoder, DefaultAnsCoder},
-///     range::{SmallRangeEncoder, DefaultRangeEncoder},
+///     stack::{SmallAnsCoder, DefaultAnsCoder},
+///     queue::{SmallRangeEncoder, DefaultRangeEncoder},
 ///     Encode,
 /// };
 ///
@@ -84,10 +84,10 @@ where
 /// - [`DefaultEncoderArrayLookupTable`]
 /// - [`DefaultDecoderGenericLookupTable`]
 ///
-/// [`SmallAnsCoder`]: super::super::ans::SmallAnsCoder
-/// [`SmallRangeEncoder`]: super::super::range::SmallRangeEncoder
-/// [`DefaultAnsCoder`]: super::super::ans::DefaultAnsCoder
-/// [`DefaultRangeEncoder`]: super::super::range::DefaultRangeEncoder
+/// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
+/// [`SmallRangeEncoder`]: super::super::queue::SmallRangeEncoder
+/// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
+/// [`DefaultRangeEncoder`]: super::super::queue::DefaultRangeEncoder
 pub type DefaultEncoderHashLookupTable<Symbol> = EncoderHashLookupTable<Symbol, u16, 12>;
 
 impl<Symbol, Probability, const PRECISION: usize>
@@ -235,8 +235,8 @@ where
 /// ```
 /// use constriction::stream::{
 ///     models::lookup::DefaultEncoderArrayLookupTable,
-///     ans::{SmallAnsCoder, DefaultAnsCoder},
-///     range::{SmallRangeEncoder, DefaultRangeEncoder},
+///     stack::{SmallAnsCoder, DefaultAnsCoder},
+///     queue::{SmallRangeEncoder, DefaultRangeEncoder},
 ///     Encode,
 /// };
 ///
@@ -273,10 +273,10 @@ where
 /// - [`DefaultEncoderHashLookupTable`]
 /// - [`DefaultDecoderIndexLookupTable`]
 ///
-/// [`SmallAnsCoder`]: super::super::ans::SmallAnsCoder
-/// [`SmallRangeEncoder`]: super::super::range::SmallRangeEncoder
-/// [`DefaultAnsCoder`]: super::super::ans::DefaultAnsCoder
-/// [`DefaultRangeEncoder`]: super::super::range::DefaultRangeEncoder
+/// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
+/// [`SmallRangeEncoder`]: super::super::queue::SmallRangeEncoder
+/// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
+/// [`DefaultRangeEncoder`]: super::super::queue::DefaultRangeEncoder
 pub type DefaultEncoderArrayLookupTable<Symbol> =
     EncoderArrayLookupTable<Symbol, Box<[(u16, u16)]>, 12>;
 
@@ -455,8 +455,8 @@ where
 /// ```
 /// use constriction::stream::{
 ///     models::lookup::DefaultDecoderIndexLookupTable,
-///     ans::{SmallAnsCoder, DefaultAnsCoder},
-///     range::{SmallRangeDecoder, DefaultRangeDecoder},
+///     stack::{SmallAnsCoder, DefaultAnsCoder},
+///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
 ///     Decode, Code,
 /// };
 ///
@@ -498,10 +498,10 @@ where
 /// - [`DefaultDecoderGenericLookupTable`]
 /// - [`DefaultEncoderArrayLookupTable`]
 ///
-/// [`SmallAnsCoder`]: super::super::ans::SmallAnsCoder
-/// [`SmallRangeDecoder`]: super::super::range::SmallRangeDecoder
-/// [`DefaultAnsCoder`]: super::super::ans::DefaultAnsCoder
-/// [`DefaultRangeDecoder`]: super::super::range::DefaultRangeDecoder
+/// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
+/// [`SmallRangeDecoder`]: super::super::queue::SmallRangeDecoder
+/// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
+/// [`DefaultRangeDecoder`]: super::super::queue::DefaultRangeDecoder
 pub type DefaultDecoderIndexLookupTable<Symbol> =
     DecoderLookupTable<Symbol, u16, Box<[u16]>, IndexSymbolTable<Box<[(u16, ())]>>, 12>;
 
@@ -518,8 +518,8 @@ pub type DefaultDecoderIndexLookupTable<Symbol> =
 /// ```
 /// use constriction::stream::{
 ///     models::lookup::DefaultDecoderGenericLookupTable,
-///     ans::{SmallAnsCoder, DefaultAnsCoder},
-///     range::{SmallRangeDecoder, DefaultRangeDecoder},
+///     stack::{SmallAnsCoder, DefaultAnsCoder},
+///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
 ///     Decode, Code,
 /// };
 ///
@@ -562,10 +562,10 @@ pub type DefaultDecoderIndexLookupTable<Symbol> =
 /// - [`DefaultDecoderIndexLookupTable`]
 /// - [`DefaultEncoderArrayLookupTable`]
 ///
-/// [`SmallAnsCoder`]: super::super::ans::SmallAnsCoder
-/// [`SmallRangeDecoder`]: super::super::range::SmallRangeDecoder
-/// [`DefaultAnsCoder`]: super::super::ans::DefaultAnsCoder
-/// [`DefaultRangeDecoder`]: super::super::range::DefaultRangeDecoder
+/// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
+/// [`SmallRangeDecoder`]: super::super::queue::SmallRangeDecoder
+/// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
+/// [`DefaultRangeDecoder`]: super::super::queue::DefaultRangeDecoder
 pub type DefaultDecoderGenericLookupTable<Symbol> =
     DecoderLookupTable<Symbol, u16, Box<[u16]>, GenericSymbolTable<Box<[(u16, Symbol)]>>, 12>;
 
@@ -1232,8 +1232,8 @@ mod test {
     use std::{string::String, vec};
 
     use super::super::super::{
-        ans::DefaultAnsCoder,
         models::{DecoderModel, EncoderModel},
+        stack::DefaultAnsCoder,
         Decode,
     };
 

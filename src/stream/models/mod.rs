@@ -112,7 +112,7 @@ where
 /// # Example
 ///
 /// ```
-/// use constriction::stream::{models::LeakyQuantizer, ans::DefaultAnsCoder, Encode};
+/// use constriction::stream::{models::LeakyQuantizer, stack::DefaultAnsCoder, Encode};
 ///
 /// // Get a quantizer that supports integer symbols from -5 to 20 (inclusively),
 /// // representing probabilities with 24 bit precision backed by `u32`s.

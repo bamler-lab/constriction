@@ -114,7 +114,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::LeakyQuantizer, Decode, ans::DefaultAnsCoder};
+    /// use constriction::stream::{models::LeakyQuantizer, Decode, stack::DefaultAnsCoder};
     ///
     /// // Construct two entropy models with 24 bits and 20 bits of precision, respectively.
     /// let continuous_distribution = statrs::distribution::Normal::new(0.0, 10.0).unwrap();

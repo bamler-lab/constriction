@@ -1,4 +1,4 @@
-pub mod ans;
+pub mod stack;
 
 use pyo3::{prelude::*, wrap_pymodule};
 
@@ -12,5 +12,5 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// Docstring of ans module
 #[pymodule]
 fn ans(py: Python<'_>, module: &PyModule) -> PyResult<()> {
-    ans::init_module(py, module)
+    stack::init_module(py, module)
 }

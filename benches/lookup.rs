@@ -2,7 +2,7 @@ use std::any::type_name;
 
 use constriction::{
     stream::{
-        ans::AnsCoder, models::lookup::EncoderHashLookupTable, range::RangeEncoder, Code, Decode,
+        stack::AnsCoder, models::lookup::EncoderHashLookupTable, queue::RangeEncoder, Code, Decode,
         Encode, Pos, Seek,
     },
     BitArray,
