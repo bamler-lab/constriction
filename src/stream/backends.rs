@@ -67,7 +67,7 @@
 //!     assert!(decoder.is_empty());
 //!
 //!     // Recover the original iterator over compressed words and verify that it's been exhausted.
-//!     let mut word_iterator = decoder.into_buf_and_state().0.into_iter();
+//!     let mut word_iterator = decoder.into_raw_parts().0.into_iter();
 //!     assert!(word_iterator.next().is_none());
 //!
 //!     // `word_iterator` owns the file since we used a `move` clausure above to construct it.

@@ -50,7 +50,7 @@ impl<CompressedWord: BitArray, State: BitArray> Default for CoderState<Compresse
 }
 
 pub struct RangeEncoder<CompressedWord: BitArray, State: BitArray> {
-    buf: Vec<CompressedWord>,
+    bulk: Vec<CompressedWord>,
     state: CoderState<CompressedWord, State>,
 }
 
@@ -109,7 +109,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
 {
     fn pos(&self) -> usize {
-        self.buf.len()
+        self.bulk.len()
     }
 }
 
@@ -134,7 +134,7 @@ where
         assert_eq!(State::BITS % CompressedWord::BITS, 0);
 
         Self {
-            buf: Vec::new(),
+            bulk: Vec::new(),
             state: CoderState::default(),
         }
     }
@@ -142,13 +142,13 @@ where
     /// Discards all compressed data and resets the coder to the same state as
     /// [`Coder::new`](#method.new).
     pub fn clear(&mut self) {
-        self.buf.clear();
+        self.bulk.clear();
         self.state = CoderState::default();
     }
 
     /// Check if no data has been encoded yet.
     pub fn is_empty(&self) -> bool {
-        self.buf.is_empty() && self.state.range == State::max_value()
+        self.bulk.is_empty() && self.state.range == State::max_value()
     }
 
     /// Same as IntoDecoder::into_decoder(self) but can be used for any `PRECISION`
@@ -168,9 +168,9 @@ where
     pub fn into_compressed(mut self) -> Vec<CompressedWord> {
         if !self.is_empty() {
             let word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            self.buf.push(word);
+            self.bulk.push(word);
         }
-        self.buf
+        self.bulk
     }
 
     /// Returns a view into the full compressed data currently on the ans.
@@ -193,7 +193,7 @@ where
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`from_compressed`]: #method.from_compressed
     pub fn as_compressed_raw(&self) -> (&[CompressedWord], <Self as Code>::State) {
-        (&self.buf, self.state)
+        (&self.bulk, self.state)
     }
 
     /// Assembles the current compressed data into a single slice.
@@ -269,7 +269,7 @@ where
         if self.is_empty() {
             0
         } else {
-            self.buf.len() + 1
+            self.bulk.len() + 1
         }
     }
 
@@ -284,8 +284,8 @@ where
         CompressedWord::BITS * self.num_words()
     }
 
-    pub fn buf(&self) -> &[CompressedWord] {
-        &self.buf
+    pub fn bulk(&self) -> &[CompressedWord] {
+        &self.bulk
     }
 }
 
@@ -328,7 +328,7 @@ where
             .wrapping_add(&(scale * left_sided_cumulative.into().into()));
         if new_lower < self.state.lower {
             // Addition has wrapped around, so we have to propagate back the carry bit.
-            for word in self.buf.iter_mut().rev() {
+            for word in self.bulk.iter_mut().rev() {
                 *word = word.wrapping_add(&CompressedWord::one());
                 if *word != CompressedWord::zero() {
                     break;
@@ -352,7 +352,7 @@ where
             self.state.range = self.state.range << CompressedWord::BITS;
 
             let word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            self.buf.push(word);
+            self.bulk.push(word);
             self.state.lower = self.state.lower << CompressedWord::BITS;
         }
 
@@ -361,9 +361,9 @@ where
 }
 
 pub struct RangeDecoder<CompressedWord: BitArray, State: BitArray, Buf: AsRef<[CompressedWord]>> {
-    buf: Buf,
+    bulk: Buf,
 
-    /// Points to the next word in `buf` to be read if `state` underflows.
+    /// Points to the next word in `bulk` to be read if `state` underflows.
     pos: usize,
     state: CoderState<CompressedWord, State>,
 
@@ -405,7 +405,7 @@ where
         f.debug_list()
             .entries(
                 bit_array_to_chunks_exact(self.state.lower)
-                    .chain(self.buf.as_ref().iter().cloned()),
+                    .chain(self.bulk.as_ref().iter().cloned()),
             )
             .finish()
     }
@@ -425,7 +425,7 @@ where
     }
 
     fn maybe_empty(&self) -> bool {
-        self.pos >= self.buf.as_ref().len()
+        self.pos >= self.bulk.as_ref().len()
             && self.point.wrapping_sub(&self.state.lower)
                 < State::one() << (State::BITS - CompressedWord::BITS)
     }
@@ -450,14 +450,14 @@ where
 {
     fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()> {
         let (pos, state) = pos_and_state;
-        let remainder = self.buf.as_ref().get(pos..).ok_or(())?;
+        let remainder = self.bulk.as_ref().get(pos..).ok_or(())?;
         let mut point = bit_array_from_chunks(remainder.iter().cloned());
 
         let pos_shift = if remainder.len() < State::BITS / CompressedWord::BITS {
             // A very short amount of compressed data is left, and therefore `point` is still
             // right-aligned. Shift it over so it's left-aligned and fill it up with ones.
             if remainder.is_empty() {
-                if self.buf.as_ref().is_empty() && state == Self::State::default() {
+                if self.bulk.as_ref().is_empty() && state == Self::State::default() {
                     // Special case: seeking to the beginning of no compressed data. Let's do
                     // the same what `from_compressed` does in this case.
                     point = State::max_value() >> CompressedWord::BITS;
@@ -512,7 +512,7 @@ where
         };
 
         Self {
-            buf: compressed,
+            bulk: compressed,
             state: CoderState::default(),
             pos,
             point,
@@ -610,16 +610,17 @@ where
 
             // Then update `point`, which restores invariant (*):
             self.point = self.point << CompressedWord::BITS;
-            if let Some(&word) = self.buf.as_ref().get(self.pos) {
+            if let Some(&word) = self.bulk.as_ref().get(self.pos) {
                 self.point = self.point | word.into();
                 self.pos += 1;
             } else {
                 self.point = self.point | CompressedWord::max_value().into();
-                if self.pos < self.buf.as_ref().len() + State::BITS / CompressedWord::BITS - 1 {
-                    // We allow `pos` to be up to `State::BITS / CompressedWord::BITS - 1` words
-                    // past the end of `buf` so that `point` always contains at least one word from
-                    // `buf`. We don't increase `pos` further so that it doesn't wrap around when
-                    // the decoder is misused, which would cause `maybe_empty` to misbehave.
+                if self.pos < self.bulk.as_ref().len() + State::BITS / CompressedWord::BITS - 1 {
+                    // We allow `pos` to be up to `State::BITS / CompressedWord::BITS - 1`
+                    // words past the end of `bulk` so that `point` always contains at least
+                    // one word from `bulk`. We don't increase `pos` further so that it
+                    // doesn't wrap around when the decoder is misused, which would cause
+                    // `maybe_empty` to misbehave.
                     self.pos += 1;
                 }
             }
@@ -681,7 +682,7 @@ where
         // Append state. Will be undone in `<Self as Drop>::drop`.
         if !encoder.is_empty() {
             let word = (encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            encoder.buf.push(word);
+            encoder.bulk.push(word);
         }
         Self { inner: encoder }
     }
@@ -693,7 +694,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
 {
     fn drop(&mut self) {
-        self.inner.buf.pop(); // Does nothing if `coder.is_empty()`, as it should.
+        self.inner.bulk.pop(); // Does nothing if `coder.is_empty()`, as it should.
     }
 }
 
@@ -705,7 +706,7 @@ where
     type Target = [CompressedWord];
 
     fn deref(&self) -> &Self::Target {
-        &self.inner.buf
+        &self.inner.bulk
     }
 }
 
@@ -720,7 +721,7 @@ where
 }
 
 struct IterCompressed<'a, CompressedWord> {
-    buf: &'a [CompressedWord],
+    bulk: &'a [CompressedWord],
     last: CompressedWord,
     index_front: usize,
     index_back: usize,
@@ -738,10 +739,10 @@ where
         let last = (coder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
 
         Self {
-            buf: &coder.buf,
+            bulk: &coder.bulk,
             last,
             index_front: 0,
-            index_back: coder.buf.len() + (!coder.is_empty()) as usize,
+            index_back: coder.bulk.len() + (!coder.is_empty()) as usize,
         }
     }
 }
@@ -755,7 +756,7 @@ impl<CompressedWord: BitArray> Iterator for IterCompressed<'_, CompressedWord> {
             None
         } else {
             self.index_front += 1;
-            let result = self.buf.get(index_front).cloned().unwrap_or(self.last);
+            let result = self.bulk.get(index_front).cloned().unwrap_or(self.last);
             Some(result)
         }
     }
@@ -788,7 +789,7 @@ impl<CompressedWord: BitArray> DoubleEndedIterator for IterCompressed<'_, Compre
         } else {
             // We can subtract one because `self.index_back > self.index_front >= 0`.
             self.index_back -= 1;
-            let result = self.buf.get(self.index_back).cloned().unwrap_or(self.last);
+            let result = self.bulk.get(self.index_back).cloned().unwrap_or(self.last);
             Some(result)
         }
     }

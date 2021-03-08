@@ -2,7 +2,7 @@ use std::any::type_name;
 
 use constriction::{
     stream::{
-        stack::AnsCoder, models::lookup::EncoderHashLookupTable, queue::RangeEncoder, Code, Decode,
+        models::lookup::EncoderHashLookupTable, queue::RangeEncoder, stack::AnsCoder, Code, Decode,
         Encode, Pos, Seek,
     },
     BitArray,
@@ -88,9 +88,9 @@ where
                 .encode_iid_symbols_reverse(black_box(&data), &encoder_model)
                 .unwrap();
 
-            // Access `encoder.state()` and `encoder.buf()` at an unpredictable position.
-            let index = AsPrimitive::<usize>::as_(encoder.state()) % encoder.buf().len();
-            black_box(encoder.buf()[index]);
+            // Access `encoder.state()` and `encoder.bulk()` at an unpredictable position.
+            let index = AsPrimitive::<usize>::as_(encoder.state()) % encoder.bulk().len();
+            black_box(encoder.bulk()[index]);
         })
     });
 
@@ -175,9 +175,9 @@ where
                 .encode_iid_symbols(black_box(&data), &encoder_model)
                 .unwrap();
 
-            // Access `encoder.state()` and `encoder.buf()` at an unpredictable position.
-            let index = AsPrimitive::<usize>::as_(encoder.state().lower()) % encoder.buf().len();
-            black_box(encoder.buf()[index]);
+            // Access `encoder.state()` and `encoder.bulk()` at an unpredictable position.
+            let index = AsPrimitive::<usize>::as_(encoder.state().lower()) % encoder.bulk().len();
+            black_box(encoder.bulk()[index]);
         })
     });
 

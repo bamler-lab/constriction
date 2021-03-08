@@ -64,18 +64,18 @@ where
 
         // The following also assures that `ans.buf()` is no-empty since
         // `State::BITS / CompressedWord::BITS - 1 >= 1`.
-        if ans.buf().len() < State::BITS / CompressedWord::BITS - 1 {
+        if ans.bulk().len() < State::BITS / CompressedWord::BITS - 1 {
             // Not enough data to initialize `supply` and `waste`.
             return Err(ans);
         }
 
-        let (buf, supply_state) = ans.into_buf_and_state();
+        let (buf, supply_state) = ans.into_raw_parts();
         let prefix = AnsCoder::from_binary(buf);
-        let (supply_buf, waste_state) = prefix.into_buf_and_state();
+        let (supply_buf, waste_state) = prefix.into_raw_parts();
 
-        let supply = AnsCoder::with_buf_and_state(supply_buf, supply_state)
+        let supply = AnsCoder::from_raw_parts(supply_buf, supply_state)
             .expect("`ans` had non-empty `buf`, so its state satisfies invariant.");
-        let mut waste = AnsCoder::with_state_and_empty_buf(waste_state);
+        let mut waste = AnsCoder::with_state_and_empty_bulk(waste_state);
         if PRECISION == CompressedWord::BITS {
             waste.flush_state();
         }
@@ -163,8 +163,8 @@ where
     }
 
     pub fn finish(self) -> (Vec<CompressedWord>, AnsCoder<CompressedWord, State>) {
-        let (prefix, supply_state) = self.0.supply.into_buf_and_state();
-        let suffix = AnsCoder::with_buf_and_state(self.0.waste.into_compressed(), supply_state)
+        let (prefix, supply_state) = self.0.supply.into_raw_parts();
+        let suffix = AnsCoder::from_raw_parts(self.0.waste.into_compressed(), supply_state)
             .expect("`stable::Decoder` always reserves enough `supply.state`.");
 
         (prefix, suffix)
@@ -242,18 +242,18 @@ where
 
         // The following also assures that `ans.buf()` is no-empty since
         // `State::BITS / CompressedWord::BITS - 1 >= 1`.
-        if ans.buf().len() < State::BITS / CompressedWord::BITS - 1 {
+        if ans.bulk().len() < State::BITS / CompressedWord::BITS - 1 {
             // Not enough data to initialize `supply` and `waste`.
             return Err(ans);
         }
 
-        if ans.buf.last() == Some(&CompressedWord::zero()) {
+        if ans.bulk.last() == Some(&CompressedWord::zero()) {
             // Invalid data that couldn't have been produced by `stable::Decoder::finish()`.
             return Err(ans);
         }
 
-        let (buf, supply_state) = ans.into_buf_and_state();
-        let supply = AnsCoder::with_state_and_empty_buf(supply_state);
+        let (buf, supply_state) = ans.into_raw_parts();
+        let supply = AnsCoder::with_state_and_empty_bulk(supply_state);
         let mut waste = AnsCoder::from_compressed(buf)
             .expect("We verified above that `buf` doesn't end in zero word");
         if waste.state() >= State::one() << (State::BITS - PRECISION) {
@@ -376,15 +376,15 @@ where
             }
         }
 
-        let (mut buf, state) = self.0.supply.into_buf_and_state();
-        let (prefix, mut waste_state) = self.0.waste.into_buf_and_state();
+        let (mut buf, state) = self.0.supply.into_raw_parts();
+        let (prefix, mut waste_state) = self.0.waste.into_raw_parts();
 
         while waste_state != State::one() {
             buf.push(waste_state.as_());
             waste_state = waste_state >> CompressedWord::BITS;
         }
 
-        let suffix = AnsCoder::with_buf_and_state(buf, state)
+        let suffix = AnsCoder::from_raw_parts(buf, state)
             .expect("`stable::Encoder` always reserves enough `supply.state`.");
 
         Ok((prefix, suffix))
@@ -540,7 +540,7 @@ where
     fn maybe_empty(&self) -> bool {
         // `self.supply.state()` must always be above threshold if we still want to call
         // `finish_decoding`, so we only check if `supply.buf` is empty here.
-        self.supply.buf().is_empty()
+        self.supply.bulk().is_empty()
     }
 }
 
@@ -779,7 +779,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    let (suffix_buf, state) = suffix.into_buf_and_state();
+    let (suffix_buf, state) = suffix.into_raw_parts();
 
     let buf = if prefix.is_empty() {
         // Avoid copying in this not-so-unlikely special case.
@@ -789,7 +789,7 @@ where
         prefix
     };
 
-    AnsCoder::with_buf_and_state(buf, state)
+    AnsCoder::from_raw_parts(buf, state)
 }
 
 #[cfg(test)]
