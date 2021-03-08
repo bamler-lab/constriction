@@ -149,6 +149,7 @@
 //! [`Infallible`]: core::convert::Infallible
 //! [`seek`]: Seek::seek
 
+pub mod backends;
 pub mod models;
 pub mod queue;
 pub mod stack;
@@ -693,8 +694,7 @@ pub trait Seek: Code {
     ///
     /// ```
     /// use constriction::stream::{
-    ///     models::LeakyQuantizer,
-    ///     stack::{backend::ReadCursorForward, DefaultAnsCoder, AnsCoder},
+    ///     backends::ReadCursorForward, models::LeakyQuantizer, stack::{DefaultAnsCoder, AnsCoder},
     ///     Decode, Pos, Seek
     /// };
     ///
