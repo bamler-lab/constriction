@@ -2,23 +2,13 @@
 //!
 //! # TODO:
 //!
-//! - rename `pop` to `read` and `push` to `write`
-//! - rename `ReadItems` and `WriteItems` to `ReadWords` and `WriteWords`.
-//! - add empty marker traits `ReadWordsStack: ReadWords` and `ReadWordsQueue: ReadWords`
-//!   that are implemented for types that either implement only reading, or that implement
-//!   both in reading and writing in a way that's consistent with a stack or queue,
-//!   respectively. All decoder operations then depend either on `StackRead` or on
-//!   `QueueRead`, never directly on `Read`.
-//! - reading always goes in just one direction, even if a type implements both `StackRead`
-//!   and `QueueRead`
 //! - generizise `Range{En,De}Coder`.
-//!
-//! Note: `Vec` should not implement `Queue`.
 //!
 //! # Example
 //!
 //! TODO: turn this into a Range Coding example where both the encoder and the decoder
-//! operate on the fly.
+//! operate on the fly (that actually requires changing how the range coder deals with carry
+//! bits, it has to become lazy).
 //!
 //! ```
 //! use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -93,70 +83,155 @@
 use alloc::vec::Vec;
 use core::{fmt::Debug, marker::PhantomData};
 
-/// TODO: document that, if a `Backend<Item>` implements `AsRef<[Item]>` then the
-/// head of the stack must be at the end of the slice returned by `as_ref`.
-/// (this condition will probably only apply to `ReadWordsStack`)
-pub trait Backend<Item> {}
-
-pub trait ReadItems<Item>: Backend<Item> {
-    fn pop(&mut self) -> Option<Item>;
+pub trait Backend<Word> {
+    fn maybe_empty(&self) -> bool {
+        true
+    }
 }
 
-pub trait ReadLookaheadItems<Item>: Backend<Item> {
+/// A trait for backends that read compressed words (used by decoders)
+///
+/// Encoders should not use this trait directly to bound type parameters. Instead, they
+/// should bound type arguments by one of the more specific traits [`ReadStackBackend`] or
+/// [`ReadQueueBackend`], or add their own more specific trait if they operate neither as a
+/// stack nor as a queue.
+pub trait ReadBackend<Word>: Backend<Word> {
+    fn read(&mut self) -> Option<Word>;
+}
+
+pub trait LookaheadBackend<Word>: ReadBackend<Word> + Backend<Word> {
     fn amt_left(&self) -> usize;
 
+    /// TODO: don't forget to overwrite the default implementation of
+    /// `Backend::maybe_empty`.
     #[inline(always)]
-    fn is_at_end(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.amt_left() == 0
     }
 }
 
-pub trait Seek<Item>: Backend<Item> {
+pub trait SeekBackend<Word>: Backend<Word> {
     fn seek(&mut self, pos: usize, must_be_end: bool) -> Result<(), ()>;
 }
 
-pub trait Pos<Item>: Backend<Item> {
+pub trait PosBackend<Word>: Backend<Word> {
     fn pos(&self) -> usize;
 }
 
-pub trait WriteItems<Item>: Backend<Item> + core::iter::Extend<Item> {
-    fn push(&mut self, item: Item);
+/// A trait for backends that write compressed words (used by encoders)
+///
+/// # Consistency Rule
+///
+/// No type may implement more than two of the following three traits:
+///
+/// - [`ReadStackBackend`]
+/// - ReadQueueBackend (this trait)
+/// - [`WriteBackend`]
+///
+/// In other words, a backend may either support both reading and writing, in which case
+/// interleaved reads and writes cannot have both stack and queue semantics at the same time
+/// (thus implementing all three of the above traits would be illogical); or the backend may
+/// be read-only or write-only, in which case the distinction between stack and queue
+/// semantics is moot. (One might argue that stack and queue semantics are consistent with
+/// each other if `Word` is a zero-sized type but the use case for zero-sized `Word`s is
+/// unclear.)
+pub trait WriteBackend<Word>: core::iter::Extend<Word> + Backend<Word> {
+    fn write(&mut self, item: Word);
 }
 
-pub trait WriteMutableItems<Item>: WriteItems<Item> {
+/// Backends that can mutate already existing words
+///
+/// Actually, we only require the possibility to clear everything.
+pub trait MutBackend<Word>: WriteBackend<Word> {
     fn clear(&mut self);
 }
 
-impl<Item> Backend<Item> for Vec<Item> {}
+/// Marker trait for a [`ReadBackend`] that either doesn't implement [`WriteBackend`] or
+/// that satisfies stack semantics.
+///
+/// # Consistency Rule
+///
+/// No type may implement more than two of the following three traits:
+///
+/// - ReadStackBackend (this trait)
+/// - [`ReadQueueBackend`]
+/// - [`WriteBackend`]
+///
+/// See [`WriteBackend`] for an explanation of this rule.
+pub trait ReadStackBackend<Word>: ReadBackend<Word> {}
 
-impl<Item> ReadItems<Item> for Vec<Item> {
+/// Marker trait for a [`ReadBackend`] that either doesn't implement [`WriteBackend`] or
+/// that satisfies queue semantics.
+///
+/// # Consistency Rule
+///
+/// No type may implement more than two of the following three traits:
+///
+/// - [`ReadStackBackend`]
+/// - ReadQueueBackend (this trait)
+/// - [`WriteBackend`]
+///
+/// See [`WriteBackend`] for an explanation of this rule.
+pub trait ReadQueueBackend<Word>: ReadBackend<Word> {}
+
+pub trait AsReadStackBackend<'a, Word>: 'a {
+    type AsReadStackBackend: ReadStackBackend<Word> + From<&'a Self>;
+
+    fn as_read_stack_backend(&'a self) -> Self::AsReadStackBackend {
+        self.into()
+    }
+}
+
+impl<'a, Word: Clone + 'a> AsReadStackBackend<'a, Word> for Vec<Word> {
+    type AsReadStackBackend = ReadCursorBackward<Word, &'a [Word]>;
+}
+
+impl<'a, Word: 'a> From<&'a Vec<Word>> for ReadCursorBackward<Word, &'a [Word]> {
+    fn from(buf: &'a Vec<Word>) -> Self {
+        Self::new(buf)
+    }
+}
+
+impl<Word> Backend<Word> for Vec<Word> {
+    fn maybe_empty(&self) -> bool {
+        self.is_empty()
+    }
+}
+
+impl<Word> ReadBackend<Word> for Vec<Word> {
     #[inline(always)]
-    fn pop(&mut self) -> Option<Item> {
+    fn read(&mut self) -> Option<Word> {
         self.pop()
     }
 }
 
-impl<Item> ReadLookaheadItems<Item> for Vec<Item> {
+/// `Vec` implements `ReadStackBackend` and `WriteBackend`, therefore it is not allowed to
+/// implement `ReadQueueBackend` (which it can't anyway). If you want to read from a `Vec`
+/// as a queue, wrap either the `Vec` itself or the slice that it dereferences to in a
+/// `ReadCursorForward`.
+impl<Word> ReadStackBackend<Word> for Vec<Word> {}
+
+impl<Word> LookaheadBackend<Word> for Vec<Word> {
     #[inline(always)]
     fn amt_left(&self) -> usize {
         self.len()
     }
 }
 
-impl<Item> WriteItems<Item> for Vec<Item> {
+impl<Word> WriteBackend<Word> for Vec<Word> {
     #[inline(always)]
-    fn push(&mut self, item: Item) {
+    fn write(&mut self, item: Word) {
         self.push(item)
     }
 }
 
-impl<Item> WriteMutableItems<Item> for Vec<Item> {
+impl<Word> MutBackend<Word> for Vec<Word> {
     fn clear(&mut self) {
         self.clear()
     }
 }
 
-impl<Item> Pos<Item> for Vec<Item> {
+impl<Word> PosBackend<Word> for Vec<Word> {
     fn pos(&self) -> usize {
         self.len()
     }
@@ -184,17 +259,17 @@ impl Direction for Backward {
 }
 
 #[derive(Clone, Debug)]
-pub struct ReadFromIter<Iter: Iterator> {
+pub struct ReadFromIterBackend<Iter: Iterator> {
     inner: Iter,
 }
 
-impl<Iter: Iterator> ReadFromIter<Iter> {
+impl<Iter: Iterator> ReadFromIterBackend<Iter> {
     pub fn new(inner: Iter) -> Self {
         Self { inner }
     }
 }
 
-impl<Iter: Iterator> IntoIterator for ReadFromIter<Iter> {
+impl<Iter: Iterator> IntoIterator for ReadFromIterBackend<Iter> {
     type Item = Iter::Item;
     type IntoIter = Iter;
 
@@ -203,22 +278,25 @@ impl<Iter: Iterator> IntoIterator for ReadFromIter<Iter> {
     }
 }
 
-impl<Iter: Iterator> Backend<Iter::Item> for ReadFromIter<Iter> {}
+impl<Iter: Iterator> Backend<Iter::Item> for ReadFromIterBackend<Iter> {}
 
-impl<Iter: Iterator> ReadItems<Iter::Item> for ReadFromIter<Iter> {
-    fn pop(&mut self) -> Option<Iter::Item> {
+impl<Iter: Iterator> ReadBackend<Iter::Item> for ReadFromIterBackend<Iter> {
+    fn read(&mut self) -> Option<Iter::Item> {
         self.inner.next()
     }
 }
 
-impl<Iter: ExactSizeIterator> ReadLookaheadItems<Iter::Item> for ReadFromIter<Iter> {
+impl<Iter: Iterator> ReadStackBackend<Iter::Item> for ReadFromIterBackend<Iter> {}
+impl<Iter: Iterator> ReadQueueBackend<Iter::Item> for ReadFromIterBackend<Iter> {}
+
+impl<Iter: ExactSizeIterator> LookaheadBackend<Iter::Item> for ReadFromIterBackend<Iter> {
     fn amt_left(&self) -> usize {
         self.inner.len()
     }
 }
 
 #[derive(Clone)]
-pub struct ReadCursor<Item, Buf: AsRef<[Item]>, Dir: Direction> {
+pub struct ReadCursor<Word, Buf: AsRef<[Word]>, Dir: Direction> {
     buf: Buf,
 
     /// If `Dir::FORWARD`: the index of the next item to be read.
@@ -227,13 +305,13 @@ pub struct ReadCursor<Item, Buf: AsRef<[Item]>, Dir: Direction> {
     /// In both cases: satisfies invariant `pos <= buf.as_ref().len()`.
     pos: usize,
 
-    phantom: PhantomData<(Item, Dir)>,
+    phantom: PhantomData<(Word, Dir)>,
 }
 
-pub type ReadCursorForward<Item, Buf> = ReadCursor<Item, Buf, Forward>;
-pub type ReadCursorBackward<Item, Buf> = ReadCursor<Item, Buf, Backward>;
+pub type ReadCursorForward<Word, Buf> = ReadCursor<Word, Buf, Forward>;
+pub type ReadCursorBackward<Word, Buf> = ReadCursor<Word, Buf, Backward>;
 
-impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
+impl<Word, Buf: AsRef<[Word]>, Dir: Direction> ReadCursor<Word, Buf, Dir> {
     #[inline(always)]
     pub fn new(buf: Buf) -> Self {
         let pos = if Dir::FORWARD { 0 } else { buf.as_ref().len() };
@@ -256,7 +334,7 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
         }
     }
 
-    pub fn as_view(&self) -> ReadCursor<Item, &[Item], Dir> {
+    pub fn as_view(&self) -> ReadCursor<Word, &[Word], Dir> {
         ReadCursor {
             buf: self.buf.as_ref(),
             pos: self.pos,
@@ -264,9 +342,9 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
         }
     }
 
-    pub fn cloned(&self) -> ReadCursor<Item, Vec<Item>, Dir>
+    pub fn cloned(&self) -> ReadCursor<Word, Vec<Word>, Dir>
     where
-        Item: Clone,
+        Word: Clone,
     {
         ReadCursor {
             buf: self.buf.as_ref().to_vec(),
@@ -275,7 +353,7 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
         }
     }
 
-    pub fn buf(&self) -> &[Item] {
+    pub fn buf(&self) -> &[Word] {
         self.buf.as_ref()
     }
 
@@ -286,14 +364,14 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
     /// Reverses both the data and the reading direction.
     ///
     /// This method consumes the original `ReadCursor`, reverses the order of the
-    /// `Item`s in-place, updates the cursor position accordingly, and returns a
+    /// `Word`s in-place, updates the cursor position accordingly, and returns a
     /// `ReadCursor` that progresses in the opposite direction. Reading from the
-    /// returned `ReadCursor` will yield the same `Item`s as continued reading from the
+    /// returned `ReadCursor` will yield the same `Word`s as continued reading from the
     /// original one would, but the changed direction will be observable via different
     /// behavior of [`Pos::pos`], [`Seek::seek`], and [`Self::buf`].
-    pub fn into_reversed(self) -> ReadCursor<Item, Buf, Dir::Reverse>
+    pub fn into_reversed(self) -> ReadCursor<Word, Buf, Dir::Reverse>
     where
-        Buf: AsMut<[Item]>,
+        Buf: AsMut<[Word]>,
     {
         let ReadCursor {
             mut buf, mut pos, ..
@@ -310,11 +388,11 @@ impl<Item, Buf: AsRef<[Item]>, Dir: Direction> ReadCursor<Item, Buf, Dir> {
     }
 }
 
-impl<'a, Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> IntoIterator
-    for &'a ReadCursor<Item, Buf, Dir>
+impl<'a, Word: Clone, Buf: AsRef<[Word]>, Dir: Direction> IntoIterator
+    for &'a ReadCursor<Word, Buf, Dir>
 {
-    type Item = Item;
-    type IntoIter = core::iter::Cloned<core::slice::Iter<'a, Item>>;
+    type Item = Word;
+    type IntoIter = core::iter::Cloned<core::slice::Iter<'a, Word>>;
 
     fn into_iter(self) -> Self::IntoIter {
         let slice = unsafe {
@@ -330,19 +408,23 @@ impl<'a, Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> IntoIterator
     }
 }
 
-impl<Item: Clone + Debug, Buf: AsRef<[Item]>, Dir: Direction> Debug for ReadCursor<Item, Buf, Dir> {
+impl<Word: Clone + Debug, Buf: AsRef<[Word]>, Dir: Direction> Debug for ReadCursor<Word, Buf, Dir> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_list().entries(self).finish()
     }
 }
 
-impl<Item, Buf: AsRef<[Item]>, Dir: Direction> Backend<Item> for ReadCursor<Item, Buf, Dir> {}
+impl<Word: Clone, Buf: AsRef<[Word]>, Dir: Direction> Backend<Word> for ReadCursor<Word, Buf, Dir> {
+    fn maybe_empty(&self) -> bool {
+        self.is_empty()
+    }
+}
 
-impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadItems<Item>
-    for ReadCursor<Item, Buf, Dir>
+impl<Word: Clone, Buf: AsRef<[Word]>, Dir: Direction> ReadBackend<Word>
+    for ReadCursor<Word, Buf, Dir>
 {
     #[inline(always)]
-    fn pop(&mut self) -> Option<Item> {
+    fn read(&mut self) -> Option<Word> {
         if Dir::FORWARD {
             let item = self.buf.as_ref().get(self.pos)?.clone();
             self.pos += 1;
@@ -363,8 +445,36 @@ impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadItems<Item>
     }
 }
 
-impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadLookaheadItems<Item>
-    for ReadCursor<Item, Buf, Dir>
+/// Both `ReadStackBackend` and `ReadQueueBacken` are implemented for `ReadCursor`s of both
+/// directions because the reading direction is not tied to the stack vs. queue nature.
+/// What's important is that reading and writing directions are compatible, which is
+/// trivially given since `ReadCursor`s don't implement `WriteBackend`.
+impl<Word: Clone, Buf: AsRef<[Word]>, Dir: Direction> ReadStackBackend<Word>
+    for ReadCursor<Word, Buf, Dir>
+{
+}
+
+impl<Word: Clone, Buf: AsRef<[Word]>, Dir: Direction> ReadQueueBackend<Word>
+    for ReadCursor<Word, Buf, Dir>
+{
+}
+
+impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a, Dir: Direction> AsReadStackBackend<'a, Word>
+    for ReadCursor<Word, Buf, Dir>
+{
+    type AsReadStackBackend = ReadCursor<Word, &'a [Word], Dir>;
+}
+
+impl<'a, Word: 'a, Buf: AsRef<[Word]> + 'a, Dir: Direction> From<&'a ReadCursor<Word, Buf, Dir>>
+    for ReadCursor<Word, &'a [Word], Dir>
+{
+    fn from(cursor: &'a ReadCursor<Word, Buf, Dir>) -> Self {
+        cursor.as_view()
+    }
+}
+
+impl<Word: Clone, Buf: AsRef<[Word]>, Dir: Direction> LookaheadBackend<Word>
+    for ReadCursor<Word, Buf, Dir>
 {
     fn amt_left(&self) -> usize {
         if Dir::FORWARD {
@@ -376,7 +486,9 @@ impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> ReadLookaheadItems<Item>
     }
 }
 
-impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Seek<Item> for ReadCursor<Item, Buf, Dir> {
+impl<Word: Clone, Buf: AsRef<[Word]>, Dir: Direction> SeekBackend<Word>
+    for ReadCursor<Word, Buf, Dir>
+{
     fn seek(&mut self, pos: usize, must_be_end: bool) -> Result<(), ()> {
         let end_pos = if Dir::FORWARD {
             self.buf.as_ref().len()
@@ -393,7 +505,9 @@ impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Seek<Item> for ReadCursor<
     }
 }
 
-impl<Item: Clone, Buf: AsRef<[Item]>, Dir: Direction> Pos<Item> for ReadCursor<Item, Buf, Dir> {
+impl<Word: Clone, Buf: AsRef<[Word]>, Dir: Direction> PosBackend<Word>
+    for ReadCursor<Word, Buf, Dir>
+{
     fn pos(&self) -> usize {
         self.pos
     }

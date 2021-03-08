@@ -9,14 +9,14 @@ use core::{borrow::Borrow, convert::TryInto, fmt::Debug, marker::PhantomData, op
 use num::cast::AsPrimitive;
 
 use super::{
+    backends::{
+        self, AsReadStackBackend, LookaheadBackend, MutBackend, ReadFromIterBackend,
+        ReadStackBackend, WriteBackend,
+    },
     models::{DecoderModel, EncoderModel, EntropyModel},
     AsDecoder, Code, Decode, Encode, Pos, Seek, TryCodingError,
 };
 use crate::{bit_array_from_chunks, bit_array_to_chunks_truncated, BitArray, EncodingError};
-
-use super::backends::{
-    self, Backend, ReadCursor, ReadItems, ReadLookaheadItems, WriteItems, WriteMutableItems,
-};
 
 /// Entropy coder for both encoding and decoding on a stack
 ///
@@ -239,7 +239,7 @@ impl<CompressedWord, State, Buf> Debug for AnsCoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: ReadItems<CompressedWord>,
+    Buf: ReadStackBackend<CompressedWord>,
     for<'a> &'a Buf: IntoIterator<Item = &'a CompressedWord>,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -251,16 +251,16 @@ impl<'a, CompressedWord, State, Buf> From<&'a AnsCoder<CompressedWord, State, Bu
     for AnsCoder<
         CompressedWord,
         State,
-        backends::ReadCursorBackward<CompressedWord, &'a [CompressedWord]>,
+        <Buf as AsReadStackBackend<'a, CompressedWord>>::AsReadStackBackend,
     >
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: Backend<CompressedWord> + AsRef<[CompressedWord]>,
+    Buf: AsReadStackBackend<'a, CompressedWord>,
 {
     fn from(ans: &'a AnsCoder<CompressedWord, State, Buf>) -> Self {
         AnsCoder {
-            buf: backends::ReadCursorBackward::new(ans.buf().as_ref()),
+            buf: ans.buf().as_read_stack_backend(),
             state: ans.state(),
             phantom: PhantomData,
         }
@@ -272,45 +272,9 @@ impl<'a, CompressedWord, State, Buf, const PRECISION: usize> AsDecoder<'a, PRECI
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: Backend<CompressedWord> + AsRef<[CompressedWord]> + 'a,
+    Buf: AsReadStackBackend<'a, CompressedWord>,
 {
-    type AsDecoder = AnsCoder<
-        CompressedWord,
-        State,
-        backends::ReadCursorBackward<CompressedWord, &'a [CompressedWord]>,
-    >;
-}
-
-impl<'a, CompressedWord, State, Buf, Dir>
-    From<&'a AnsCoder<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>>
-    for AnsCoder<CompressedWord, State, ReadCursor<CompressedWord, &'a [CompressedWord], Dir>>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: AsRef<[CompressedWord]>,
-    Dir: backends::Direction,
-{
-    fn from(
-        ans: &'a AnsCoder<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>,
-    ) -> Self {
-        AnsCoder {
-            buf: ans.buf().as_view(),
-            state: ans.state(),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, CompressedWord, State, Buf, Dir, const PRECISION: usize> AsDecoder<'a, PRECISION>
-    for AnsCoder<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: AsRef<[CompressedWord]> + 'a,
-    Dir: backends::Direction,
-{
-    type AsDecoder =
-        AnsCoder<CompressedWord, State, ReadCursor<CompressedWord, &'a [CompressedWord], Dir>>;
+    type AsDecoder = AnsCoder<CompressedWord, State, Buf::AsReadStackBackend>;
 }
 
 impl<CompressedWord, State> AnsCoder<CompressedWord, State, Vec<CompressedWord>>
@@ -372,9 +336,9 @@ where
 
     pub fn with_buf_and_state(buf: Buf, state: State) -> Result<Self, ()>
     where
-        Buf: ReadLookaheadItems<CompressedWord>,
+        Buf: LookaheadBackend<CompressedWord>,
     {
-        if buf.is_at_end() || state >= State::one() << (State::BITS - CompressedWord::BITS) {
+        if buf.is_empty() || state >= State::one() << (State::BITS - CompressedWord::BITS) {
             Ok(Self {
                 buf,
                 state,
@@ -402,17 +366,17 @@ where
     /// [`from_binary`]: #method.from_binary
     pub fn from_compressed(mut compressed: Buf) -> Result<Self, Buf>
     where
-        Buf: ReadItems<CompressedWord>,
+        Buf: ReadStackBackend<CompressedWord>,
     {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
 
-        let state = if let Some(first_word) = compressed.pop() {
+        let state = if let Some(first_word) = compressed.read() {
             if first_word == CompressedWord::zero() {
                 return Err(compressed);
             }
 
             let mut state = first_word.into();
-            while let Some(word) = compressed.pop() {
+            while let Some(word) = compressed.read() {
                 state = state << CompressedWord::BITS | word.into();
                 if state >= State::one() << (State::BITS - CompressedWord::BITS) {
                     break;
@@ -453,7 +417,7 @@ where
     /// [`from_compressed`]: #method.from_compressed
     pub fn from_binary(mut data: Buf) -> Self
     where
-        Buf: ReadItems<CompressedWord>,
+        Buf: ReadStackBackend<CompressedWord>,
     {
         // We only simulate the effect of appending a `1` to `data` because actually
         // appending a word may cause an expensive resizing of the vector `data`. This
@@ -464,7 +428,7 @@ where
         // avoidable.
         let state = bit_array_from_chunks(
             core::iter::once(CompressedWord::one())
-                .chain(core::iter::repeat_with(|| data.pop()).scan((), |(), chunk| chunk)),
+                .chain(core::iter::repeat_with(|| data.read()).scan((), |(), chunk| chunk)),
         );
 
         Self {
@@ -478,7 +442,7 @@ where
     /// [`Coder::new`](#method.new).
     pub fn clear(&mut self)
     where
-        Buf: WriteMutableItems<CompressedWord>,
+        Buf: MutBackend<CompressedWord>,
     {
         self.buf.clear();
         self.state = State::zero();
@@ -587,7 +551,7 @@ where
     /// [`into_compressed`]: #method.into_compressed
     pub fn get_compressed<'a>(&'a mut self) -> impl Deref<Target = Buf> + Debug + Drop + 'a
     where
-        Buf: ReadItems<CompressedWord> + WriteItems<CompressedWord> + Debug,
+        Buf: ReadStackBackend<CompressedWord> + WriteBackend<CompressedWord> + Debug,
     {
         CoderGuard::new(self)
     }
@@ -645,21 +609,21 @@ where
     /// [`num_bits`]: #method.num_bits
     pub fn num_words(&self) -> usize
     where
-        Buf: ReadLookaheadItems<CompressedWord>,
+        Buf: LookaheadBackend<CompressedWord>,
     {
         self.buf.amt_left() + bit_array_to_chunks_truncated::<_, CompressedWord>(self.state).len()
     }
 
     pub fn num_bits(&self) -> usize
     where
-        Buf: ReadLookaheadItems<CompressedWord>,
+        Buf: LookaheadBackend<CompressedWord>,
     {
         CompressedWord::BITS * self.num_words()
     }
 
     pub fn num_valid_bits(&self) -> usize
     where
-        Buf: ReadLookaheadItems<CompressedWord>,
+        Buf: LookaheadBackend<CompressedWord>,
     {
         CompressedWord::BITS * self.buf.amt_left()
             + core::cmp::max(State::BITS - self.state.leading_zeros() as usize, 1)
@@ -782,18 +746,18 @@ where
     }
 }
 
-impl<CompressedWord, State, Iter> AnsCoder<CompressedWord, State, backends::ReadFromIter<Iter>>
+impl<CompressedWord, State, Iter> AnsCoder<CompressedWord, State, ReadFromIterBackend<Iter>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
     Iter: Iterator<Item = CompressedWord>,
 {
     pub fn from_reversed_compressed_iter(compressed: Iter) -> Result<Self, ()> {
-        Self::from_compressed(backends::ReadFromIter::new(compressed)).map_err(|_| ())
+        Self::from_compressed(ReadFromIterBackend::new(compressed)).map_err(|_| ())
     }
 
     pub fn from_reversed_binary_iter(data: Iter) -> Self {
-        Self::from_binary(backends::ReadFromIter::new(data))
+        Self::from_binary(ReadFromIterBackend::new(data))
     }
 }
 
@@ -801,11 +765,11 @@ impl<CompressedWord, State, Buf> AnsCoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: WriteItems<CompressedWord>,
+    Buf: WriteBackend<CompressedWord>,
 {
     #[inline(always)]
     pub(crate) fn flush_state(&mut self) {
-        self.buf.push(self.state.as_());
+        self.buf.write(self.state.as_());
         self.state = self.state >> CompressedWord::BITS;
     }
 
@@ -979,7 +943,7 @@ where
 }
 
 impl<CompressedWord, State, Buf, Dir>
-    AnsCoder<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir>>
+    AnsCoder<CompressedWord, State, backends::ReadCursor<CompressedWord, Buf, Dir>>
 where
     CompressedWord: BitArray,
     State: BitArray + AsPrimitive<CompressedWord> + From<CompressedWord>,
@@ -988,7 +952,7 @@ where
 {
     pub fn into_reversed(
         self,
-    ) -> AnsCoder<CompressedWord, State, ReadCursor<CompressedWord, Buf, Dir::Reverse>> {
+    ) -> AnsCoder<CompressedWord, State, backends::ReadCursor<CompressedWord, Buf, Dir::Reverse>> {
         let (buf, state) = self.into_buf_and_state();
         let buf = buf.into_reversed();
         AnsCoder {
@@ -1003,7 +967,6 @@ impl<CompressedWord, State, Buf> Code for AnsCoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: Backend<CompressedWord>,
 {
     type CompressedWord = CompressedWord;
     type State = State;
@@ -1022,7 +985,7 @@ impl<CompressedWord, State, Buf, const PRECISION: usize> Encode<PRECISION>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: WriteItems<CompressedWord>,
+    Buf: WriteBackend<CompressedWord>,
 {
     /// Encodes a single symbol and appends it to the compressed data.
     ///
@@ -1076,7 +1039,7 @@ impl<CompressedWord, State, Buf> AnsCoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: ReadItems<CompressedWord>,
+    Buf: ReadStackBackend<CompressedWord>,
 {
     /// Checks the invariant on `self.state` and restores it if necessary and possible.
     ///
@@ -1105,7 +1068,7 @@ where
     /// `Err(())` if no compressed word was available.
     #[inline(always)]
     pub(crate) fn try_refill_state(&mut self) -> Result<(), ()> {
-        self.state = (self.state << CompressedWord::BITS) | self.buf.pop().ok_or(())?.into();
+        self.state = (self.state << CompressedWord::BITS) | self.buf.read().ok_or(())?.into();
         Ok(())
     }
 }
@@ -1115,7 +1078,7 @@ impl<CompressedWord, State, Buf, const PRECISION: usize> Decode<PRECISION>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: ReadItems<CompressedWord>,
+    Buf: ReadStackBackend<CompressedWord>,
 {
     /// ANS coding is surjective, and we (deliberately) allow decoding past EOF (in a
     /// deterministic way) for consistency. Therefore, decoding cannot fail.
@@ -1157,7 +1120,7 @@ impl<CompressedWord, State, Buf> Seek for AnsCoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: backends::Seek<CompressedWord>,
+    Buf: backends::SeekBackend<CompressedWord>,
 {
     fn seek(&mut self, (pos, state): (usize, Self::State)) -> Result<(), ()> {
         let must_be_end = state < State::one() << (State::BITS - CompressedWord::BITS);
@@ -1171,7 +1134,7 @@ impl<CompressedWord, State, Buf> Pos for AnsCoder<CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: backends::Pos<CompressedWord>,
+    Buf: backends::PosBackend<CompressedWord>,
 {
     fn pos(&self) -> usize {
         self.buf.pos()
@@ -1189,7 +1152,7 @@ struct CoderGuard<'a, CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
+    Buf: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord>,
 {
     inner: &'a mut AnsCoder<CompressedWord, State, Buf>,
 }
@@ -1198,12 +1161,12 @@ impl<'a, CompressedWord, State, Buf> CoderGuard<'a, CompressedWord, State, Buf>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
+    Buf: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord>,
 {
     fn new(ans: &'a mut AnsCoder<CompressedWord, State, Buf>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         for chunk in bit_array_to_chunks_truncated(ans.state).rev() {
-            ans.buf.push(chunk)
+            ans.buf.write(chunk)
         }
 
         Self { inner: ans }
@@ -1214,12 +1177,12 @@ impl<'a, CompressedWord, State, Buf> Drop for CoderGuard<'a, CompressedWord, Sta
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
+    Buf: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord>,
 {
     fn drop(&mut self) {
         // Revert what we did in `Self::new`.
         for _ in bit_array_to_chunks_truncated::<_, CompressedWord>(self.inner.state) {
-            self.inner.buf.pop();
+            self.inner.buf.read();
         }
     }
 }
@@ -1228,7 +1191,7 @@ impl<'a, CompressedWord, State, Buf> Deref for CoderGuard<'a, CompressedWord, St
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord>,
+    Buf: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord>,
 {
     type Target = Buf;
 
@@ -1241,7 +1204,7 @@ impl<CompressedWord, State, Buf> Debug for CoderGuard<'_, CompressedWord, State,
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Buf: WriteItems<CompressedWord> + ReadItems<CompressedWord> + Debug,
+    Buf: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord> + Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Debug::fmt(&**self, f)
