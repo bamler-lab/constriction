@@ -10,8 +10,8 @@ use num::cast::AsPrimitive;
 
 use super::{
     backends::{
-        self, AsReadStackBackend, LookaheadBackend, MutBackend, ReadFromIterBackend,
-        ReadStackBackend, WriteBackend,
+        self, AsReadBackend, AsSeekReadBackend, BoundedReadBackend, Cursor, IntoSeekReadBackend,
+        IteratorBackend, ReadBackend, ReverseReads, Stack, WriteBackend,
     },
     models::{DecoderModel, EncoderModel, EntropyModel},
     AsDecoder, Code, Decode, Encode, Pos, Seek, TryCodingError,
@@ -205,7 +205,7 @@ where
     state: State,
 
     /// We keep track of the `CompressedWord` type so that we can statically enforce
-    /// the invariant for `state`.
+    /// the invariant `CompressedWord: Into<State>`.
     phantom: PhantomData<CompressedWord>,
 }
 
@@ -233,13 +233,12 @@ pub type DefaultAnsCoder<Backend = Vec<u32>> = AnsCoder<u32, u64, Backend>;
 /// [`DefaultEncoderHashLookupTable`]: super::models::lookup::DefaultEncoderHashLookupTable
 /// [`DefaultDecoderIndexLookupTable`]: super::models::lookup::DefaultDecoderIndexLookupTable
 /// [`DefaultDecoderGenericLookupTable`]: super::models::lookup::DefaultDecoderGenericLookupTable
-pub type SmallAnsCoder = AnsCoder<u16, u32>;
+pub type SmallAnsCoder<Backend = Vec<u16>> = AnsCoder<u16, u32, Backend>;
 
 impl<CompressedWord, State, Backend> Debug for AnsCoder<CompressedWord, State, Backend>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: ReadStackBackend<CompressedWord>,
     for<'a> &'a Backend: IntoIterator<Item = &'a CompressedWord>,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -251,16 +250,16 @@ impl<'a, CompressedWord, State, Backend> From<&'a AnsCoder<CompressedWord, State
     for AnsCoder<
         CompressedWord,
         State,
-        <Backend as AsReadStackBackend<'a, CompressedWord>>::AsReadStackBackend,
+        <Backend as AsReadBackend<'a, CompressedWord, Stack>>::AsReadBackend,
     >
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: AsReadStackBackend<'a, CompressedWord>,
+    Backend: AsReadBackend<'a, CompressedWord, Stack>,
 {
     fn from(ans: &'a AnsCoder<CompressedWord, State, Backend>) -> Self {
         AnsCoder {
-            bulk: ans.bulk().as_read_stack_backend(),
+            bulk: ans.bulk().as_read_backend(),
             state: ans.state(),
             phantom: PhantomData,
         }
@@ -272,9 +271,9 @@ impl<'a, CompressedWord, State, Backend, const PRECISION: usize> AsDecoder<'a, P
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: AsReadStackBackend<'a, CompressedWord>,
+    Backend: AsReadBackend<'a, CompressedWord, Stack>,
 {
-    type AsDecoder = AnsCoder<CompressedWord, State, Backend::AsReadStackBackend>;
+    type AsDecoder = AnsCoder<CompressedWord, State, Backend::AsReadBackend>;
 }
 
 impl<CompressedWord, State> AnsCoder<CompressedWord, State, Vec<CompressedWord>>
@@ -296,6 +295,12 @@ where
     /// // Finally, get the compressed data.
     /// let compressed = ans.into_compressed();
     /// ```
+    ///
+    /// # Generality
+    ///
+    /// To avoid type parameters in common use cases, `new` is only implemented for
+    /// `AnsCoder`s with a `Vec` backend. To create an empty coder with a different backend,
+    /// call [`Default::default`] instead.
     pub fn new() -> Self {
         Self::default()
     }
@@ -334,18 +339,11 @@ where
         }
     }
 
-    pub fn from_raw_parts(bulk: Backend, state: State) -> Result<Self, ()>
-    where
-        Backend: LookaheadBackend<CompressedWord>,
-    {
-        if bulk.is_empty() || state >= State::one() << (State::BITS - CompressedWord::BITS) {
-            Ok(Self {
-                bulk,
-                state,
-                phantom: PhantomData,
-            })
-        } else {
-            Err(())
+    pub unsafe fn from_raw_parts(bulk: Backend, state: State) -> Self {
+        Self {
+            bulk,
+            state,
+            phantom: PhantomData,
         }
     }
 
@@ -366,7 +364,7 @@ where
     /// [`from_binary`]: #method.from_binary
     pub fn from_compressed(mut compressed: Backend) -> Result<Self, Backend>
     where
-        Backend: ReadStackBackend<CompressedWord>,
+        Backend: ReadBackend<CompressedWord, Stack>,
     {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
 
@@ -417,18 +415,10 @@ where
     /// [`from_compressed`]: #method.from_compressed
     pub fn from_binary(mut data: Backend) -> Self
     where
-        Backend: ReadStackBackend<CompressedWord>,
+        Backend: ReadBackend<CompressedWord, Stack>,
     {
-        // We only simulate the effect of appending a `1` to `data` because actually
-        // appending a word may cause an expensive resizing of the vector `data`. This
-        // resizing is both likely to happen and likely to be unnecessary: `data` may be
-        // explicitly copied out from some larger buffer, in which case its capacity will
-        // likely match its size, so appending a single word would cause a resize. Further,
-        // the `AnsCoder` may be intended for decoding, and so the resizing is completely
-        // avoidable.
         let state = bit_array_from_chunks(
-            core::iter::once(CompressedWord::one())
-                .chain(core::iter::repeat_with(|| data.read()).scan((), |(), chunk| chunk)),
+            core::iter::once(CompressedWord::one()).chain(core::iter::from_fn(|| data.read())),
         );
 
         Self {
@@ -436,16 +426,6 @@ where
             state,
             phantom: PhantomData,
         }
-    }
-
-    /// Discards all compressed data and resets the coder to the same state as
-    /// [`Coder::new`](#method.new).
-    pub fn clear(&mut self)
-    where
-        Backend: MutBackend<CompressedWord>,
-    {
-        self.bulk.clear();
-        self.state = State::zero();
     }
 
     pub fn bulk(&self) -> &Backend {
@@ -551,7 +531,7 @@ where
     /// [`into_compressed`]: #method.into_compressed
     pub fn get_compressed<'a>(&'a mut self) -> impl Deref<Target = Backend> + Debug + Drop + 'a
     where
-        Backend: ReadStackBackend<CompressedWord> + WriteBackend<CompressedWord> + Debug,
+        Backend: ReadBackend<CompressedWord, Stack> + WriteBackend<CompressedWord> + Debug,
     {
         CoderGuard::new(self)
     }
@@ -609,23 +589,23 @@ where
     /// [`num_bits`]: #method.num_bits
     pub fn num_words(&self) -> usize
     where
-        Backend: LookaheadBackend<CompressedWord>,
+        Backend: BoundedReadBackend<CompressedWord, Stack>,
     {
-        self.bulk.amt_left() + bit_array_to_chunks_truncated::<_, CompressedWord>(self.state).len()
+        self.bulk.remaining() + bit_array_to_chunks_truncated::<_, CompressedWord>(self.state).len()
     }
 
     pub fn num_bits(&self) -> usize
     where
-        Backend: LookaheadBackend<CompressedWord>,
+        Backend: BoundedReadBackend<CompressedWord, Stack>,
     {
         CompressedWord::BITS * self.num_words()
     }
 
     pub fn num_valid_bits(&self) -> usize
     where
-        Backend: LookaheadBackend<CompressedWord>,
+        Backend: BoundedReadBackend<CompressedWord, Stack>,
     {
-        CompressedWord::BITS * self.bulk.amt_left()
+        CompressedWord::BITS * self.bulk.remaining()
             + core::cmp::max(State::BITS - self.state.leading_zeros() as usize, 1)
             - 1
     }
@@ -645,23 +625,21 @@ where
     ///
     /// # Limitations
     ///
+    /// TODO: this text is outdated.
+    ///
     /// This method is only implemented for `AnsCoder`s whose backing store of compressed
     /// data (`Backend`) implements `AsRef<[CompressedWord]>`. This includes the default
     /// backing data store `Backend = Vec<CompressedWord>`.
     ///
     /// [`into_seekable_decoder`]: Self::into_seekable_decoder
-    pub fn seekable_decoder(
-        &self,
-    ) -> AnsCoder<
-        CompressedWord,
-        State,
-        backends::ReadCursorBackward<CompressedWord, &[CompressedWord]>,
-    >
+    pub fn seekable_decoder<'a>(
+        &'a self,
+    ) -> AnsCoder<CompressedWord, State, Backend::AsSeekReadBackend>
     where
-        Backend: AsRef<[CompressedWord]>,
+        Backend: AsSeekReadBackend<'a, CompressedWord, Stack>,
     {
         AnsCoder {
-            bulk: backends::ReadCursorBackward::new(self.bulk.as_ref()),
+            bulk: self.bulk.as_seek_read_backend(),
             state: self.state,
             phantom: PhantomData,
         }
@@ -676,12 +654,12 @@ where
     /// [`seekable_decoder`]: Self::seekable_decoder
     pub fn into_seekable_decoder(
         self,
-    ) -> AnsCoder<CompressedWord, State, backends::ReadCursorBackward<CompressedWord, Backend>>
+    ) -> AnsCoder<CompressedWord, State, Backend::IntoSeekReadBackend>
     where
-        Backend: AsRef<[CompressedWord]>,
+        Backend: IntoSeekReadBackend<CompressedWord, Stack>,
     {
         AnsCoder {
-            bulk: backends::ReadCursorBackward::new(self.bulk),
+            bulk: self.bulk.into_seek_read_backend(),
             state: self.state,
             phantom: PhantomData,
         }
@@ -711,53 +689,61 @@ where
     }
 }
 
-impl<'bulk, CompressedWord, State>
-    AnsCoder<
-        CompressedWord,
-        State,
-        backends::ReadCursorBackward<CompressedWord, &'bulk [CompressedWord]>,
-    >
+impl<CompressedWord, State> AnsCoder<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    /// Discards all compressed data and resets the coder to the same state as
+    /// [`Coder::new`](#method.new).
+    pub fn clear(&mut self) {
+        self.bulk.clear();
+        self.state = State::zero();
+    }
+}
+
+impl<'bulk, CompressedWord, State> AnsCoder<CompressedWord, State, Cursor<&'bulk [CompressedWord]>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
     pub fn from_compressed_slice(compressed: &'bulk [CompressedWord]) -> Result<Self, ()> {
-        Self::from_compressed(backends::ReadCursorBackward::new(compressed)).map_err(|_| ())
+        Self::from_compressed(backends::Cursor::new_at_write_end(compressed)).map_err(|_| ())
     }
 
     pub fn from_binary_slice(data: &'bulk [CompressedWord]) -> Self {
-        Self::from_binary(backends::ReadCursorBackward::new(data))
+        Self::from_binary(backends::Cursor::new_at_write_end(data))
     }
 }
 
-impl<CompressedWord, State, Backend>
-    AnsCoder<CompressedWord, State, backends::ReadCursorForward<CompressedWord, Backend>>
+impl<CompressedWord, State, Buf> AnsCoder<CompressedWord, State, ReverseReads<Cursor<Buf>>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: AsRef<[CompressedWord]>,
+    Buf: AsRef<[CompressedWord]>,
 {
-    pub fn from_reversed_compressed(compressed: Backend) -> Result<Self, ()> {
-        Self::from_compressed(backends::ReadCursorForward::new(compressed)).map_err(|_| ())
+    pub fn from_reversed_compressed(compressed: Buf) -> Result<Self, Buf> {
+        Self::from_compressed(ReverseReads(Cursor::new_at_write_beginning(compressed)))
+            .map_err(|ReverseReads(cursor)| cursor.into_buf_and_pos().0)
     }
 
-    pub fn from_reversed_binary(data: Backend) -> Self {
-        Self::from_binary(backends::ReadCursorForward::new(data))
+    pub fn from_reversed_binary(data: Buf) -> Self {
+        Self::from_binary(ReverseReads(Cursor::new_at_write_beginning(data)))
     }
 }
 
-impl<CompressedWord, State, Iter> AnsCoder<CompressedWord, State, ReadFromIterBackend<Iter>>
+impl<CompressedWord, State, Iter> AnsCoder<CompressedWord, State, IteratorBackend<Iter>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
     Iter: Iterator<Item = CompressedWord>,
 {
     pub fn from_reversed_compressed_iter(compressed: Iter) -> Result<Self, ()> {
-        Self::from_compressed(ReadFromIterBackend::new(compressed)).map_err(|_| ())
+        Self::from_compressed(IteratorBackend::new(compressed)).map_err(|_| ())
     }
 
     pub fn from_reversed_binary_iter(data: Iter) -> Self {
-        Self::from_binary(ReadFromIterBackend::new(data))
+        Self::from_binary(IteratorBackend::new(data))
     }
 }
 
@@ -924,6 +910,7 @@ where
     }
 }
 
+/// TODO: check if this can be made generic over the backend
 impl<CompressedWord, State> AnsCoder<CompressedWord, State, Vec<CompressedWord>>
 where
     CompressedWord: BitArray + Into<State>,
@@ -942,22 +929,32 @@ where
     }
 }
 
-impl<CompressedWord, State, Backend, Dir>
-    AnsCoder<CompressedWord, State, backends::ReadCursor<CompressedWord, Backend, Dir>>
+impl<CompressedWord, State, Buf> AnsCoder<CompressedWord, State, Cursor<Buf>>
 where
     CompressedWord: BitArray,
     State: BitArray + AsPrimitive<CompressedWord> + From<CompressedWord>,
-    Backend: AsRef<[CompressedWord]> + AsMut<[CompressedWord]>,
-    Dir: backends::Direction,
+    Buf: AsRef<[CompressedWord]> + AsMut<[CompressedWord]>,
 {
-    pub fn into_reversed(
-        self,
-    ) -> AnsCoder<CompressedWord, State, backends::ReadCursor<CompressedWord, Backend, Dir::Reverse>>
-    {
+    pub fn into_reversed(self) -> AnsCoder<CompressedWord, State, ReverseReads<Cursor<Buf>>> {
         let (bulk, state) = self.into_raw_parts();
-        let bulk = bulk.into_reversed();
         AnsCoder {
-            bulk: bulk,
+            bulk: bulk.into_reversed(),
+            state,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<CompressedWord, State, Buf> AnsCoder<CompressedWord, State, ReverseReads<Cursor<Buf>>>
+where
+    CompressedWord: BitArray,
+    State: BitArray + AsPrimitive<CompressedWord> + From<CompressedWord>,
+    Buf: AsRef<[CompressedWord]> + AsMut<[CompressedWord]>,
+{
+    pub fn into_reversed(self) -> AnsCoder<CompressedWord, State, Cursor<Buf>> {
+        let (bulk, state) = self.into_raw_parts();
+        AnsCoder {
+            bulk: bulk.into_reversed(),
             state,
             phantom: PhantomData,
         }
@@ -1040,7 +1037,7 @@ impl<CompressedWord, State, Backend> AnsCoder<CompressedWord, State, Backend>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: ReadStackBackend<CompressedWord>,
+    Backend: ReadBackend<CompressedWord, Stack>,
 {
     /// Checks the invariant on `self.state` and restores it if necessary and possible.
     ///
@@ -1079,7 +1076,7 @@ impl<CompressedWord, State, Backend, const PRECISION: usize> Decode<PRECISION>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: ReadStackBackend<CompressedWord>,
+    Backend: ReadBackend<CompressedWord, Stack>,
 {
     /// ANS coding is surjective, and we (deliberately) allow decoding past EOF (in a
     /// deterministic way) for consistency. Therefore, decoding cannot fail.
@@ -1124,8 +1121,7 @@ where
     Backend: backends::SeekBackend<CompressedWord>,
 {
     fn seek(&mut self, (pos, state): (usize, Self::State)) -> Result<(), ()> {
-        let must_be_end = state < State::one() << (State::BITS - CompressedWord::BITS);
-        self.bulk.seek(pos, must_be_end)?;
+        self.bulk.seek(pos)?;
         self.state = state;
         Ok(())
     }
@@ -1153,7 +1149,7 @@ struct CoderGuard<'a, CompressedWord, State, Backend>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord>,
+    Backend: WriteBackend<CompressedWord> + ReadBackend<CompressedWord, Stack>,
 {
     inner: &'a mut AnsCoder<CompressedWord, State, Backend>,
 }
@@ -1162,7 +1158,7 @@ impl<'a, CompressedWord, State, Backend> CoderGuard<'a, CompressedWord, State, B
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord>,
+    Backend: WriteBackend<CompressedWord> + ReadBackend<CompressedWord, Stack>,
 {
     fn new(ans: &'a mut AnsCoder<CompressedWord, State, Backend>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
@@ -1178,7 +1174,7 @@ impl<'a, CompressedWord, State, Backend> Drop for CoderGuard<'a, CompressedWord,
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord>,
+    Backend: WriteBackend<CompressedWord> + ReadBackend<CompressedWord, Stack>,
 {
     fn drop(&mut self) {
         // Revert what we did in `Self::new`.
@@ -1192,7 +1188,7 @@ impl<'a, CompressedWord, State, Backend> Deref for CoderGuard<'a, CompressedWord
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord>,
+    Backend: WriteBackend<CompressedWord> + ReadBackend<CompressedWord, Stack>,
 {
     type Target = Backend;
 
@@ -1205,7 +1201,7 @@ impl<CompressedWord, State, Backend> Debug for CoderGuard<'_, CompressedWord, St
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: WriteBackend<CompressedWord> + ReadStackBackend<CompressedWord> + Debug,
+    Backend: WriteBackend<CompressedWord> + ReadBackend<CompressedWord, Stack> + Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Debug::fmt(&**self, f)
@@ -1493,8 +1489,7 @@ mod tests {
         let initial_pos = compressed.len() - initial_pos;
 
         {
-            let mut seekable_decoder =
-                AnsCoder::from_compressed(backends::ReadCursorForward::new(compressed)).unwrap();
+            let mut seekable_decoder = AnsCoder::from_reversed_compressed(compressed).unwrap();
 
             // Verify that decoding leads to the expected positions and states.
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {

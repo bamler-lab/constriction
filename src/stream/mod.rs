@@ -38,7 +38,9 @@
 //!
 //! # Highly Customizable Implementations With Sane Defaults
 //!
-//! TODO: define term "word".
+//! TODO:
+//! - define term "word".
+//! - rename `CompressedWord` to `Word` crate wide
 //!
 //! # Comparison of the Implemented Algorithms
 //!
@@ -536,7 +538,7 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
 /// encode_decode_encode(&mut encoder, model);
 /// ```
-pub trait AsDecoder<'a, const PRECISION: usize>: Code + Sized + 'a {
+pub trait AsDecoder<'a, const PRECISION: usize>: Code + 'a {
     /// The target type of the conversion.
     ///
     /// This is the important part of the `AsDecoder` trait. The actual conversion in
@@ -694,8 +696,7 @@ pub trait Seek: Code {
     ///
     /// ```
     /// use constriction::stream::{
-    ///     backends::ReadCursorForward, models::LeakyQuantizer, stack::{DefaultAnsCoder, AnsCoder},
-    ///     Decode, Pos, Seek
+    ///     models::LeakyQuantizer, stack::{DefaultAnsCoder, AnsCoder}, Decode, Pos, Seek
     /// };
     ///
     /// // Construct a `DefaultAnsCoder` for encoding and an entropy model:
@@ -712,7 +713,7 @@ pub trait Seek: Code {
     /// let mut compressed = encoder.into_compressed();
     /// compressed.reverse();
     /// snapshot_pos = compressed.len() - snapshot_pos; // <-- Adjusts the snapshot position.
-    /// let mut decoder = AnsCoder::from_compressed(ReadCursorForward::new(compressed)).unwrap();
+    /// let mut decoder = AnsCoder::from_reversed_compressed(compressed).unwrap();
     ///
     /// // Since we chose to encode onto a stack, decoding yields the last encoded chunk first:
     /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 50);
@@ -728,7 +729,7 @@ pub trait Seek: Code {
     fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()>;
 }
 
-#[allow(missing_debug_implementations)] // Any useful debug output would have to mutate the decoder.
+#[derive(Debug)]
 pub struct DecodeSymbols<'a, Decoder: ?Sized, I, const PRECISION: usize> {
     decoder: &'a mut Decoder,
     models: I,

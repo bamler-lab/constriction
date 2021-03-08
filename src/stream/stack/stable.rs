@@ -73,8 +73,11 @@ where
         let prefix = AnsCoder::from_binary(buf);
         let (supply_buf, waste_state) = prefix.into_raw_parts();
 
-        let supply = AnsCoder::from_raw_parts(supply_buf, supply_state)
-            .expect("`ans` had non-empty `buf`, so its state satisfies invariant.");
+        let supply = unsafe {
+            // SAFETY: `ans` had non-empty `buf`, so its state satisfies invariant.
+            AnsCoder::from_raw_parts(supply_buf, supply_state)
+        };
+
         let mut waste = AnsCoder::with_state_and_empty_bulk(waste_state);
         if PRECISION == CompressedWord::BITS {
             waste.flush_state();
@@ -164,16 +167,19 @@ where
 
     pub fn finish(self) -> (Vec<CompressedWord>, AnsCoder<CompressedWord, State>) {
         let (prefix, supply_state) = self.0.supply.into_raw_parts();
-        let suffix = AnsCoder::from_raw_parts(self.0.waste.into_compressed(), supply_state)
-            .expect("`stable::Decoder` always reserves enough `supply.state`.");
+        let suffix = unsafe {
+            // SAFETY: `stable::Decoder` always reserves enough `supply.state`.
+            AnsCoder::from_raw_parts(self.0.waste.into_compressed(), supply_state)
+        };
 
         (prefix, suffix)
     }
 
     pub fn finish_and_concatenate(self) -> AnsCoder<CompressedWord, State> {
-        let ans = concatenate(self.finish())
-            .expect("`stable::Decoder` always reserves enough `supply.state`.");
-        ans
+        unsafe {
+            // UNSAFE: `stable::Decoder` always reserves enough `supply.state`.
+            concatenate(self.finish())
+        }
     }
 
     pub fn supply(&self) -> &AnsCoder<CompressedWord, State> {
@@ -217,6 +223,7 @@ where
     }
 }
 
+/// TODO: check if this can be made generic over the backend
 impl<CompressedWord, State, const PRECISION: usize> From<Decoder<CompressedWord, State, PRECISION>>
     for AnsCoder<CompressedWord, State>
 where
@@ -384,16 +391,19 @@ where
             waste_state = waste_state >> CompressedWord::BITS;
         }
 
-        let suffix = AnsCoder::from_raw_parts(buf, state)
-            .expect("`stable::Encoder` always reserves enough `supply.state`.");
+        let suffix = unsafe {
+            // SAFETY: `stable::Encoder` always reserves enough `supply.state`.
+            AnsCoder::from_raw_parts(buf, state)
+        };
 
         Ok((prefix, suffix))
     }
 
     pub fn finish_and_concatenate(self) -> Result<AnsCoder<CompressedWord, State>, Self> {
-        let ans = concatenate(self.finish()?)
-            .expect("`stable::Encoder` always reserves enough `supply.state`.");
-        Ok(ans)
+        unsafe {
+            // UNSAFE: `stable::Encoder` always reserves enough `supply.state`.
+            Ok(concatenate(self.finish()?))
+        }
     }
 
     pub fn supply(&self) -> &AnsCoder<CompressedWord, State> {
@@ -437,6 +447,7 @@ where
     }
 }
 
+/// TODO: check if this can be made generic over the backend
 impl<CompressedWord, State, const PRECISION: usize>
     TryFrom<Encoder<CompressedWord, State, PRECISION>> for AnsCoder<CompressedWord, State>
 where
@@ -772,9 +783,9 @@ where
     }
 }
 
-fn concatenate<CompressedWord, State>(
+unsafe fn concatenate<CompressedWord, State>(
     (mut prefix, suffix): (Vec<CompressedWord>, AnsCoder<CompressedWord, State>),
-) -> Result<AnsCoder<CompressedWord, State>, ()>
+) -> AnsCoder<CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
