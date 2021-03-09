@@ -116,7 +116,7 @@
 //!     )).unwrap();
 //!
 //!     // Retrieve the compressed representation (filling it up to full words with zero bits).
-//!     coder.into_compressed()
+//!     coder.into_compressed().unwrap()
 //! }
 //!
 //! assert_eq!(encode_sample_data(), [0x421C_7EC3, 0x000B_8ED1]);
@@ -208,12 +208,12 @@
 //!     )).unwrap();
 //!
 //!     // Retrieve the (sealed up) compressed representation.
-//!     encoder.into_compressed()
+//!     encoder.into_compressed().unwrap()
 //! }
 //!
 //! fn decode_sample_data(compressed: Vec<u32>) -> Vec<i32> {
 //!     // Create a Range Decoder with default word and state size from the compressed data:
-//!     let mut decoder = DefaultRangeDecoder::from_compressed(compressed);
+//!     let mut decoder = DefaultRangeDecoder::from_compressed(compressed).unwrap();
 //!
 //!     // Same entropy models and quantizer we used for encoding:
 //!     let means = [35.2, -1.7, 30.1, 71.2, -75.1];
@@ -255,13 +255,19 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+#[cfg(feature = "std")]
+use std::error::Error;
+
 #[cfg(feature = "pybindings")]
 mod pybindings;
 
 pub mod stream;
 pub mod symbol;
 
-use core::fmt::{Binary, Debug, LowerHex, UpperHex};
+use core::{
+    convert::Infallible,
+    fmt::{Binary, Debug, Display, LowerHex, UpperHex},
+};
 
 use num::{
     cast::AsPrimitive,
@@ -285,6 +291,58 @@ pub enum EncodingError<WriteError> {
     ImpossibleSymbol,
 
     WriteError(WriteError),
+}
+
+impl<WriteError: Display> Display for EncodingError<WriteError> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ImpossibleSymbol => write!(
+                f,
+                "Tried to encode symbol that has zero probability under the used entropy model."
+            ),
+            Self::WriteError(err) => {
+                write!(f, "Error while writing compressed data: {}", err)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<WriteError: Error> Error for EncodingError<WriteError> {}
+
+impl<WriteError> From<WriteError> for EncodingError<WriteError> {
+    fn from(write_error: WriteError) -> Self {
+        Self::WriteError(write_error)
+    }
+}
+
+/// TODO: rename into `CoderError<FrontendError, BackendError>`, and use it for both
+/// encodand decoding. (Force encoders to use a common `FrontendError`, which only has the
+/// variant `InvalidSymbol`.)
+#[derive(Debug)]
+pub enum DecodingError<ReadError, DataError> {
+    ReadError(ReadError),
+    DataError(DataError),
+}
+
+impl<ReadError: Display, DataError: Display> Display for DecodingError<ReadError, DataError> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ReadError(err) => write!(f, "Error while reading compressed data: {}", err),
+            Self::DataError(err) => write!(f, "Invalid compressed data: {}", err),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<ReadError: Error, DataError: Error> Error for DecodingError<ReadError, DataError> {}
+
+impl<ReadError: Display, DataError: Display> From<ReadError>
+    for DecodingError<ReadError, DataError>
+{
+    fn from(read_error: ReadError) -> Self {
+        Self::ReadError(read_error)
+    }
 }
 
 /// A trait for bit strings of fixed (and usually small) length.
@@ -339,35 +397,10 @@ pub unsafe trait BitArray:
     }
 }
 
-/// Constructs a `BitArray` from an iterator from most significant to least
-/// significant chunks.
-///
-/// Terminates iteration as soon as either
-/// - enough chunks have been read to specify all bits; or
-/// - the provided iterator terminates; in this case, the provided chunks are used
-///   to set the lower significant end of the return value and any remaining higher
-///   significant bits are set to zero.
-///
-/// This method is the inverse of [`bit_array_to_chunks_truncated`](
-/// #method.bit_array_to_chunks_truncated).
-fn bit_array_from_chunks<Data, I>(chunks: I) -> Data
-where
-    Data: BitArray,
-    I: IntoIterator,
-    I::Item: BitArray + Into<Data>,
-{
-    let max_count = (Data::BITS + I::Item::BITS - 1) / I::Item::BITS;
-    let mut result = Data::zero();
-    for chunk in chunks.into_iter().take(max_count) {
-        result = (result << I::Item::BITS) | chunk.into();
-    }
-    result
-}
-
 /// Iterates from most significant to least significant bits in chunks but skips any
 /// initial zero chunks.
 ///
-/// This method is one possible inverse of [`bit_array_from_chunks`].
+/// TODO: is this still used anywhere?
 fn bit_array_to_chunks_truncated<Data, Chunk>(
     data: Data,
 ) -> impl Iterator<Item = Chunk> + ExactSizeIterator + DoubleEndedIterator
@@ -381,34 +414,37 @@ where
         .map(move |shift| (data >> shift).as_())
 }
 
-/// Iterates from most significant to least significant bits in chunks without
-/// skipping initial zero chunks.
-///
-/// This method is one possible inverse of [`bit_array_from_chunks`].
-///
-/// # Panics
-///
-/// Panics if `Self::BITS` is not an integer multiple of `Chunks::BITS`.
-///
-/// TODO: this will be turned into a compile time bound as soon as that's possible.
-fn bit_array_to_chunks_exact<Data, Chunk>(
-    data: Data,
-) -> impl Iterator<Item = Chunk> + ExactSizeIterator + DoubleEndedIterator
-where
-    Data: BitArray + AsPrimitive<Chunk>,
-    Chunk: BitArray,
-{
-    assert_eq!(Data::BITS % Chunk::BITS, 0);
-
-    (0..Data::BITS)
-        .step_by(Chunk::BITS)
-        .rev()
-        .map(move |shift| (data >> shift).as_())
-}
-
 unsafe impl BitArray for u8 {}
 unsafe impl BitArray for u16 {}
 unsafe impl BitArray for u32 {}
 unsafe impl BitArray for u64 {}
 unsafe impl BitArray for u128 {}
 unsafe impl BitArray for usize {}
+
+/// Private helper extension trait.
+///
+/// TODO: maybe make this public and then use it in doc tests.
+trait UnwrapInfallible<T> {
+    fn unwrap_infallible(self) -> T;
+}
+
+impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
+    fn unwrap_infallible(self) -> T {
+        match self {
+            Ok(x) => x,
+            Err(infallible) => match infallible {},
+        }
+    }
+}
+
+impl<T> UnwrapInfallible<T> for Result<T, DecodingError<Infallible, Infallible>> {
+    fn unwrap_infallible(self) -> T {
+        match self {
+            Ok(x) => x,
+            Err(infallible) => match infallible {
+                DecodingError::ReadError(infallible) => match infallible {},
+                DecodingError::DataError(infallible) => match infallible {},
+            },
+        }
+    }
+}

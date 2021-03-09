@@ -161,7 +161,7 @@ use std::error::Error;
 
 use core::{borrow::Borrow, fmt::Display};
 
-use crate::{BitArray, EncodingError};
+use crate::{BitArray, DecodingError, EncodingError};
 use models::{DecoderModel, EncoderModel, EntropyModel};
 use num::cast::AsPrimitive;
 
@@ -309,31 +309,22 @@ pub trait Encode<const PRECISION: usize>: Code {
 }
 
 pub trait Decode<const PRECISION: usize>: Code {
-    /// The error type for [`decode_symbol`].
-    ///
-    /// This is an associated type because [`decode_symbol`] is infallible for some
-    /// decoders (e.g., for a [`AnsCoder`]). These decoders set the `DecodingError`
-    /// type to [`core::convert::Infallible`] so that the compiler can optimize away
-    /// error checks.
-    ///
-    /// [`decode_symbol`]: #tymethod.decode_symbol
-    /// [`AnsCoder`]: ans.AnsCoder
     #[cfg(not(feature = "std"))]
-    type DecodingError: Debug;
+    type ReadError: Debug;
 
-    /// The error type for [`decode_symbol`].
-    ///
-    /// This is an associated type because [`decode_symbol`] is infallible for some
-    /// decoders (e.g., for a [`AnsCoder`]). These decoders set the `DecodingError`
-    /// type to [`core::convert::Infallible`] so that the compiler can optimize away
-    /// error checks.
-    ///
-    /// [`decode_symbol`]: #tymethod.decode_symbol
-    /// [`AnsCoder`]: ans.AnsCoder
     #[cfg(feature = "std")]
-    type DecodingError: Error;
+    type ReadError: Error;
 
-    fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
+    #[cfg(not(feature = "std"))]
+    type DataError: Debug;
+
+    #[cfg(feature = "std")]
+    type DataError: Error;
+
+    fn decode_symbol<D>(
+        &mut self,
+        model: D,
+    ) -> Result<D::Symbol, DecodingError<Self::ReadError, Self::DataError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -414,7 +405,7 @@ pub trait Decode<const PRECISION: usize>: Code {
         iterator: I,
         model: &'s D,
         mut callback: impl FnMut(I::Item, D::Symbol),
-    ) -> Result<(), Self::DecodingError>
+    ) -> Result<(), DecodingError<Self::ReadError, Self::DataError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -740,7 +731,7 @@ pub trait Seek: Code {
     /// encoder.encode_iid_symbols_reverse(50..101, &entropy_model).unwrap();
     ///
     /// // Obtain compressed data, reverse it, and create a decoder that reads it from front to back:
-    /// let mut compressed = encoder.into_compressed();
+    /// let mut compressed = encoder.into_compressed().unwrap();
     /// compressed.reverse();
     /// snapshot_pos = compressed.len() - snapshot_pos; // <-- Adjusts the snapshot position.
     /// let mut decoder = AnsCoder::from_reversed_compressed(compressed).unwrap();
@@ -774,7 +765,10 @@ where
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
-    type Item = Result<<I::Item as EntropyModel<PRECISION>>::Symbol, Decoder::DecodingError>;
+    type Item = Result<
+        <I::Item as EntropyModel<PRECISION>>::Symbol,
+        DecodingError<Decoder::ReadError, Decoder::DataError>,
+    >;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.models
@@ -813,7 +807,8 @@ where
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
-    type Item = Result<D::Symbol, TryCodingError<Decoder::DecodingError, E>>;
+    type Item =
+        Result<D::Symbol, TryCodingError<DecodingError<Decoder::ReadError, Decoder::DataError>, E>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.models.next().map(|model| {
@@ -855,7 +850,7 @@ where
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
-    type Item = Result<D::Symbol, Decoder::DecodingError>;
+    type Item = Result<D::Symbol, DecodingError<Decoder::ReadError, Decoder::DataError>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.amt != 0 {
@@ -895,23 +890,6 @@ pub enum TryCodingError<CodingError, ModelError> {
 
     CodingError(CodingError),
 }
-
-impl<WriteError: Display> Display for EncodingError<WriteError> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::ImpossibleSymbol => write!(
-                f,
-                "Tried to encode symbol that has zero probability under the used entropy model."
-            ),
-            Self::WriteError(write_error) => {
-                write!(f, "Cannot write compressed data: {}", write_error)
-            }
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl<WriteError: Error> Error for EncodingError<WriteError> {}
 
 impl<CodingError: Display, ModelError: Display> Display
     for TryCodingError<CodingError, ModelError>

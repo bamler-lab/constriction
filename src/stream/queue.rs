@@ -1,7 +1,16 @@
 //! TODO: mirror as much of the `stack` API as possible
 
+#[cfg(feature = "std")]
+use std::error::Error;
+
 use alloc::vec::Vec;
-use core::{borrow::Borrow, convert::Infallible, fmt::Debug, marker::PhantomData, ops::Deref};
+use core::{
+    borrow::Borrow,
+    convert::Infallible,
+    fmt::{Debug, Display},
+    marker::PhantomData,
+    ops::Deref,
+};
 
 use num::cast::AsPrimitive;
 
@@ -13,7 +22,7 @@ use super::{
     models::{DecoderModel, EncoderModel},
     Code, Decode, Encode, IntoDecoder, Pos, Seek,
 };
-use crate::{bit_array_from_chunks, bit_array_to_chunks_exact, BitArray, EncodingError};
+use crate::{BitArray, DecodingError, EncodingError, UnwrapInfallible};
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
 /// [`Decoder<CompressedWord, State>`]. Relevant for [`Seek`]ing.
@@ -64,6 +73,7 @@ impl<CompressedWord: BitArray, State: BitArray> Default for CoderState<Compresse
 ///
 /// Sketch of lazy variant:
 ///
+/// ```text
 /// struct RangeEncoder {
 ///     bulk: Backend,
 ///     state: CoderState,
@@ -102,6 +112,7 @@ impl<CompressedWord: BitArray, State: BitArray> Default for CoderState<Compresse
 ///         // don't emit word
 ///     }
 /// }
+/// ```
 pub struct RangeEncoder<CompressedWord, State, Backend = Vec<CompressedWord>>
 where
     CompressedWord: BitArray,
@@ -216,20 +227,23 @@ where
     /// and therefore doesn't require type arguments on the caller side.
     ///
     /// TODO: there should also be a `decoder()` method that takes `&mut self`
-    pub fn into_decoder(self) -> RangeDecoder<CompressedWord, State, Backend::IntoReadBackend>
+    pub fn into_decoder(
+        self,
+    ) -> Result<RangeDecoder<CompressedWord, State, Backend::IntoReadBackend>, ()>
     where
         Backend: IntoReadBackend<CompressedWord, Queue>,
     {
-        RangeDecoder::from_compressed(self.into_compressed())
+        // TODO: return proper error (or just box it up).
+        RangeDecoder::from_compressed(self.into_compressed().map_err(|_| ())?).map_err(|_| ())
     }
 
-    pub fn into_compressed(mut self) -> Backend {
+    pub fn into_compressed(mut self) -> Result<Backend, Backend::WriteError> {
         if self.state != Default::default() {
             // TODO: double check if this is the correct condition.
             let word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            self.bulk.write(word);
+            self.bulk.write(word)?;
         }
-        self.bulk
+        Ok(self.bulk)
     }
 
     pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = CompressedWord> + '_
@@ -369,7 +383,7 @@ where
     pub fn decoder<'a>(
         &'a mut self,
     ) -> RangeDecoder<CompressedWord, State, Cursor<EncoderGuard<'a, CompressedWord, State>>> {
-        RangeDecoder::<CompressedWord, State, Cursor<EncoderGuard<'a, CompressedWord, State>>>::from_compressed(self.get_compressed())
+        RangeDecoder::<CompressedWord, State, Cursor<EncoderGuard<'a, CompressedWord, State>>>::from_compressed(self.get_compressed()).unwrap_infallible()
     }
 }
 
@@ -447,6 +461,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct RangeDecoder<CompressedWord, State, Backend>
 where
     CompressedWord: BitArray,
@@ -509,7 +524,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: ReadBackend<CompressedWord, Queue>,
 {
-    pub fn from_compressed<Buf>(compressed: Buf) -> Self
+    pub fn from_compressed<Buf>(compressed: Buf) -> Result<Self, Backend::ReadError>
     where
         Buf: IntoReadBackend<CompressedWord, Queue, IntoReadBackend = Backend>,
     {
@@ -517,16 +532,16 @@ where
         assert_eq!(State::BITS % CompressedWord::BITS, 0);
 
         let mut bulk = compressed.into_read_backend();
-        let point = Self::read_point(&mut bulk);
+        let point = Self::read_point(&mut bulk)?;
 
-        RangeDecoder {
+        Ok(RangeDecoder {
             bulk,
             state: CoderState::default(),
             point,
-        }
+        })
     }
 
-    pub fn for_compressed<'a, Buf>(compressed: &'a Buf) -> Self
+    pub fn for_compressed<'a, Buf>(compressed: &'a Buf) -> Result<Self, Backend::ReadError>
     where
         Buf: AsReadBackend<'a, CompressedWord, Queue, AsReadBackend = Backend>,
     {
@@ -534,13 +549,13 @@ where
         assert_eq!(State::BITS % CompressedWord::BITS, 0);
 
         let mut bulk = compressed.as_read_backend();
-        let point = Self::read_point(&mut bulk);
+        let point = Self::read_point(&mut bulk)?;
 
-        RangeDecoder {
+        Ok(RangeDecoder {
             bulk,
             state: CoderState::default(),
             point,
-        }
+        })
     }
 
     pub fn from_raw_parts(
@@ -557,10 +572,12 @@ where
         (self.bulk, self.state)
     }
 
-    fn read_point<B: ReadBackend<CompressedWord, Queue>>(bulk: &mut B) -> State {
+    fn read_point<B: ReadBackend<CompressedWord, Queue>>(
+        bulk: &mut B,
+    ) -> Result<State, B::ReadError> {
         let mut num_read = 0;
         let mut point = State::zero();
-        while let Some(word) = bulk.read() {
+        while let Some(word) = bulk.read()? {
             point = point << CompressedWord::BITS | word.into();
             num_read += 1;
             if num_read == State::BITS / CompressedWord::BITS {
@@ -581,7 +598,7 @@ where
             // `PosBackend` consistent with its implementation for the encoder?
         }
 
-        point
+        Ok(point)
     }
 }
 
@@ -628,7 +645,7 @@ where
         let (pos, state) = pos_and_state;
 
         self.bulk.seek(pos)?;
-        self.point = Self::read_point(&mut self.bulk);
+        self.point = Self::read_point(&mut self.bulk).map_err(|_| ())?;
         self.state = state;
 
         // TODO: deal with positions very close to end.
@@ -645,7 +662,10 @@ where
     Backend: WriteBackend<CompressedWord> + IntoReadBackend<CompressedWord, Queue>,
 {
     fn from(encoder: RangeEncoder<CompressedWord, State, Backend>) -> Self {
-        encoder.into_decoder()
+        // TODO: implement a `try_into_decoder` or something instead. Or specialize this
+        // method to the case where both read and write error are Infallible, which is
+        // probably the only place where this will be used anyway.
+        encoder.into_decoder().unwrap()
     }
 }
 
@@ -669,7 +689,9 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: ReadBackend<CompressedWord, Queue>,
 {
-    type DecodingError = DecodingError;
+    type DataError = DataError;
+
+    type ReadError = Backend::ReadError;
 
     /// Decodes a single symbol and pops it off the compressed data.
     ///
@@ -686,7 +708,10 @@ where
     /// recover any previously encoded data and will generally have low entropy.
     /// Still, being able to pop off an arbitrary number of symbols can sometimes be
     /// useful in edge cases of, e.g., the bits-back algorithm.
-    fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
+    fn decode_symbol<D>(
+        &mut self,
+        model: D,
+    ) -> Result<D::Symbol, DecodingError<Self::ReadError, Self::DataError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -703,7 +728,7 @@ where
             // (i) we are decoding invalid compressed data; and
             // (ii) we use entropy models with varying `PRECISION`s.
             // TODO: Is (ii) necessary? Aren't there always unreachable pockets due to rounding?
-            return Err(DecodingError::InvalidCompressedData);
+            return Err(DecodingError::DataError(DataError::InvalidData));
         }
 
         let (symbol, left_sided_cumulative, probability) =
@@ -729,7 +754,7 @@ where
             self.state.range = self.state.range << CompressedWord::BITS;
 
             // Then update `point`, which restores invariant (*):
-            let word = self.bulk.read().unwrap_or(CompressedWord::max_value());
+            let word = self.bulk.read()?.unwrap_or(CompressedWord::max_value());
             self.point = self.point << CompressedWord::BITS | word.into();
 
             // TODO: register reads past end.
@@ -738,24 +763,6 @@ where
         Ok(symbol)
     }
 }
-
-#[derive(Debug)]
-pub enum DecodingError {
-    InvalidCompressedData,
-}
-
-impl core::fmt::Display for DecodingError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            DecodingError::InvalidCompressedData => {
-                write!(f, "Tried to decode invalid compressed data.")
-            }
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for DecodingError {}
 
 /// Provides temporary read-only access to the compressed data wrapped in an
 /// [`Encoder`].
@@ -791,7 +798,7 @@ where
         // Append state. Will be undone in `<Self as Drop>::drop`.
         if !encoder.is_empty() {
             let word = (encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            encoder.bulk.write(word);
+            encoder.bulk.write(word).unwrap_infallible();
         }
         Self { inner: encoder }
     }
@@ -847,10 +854,10 @@ mod tests {
     fn compress_none() {
         let encoder = DefaultRangeEncoder::new();
         assert!(encoder.is_empty());
-        let compressed = encoder.into_compressed();
+        let compressed = encoder.into_compressed().unwrap();
         assert!(compressed.is_empty());
 
-        let decoder = DefaultRangeDecoder::from_compressed(compressed);
+        let decoder = DefaultRangeDecoder::from_compressed(compressed).unwrap();
         assert!(decoder.maybe_empty());
     }
 
@@ -886,10 +893,10 @@ mod tests {
         let model = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
 
         encoder.encode_iid_symbols(symbols.clone(), &model).unwrap();
-        let compressed = encoder.into_compressed();
+        let compressed = encoder.into_compressed().unwrap();
         assert_eq!(compressed.len(), expected_size);
 
-        let mut decoder = DefaultRangeDecoder::from_compressed(&compressed);
+        let mut decoder = DefaultRangeDecoder::from_compressed(&compressed).unwrap();
         for symbol in symbols {
             assert_eq!(decoder.decode_symbol(&model).unwrap(), symbol);
         }
@@ -1015,7 +1022,7 @@ mod tests {
             .unwrap();
         dbg!(encoder.num_bits());
 
-        let mut decoder = encoder.into_decoder();
+        let mut decoder = encoder.into_decoder().unwrap();
 
         let reconstructed_categorical = decoder
             .decode_iid_symbols(AMT, &categorical)
@@ -1100,3 +1107,20 @@ mod tests {
         assert!(decoder.maybe_empty());
     }
 }
+
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum DataError {
+    InvalidData,
+}
+
+impl Display for DataError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidData => write!(f, "Tried to decode invalid compressed data."),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl Error for DataError {}

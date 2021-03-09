@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use core::{
     borrow::Borrow,
-    convert::TryFrom,
+    convert::{Infallible, TryFrom},
     ops::{Deref, DerefMut},
 };
 
@@ -12,7 +12,7 @@ use super::{
     super::models::{DecoderModel, EncoderModel},
     AnsCoder, Code, Decode, Encode, EncodingError, TryCodingError,
 };
-use crate::BitArray;
+use crate::{BitArray, DecodingError, UnwrapInfallible};
 
 #[derive(Debug, Clone)]
 struct Coder<CompressedWord, State, const PRECISION: usize>
@@ -55,7 +55,9 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    fn new(ans: AnsCoder<CompressedWord, State>) -> Result<Self, AnsCoder<CompressedWord, State>> {
+    fn new(
+        ans: AnsCoder<CompressedWord, State>,
+    ) -> Result<Self, Option<AnsCoder<CompressedWord, State>>> {
         assert!(CompressedWord::BITS > 0);
         assert!(State::BITS >= 2 * CompressedWord::BITS);
         assert!(State::BITS % CompressedWord::BITS == 0);
@@ -66,11 +68,11 @@ where
         // `State::BITS / CompressedWord::BITS - 1 >= 1`.
         if ans.bulk().len() < State::BITS / CompressedWord::BITS - 1 {
             // Not enough data to initialize `supply` and `waste`.
-            return Err(ans);
+            return Err(Some(ans));
         }
 
         let (buf, supply_state) = ans.into_raw_parts();
-        let prefix = AnsCoder::from_binary(buf);
+        let prefix = AnsCoder::from_binary(buf).map_err(|_| None)?;
         let (supply_buf, waste_state) = prefix.into_raw_parts();
 
         let supply = unsafe {
@@ -128,7 +130,7 @@ where
     ///
     /// // Construct a `stable::Decoder` and decode some data with the 24 bit precision entropy model.
     /// let data = vec![0x0123_4567u32, 0x89ab_cdef];
-    /// let mut stable_decoder = DefaultAnsCoder::from_binary(data).into_stable_decoder().unwrap();
+    /// let mut stable_decoder = DefaultAnsCoder::from_binary(data).unwrap().into_stable_decoder().unwrap();
     /// let _symbol_a = stable_decoder.decode_symbol(distribution24);
     ///
     /// // Change the `Decoder`'s precision and decode data with the 20 bit precision entropy model.
@@ -169,7 +171,7 @@ where
         let (prefix, supply_state) = self.0.supply.into_raw_parts();
         let suffix = unsafe {
             // SAFETY: `stable::Decoder` always reserves enough `supply.state`.
-            AnsCoder::from_raw_parts(self.0.waste.into_compressed(), supply_state)
+            AnsCoder::from_raw_parts(self.0.waste.into_compressed().unwrap_infallible(), supply_state)
         };
 
         (prefix, suffix)
@@ -214,11 +216,11 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type Error = AnsCoder<CompressedWord, State>;
+    type Error = Option<AnsCoder<CompressedWord, State>>;
 
     fn try_from(
         ans: AnsCoder<CompressedWord, State>,
-    ) -> Result<Self, AnsCoder<CompressedWord, State>> {
+    ) -> Result<Self, Option<AnsCoder<CompressedWord, State>>> {
         Self::new(ans)
     }
 }
@@ -369,7 +371,7 @@ where
     ) -> Result<(Vec<CompressedWord>, AnsCoder<CompressedWord, State>), Self> {
         if PRECISION == CompressedWord::BITS {
             if self.0.waste.state() >> (State::BITS - 2 * CompressedWord::BITS) != State::one()
-                || self.0.waste.try_refill_state().is_err()
+                || self.0.waste.refill_state_maybe_truncating().is_err()
             {
                 // Waste's state (without leading 1 bit) doesn't fit into integer number of
                 // `CompressedWord`s, or there is not enough data on `waste`.
@@ -484,7 +486,7 @@ where
             if self.waste.state()
                 < State::one() << (State::BITS - NEW_PRECISION - CompressedWord::BITS)
             {
-                if self.waste.try_refill_state().is_err() {
+                if self.waste.refill_state_maybe_truncating().is_err() {
                     return Err(self);
                 }
             }
@@ -597,7 +599,7 @@ where
 ///
 /// [`stable::Decoder`]: Decoder
 #[derive(Debug)]
-pub enum DecodingError {
+pub enum DataError {
     /// Not enough binary data available to decode the symbol.
     ///
     /// Note that a [`stable::Decoder<State, CompressedWord, PRECISION>`]
@@ -622,7 +624,7 @@ pub enum DecodingError {
     OutOfData,
 }
 
-impl core::fmt::Display for DecodingError {
+impl core::fmt::Display for DataError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::OutOfData => {
@@ -633,7 +635,7 @@ impl core::fmt::Display for DecodingError {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for DecodingError {}
+impl std::error::Error for DataError {}
 
 #[derive(Debug)]
 pub enum WriteError {
@@ -659,9 +661,15 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type DecodingError = DecodingError;
+    type DataError = DataError;
 
-    fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
+    /// TODO: this should be an enum that reports errors in either of the backends.
+    type ReadError = Infallible;
+
+    fn decode_symbol<D>(
+        &mut self,
+        model: D,
+    ) -> Result<D::Symbol, DecodingError<Self::ReadError, Self::DataError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -673,7 +681,7 @@ where
             self.0
                 .supply
                 .append_quantile_to_state::<D, PRECISION>(quantile);
-            return Err(DecodingError::OutOfData);
+            return Err(DecodingError::DataError(DataError::OutOfData));
         }
 
         let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
@@ -720,8 +728,8 @@ where
         {
             self.0
                 .waste
-                .try_refill_state()
-                .map_err(|()| EncodingError::WriteError(WriteError::CapacityExceeded))?;
+                .refill_state_maybe_truncating()
+                .map_err(|_| EncodingError::WriteError(WriteError::CapacityExceeded))?;
             // At this point, the invariant on `self.0.waste` (see its doc comment) is
             // temporarily violated (but it will be restored below). This is how
             // `decode_symbol` can detect that it has to flush `waste.state`.
@@ -984,7 +992,7 @@ mod test {
                 .unwrap();
 
             let ans = stable_encoder.finish_and_concatenate().unwrap();
-            assert_eq!(ans.into_compressed(), compressed);
+            assert_eq!(ans.into_compressed().unwrap_infallible(), compressed);
         }
     }
 }

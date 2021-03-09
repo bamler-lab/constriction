@@ -5,7 +5,13 @@
 pub mod stable;
 
 use alloc::vec::Vec;
-use core::{borrow::Borrow, convert::TryInto, fmt::Debug, marker::PhantomData, ops::Deref};
+use core::{
+    borrow::Borrow,
+    convert::{Infallible, TryInto},
+    fmt::Debug,
+    marker::PhantomData,
+    ops::Deref,
+};
 use num::cast::AsPrimitive;
 
 use super::{
@@ -16,7 +22,9 @@ use super::{
     models::{DecoderModel, EncoderModel, EntropyModel},
     AsDecoder, Code, Decode, Encode, Pos, Seek, TryCodingError,
 };
-use crate::{bit_array_from_chunks, bit_array_to_chunks_truncated, BitArray, EncodingError};
+use crate::{
+    bit_array_to_chunks_truncated, BitArray, DecodingError, EncodingError, UnwrapInfallible,
+};
 
 /// Entropy coder for both encoding and decoding on a stack
 ///
@@ -52,13 +60,13 @@ use crate::{bit_array_from_chunks, bit_array_to_chunks_truncated, BitArray, Enco
 ///
 /// let symbols = vec![-10, 4, 0, 3];
 /// ans.encode_iid_symbols_reverse(&symbols, &entropy_model).unwrap();
-/// println!("Encoded into {} bits: {:?}", ans.num_bits(), &*ans.get_compressed());
+/// println!("Encoded into {} bits: {:?}", ans.num_bits(), &*ans.get_compressed().unwrap());
 ///
 /// // The call to `encode_iid_symbols` above encoded the symbols in reverse order (see
 /// // documentation). So popping them off now will yield the same symbols in original order.
 /// let reconstructed = ans
 ///     .decode_iid_symbols(4, &entropy_model)
-///     .collect::<Result<Vec<_>, core::convert::Infallible>>()
+///     .collect::<Result<Vec<_>, _>>()
 ///     .unwrap();
 /// assert_eq!(reconstructed, symbols);
 /// ```
@@ -368,21 +376,9 @@ where
     {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
 
-        let state = if let Some(first_word) = compressed.read() {
-            if first_word == CompressedWord::zero() {
-                return Err(compressed);
-            }
-
-            let mut state = first_word.into();
-            while let Some(word) = compressed.read() {
-                state = state << CompressedWord::BITS | word.into();
-                if state >= State::one() << (State::BITS - CompressedWord::BITS) {
-                    break;
-                }
-            }
-            state
-        } else {
-            State::zero()
+        let state = match Self::read_initial_state(|| compressed.read()) {
+            Ok(state) => state,
+            Err(_) => return Err(compressed),
         };
 
         Ok(Self {
@@ -390,6 +386,30 @@ where
             state,
             phantom: PhantomData,
         })
+    }
+
+    fn read_initial_state<Error>(
+        mut read_word: impl FnMut() -> Result<Option<CompressedWord>, Error>,
+    ) -> Result<State, ()>
+    where
+        Backend: ReadBackend<CompressedWord, Stack>,
+    {
+        if let Some(first_word) = read_word().map_err(|_| ())? {
+            if first_word == CompressedWord::zero() {
+                return Err(());
+            }
+
+            let mut state = first_word.into();
+            while let Some(word) = read_word().map_err(|_| ())? {
+                state = state << CompressedWord::BITS | word.into();
+                if state >= State::one() << (State::BITS - CompressedWord::BITS) {
+                    break;
+                }
+            }
+            Ok(state)
+        } else {
+            Ok(State::zero())
+        }
     }
 
     /// Like [`from_compressed`] but works on any binary data.
@@ -406,26 +426,32 @@ where
     /// ```
     /// use constriction::stream::stack::DefaultAnsCoder;
     ///
-    /// let stack1 = DefaultAnsCoder::from_binary(Vec::new());
+    /// let stack1 = DefaultAnsCoder::from_binary(Vec::new()).unwrap();
     /// assert!(!stack1.is_empty()); // <-- stack1 is *not* empty.
     ///
     /// let stack2 = DefaultAnsCoder::from_compressed(Vec::new()).unwrap();
     /// assert!(stack2.is_empty()); // <-- stack2 is empty.
     /// ```
     /// [`from_compressed`]: #method.from_compressed
-    pub fn from_binary(mut data: Backend) -> Self
+    pub fn from_binary(mut data: Backend) -> Result<Self, Backend::ReadError>
     where
         Backend: ReadBackend<CompressedWord, Stack>,
     {
-        let state = bit_array_from_chunks(
-            core::iter::once(CompressedWord::one()).chain(core::iter::from_fn(|| data.read())),
-        );
+        let mut state = State::one();
 
-        Self {
+        while state < State::one() << (State::BITS - CompressedWord::BITS) {
+            if let Some(word) = data.read()? {
+                state = state << CompressedWord::BITS | word.into();
+            } else {
+                break;
+            }
+        }
+
+        Ok(Self {
             bulk: data,
             state,
             phantom: PhantomData,
-        }
+        })
     }
 
     pub fn bulk(&self) -> &Backend {
@@ -518,7 +544,7 @@ where
     /// // We can still use the ANS coder afterwards.
     /// let reconstructed = ans
     ///     .decode_iid_symbols(4, &model)
-    ///     .collect::<Result<Vec<_>, core::convert::Infallible>>()
+    ///     .collect::<Result<Vec<_>, _>>()
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// ```
@@ -559,7 +585,7 @@ where
     /// let compressed_iter = ans.iter_compressed();
     /// let compressed_collected = compressed_iter.collect::<Vec<_>>();
     /// assert!(!compressed_collected.is_empty());
-    /// assert_eq!(compressed_collected, *ans.get_compressed());
+    /// assert_eq!(compressed_collected, *ans.get_compressed().unwrap());
     /// ```
     ///
     /// [`get_compressed`]: #method.get_compressed
@@ -713,7 +739,7 @@ where
     }
 
     pub fn from_binary_slice(data: &'bulk [CompressedWord]) -> Self {
-        Self::from_binary(backends::Cursor::new_at_write_end(data))
+        Self::from_binary(backends::Cursor::new_at_write_end(data)).unwrap_infallible()
     }
 }
 
@@ -729,7 +755,7 @@ where
     }
 
     pub fn from_reversed_binary(data: Buf) -> Self {
-        Self::from_binary(ReverseReads(Cursor::new_at_write_beginning(data)))
+        Self::from_binary(ReverseReads(Cursor::new_at_write_beginning(data))).unwrap_infallible()
     }
 }
 
@@ -744,7 +770,7 @@ where
     }
 
     pub fn from_reversed_binary_iter(data: Iter) -> Self {
-        Self::from_binary(IteratorBackend::new(data))
+        Self::from_binary(IteratorBackend::new(data)).unwrap_infallible()
     }
 }
 
@@ -832,7 +858,7 @@ where
     /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Get the compressed data, consuming the ANS coder:
-    /// let compressed = ans.into_compressed();
+    /// let compressed = ans.into_compressed().unwrap();
     ///
     /// // ... write `compressed` to a file and then read it back later ...
     ///
@@ -840,15 +866,15 @@ where
     /// let mut ans = DefaultAnsCoder::from_compressed(compressed).expect("Corrupted compressed file.");
     /// let reconstructed = ans
     ///     .decode_iid_symbols(4, &model)
-    ///     .collect::<Result<Vec<_>, core::convert::Infallible>>()
+    ///     .collect::<Result<Vec<_>, _>>()
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// assert!(ans.is_empty())
     /// ```
-    pub fn into_compressed(mut self) -> Backend {
+    pub fn into_compressed(mut self) -> Result<Backend, Backend::WriteError> {
         self.bulk
-            .extend(bit_array_to_chunks_truncated(self.state).rev());
-        self.bulk
+            .extend(bit_array_to_chunks_truncated(self.state).rev())?;
+        Ok(self.bulk)
     }
 
     /// Returns the binary data if it fits precisely into an integer number of
@@ -874,7 +900,7 @@ where
     ///
     /// // Constructing a `AnsCoder` with `from_binary` indicates that all bits of `data` are
     /// // considered part of the information-carrying payload.
-    /// let stack1 = constriction::stream::stack::DefaultAnsCoder::from_binary(data.clone());
+    /// let stack1 = constriction::stream::stack::DefaultAnsCoder::from_binary(data.clone()).unwrap();
     /// assert_eq!(stack1.clone().into_binary().unwrap(), data); // <-- Retrieves the original `data`.
     ///
     /// // By contrast, if we construct a `AnsCoder` with `from_compressed`, we indicate that
@@ -889,24 +915,24 @@ where
     /// assert!(stack2.clone().into_binary().is_err()); // <-- Returns an error.
     ///
     /// // Use `into_compressed` to retrieve the data in this case:
-    /// assert_eq!(stack2.into_compressed(), data);
+    /// assert_eq!(stack2.into_compressed().unwrap(), data);
     ///
     /// // Calling `into_compressed` on `stack1` would append an extra `1` bit to indicate
     /// // the boundary between information-carrying bits and padding `0` bits:
-    /// assert_eq!(stack1.into_compressed(), vec![0x89ab_cdef, 0x0123_4567, 0x0000_0001]);
+    /// assert_eq!(stack1.into_compressed().unwrap(), vec![0x89ab_cdef, 0x0123_4567, 0x0000_0001]);
     /// ```
     ///
     /// [`from_binary`]: #method.from_binary
     /// [`into_compressed`]: #method.into_compressed
-    pub fn into_binary(mut self) -> Result<Backend, ()> {
+    pub fn into_binary(mut self) -> Result<Backend, Option<Backend::WriteError>> {
         let valid_bits = (State::BITS - 1).wrapping_sub(self.state.leading_zeros() as usize);
 
         if valid_bits % CompressedWord::BITS != 0 || valid_bits == usize::max_value() {
-            Err(())
+            Err(None)
         } else {
             let truncated_state = self.state ^ (State::one() << valid_bits);
             self.bulk
-                .extend(bit_array_to_chunks_truncated(truncated_state).rev());
+                .extend(bit_array_to_chunks_truncated(truncated_state).rev())?;
             Ok(self.bulk)
         }
     }
@@ -920,7 +946,7 @@ where
 {
     pub fn into_stable_decoder<const PRECISION: usize>(
         self,
-    ) -> Result<stable::Decoder<CompressedWord, State, PRECISION>, Self> {
+    ) -> Result<stable::Decoder<CompressedWord, State, PRECISION>, Option<Self>> {
         self.try_into()
     }
 
@@ -1025,7 +1051,7 @@ where
             .map_err(|()| EncodingError::ImpossibleSymbol)?;
 
         if (self.state >> (State::BITS - PRECISION)) >= probability.into().into() {
-            self.flush_state();
+            self.flush_state()?;
             // At this point, the invariant on `self.state` (see its doc comment) is
             // temporarily violated, but it will be restored below.
         }
@@ -1047,32 +1073,39 @@ where
 {
     /// Checks the invariant on `self.state` and restores it if necessary and possible.
     ///
-    /// Returns `Err(())` if the `state` should have been refilled but there are no
-    /// compressed words left. Returns `Ok(())` in all other cases.
+    /// Returns `Err(None)` if the `state` should have been refilled but there are no
+    /// compressed words left. Returns `Err(e)` if the `state` should have been refilled but
+    /// reading from the backend returned error `e`. Returns `Ok(())` in all other cases.
     #[inline(always)]
-    pub(crate) fn try_refill_state_if_necessary(&mut self) -> Result<(), ()> {
+    pub(crate) fn try_refill_state_if_necessary(
+        &mut self,
+    ) -> Result<(), Option<Backend::ReadError>> {
         if self.state < State::one() << (State::BITS - CompressedWord::BITS) {
             // Invariant on `self.state` (see its doc comment) is violated. Restore it by
             // refilling with a compressed word from `self.bulk` if available.
-            self.try_refill_state()
+            self.refill_state_maybe_truncating()
         } else {
             Ok(())
         }
     }
 
     /// Tries to push a compressed word onto `state` without checking for overflow, thus
-    /// potentially truncating `state`. If you're not sure if the operation might
-    /// overflow, call [`try_refill_state_if_necessary`] instead.
+    /// potentially truncating `state`. If you're not sure if the operation might overflow,
+    /// call [`try_refill_state_if_necessary`] instead.
     ///
     /// This method is *not* declared `unsafe` because the potential truncation is
     /// well-defined and we consider truncating `state` a logic error but not a
     /// memory/safety violation.
     ///
-    /// Returns `Ok(())` if a compressed word to refill the state was available and
-    /// `Err(())` if no compressed word was available.
+    /// Returns `Ok(())` if a compressed word to refill the state was available, `Err(None)`
+    /// if no compressed word was available, and `Err(e)` if reading from the backend
+    /// returned error `e`.
     #[inline(always)]
-    pub(crate) fn try_refill_state(&mut self) -> Result<(), ()> {
-        self.state = (self.state << CompressedWord::BITS) | self.bulk.read().ok_or(())?.into();
+    pub(crate) fn refill_state_maybe_truncating(
+        &mut self,
+    ) -> Result<(), Option<Backend::ReadError>> {
+        let word = self.bulk.read().map_err(Some)?.ok_or(None)?;
+        self.state = (self.state << CompressedWord::BITS) | word.into();
         Ok(())
     }
 }
@@ -1085,8 +1118,10 @@ where
     Backend: ReadBackend<CompressedWord, Stack>,
 {
     /// ANS coding is surjective, and we (deliberately) allow decoding past EOF (in a
-    /// deterministic way) for consistency. Therefore, decoding cannot fail.
-    type DecodingError = core::convert::Infallible;
+    /// deterministic way) for consistency. Therefore, decoding cannot fail.    
+    type DataError = Infallible;
+
+    type ReadError = Backend::ReadError;
 
     /// Decodes a single symbol and pops it off the compressed data.
     ///
@@ -1104,7 +1139,10 @@ where
     /// Still, being able to pop off an arbitrary number of symbols can sometimes be
     /// useful in edge cases of, e.g., the bits-back algorithm.
     #[inline(always)]
-    fn decode_symbol<D>(&mut self, model: D) -> Result<D::Symbol, Self::DecodingError>
+    fn decode_symbol<D>(
+        &mut self,
+        model: D,
+    ) -> Result<D::Symbol, DecodingError<Self::ReadError, Self::DataError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -1187,7 +1225,7 @@ where
     fn drop(&mut self) {
         // Revert what we did in `Self::new`.
         for _ in bit_array_to_chunks_truncated::<_, CompressedWord>(self.inner.state) {
-            self.inner.bulk.read();
+            std::mem::drop(self.inner.bulk.read());
         }
     }
 }
@@ -1233,7 +1271,7 @@ mod tests {
     fn compress_none() {
         let coder1 = DefaultAnsCoder::new();
         assert!(coder1.is_empty());
-        let compressed = coder1.into_compressed();
+        let compressed = coder1.into_compressed().unwrap();
         assert!(compressed.is_empty());
 
         let coder2 = DefaultAnsCoder::from_compressed(compressed).unwrap();
@@ -1274,7 +1312,7 @@ mod tests {
         // We don't reuse the same encoder for decoding because we want to test
         // if exporting and re-importing of compressed data works.
         encoder.encode_iid_symbols(symbols.clone(), &model).unwrap();
-        let compressed = encoder.into_compressed();
+        let compressed = encoder.into_compressed().unwrap();
         assert_eq!(compressed.len(), expected_size);
 
         let mut decoder = DefaultAnsCoder::from_compressed(compressed).unwrap();
@@ -1408,7 +1446,7 @@ mod tests {
         dbg!(ans.num_valid_bits());
 
         // Test if import/export of compressed data works.
-        let compressed = ans.into_compressed();
+        let compressed = ans.into_compressed().unwrap();
         let mut ans = AnsCoder::from_compressed(compressed).unwrap();
 
         let reconstructed_gaussian = ans
@@ -1418,11 +1456,11 @@ mod tests {
                     .zip(&stds)
                     .map(|(&mean, &core)| quantizer.quantize(Normal::new(mean, core).unwrap())),
             )
-            .collect::<Result<Vec<_>, core::convert::Infallible>>()
+            .collect::<Result<Vec<_>, DecodingError<Infallible, Infallible>>>()
             .unwrap();
         let reconstructed_categorical = ans
             .decode_iid_symbols(AMT, &categorical)
-            .collect::<Result<Vec<_>, core::convert::Infallible>>()
+            .collect::<Result<Vec<_>, DecodingError<Infallible, Infallible>>>()
             .unwrap();
 
         assert!(ans.is_empty());
@@ -1489,7 +1527,7 @@ mod tests {
 
         // Reverse compressed data, map positions in jump table to reversed positions,
         // and test decoding from front to back.
-        let mut compressed = encoder.into_compressed();
+        let mut compressed = encoder.into_compressed().unwrap();
         compressed.reverse();
         for (pos, _state) in jump_table.iter_mut() {
             *pos = compressed.len() - *pos;

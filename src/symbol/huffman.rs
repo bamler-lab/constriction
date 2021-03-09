@@ -10,7 +10,7 @@ use super::{
     Codebook, DecoderCodebook, DecodingError, EncoderCodebook, SmallBitVec,
     SmallBitVecReverseIterator,
 };
-use crate::{BitArray, EncodingError};
+use crate::{BitArray, EncodingError, UnwrapInfallible};
 
 /// The type parameter `W` is used in the implementation of [`EncoderCodebook`],
 /// which temporarily builds up the reversed codeword in a `SmallBitVec<W>` before
@@ -41,12 +41,10 @@ impl EncoderHuffmanTree {
         I: IntoIterator,
         I::Item: Borrow<P>,
     {
-        match Self::try_from_probabilities::<_, Infallible, _>(
+        Self::try_from_probabilities::<_, Infallible, _>(
             probabilities.into_iter().map(|p| Ok(p.borrow().clone())),
-        ) {
-            Ok(tree) => tree,
-            Err(infallible) => match infallible {},
-        }
+        )
+        .unwrap_infallible()
     }
 
     pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, ()>
@@ -177,12 +175,10 @@ impl DecoderHuffmanTree {
         I: IntoIterator,
         I::Item: Borrow<P>,
     {
-        match Self::try_from_probabilities::<_, Infallible, _>(
+        Self::try_from_probabilities::<_, Infallible, _>(
             probabilities.into_iter().map(|p| Ok(p.borrow().clone())),
-        ) {
-            Ok(tree) => tree,
-            Err(infallible) => match infallible {},
-        }
+        )
+        .unwrap_infallible()
     }
 
     pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, ()>

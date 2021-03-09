@@ -36,7 +36,7 @@
 //!     // Encode (compress) the symbols.
 //!     let mut encoder = DefaultAnsCoder::new();
 //!     encoder.encode_iid_symbols_reverse(symbols, &model).unwrap();
-//!     let compressed = encoder.into_compressed();
+//!     let compressed = encoder.into_compressed().unwrap();
 //!
 //!     // Write the compressed words to a file *in reverse order* (using `.rev()`), so
 //!     // that the resulting file can be decoded in normal order from front to back.
@@ -87,7 +87,7 @@
 //! ```
 
 use alloc::vec::Vec;
-use core::{convert::Infallible, fmt::Debug, hint::unreachable_unchecked, marker::PhantomData};
+use core::{convert::Infallible, fmt::Debug};
 
 // READ WRITE LOGICS ==========================================================
 
@@ -116,16 +116,23 @@ pub trait WriteBackend<Word> {
     ///   always write from left to right).
     fn write(&mut self, word: Word) -> Result<(), Self::WriteError>;
 
-    fn extend(&mut self, iter: impl Iterator<Item = Word>) {
+    fn extend(&mut self, iter: impl Iterator<Item = Word>) -> Result<(), Self::WriteError> {
         for word in iter {
-            self.write(word);
+            self.write(word)?;
         }
+        Ok(())
     }
 }
 
 /// A trait for backends that read compressed words (used by decoders)
 pub trait ReadBackend<Word, S: Semantics> {
-    fn read(&mut self) -> Option<Word>;
+    #[cfg(not(feature = "std"))]
+    type ReadError: Debug;
+
+    #[cfg(feature = "std")]
+    type ReadError: std::error::Error;
+
+    fn read(&mut self) -> Result<Option<Word>, Self::ReadError>;
 
     fn maybe_exhausted(&self) -> bool {
         true
@@ -206,9 +213,11 @@ impl<Word> WriteBackend<Word> for Vec<Word> {
 }
 
 impl<Word> ReadBackend<Word, Stack> for Vec<Word> {
+    type ReadError = Infallible;
+
     #[inline(always)]
-    fn read(&mut self) -> Option<Word> {
-        self.pop()
+    fn read(&mut self) -> Result<Option<Word>, Self::ReadError> {
+        Ok(self.pop())
     }
 
     #[inline(always)]
@@ -232,21 +241,23 @@ impl<Word> PosBackend<Word> for Vec<Word> {
 
 // ADAPTER FOR (SEMANTIC) REVERSING OF READING DIRECTION ======================
 
+#[derive(Debug)]
 pub struct ReverseReads<Backend>(pub Backend);
 
 impl<Word, B: WriteBackend<Word>> WriteBackend<Word> for ReverseReads<B> {
-    type WriteError = Infallible;
+    type WriteError = B::WriteError;
 
     #[inline(always)]
     fn write(&mut self, word: Word) -> Result<(), Self::WriteError> {
-        self.0.write(word);
-        Ok(())
+        self.0.write(word)
     }
 }
 
 impl<Word, B: ReadBackend<Word, Stack>> ReadBackend<Word, Queue> for ReverseReads<B> {
+    type ReadError = B::ReadError;
+
     #[inline(always)]
-    fn read(&mut self) -> Option<Word> {
+    fn read(&mut self) -> Result<Option<Word>, Self::ReadError> {
         self.0.read()
     }
 
@@ -257,8 +268,10 @@ impl<Word, B: ReadBackend<Word, Stack>> ReadBackend<Word, Queue> for ReverseRead
 }
 
 impl<Word, B: ReadBackend<Word, Queue>> ReadBackend<Word, Stack> for ReverseReads<B> {
+    type ReadError = B::ReadError;
+
     #[inline(always)]
-    fn read(&mut self) -> Option<Word> {
+    fn read(&mut self) -> Result<Option<Word>, Self::ReadError> {
         self.0.read()
     }
 
@@ -439,34 +452,40 @@ impl<Word, Buf: AsMut<[Word]>> WriteBackend<Word> for Cursor<Buf> {
     type WriteError = Infallible;
 
     #[inline(always)]
-    fn write(&mut self, word: Word) -> Result<(), Self::WriteError> {
+    fn write(&mut self, _word: Word) -> Result<(), Self::WriteError> {
         todo!()
     }
 }
 
 impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Stack> for Cursor<Buf> {
+    type ReadError = Infallible;
+
     #[inline(always)]
-    fn read(&mut self) -> Option<Word> {
+    fn read(&mut self) -> Result<Option<Word>, Self::ReadError> {
         if self.pos == 0 {
-            None
+            Ok(None)
         } else {
             self.pos -= 1;
             unsafe {
                 // SAFETY: We maintain the invariant `self.pos <= self.buf.as_ref().len()`
                 // and we just decreased `self.pos` (and made sure that didn't wrap around),
                 // so we now have `self.pos < self.buf.as_ref().len()`.
-                Some(self.buf.as_ref().get_unchecked(self.pos).clone())
+                Ok(Some(self.buf.as_ref().get_unchecked(self.pos).clone()))
             }
         }
     }
 }
 
 impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Queue> for Cursor<Buf> {
+    type ReadError = Infallible;
+
     #[inline(always)]
-    fn read(&mut self) -> Option<Word> {
-        let word = self.buf.as_ref().get(self.pos)?.clone();
-        self.pos += 1;
-        Some(word)
+    fn read(&mut self) -> Result<Option<Word>, Self::ReadError> {
+        let maybe_word = self.buf.as_ref().get(self.pos).cloned();
+        if maybe_word.is_some() {
+            self.pos += 1;
+        }
+        Ok(maybe_word)
     }
 }
 
@@ -595,6 +614,8 @@ impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteBackend<'a, Word,
 
 // ADAPTER FOR ITERATORS ======================================================
 
+/// TODO: add `FallibleIteratorBackend` that iterates over `Result<Word, Selfl::ReadError>`.
+/// Then make `IteratorBackend` a type allias for `FallibleIteratorBackend<Infallible>`.
 #[derive(Clone, Debug)]
 pub struct IteratorBackend<Iter: Iterator> {
     inner: core::iter::Fuse<Iter>,
@@ -618,9 +639,11 @@ impl<Iter: Iterator> IntoIterator for IteratorBackend<Iter> {
 /// Since `IteratorBackend` doesn't implement `WriteBackend`, it is allowed to implement
 /// `ReadBackend` for all `ReadWriteLogic`s
 impl<Iter: Iterator, S: Semantics> ReadBackend<Iter::Item, S> for IteratorBackend<Iter> {
+    type ReadError = Infallible;
+
     #[inline(always)]
-    fn read(&mut self) -> Option<Iter::Item> {
-        self.inner.next()
+    fn read(&mut self) -> Result<Option<Iter::Item>, Self::ReadError> {
+        Ok(self.inner.next())
     }
 }
 
