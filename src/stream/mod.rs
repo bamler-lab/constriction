@@ -161,7 +161,7 @@ use std::error::Error;
 
 use core::{borrow::Borrow, fmt::Display};
 
-use crate::{BitArray, DecodingError, EncodingError};
+use crate::{BitArray, CoderError, EncodingError};
 use models::{DecoderModel, EncoderModel, EntropyModel};
 use num::cast::AsPrimitive;
 
@@ -236,7 +236,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     /// in-memory backends (such as `Vec`). But it may be an inhabitated error type if
     /// you're, e.g., encoding directly to a file or socket.
     #[cfg(not(feature = "std"))]
-    type WriteError: Debug;
+    type BackendError: Debug;
 
     /// The error type for writing out encoded data.
     ///
@@ -245,13 +245,13 @@ pub trait Encode<const PRECISION: usize>: Code {
     /// in-memory backends (such as `Vec`). But it may be an inhabitated error type if
     /// you're, e.g., encoding directly to a file or socket.
     #[cfg(feature = "std")]
-    type WriteError: Error;
+    type BackendError: Error;
 
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError<Self::WriteError>>
+    ) -> Result<(), EncodingError<Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -260,7 +260,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn encode_symbols<S, D>(
         &mut self,
         symbols_and_models: impl IntoIterator<Item = (S, D)>,
-    ) -> Result<(), EncodingError<Self::WriteError>>
+    ) -> Result<(), EncodingError<Self::BackendError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -277,7 +277,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn try_encode_symbols<S, D, E>(
         &mut self,
         symbols_and_models: impl IntoIterator<Item = Result<(S, D), E>>,
-    ) -> Result<(), TryCodingError<EncodingError<Self::WriteError>, E>>
+    ) -> Result<(), TryCodingError<EncodingError<Self::BackendError>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -297,7 +297,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         &mut self,
         symbols: impl IntoIterator<Item = S>,
         model: &D,
-    ) -> Result<(), EncodingError<Self::WriteError>>
+    ) -> Result<(), EncodingError<Self::BackendError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -310,21 +310,21 @@ pub trait Encode<const PRECISION: usize>: Code {
 
 pub trait Decode<const PRECISION: usize>: Code {
     #[cfg(not(feature = "std"))]
-    type ReadError: Debug;
+    type BackendError: Debug;
 
     #[cfg(feature = "std")]
-    type ReadError: Error;
+    type BackendError: Error;
 
     #[cfg(not(feature = "std"))]
-    type DataError: Debug;
+    type FrontendError: Debug;
 
     #[cfg(feature = "std")]
-    type DataError: Error;
+    type FrontendError: Error;
 
     fn decode_symbol<D>(
         &mut self,
         model: D,
-    ) -> Result<D::Symbol, DecodingError<Self::ReadError, Self::DataError>>
+    ) -> Result<D::Symbol, CoderError<Self::FrontendError, Self::BackendError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -405,7 +405,7 @@ pub trait Decode<const PRECISION: usize>: Code {
         iterator: I,
         model: &'s D,
         mut callback: impl FnMut(I::Item, D::Symbol),
-    ) -> Result<(), DecodingError<Self::ReadError, Self::DataError>>
+    ) -> Result<(), CoderError<Self::FrontendError, Self::BackendError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -767,7 +767,7 @@ where
 {
     type Item = Result<
         <I::Item as EntropyModel<PRECISION>>::Symbol,
-        DecodingError<Decoder::ReadError, Decoder::DataError>,
+        CoderError<Decoder::FrontendError, Decoder::BackendError>,
     >;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -807,8 +807,10 @@ where
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
-    type Item =
-        Result<D::Symbol, TryCodingError<DecodingError<Decoder::ReadError, Decoder::DataError>, E>>;
+    type Item = Result<
+        D::Symbol,
+        TryCodingError<CoderError<Decoder::FrontendError, Decoder::BackendError>, E>,
+    >;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.models.next().map(|model| {
@@ -850,7 +852,7 @@ where
     Decoder::CompressedWord: AsPrimitive<D::Probability>,
     D::Probability: Into<Decoder::CompressedWord>,
 {
-    type Item = Result<D::Symbol, DecodingError<Decoder::ReadError, Decoder::DataError>>;
+    type Item = Result<D::Symbol, CoderError<Decoder::FrontendError, Decoder::BackendError>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.amt != 0 {

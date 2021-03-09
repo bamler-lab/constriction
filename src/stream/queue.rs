@@ -22,7 +22,7 @@ use super::{
     models::{DecoderModel, EncoderModel},
     Code, Decode, Encode, IntoDecoder, Pos, Seek,
 };
-use crate::{BitArray, DecodingError, EncodingError, UnwrapInfallible};
+use crate::{BitArray, CoderError, EncodingError, UnwrapInfallible};
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
 /// [`Decoder<CompressedWord, State>`]. Relevant for [`Seek`]ing.
@@ -403,13 +403,13 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type WriteError = Infallible;
+    type BackendError = Infallible;
 
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError<Self::WriteError>>
+    ) -> Result<(), EncodingError<Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -689,9 +689,9 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: ReadBackend<CompressedWord, Queue>,
 {
-    type DataError = DataError;
+    type FrontendError = FrontendError;
 
-    type ReadError = Backend::ReadError;
+    type BackendError = Backend::ReadError;
 
     /// Decodes a single symbol and pops it off the compressed data.
     ///
@@ -711,7 +711,7 @@ where
     fn decode_symbol<D>(
         &mut self,
         model: D,
-    ) -> Result<D::Symbol, DecodingError<Self::ReadError, Self::DataError>>
+    ) -> Result<D::Symbol, CoderError<Self::FrontendError, Self::BackendError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -728,7 +728,7 @@ where
             // (i) we are decoding invalid compressed data; and
             // (ii) we use entropy models with varying `PRECISION`s.
             // TODO: Is (ii) necessary? Aren't there always unreachable pockets due to rounding?
-            return Err(DecodingError::DataError(DataError::InvalidData));
+            return Err(CoderError::FrontendError(FrontendError::InvalidData));
         }
 
         let (symbol, left_sided_cumulative, probability) =
@@ -1110,11 +1110,11 @@ mod tests {
 
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum DataError {
+pub enum FrontendError {
     InvalidData,
 }
 
-impl Display for DataError {
+impl Display for FrontendError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidData => write!(f, "Tried to decode invalid compressed data."),
@@ -1123,4 +1123,4 @@ impl Display for DataError {
 }
 
 #[cfg(feature = "std")]
-impl Error for DataError {}
+impl Error for FrontendError {}

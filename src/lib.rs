@@ -320,28 +320,30 @@ impl<WriteError> From<WriteError> for EncodingError<WriteError> {
 /// encodand decoding. (Force encoders to use a common `FrontendError`, which only has the
 /// variant `InvalidSymbol`.)
 #[derive(Debug)]
-pub enum DecodingError<ReadError, DataError> {
-    ReadError(ReadError),
-    DataError(DataError),
+pub enum CoderError<FrontendError, BackendError> {
+    FrontendError(FrontendError),
+    BackendError(BackendError),
 }
 
-impl<ReadError: Display, DataError: Display> Display for DecodingError<ReadError, DataError> {
+impl<BackendError: Display, FrontendError: Display> Display
+    for CoderError<FrontendError, BackendError>
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::ReadError(err) => write!(f, "Error while reading compressed data: {}", err),
-            Self::DataError(err) => write!(f, "Invalid compressed data: {}", err),
+            Self::FrontendError(err) => write!(f, "Invalid compressed data: {}", err),
+            Self::BackendError(err) => write!(f, "Error while reading compressed data: {}", err),
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl<ReadError: Error, DataError: Error> Error for DecodingError<ReadError, DataError> {}
+impl<BackendError: Error, FrontendError: Error> Error for CoderError<FrontendError, BackendError> {}
 
-impl<ReadError: Display, DataError: Display> From<ReadError>
-    for DecodingError<ReadError, DataError>
+impl<BackendError: Display, FrontendError: Display> From<BackendError>
+    for CoderError<FrontendError, BackendError>
 {
-    fn from(read_error: ReadError) -> Self {
-        Self::ReadError(read_error)
+    fn from(read_error: BackendError) -> Self {
+        Self::BackendError(read_error)
     }
 }
 
@@ -437,13 +439,13 @@ impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
     }
 }
 
-impl<T> UnwrapInfallible<T> for Result<T, DecodingError<Infallible, Infallible>> {
+impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
     fn unwrap_infallible(self) -> T {
         match self {
             Ok(x) => x,
             Err(infallible) => match infallible {
-                DecodingError::ReadError(infallible) => match infallible {},
-                DecodingError::DataError(infallible) => match infallible {},
+                CoderError::BackendError(infallible) => match infallible {},
+                CoderError::FrontendError(infallible) => match infallible {},
             },
         }
     }

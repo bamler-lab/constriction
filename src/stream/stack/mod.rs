@@ -22,9 +22,7 @@ use super::{
     models::{DecoderModel, EncoderModel, EntropyModel},
     AsDecoder, Code, Decode, Encode, Pos, Seek, TryCodingError,
 };
-use crate::{
-    bit_array_to_chunks_truncated, BitArray, DecodingError, EncodingError, UnwrapInfallible,
-};
+use crate::{bit_array_to_chunks_truncated, BitArray, CoderError, EncodingError, UnwrapInfallible};
 
 /// Entropy coder for both encoding and decoding on a stack
 ///
@@ -1013,7 +1011,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: WriteBackend<CompressedWord>,
 {
-    type WriteError = Backend::WriteError;
+    type BackendError = Backend::WriteError;
 
     /// Encodes a single symbol and appends it to the compressed data.
     ///
@@ -1040,7 +1038,7 @@ where
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError<Self::WriteError>>
+    ) -> Result<(), EncodingError<Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -1119,9 +1117,9 @@ where
 {
     /// ANS coding is surjective, and we (deliberately) allow decoding past EOF (in a
     /// deterministic way) for consistency. Therefore, decoding cannot fail.    
-    type DataError = Infallible;
+    type FrontendError = Infallible;
 
-    type ReadError = Backend::ReadError;
+    type BackendError = Backend::ReadError;
 
     /// Decodes a single symbol and pops it off the compressed data.
     ///
@@ -1142,7 +1140,7 @@ where
     fn decode_symbol<D>(
         &mut self,
         model: D,
-    ) -> Result<D::Symbol, DecodingError<Self::ReadError, Self::DataError>>
+    ) -> Result<D::Symbol, CoderError<Self::FrontendError, Self::BackendError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -1456,11 +1454,11 @@ mod tests {
                     .zip(&stds)
                     .map(|(&mean, &core)| quantizer.quantize(Normal::new(mean, core).unwrap())),
             )
-            .collect::<Result<Vec<_>, DecodingError<Infallible, Infallible>>>()
+            .collect::<Result<Vec<_>, CoderError<Infallible, Infallible>>>()
             .unwrap();
         let reconstructed_categorical = ans
             .decode_iid_symbols(AMT, &categorical)
-            .collect::<Result<Vec<_>, DecodingError<Infallible, Infallible>>>()
+            .collect::<Result<Vec<_>, CoderError<Infallible, Infallible>>>()
             .unwrap();
 
         assert!(ans.is_empty());

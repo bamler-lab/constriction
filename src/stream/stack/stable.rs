@@ -12,7 +12,7 @@ use super::{
     super::models::{DecoderModel, EncoderModel},
     AnsCoder, Code, Decode, Encode, EncodingError, TryCodingError,
 };
-use crate::{BitArray, DecodingError, UnwrapInfallible};
+use crate::{BitArray, CoderError, UnwrapInfallible};
 
 #[derive(Debug, Clone)]
 struct Coder<CompressedWord, State, const PRECISION: usize>
@@ -171,7 +171,10 @@ where
         let (prefix, supply_state) = self.0.supply.into_raw_parts();
         let suffix = unsafe {
             // SAFETY: `stable::Decoder` always reserves enough `supply.state`.
-            AnsCoder::from_raw_parts(self.0.waste.into_compressed().unwrap_infallible(), supply_state)
+            AnsCoder::from_raw_parts(
+                self.0.waste.into_compressed().unwrap_infallible(),
+                supply_state,
+            )
         };
 
         (prefix, suffix)
@@ -599,7 +602,7 @@ where
 ///
 /// [`stable::Decoder`]: Decoder
 #[derive(Debug)]
-pub enum DataError {
+pub enum FrontendError {
     /// Not enough binary data available to decode the symbol.
     ///
     /// Note that a [`stable::Decoder<State, CompressedWord, PRECISION>`]
@@ -624,7 +627,7 @@ pub enum DataError {
     OutOfData,
 }
 
-impl core::fmt::Display for DataError {
+impl core::fmt::Display for FrontendError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::OutOfData => {
@@ -635,7 +638,7 @@ impl core::fmt::Display for DataError {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for DataError {}
+impl std::error::Error for FrontendError {}
 
 #[derive(Debug)]
 pub enum WriteError {
@@ -661,15 +664,15 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type DataError = DataError;
+    type FrontendError = FrontendError;
 
     /// TODO: this should be an enum that reports errors in either of the backends.
-    type ReadError = Infallible;
+    type BackendError = Infallible;
 
     fn decode_symbol<D>(
         &mut self,
         model: D,
-    ) -> Result<D::Symbol, DecodingError<Self::ReadError, Self::DataError>>
+    ) -> Result<D::Symbol, CoderError<Self::FrontendError, Self::BackendError>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -681,7 +684,7 @@ where
             self.0
                 .supply
                 .append_quantile_to_state::<D, PRECISION>(quantile);
-            return Err(DecodingError::DataError(DataError::OutOfData));
+            return Err(CoderError::FrontendError(FrontendError::OutOfData));
         }
 
         let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
@@ -707,7 +710,7 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
-    type WriteError = WriteError;
+    type BackendError = WriteError;
 
     fn encode_symbol<D>(
         &mut self,
