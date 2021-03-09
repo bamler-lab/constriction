@@ -3,7 +3,7 @@
 //! # TODO:
 //!
 //! - generizise `Range{En,De}Coder`.
-//! - move this module up yet another level in the hierarchi and generizise symbol codes
+//! - move this module up yet another level in the hierarchy and generizise symbol codes
 //!   over backends.
 //! - Also, add a trait for prefix codes and implement both a queue and a stack of prefix
 //!   codes, where the stack inferts the bit order. Note that Huffman coding is actually
@@ -86,8 +86,14 @@
 //! decode_from_file_on_the_fly(1000);
 //! ```
 
+#[cfg(feature = "std")]
+use std::error::Error;
+
 use alloc::vec::Vec;
-use core::{convert::Infallible, fmt::Debug};
+use core::{
+    convert::Infallible,
+    fmt::{Debug, Display},
+};
 
 // READ WRITE LOGICS ==========================================================
 
@@ -102,27 +108,6 @@ pub enum Queue {}
 impl Semantics for Queue {}
 
 // MAIN TRAITS FOR CAPABILITIES OF BACKENDS ===================================
-
-/// A trait for backends that write compressed words (used by encoders)
-pub trait WriteBackend<Word> {
-    #[cfg(not(feature = "std"))]
-    type WriteError: Debug;
-
-    #[cfg(feature = "std")]
-    type WriteError: std::error::Error;
-
-    /// TODO:
-    /// - also introduce a `BoundedWrite` trait (and implement it for mut cursors, which
-    ///   always write from left to right).
-    fn write(&mut self, word: Word) -> Result<(), Self::WriteError>;
-
-    fn extend(&mut self, iter: impl Iterator<Item = Word>) -> Result<(), Self::WriteError> {
-        for word in iter {
-            self.write(word)?;
-        }
-        Ok(())
-    }
-}
 
 /// A trait for backends that read compressed words (used by decoders)
 pub trait ReadBackend<Word, S: Semantics> {
@@ -139,16 +124,50 @@ pub trait ReadBackend<Word, S: Semantics> {
     }
 }
 
+/// A trait for backends that write compressed words (used by encoders)
+pub trait WriteBackend<Word> {
+    #[cfg(not(feature = "std"))]
+    type WriteError: Debug;
+
+    #[cfg(feature = "std")]
+    type WriteError: std::error::Error;
+
+    fn write(&mut self, word: Word) -> Result<(), Self::WriteError>;
+
+    fn extend(&mut self, iter: impl Iterator<Item = Word>) -> Result<(), Self::WriteError> {
+        for word in iter {
+            self.write(word)?;
+        }
+        Ok(())
+    }
+
+    fn maybe_full(&self) -> bool {
+        true
+    }
+}
+
 // A trait for read backends that know how much data is left.
 pub trait BoundedReadBackend<Word, S: Semantics>: ReadBackend<Word, S> {
     // Returns the amount of data that's left for reading.
     fn remaining(&self) -> usize;
 
     /// TODO: don't forget to overwrite the default implementation of
-    /// `Backend::maybe_empty`.
+    /// `ReadBackend::maybe_empty`.
     #[inline(always)]
     fn is_exhausted(&self) -> bool {
         self.remaining() == 0
+    }
+}
+// A trait for write backends that know how much more data they're allowed to write.
+pub trait BoundedWriteBackend<Word>: WriteBackend<Word> {
+    // Returns the amount of `Word`s that may still be written.
+    fn space(&self) -> usize;
+
+    /// TODO: don't forget to overwrite the default implementation of
+    /// `WriteBackend::maybe_full`.
+    #[inline(always)]
+    fn is_full(&self) -> bool {
+        self.space() == 0
     }
 }
 
@@ -449,13 +468,41 @@ impl<Buf> ReverseReads<Cursor<Buf>> {
 }
 
 impl<Word, Buf: AsMut<[Word]>> WriteBackend<Word> for Cursor<Buf> {
-    type WriteError = Infallible;
+    type WriteError = BoundedWriteError;
 
     #[inline(always)]
-    fn write(&mut self, _word: Word) -> Result<(), Self::WriteError> {
-        todo!()
+    fn write(&mut self, word: Word) -> Result<(), Self::WriteError> {
+        if let Some(target) = self.buf.as_mut().get_mut(self.pos) {
+            *target = word;
+            self.pos += 1;
+            Ok(())
+        } else {
+            Err(BoundedWriteError::OutOfSpace)
+        }
     }
 }
+
+impl<Word, Buf: AsMut<[Word]> + AsRef<[Word]>> BoundedWriteBackend<Word> for Cursor<Buf> {
+    #[inline(always)]
+    fn space(&self) -> usize {
+        self.buf.as_ref().len() - self.pos
+    }
+}
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum BoundedWriteError {
+    OutOfSpace,
+}
+
+impl Display for BoundedWriteError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::OutOfSpace => write!(f, "Out of space."),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl Error for BoundedWriteError {}
 
 impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Stack> for Cursor<Buf> {
     type ReadError = Infallible;
