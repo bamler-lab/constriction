@@ -10,7 +10,7 @@ use super::{
     Codebook, DecoderCodebook, DecodingError, EncoderCodebook, SmallBitVec,
     SmallBitVecReverseIterator,
 };
-use crate::{BitArray, EncodingError, UnwrapInfallible};
+use crate::{BitArray, EncoderError, EncoderFrontendError, UnwrapInfallible};
 
 /// The type parameter `W` is used in the implementation of [`EncoderCodebook`],
 /// which temporarily builds up the reversed codeword in a `SmallBitVec<W>` before
@@ -126,9 +126,9 @@ impl<W: BitArray> Codebook for EncoderHuffmanTree<W> {
 impl<W: BitArray> EncoderCodebook for EncoderHuffmanTree<W> {
     type BitIterator = SmallBitVecReverseIterator<W>;
 
-    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncodingError<Infallible>> {
+    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncoderError<Infallible>> {
         if symbol > self.nodes.len() / 2 {
-            return Err(EncodingError::ImpossibleSymbol);
+            return Err(EncoderFrontendError::ImpossibleSymbol.into_encoder_error());
         }
 
         let mut reverse_codeword = SmallBitVec::<W>::new();

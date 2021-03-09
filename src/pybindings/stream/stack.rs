@@ -9,7 +9,7 @@ use crate::{
         models::{Categorical, LeakyQuantizer},
         Decode, TryCodingError,
     },
-    EncodingError,
+    EncoderError,
 };
 
 use statrs::distribution::Normal;
@@ -400,13 +400,13 @@ impl<CodingError: Error + Into<PyErr>, ModelError: Error>
     }
 }
 
-impl<WriteError: Display> From<EncodingError<WriteError>> for PyErr {
-    fn from(err: EncodingError<WriteError>) -> Self {
+impl<WriteError: Display> From<EncoderError<WriteError>> for PyErr {
+    fn from(err: EncoderError<WriteError>) -> Self {
         match err {
-            EncodingError::ImpossibleSymbol => {
+            EncoderFrontendError::ImpossibleSymbol.into_encoder_error() => {
                 pyo3::exceptions::PyKeyError::new_err(err.to_string())
             }
-            EncodingError::WriteError(err) => {
+            EncoderError::WriteError(err) => {
                 pyo3::exceptions::PyBufferError::new_err(err.to_string())
             }
         }

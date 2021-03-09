@@ -161,7 +161,7 @@ use std::error::Error;
 
 use core::{borrow::Borrow, fmt::Display};
 
-use crate::{BitArray, CoderError, EncodingError};
+use crate::{BitArray, CoderError, EncoderError};
 use models::{DecoderModel, EncoderModel, EntropyModel};
 use num::cast::AsPrimitive;
 
@@ -251,7 +251,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError<Self::BackendError>>
+    ) -> Result<(), EncoderError<Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -260,7 +260,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn encode_symbols<S, D>(
         &mut self,
         symbols_and_models: impl IntoIterator<Item = (S, D)>,
-    ) -> Result<(), EncodingError<Self::BackendError>>
+    ) -> Result<(), EncoderError<Self::BackendError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -277,7 +277,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn try_encode_symbols<S, D, E>(
         &mut self,
         symbols_and_models: impl IntoIterator<Item = Result<(S, D), E>>,
-    ) -> Result<(), TryCodingError<EncodingError<Self::BackendError>, E>>
+    ) -> Result<(), TryCodingError<EncoderError<Self::BackendError>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -297,7 +297,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         &mut self,
         symbols: impl IntoIterator<Item = S>,
         model: &D,
-    ) -> Result<(), EncodingError<Self::BackendError>>
+    ) -> Result<(), EncoderError<Self::BackendError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,

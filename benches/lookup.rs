@@ -183,7 +183,7 @@ where
 
     let decoder_model = encoder_model.to_decoder_model();
 
-    let mut decoder = encoder.into_decoder();
+    let mut decoder = encoder.into_decoder().unwrap();
     let reset_snapshot = decoder.pos_and_state();
 
     c.bench_function(&format!("range_decoding_{}", label_suffix), |b| {

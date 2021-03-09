@@ -22,7 +22,10 @@ use super::{
     models::{DecoderModel, EncoderModel, EntropyModel},
     AsDecoder, Code, Decode, Encode, Pos, Seek, TryCodingError,
 };
-use crate::{bit_array_to_chunks_truncated, BitArray, CoderError, EncodingError, UnwrapInfallible};
+use crate::{
+    bit_array_to_chunks_truncated, BitArray, CoderError, EncoderError, EncoderFrontendError,
+    UnwrapInfallible,
+};
 
 /// Entropy coder for both encoding and decoding on a stack
 ///
@@ -788,7 +791,7 @@ where
     pub fn encode_symbols_reverse<S, D, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), EncodingError<Backend::WriteError>>
+    ) -> Result<(), EncoderError<Backend::WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -803,7 +806,7 @@ where
     pub fn try_encode_symbols_reverse<S, D, E, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), TryCodingError<EncodingError<Backend::WriteError>, E>>
+    ) -> Result<(), TryCodingError<EncoderError<Backend::WriteError>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -819,7 +822,7 @@ where
         &mut self,
         symbols: I,
         model: &D,
-    ) -> Result<(), EncodingError<Backend::WriteError>>
+    ) -> Result<(), EncoderError<Backend::WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -1038,7 +1041,7 @@ where
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError<Self::BackendError>>
+    ) -> Result<(), EncoderError<Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -1046,7 +1049,7 @@ where
     {
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .map_err(|()| EncodingError::ImpossibleSymbol)?;
+            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
 
         if (self.state >> (State::BITS - PRECISION)) >= probability.into().into() {
             self.flush_state()?;
@@ -1056,7 +1059,7 @@ where
 
         let remainder = self
             .decode_remainder_off_state::<D, PRECISION>(probability)
-            .map_err(|()| EncodingError::ImpossibleSymbol)?;
+            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
         self.append_quantile_to_state::<D, PRECISION>(left_sided_cumulative + remainder);
 
         Ok(())

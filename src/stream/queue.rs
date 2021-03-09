@@ -22,7 +22,7 @@ use super::{
     models::{DecoderModel, EncoderModel},
     Code, Decode, Encode, IntoDecoder, Pos, Seek,
 };
-use crate::{BitArray, CoderError, EncodingError, UnwrapInfallible};
+use crate::{BitArray, CoderError, EncoderError, EncoderFrontendError, UnwrapInfallible};
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
 /// [`Decoder<CompressedWord, State>`]. Relevant for [`Seek`]ing.
@@ -409,7 +409,7 @@ where
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError<Self::BackendError>>
+    ) -> Result<(), EncoderError<Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -420,7 +420,7 @@ where
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .map_err(|()| EncodingError::ImpossibleSymbol)?;
+            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
 
         let scale = self.state.range >> PRECISION;
         let new_lower = self

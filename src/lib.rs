@@ -275,11 +275,10 @@ use num::{
     PrimInt, Unsigned,
 };
 
-/// Error type for [`constriction::Coder`]
-///
-/// [`constriction::Coder`]: struct.Coder.html
-#[derive(Debug)]
-pub enum EncodingError<WriteError> {
+type EncoderError<BackendError> = CoderError<EncoderFrontendError, BackendError>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EncoderFrontendError {
     /// Tried to encode a symbol with zero probability under the used entropy model.
     ///
     /// This error can usually be avoided by using a "leaky" distribution, as the
@@ -289,37 +288,32 @@ pub enum EncodingError<WriteError> {
     /// [`Categorical::from_floating_point_probabilities`](
     /// models/struct.Categorical.html#method.from_floating_point_probabilities).
     ImpossibleSymbol,
-
-    WriteError(WriteError),
 }
 
-impl<WriteError: Display> Display for EncodingError<WriteError> {
+impl Display for EncoderFrontendError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::ImpossibleSymbol => write!(
                 f,
                 "Tried to encode symbol that has zero probability under the used entropy model."
             ),
-            Self::WriteError(err) => {
-                write!(f, "Error while writing compressed data: {}", err)
-            }
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl<WriteError: Error> Error for EncodingError<WriteError> {}
+impl Error for EncoderFrontendError {}
 
-impl<WriteError> From<WriteError> for EncodingError<WriteError> {
-    fn from(write_error: WriteError) -> Self {
-        Self::WriteError(write_error)
+impl EncoderFrontendError {
+    fn into_encoder_error<BackendError>(self) -> EncoderError<BackendError> {
+        EncoderError::FrontendError(self)
     }
 }
 
 /// TODO: rename into `CoderError<FrontendError, BackendError>`, and use it for both
 /// encodand decoding. (Force encoders to use a common `FrontendError`, which only has the
 /// variant `InvalidSymbol`.)
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoderError<FrontendError, BackendError> {
     FrontendError(FrontendError),
     BackendError(BackendError),

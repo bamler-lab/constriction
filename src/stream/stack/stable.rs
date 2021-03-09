@@ -10,9 +10,9 @@ use num::cast::AsPrimitive;
 
 use super::{
     super::models::{DecoderModel, EncoderModel},
-    AnsCoder, Code, Decode, Encode, EncodingError, TryCodingError,
+    AnsCoder, Code, Decode, Encode, EncoderError, TryCodingError,
 };
-use crate::{BitArray, CoderError, UnwrapInfallible};
+use crate::{BitArray, CoderError, EncoderFrontendError, UnwrapInfallible};
 
 #[derive(Debug, Clone)]
 struct Coder<CompressedWord, State, const PRECISION: usize>
@@ -279,7 +279,7 @@ where
     pub fn encode_symbols_reverse<S, D, I>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), EncodingError<WriteError>>
+    ) -> Result<(), EncoderError<WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -295,7 +295,7 @@ where
     pub fn try_encode_symbols_reverse<S, D, E, I>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), TryCodingError<EncodingError<WriteError>, E>>
+    ) -> Result<(), TryCodingError<EncoderError<WriteError>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -312,7 +312,7 @@ where
         &mut self,
         symbols: I,
         model: &D,
-    ) -> Result<(), EncodingError<WriteError>>
+    ) -> Result<(), EncoderError<WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -716,7 +716,7 @@ where
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError<WriteError>>
+    ) -> Result<(), EncoderError<WriteError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -724,7 +724,7 @@ where
     {
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .map_err(|()| EncodingError::ImpossibleSymbol)?;
+            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
 
         if self.0.waste.state()
             < probability.into().into() << (State::BITS - CompressedWord::BITS - PRECISION)
@@ -732,7 +732,7 @@ where
             self.0
                 .waste
                 .refill_state_maybe_truncating()
-                .map_err(|_| EncodingError::WriteError(WriteError::CapacityExceeded))?;
+                .map_err(|_| EncoderError::BackendError(WriteError::CapacityExceeded))?;
             // At this point, the invariant on `self.0.waste` (see its doc comment) is
             // temporarily violated (but it will be restored below). This is how
             // `decode_symbol` can detect that it has to flush `waste.state`.
@@ -744,7 +744,7 @@ where
             .0
             .waste
             .decode_remainder_off_state::<D, PRECISION>(probability)
-            .map_err(|()| EncodingError::WriteError(WriteError::CapacityExceeded))?;
+            .map_err(|()| EncoderError::BackendError(WriteError::CapacityExceeded))?;
 
         if (self.0.supply.state() >> (State::BITS - PRECISION)) != State::zero() {
             self.0.supply.flush_state();
