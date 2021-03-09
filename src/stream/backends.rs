@@ -3,6 +3,12 @@
 //! # TODO:
 //!
 //! - generizise `Range{En,De}Coder`.
+//! - move this module up yet another level in the hierarchi and generizise symbol codes
+//!   over backends.
+//! - Also, add a trait for prefix codes and implement both a queue and a stack of prefix
+//!   codes, where the stack inferts the bit order. Note that Huffman coding is actually
+//!   easier to do on a stack. So genarlize `HuffmanEncoderCodebook` such that it doesn't
+//!   need the temporary `SmallVec` when encoding on a stack.
 //!
 //! # Example
 //!
@@ -81,28 +87,34 @@
 //! ```
 
 use alloc::vec::Vec;
-use core::{fmt::Debug, hint::unreachable_unchecked, marker::PhantomData};
+use core::{convert::Infallible, fmt::Debug, hint::unreachable_unchecked, marker::PhantomData};
 
 // READ WRITE LOGICS ==========================================================
 
-/// TODO: rename to `ReadWriteSemantics` or just `Semantics`.
 pub trait Semantics {}
 
-pub struct Stack;
+#[allow(missing_debug_implementations)] // Can't be instantiated.
+pub enum Stack {}
 impl Semantics for Stack {}
 
-pub struct Queue;
+#[allow(missing_debug_implementations)] // Can't be instantiated.
+pub enum Queue {}
 impl Semantics for Queue {}
 
 // MAIN TRAITS FOR CAPABILITIES OF BACKENDS ===================================
 
 /// A trait for backends that write compressed words (used by encoders)
 pub trait WriteBackend<Word> {
+    #[cfg(not(feature = "std"))]
+    type WriteError: Debug;
+
+    #[cfg(feature = "std")]
+    type WriteError: std::error::Error;
+
     /// TODO:
-    /// - make this return a Result with associated error type (which may be infallible)
     /// - also introduce a `BoundedWrite` trait (and implement it for mut cursors, which
     ///   always write from left to right).
-    fn write(&mut self, word: Word);
+    fn write(&mut self, word: Word) -> Result<(), Self::WriteError>;
 
     fn extend(&mut self, iter: impl Iterator<Item = Word>) {
         for word in iter {
@@ -184,9 +196,12 @@ pub trait AsSeekWriteBackend<'a, Word, S: Semantics>: 'a {
 // IMPLEMENTATIONS FOR `Vec<Word>` ============================================
 
 impl<Word> WriteBackend<Word> for Vec<Word> {
+    type WriteError = Infallible;
+
     #[inline(always)]
-    fn write(&mut self, word: Word) {
-        self.push(word)
+    fn write(&mut self, word: Word) -> Result<(), Self::WriteError> {
+        self.push(word);
+        Ok(())
     }
 }
 
@@ -220,9 +235,12 @@ impl<Word> PosBackend<Word> for Vec<Word> {
 pub struct ReverseReads<Backend>(pub Backend);
 
 impl<Word, B: WriteBackend<Word>> WriteBackend<Word> for ReverseReads<B> {
+    type WriteError = Infallible;
+
     #[inline(always)]
-    fn write(&mut self, word: Word) {
-        self.0.write(word)
+    fn write(&mut self, word: Word) -> Result<(), Self::WriteError> {
+        self.0.write(word);
+        Ok(())
     }
 }
 
@@ -418,8 +436,10 @@ impl<Buf> ReverseReads<Cursor<Buf>> {
 }
 
 impl<Word, Buf: AsMut<[Word]>> WriteBackend<Word> for Cursor<Buf> {
+    type WriteError = Infallible;
+
     #[inline(always)]
-    fn write(&mut self, word: Word) {
+    fn write(&mut self, word: Word) -> Result<(), Self::WriteError> {
         todo!()
     }
 }

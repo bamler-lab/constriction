@@ -128,7 +128,7 @@ impl<W: BitArray> Codebook for EncoderHuffmanTree<W> {
 impl<W: BitArray> EncoderCodebook for EncoderHuffmanTree<W> {
     type BitIterator = SmallBitVecReverseIterator<W>;
 
-    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncodingError> {
+    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncodingError<Infallible>> {
         if symbol > self.nodes.len() / 2 {
             return Err(EncodingError::ImpossibleSymbol);
         }

@@ -440,7 +440,7 @@ where
     pub(crate) fn decode_remainder_off_state<D, const PRECISION: usize>(
         &mut self,
         probability: D::Probability,
-    ) -> Result<D::Probability, EncodingError>
+    ) -> Result<D::Probability, ()>
     where
         D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
@@ -450,8 +450,7 @@ where
         self.state = self
             .state
             .checked_div(&probability.into().into())
-            .ok_or(EncodingError::ImpossibleSymbol)?;
-
+            .ok_or(())?;
         Ok(remainder)
     }
 
@@ -529,7 +528,9 @@ where
     /// [`from_compressed`]: #method.from_compressed
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`into_compressed`]: #method.into_compressed
-    pub fn get_compressed<'a>(&'a mut self) -> impl Deref<Target = Backend> + Debug + Drop + 'a
+    pub fn get_compressed<'a>(
+        &'a mut self,
+    ) -> Result<impl Deref<Target = Backend> + Debug + Drop + 'a, Backend::WriteError>
     where
         Backend: ReadBackend<CompressedWord, Stack> + WriteBackend<CompressedWord> + Debug,
     {
@@ -754,15 +755,16 @@ where
     Backend: WriteBackend<CompressedWord>,
 {
     #[inline(always)]
-    pub(crate) fn flush_state(&mut self) {
-        self.bulk.write(self.state.as_());
+    pub(crate) fn flush_state(&mut self) -> Result<(), Backend::WriteError> {
+        self.bulk.write(self.state.as_())?;
         self.state = self.state >> CompressedWord::BITS;
+        Ok(())
     }
 
     pub fn encode_symbols_reverse<S, D, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<Backend::WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -777,7 +779,7 @@ where
     pub fn try_encode_symbols_reverse<S, D, E, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), TryCodingError<EncodingError, E>>
+    ) -> Result<(), TryCodingError<EncodingError<Backend::WriteError>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -793,7 +795,7 @@ where
         &mut self,
         symbols: I,
         model: &D,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<Backend::WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -985,6 +987,8 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: WriteBackend<CompressedWord>,
 {
+    type WriteError = Backend::WriteError;
+
     /// Encodes a single symbol and appends it to the compressed data.
     ///
     /// This is a low level method. You probably usually want to call a batch method
@@ -1010,7 +1014,7 @@ where
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<Self::WriteError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -1026,7 +1030,9 @@ where
             // temporarily violated, but it will be restored below.
         }
 
-        let remainder = self.decode_remainder_off_state::<D, PRECISION>(probability)?;
+        let remainder = self
+            .decode_remainder_off_state::<D, PRECISION>(probability)
+            .map_err(|()| EncodingError::ImpossibleSymbol)?;
         self.append_quantile_to_state::<D, PRECISION>(left_sided_cumulative + remainder);
 
         Ok(())
@@ -1160,13 +1166,15 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: WriteBackend<CompressedWord> + ReadBackend<CompressedWord, Stack>,
 {
-    fn new(ans: &'a mut AnsCoder<CompressedWord, State, Backend>) -> Self {
+    fn new(
+        ans: &'a mut AnsCoder<CompressedWord, State, Backend>,
+    ) -> Result<Self, Backend::WriteError> {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         for chunk in bit_array_to_chunks_truncated(ans.state).rev() {
-            ans.bulk.write(chunk)
+            ans.bulk.write(chunk)?
         }
 
-        Self { inner: ans }
+        Ok(Self { inner: ans })
     }
 }
 

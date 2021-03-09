@@ -1,7 +1,7 @@
 //! TODO: mirror as much of the `stack` API as possible
 
 use alloc::vec::Vec;
-use core::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::Deref};
+use core::{borrow::Borrow, convert::Infallible, fmt::Debug, marker::PhantomData, ops::Deref};
 
 use num::cast::AsPrimitive;
 
@@ -389,11 +389,13 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
+    type WriteError = Infallible;
+
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<Self::WriteError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,

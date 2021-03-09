@@ -5,7 +5,7 @@ pub mod huffman;
 use smallvec::SmallVec;
 
 use alloc::vec::Vec;
-use core::{borrow::Borrow, iter::FromIterator};
+use core::{borrow::Borrow, convert::Infallible, iter::FromIterator};
 
 use crate::{BitArray, EncodingError};
 
@@ -20,7 +20,7 @@ pub trait Codebook {
 pub trait EncoderCodebook: Codebook {
     type BitIterator: Iterator<Item = bool>;
 
-    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncodingError>;
+    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncodingError<Infallible>>;
 }
 
 pub trait DecoderCodebook: Codebook {
@@ -36,7 +36,7 @@ impl<C: Codebook> Codebook for &C {
 impl<C: EncoderCodebook> EncoderCodebook for &C {
     type BitIterator = C::BitIterator;
 
-    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncodingError> {
+    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncodingError<Infallible>> {
         (*self).encode_symbol(symbol)
     }
 }
@@ -228,14 +228,14 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
         &mut self,
         symbol: usize,
         codebook: impl EncoderCodebook,
-    ) -> Result<(), EncodingError> {
+    ) -> Result<(), EncodingError<Infallible>> {
         Ok(self.extend(codebook.encode_symbol(symbol)?))
     }
 
     pub fn encode_symbols<S, C>(
         &mut self,
         symbols_and_codebooks: impl IntoIterator<Item = (S, C)>,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<Infallible>>
     where
         S: Borrow<usize>,
         C: EncoderCodebook,
@@ -251,7 +251,7 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
         &mut self,
         symbols: impl IntoIterator<Item = S>,
         codebook: &impl EncoderCodebook,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<Infallible>>
     where
         S: Borrow<usize>,
     {

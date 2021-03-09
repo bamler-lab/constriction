@@ -159,7 +159,7 @@ pub mod stack;
 #[cfg(feature = "std")]
 use std::error::Error;
 
-use core::borrow::Borrow;
+use core::{borrow::Borrow, fmt::Display};
 
 use crate::{BitArray, EncodingError};
 use models::{DecoderModel, EncoderModel, EntropyModel};
@@ -229,11 +229,29 @@ pub trait Code {
 
 /// TODO: rethink `PRECISION` parameter. Try again to encapsulate it in `Probability`
 pub trait Encode<const PRECISION: usize>: Code {
+    /// The error type for writing out encoded data.
+    ///
+    /// This will typically be the [`WriteError`] type of the of an underlying
+    /// [`WriteBackend`], which is typically [`Infallible`] for automatically growing
+    /// in-memory backends (such as `Vec`). But it may be an inhabitated error type if
+    /// you're, e.g., encoding directly to a file or socket.
+    #[cfg(not(feature = "std"))]
+    type WriteError: Debug;
+
+    /// The error type for writing out encoded data.
+    ///
+    /// This will typically be the [`WriteError`] type of the of an underlying
+    /// [`WriteBackend`], which is typically [`Infallible`] for automatically growing
+    /// in-memory backends (such as `Vec`). But it may be an inhabitated error type if
+    /// you're, e.g., encoding directly to a file or socket.
+    #[cfg(feature = "std")]
+    type WriteError: Error;
+
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<Self::WriteError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -242,7 +260,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn encode_symbols<S, D>(
         &mut self,
         symbols_and_models: impl IntoIterator<Item = (S, D)>,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<Self::WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -259,7 +277,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn try_encode_symbols<S, D, E>(
         &mut self,
         symbols_and_models: impl IntoIterator<Item = Result<(S, D), E>>,
-    ) -> Result<(), TryCodingError<EncodingError, E>>
+    ) -> Result<(), TryCodingError<EncodingError<Self::WriteError>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -279,7 +297,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         &mut self,
         symbols: impl IntoIterator<Item = S>,
         model: &D,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<Self::WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -878,22 +896,24 @@ pub enum TryCodingError<CodingError, ModelError> {
     CodingError(CodingError),
 }
 
-impl core::fmt::Display for EncodingError {
+impl<WriteError: Display> Display for EncodingError<WriteError> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::ImpossibleSymbol => write!(
                 f,
                 "Tried to encode symbol that has zero probability under the used entropy model."
             ),
-            Self::CapacityExceeded => write!(f, "The encoder cannot accept any more symbols."),
+            Self::WriteError(write_error) => {
+                write!(f, "Cannot write compressed data: {}", write_error)
+            }
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl Error for EncodingError {}
+impl<WriteError: Error> Error for EncodingError<WriteError> {}
 
-impl<CodingError: core::fmt::Display, ModelError: core::fmt::Display> core::fmt::Display
+impl<CodingError: Display, ModelError: Display> Display
     for TryCodingError<CodingError, ModelError>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

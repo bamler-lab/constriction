@@ -272,9 +272,8 @@ use num::{
 /// Error type for [`constriction::Coder`]
 ///
 /// [`constriction::Coder`]: struct.Coder.html
-#[non_exhaustive]
 #[derive(Debug)]
-pub enum EncodingError {
+pub enum EncodingError<WriteError> {
     /// Tried to encode a symbol with zero probability under the used entropy model.
     ///
     /// This error can usually be avoided by using a "leaky" distribution, as the
@@ -285,7 +284,7 @@ pub enum EncodingError {
     /// models/struct.Categorical.html#method.from_floating_point_probabilities).
     ImpossibleSymbol,
 
-    CapacityExceeded,
+    WriteError(WriteError),
 }
 
 /// A trait for bit strings of fixed (and usually small) length.

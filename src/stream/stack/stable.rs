@@ -274,7 +274,7 @@ where
     pub fn encode_symbols_reverse<S, D, I>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -290,7 +290,7 @@ where
     pub fn try_encode_symbols_reverse<S, D, E, I>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), TryCodingError<EncodingError, E>>
+    ) -> Result<(), TryCodingError<EncodingError<WriteError>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -307,7 +307,7 @@ where
         &mut self,
         symbols: I,
         model: &D,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -476,7 +476,9 @@ where
 
         if NEW_PRECISION > PRECISION {
             if self.waste.state() >= State::one() << (State::BITS - NEW_PRECISION) {
-                self.waste.flush_state()
+                if self.waste.flush_state().is_err() {
+                    return Err(self);
+                }
             }
         } else if NEW_PRECISION < PRECISION {
             if self.waste.state()
@@ -623,7 +625,7 @@ pub enum DecodingError {
 impl core::fmt::Display for DecodingError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            DecodingError::OutOfData => {
+            Self::OutOfData => {
                 write!(f, "Out of binary data.")
             }
         }
@@ -632,6 +634,24 @@ impl core::fmt::Display for DecodingError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for DecodingError {}
+
+#[derive(Debug)]
+pub enum WriteError {
+    CapacityExceeded,
+}
+
+impl core::fmt::Display for WriteError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::CapacityExceeded => {
+                write!(f, "Capacity exceeded.")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for WriteError {}
 
 impl<CompressedWord, State, const PRECISION: usize> Decode<PRECISION>
     for Decoder<CompressedWord, State, PRECISION>
@@ -679,11 +699,13 @@ where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
 {
+    type WriteError = WriteError;
+
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncodingError>
+    ) -> Result<(), EncodingError<WriteError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::CompressedWord>,
@@ -696,18 +718,22 @@ where
         if self.0.waste.state()
             < probability.into().into() << (State::BITS - CompressedWord::BITS - PRECISION)
         {
-            if self.0.waste.try_refill_state().is_err() {
-                return Err(EncodingError::CapacityExceeded);
-            }
+            self.0
+                .waste
+                .try_refill_state()
+                .map_err(|()| EncodingError::WriteError(WriteError::CapacityExceeded))?;
             // At this point, the invariant on `self.0.waste` (see its doc comment) is
             // temporarily violated (but it will be restored below). This is how
             // `decode_symbol` can detect that it has to flush `waste.state`.
         }
 
+        // TODO: not sure if we're returning the right error here. Why are there two places
+        // in this function that can return a `CapacityExceeded` error?
         let remainder = self
             .0
             .waste
-            .decode_remainder_off_state::<D, PRECISION>(probability)?;
+            .decode_remainder_off_state::<D, PRECISION>(probability)
+            .map_err(|()| EncodingError::WriteError(WriteError::CapacityExceeded))?;
 
         if (self.0.supply.state() >> (State::BITS - PRECISION)) != State::zero() {
             self.0.supply.flush_state();

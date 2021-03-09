@@ -1,3 +1,4 @@
+use core::fmt::Display;
 use std::{error::Error, format, prelude::v1::*, vec};
 
 use numpy::{PyArray1, PyReadonlyArray1};
@@ -399,13 +400,13 @@ impl<CodingError: Error + Into<PyErr>, ModelError: Error>
     }
 }
 
-impl From<EncodingError> for PyErr {
-    fn from(err: EncodingError) -> Self {
+impl<WriteError: Display> From<EncodingError<WriteError>> for PyErr {
+    fn from(err: EncodingError<WriteError>) -> Self {
         match err {
             EncodingError::ImpossibleSymbol => {
                 pyo3::exceptions::PyKeyError::new_err(err.to_string())
             }
-            EncodingError::CapacityExceeded => {
+            EncodingError::WriteError(err) => {
                 pyo3::exceptions::PyBufferError::new_err(err.to_string())
             }
         }
