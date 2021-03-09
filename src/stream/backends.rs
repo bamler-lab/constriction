@@ -86,13 +86,13 @@ use core::{fmt::Debug, hint::unreachable_unchecked, marker::PhantomData};
 // READ WRITE LOGICS ==========================================================
 
 /// TODO: rename to `ReadWriteSemantics` or just `Semantics`.
-pub trait ReadWriteLogic {}
+pub trait Semantics {}
 
 pub struct Stack;
-impl ReadWriteLogic for Stack {}
+impl Semantics for Stack {}
 
 pub struct Queue;
-impl ReadWriteLogic for Queue {}
+impl Semantics for Queue {}
 
 // MAIN TRAITS FOR CAPABILITIES OF BACKENDS ===================================
 
@@ -112,7 +112,7 @@ pub trait WriteBackend<Word> {
 }
 
 /// A trait for backends that read compressed words (used by decoders)
-pub trait ReadBackend<Word, L: ReadWriteLogic> {
+pub trait ReadBackend<Word, S: Semantics> {
     fn read(&mut self) -> Option<Word>;
 
     fn maybe_exhausted(&self) -> bool {
@@ -121,7 +121,7 @@ pub trait ReadBackend<Word, L: ReadWriteLogic> {
 }
 
 // A trait for read backends that know how much data is left.
-pub trait BoundedReadBackend<Word, L: ReadWriteLogic>: ReadBackend<Word, L> {
+pub trait BoundedReadBackend<Word, S: Semantics>: ReadBackend<Word, S> {
     // Returns the amount of data that's left for reading.
     fn remaining(&self) -> usize;
 
@@ -145,30 +145,30 @@ pub trait SeekBackend<Word> {
 
 // TRAITS FOR CONVERSIONS BETWEEN BACKENDS WITH DIFFERENT CAPABILITIES ========
 
-pub trait IntoReadBackend<Word, L: ReadWriteLogic> {
-    type IntoReadBackend: ReadBackend<Word, L>;
+pub trait IntoReadBackend<Word, S: Semantics> {
+    type IntoReadBackend: ReadBackend<Word, S>;
     fn into_read_backend(self) -> Self::IntoReadBackend;
 }
 
-pub trait AsReadBackend<'a, Word, L: ReadWriteLogic>: 'a {
-    type AsReadBackend: ReadBackend<Word, L>;
+pub trait AsReadBackend<'a, Word, S: Semantics>: 'a {
+    type AsReadBackend: ReadBackend<Word, S>;
     fn as_read_backend(&'a self) -> Self::AsReadBackend;
 }
 
-pub trait IntoSeekReadBackend<Word, L: ReadWriteLogic> {
-    type IntoSeekReadBackend: SeekBackend<Word> + ReadBackend<Word, L>;
+pub trait IntoSeekReadBackend<Word, S: Semantics> {
+    type IntoSeekReadBackend: SeekBackend<Word> + ReadBackend<Word, S>;
     fn into_seek_read_backend(self) -> Self::IntoSeekReadBackend;
 }
 
-pub trait AsSeekReadBackend<'a, Word, L: ReadWriteLogic>: 'a {
-    type AsSeekReadBackend: SeekBackend<Word> + ReadBackend<Word, L>;
+pub trait AsSeekReadBackend<'a, Word, S: Semantics>: 'a {
+    type AsSeekReadBackend: SeekBackend<Word> + ReadBackend<Word, S>;
     fn as_seek_read_backend(&'a self) -> Self::AsSeekReadBackend;
 }
 
 // While neither `SeekBackend` nor `WriteBackend` are parameterized by a `ReadWriteLogic`,
 // we do need a `ReadWriteLogic` type parameter here because we need to initialize the
 // resulting backend correctly.
-pub trait IntoSeekWriteBackend<Word, L: ReadWriteLogic> {
+pub trait IntoSeekWriteBackend<Word, S: Semantics> {
     type IntoSeekWriteBackend: SeekBackend<Word> + WriteBackend<Word>;
     fn into_seek_write_backend(self) -> Self::IntoSeekWriteBackend;
 }
@@ -176,7 +176,7 @@ pub trait IntoSeekWriteBackend<Word, L: ReadWriteLogic> {
 // While neither `SeekBackend` nor `WriteBackend` are parameterized by a `ReadWriteLogic`,
 // we do need a `ReadWriteLogic` type parameter here because we need to initialize the
 // resulting backend correctly.
-pub trait AsSeekWriteBackend<'a, Word, L: ReadWriteLogic>: 'a {
+pub trait AsSeekWriteBackend<'a, Word, S: Semantics>: 'a {
     type AsSeekWriteBackend: SeekBackend<Word> + WriteBackend<Word>;
     fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteBackend;
 }
@@ -517,10 +517,10 @@ impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a> AsReadBackend<'a, Word, Queu
     }
 }
 
-impl<Word, Buf, L: ReadWriteLogic> IntoSeekReadBackend<Word, L> for Buf
+impl<Word, Buf, S: Semantics> IntoSeekReadBackend<Word, S> for Buf
 where
-    Buf: AsRef<[Word]> + IntoReadBackend<Word, L, IntoReadBackend = Cursor<Buf>>,
-    Cursor<Buf>: ReadBackend<Word, L>,
+    Buf: AsRef<[Word]> + IntoReadBackend<Word, S, IntoReadBackend = Cursor<Buf>>,
+    Cursor<Buf>: ReadBackend<Word, S>,
 {
     type IntoSeekReadBackend = Cursor<Buf>;
 
@@ -529,10 +529,10 @@ where
     }
 }
 
-impl<'a, Word: 'a, Buf, L: ReadWriteLogic> AsSeekReadBackend<'a, Word, L> for Buf
+impl<'a, Word: 'a, Buf, S: Semantics> AsSeekReadBackend<'a, Word, S> for Buf
 where
-    Buf: AsReadBackend<'a, Word, L, AsReadBackend = Cursor<&'a [Word]>>,
-    Cursor<&'a [Word]>: ReadBackend<Word, L>,
+    Buf: AsReadBackend<'a, Word, S, AsReadBackend = Cursor<&'a [Word]>>,
+    Cursor<&'a [Word]>: ReadBackend<Word, S>,
 {
     type AsSeekReadBackend = Cursor<&'a [Word]>;
 
@@ -597,14 +597,14 @@ impl<Iter: Iterator> IntoIterator for IteratorBackend<Iter> {
 
 /// Since `IteratorBackend` doesn't implement `WriteBackend`, it is allowed to implement
 /// `ReadBackend` for all `ReadWriteLogic`s
-impl<Iter: Iterator, L: ReadWriteLogic> ReadBackend<Iter::Item, L> for IteratorBackend<Iter> {
+impl<Iter: Iterator, S: Semantics> ReadBackend<Iter::Item, S> for IteratorBackend<Iter> {
     #[inline(always)]
     fn read(&mut self) -> Option<Iter::Item> {
         self.inner.next()
     }
 }
 
-impl<Iter: ExactSizeIterator, L: ReadWriteLogic> BoundedReadBackend<Iter::Item, L>
+impl<Iter: ExactSizeIterator, S: Semantics> BoundedReadBackend<Iter::Item, S>
     for IteratorBackend<Iter>
 {
     #[inline(always)]
