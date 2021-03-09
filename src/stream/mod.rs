@@ -165,6 +165,10 @@ use crate::{BitArray, EncodingError};
 use models::{DecoderModel, EncoderModel, EntropyModel};
 use num::cast::AsPrimitive;
 
+/// TODO:
+/// - make `PRECISION` a generic parameter of `Code`. This makes it more consistent with the
+///   fact that `CompressedWord` and `state` are also defined on `Code`.
+/// - simplify `IntoDecoder`: has same `PRECISION` as the original Code.
 pub trait Code {
     type CompressedWord: BitArray;
     type State: Clone;
@@ -177,40 +181,45 @@ pub trait Code {
     /// Check if there might be no compressed data available.
     ///
     /// This method is useful to check for consistency, e.g., when decoding data with a
-    /// [`Decode`]. This method returns `true` if there *might* not be any compressed
-    /// data. This can have several causes, e.g.:
+    /// [`Decode`]. This method returns `true` if there *might* not be any compressed data.
+    /// This can have several causes, e.g.:
     /// - the method is called on a newly constructed empty encoder or decoder; or
-    /// - the user is decoding in-memory data and called `maybe_empty` after decoding
-    ///   all available compressed data; or
+    /// - the user is decoding in-memory data and called `maybe_empty` after decoding all
+    ///   available compressed data; or
     /// - it is unknown whether there is any compressed data left.
     ///
     /// The last item in the above list deserves further explanation. It is not always
     /// possible to tell whether any compressed data is available. For example, when
-    /// encoding data onto or decoding data from a stream (like a network socket), then
-    /// the coder is not required to keep track of whether or not any compressed data
-    /// has already been emitted or can still be received, respectively. In such a case,
-    /// when it is not known whether any compressed data is available, `maybe_empty`
-    /// *must* return `true`.
+    /// encoding data onto or decoding data from a stream (like a network socket), then the
+    /// coder is not required to keep track of whether or not any compressed data has
+    /// already been emitted or can still be received, respectively. In such a case, when it
+    /// is not known whether any compressed data is available, `maybe_empty` *must* return
+    /// `true`.
     ///
     /// The contrapositive of the above requirement is that, when `maybe_empty` returns
-    /// `false`, then some compressed data is definitely available. Therefore,
-    /// `maybe_empty` can used to check for data corruption: if the user of this library
-    /// believes that they have decoded all available compressed data but `maybe_empty`
-    /// returns `false`, then the decoded data must have been corrupted. However, the
-    /// converse is not true: if `maybe_empty` returns `true` then this is not
-    /// necessarily a particularly strong guarantee of data integrity.
+    /// `false`, then some compressed data is definitely available. Therefore, `maybe_empty`
+    /// can used to check for data corruption: if the user of this library believes that
+    /// they have decoded all available compressed data but `maybe_empty` returns `false`,
+    /// then the decoded data must have been corrupted. However, the converse is not true:
+    /// if `maybe_empty` returns `true` then this is not necessarily a particularly strong
+    /// guarantee of data integrity.
     ///
-    /// Note that it is always legal to call [`decode_symbol`] even on an empty
-    /// [`Decode`]. Some decoder implementations may even always return and `Ok(_)`
-    /// value (with an arbitrary but deterministically constructed wrapped symbol) even
-    /// if the decoder is empty,
+    /// Note that it is always legal to call [`decode_symbol`] even on an empty [`Decode`].
+    /// Some decoder implementations may even always return and `Ok(_)` value (with an
+    /// arbitrary but deterministically constructed wrapped symbol) even if the decoder is
+    /// empty,
     ///
     /// # Implementation Guide
     ///
     /// The default implementation always returns `true` since this is always a *valid*
-    /// (albeit not necessarily the most useful) return value. If you overwrite this
-    /// method, you may return `false` only if there is definitely some compressed data
-    /// available. When in doubt, return `true`.
+    /// (albeit not necessarily the most useful) return value. If you overwrite this method,
+    /// you may return `false` only if there is definitely some compressed data available.
+    /// When in doubt, return `true`.
+    ///
+    /// # TODO
+    ///
+    /// - split this into `maybe_exhausted` and `maybe_empty`, defined on `Decode` and
+    ///   `Encode`, respectively, which may return different things on a queue.
     ///
     /// [`decode_symbol`]: Decode::decode_symbol
     fn maybe_empty(&self) -> bool {
@@ -218,6 +227,7 @@ pub trait Code {
     }
 }
 
+/// TODO: rethink `PRECISION` parameter. Try again to encapsulate it in `Probability`
 pub trait Encode<const PRECISION: usize>: Code {
     fn encode_symbol<D>(
         &mut self,
@@ -463,6 +473,8 @@ pub trait IntoDecoder<const PRECISION: usize>: Code + Sized {
     /// the advantage of using the `IntoDecoder` trait rather than directly calling
     /// `self.into()` is that `IntoDecoder::IntoDecoder` defines a suitable return type
     /// so the caller doesn't need to specify one.
+    ///
+    /// TODO: I no longer think we want to depend on `From` here.
     ///
     /// [`into_decoder`]: Self::into_decoder
     type IntoDecoder: From<Self>

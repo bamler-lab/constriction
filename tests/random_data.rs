@@ -8,7 +8,7 @@ use rand_pcg::Pcg64Mcg;
 use statrs::distribution::Normal;
 
 use constriction::{
-    stream::{stack, models::LeakyQuantizer, queue, Decode, Encode, IntoDecoder},
+    stream::{models::LeakyQuantizer, queue, stack, Decode, Encode, IntoDecoder},
     BitArray,
 };
 

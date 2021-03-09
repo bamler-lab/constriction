@@ -7,8 +7,8 @@ use num::cast::AsPrimitive;
 
 use super::{
     backends::{
-        IntoReadQueueBackend, MutBackend, PosBackend, ReadQueueBackend, SeekBackend, SizedBackend,
-        WriteBackend,
+        AsReadBackend, BoundedReadBackend, Cursor, IntoReadBackend, PosBackend, Queue, ReadBackend,
+        SeekBackend, WriteBackend,
     },
     models::{DecoderModel, EncoderModel},
     Code, Decode, Encode, IntoDecoder, Pos, Seek,
@@ -146,20 +146,17 @@ where
     }
 }
 
-impl<CompressedWord, State> Code for RangeEncoder<CompressedWord, State>
+impl<CompressedWord, State, Backend> Code for RangeEncoder<CompressedWord, State, Backend>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Backend: WriteBackend<CompressedWord>,
 {
     type State = CoderState<CompressedWord, State>;
     type CompressedWord = CompressedWord;
 
     fn state(&self) -> Self::State {
         self.state
-    }
-
-    fn maybe_empty(&self) -> bool {
-        self.is_empty()
     }
 }
 
@@ -206,47 +203,25 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: WriteBackend<CompressedWord>,
 {
-    /// Discards all compressed data and resets the coder to the same state as
-    /// [`Coder::new`](#method.new).
-    pub fn clear(&mut self)
-    where
-        Backend: MutBackend<CompressedWord>,
-    {
-        self.bulk.clear();
-        self.state = CoderState::default();
-    }
-
     /// Check if no data has been encoded yet.
-    pub fn is_empty(&self) -> bool
+    pub fn is_empty<'a>(&'a self) -> bool
     where
-        Backend: SizedBackend<CompressedWord>,
+        Backend: AsReadBackend<'a, CompressedWord, Queue>,
+        Backend::AsReadBackend: BoundedReadBackend<CompressedWord, Queue>,
     {
-        self.bulk.is_empty() && self.state.range == State::max_value()
+        self.state.range == State::max_value() && self.bulk.as_read_backend().is_exhausted()
     }
 
     /// Same as IntoDecoder::into_decoder(self) but can be used for any `PRECISION`
     /// and therefore doesn't require type arguments on the caller side.
     ///
-    /// TODO: isn't there already a trait method with this name?
     /// TODO: there should also be a `decoder()` method that takes `&mut self`
-    pub fn into_decoder(self) -> RangeDecoder<CompressedWord, State, Backend::IntoReadQueueBackend>
+    pub fn into_decoder(self) -> RangeDecoder<CompressedWord, State, Backend::IntoReadBackend>
     where
-        Backend: IntoReadQueueBackend<CompressedWord>,
+        Backend: IntoReadBackend<CompressedWord, Queue>,
     {
-        self.into()
+        RangeDecoder::from_compressed(self.into_compressed())
     }
-
-    // TODO: uncoment
-    // /// Same as IntoDecoder::into_decoder(&self) but can be used for any `PRECISION`
-    // /// and therefore doesn't require type arguments on the caller side.
-    // pub fn decoder(
-    //     &mut self, // TODO: document why we need mutable access (because encoder has to temporary flush its state)
-    // ) -> RangeDecoder<CompressedWord, State, CoderGuard<'_, CompressedWord, State, Backend>>
-    // where
-    //     Backend: IntoReadQueueBackend<CompressedWord>,
-    // {
-    //     RangeDecoder::from_compressed(self.get_compressed())
-    // }
 
     pub fn into_compressed(mut self) -> Backend {
         if self.state != Default::default() {
@@ -255,54 +230,6 @@ where
             self.bulk.write(word);
         }
         self.bulk
-    }
-
-    /// Assembles the current compressed data into a single slice.
-    ///
-    /// This method is similar to [`as_compressed_raw`] with the difference that it
-    /// concatenates the `bulk` and `head` before returning them. The concatenation
-    /// truncates any trailing zero words, which is compatible with the constructor
-    /// [`from_compressed`].
-    ///
-    /// This method requires a `&mut self` receiver. If you only have a shared
-    /// reference to a `Coder`, consider calling [`as_compressed_raw`] or
-    /// [`iter_compressed`] instead.
-    ///
-    /// The returned `CoderGuard` dereferences to `&[CompressedWord]`, thus providing read-only
-    /// access to the compressed data. If you need ownership of the compressed data,
-    /// consider calling [`into_compressed`] instead.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::stream::{models::Categorical, stack::DefaultAnsCoder, Decode};
-    ///
-    /// let mut coder = DefaultAnsCoder::new();
-    ///
-    /// // Push some data on the coder.
-    /// let symbols = vec![8, 2, 0, 7];
-    /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
-    ///     .unwrap();
-    /// coder.encode_iid_symbols_reverse(&symbols, &model).unwrap();
-    ///
-    /// // Inspect the compressed data.
-    /// dbg!(coder.get_compressed());
-    ///
-    /// // We can still use the coder afterwards.
-    /// let reconstructed = coder
-    ///     .decode_iid_symbols(4, &model)
-    ///     .collect::<Result<Vec<_>, _>>()
-    ///     .unwrap();
-    /// assert_eq!(reconstructed, symbols);
-    /// ```
-    ///
-    /// [`as_compressed_raw`]: #method.as_compressed_raw
-    /// [`from_compressed`]: #method.from_compressed
-    /// [`iter_compressed`]: #method.iter_compressed
-    /// [`into_compressed`]: #method.into_compressed
-    pub fn get_compressed(&mut self) -> EncoderGuard<'_, CompressedWord, State, Backend> {
-        EncoderGuard::new(self)
     }
 
     pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = CompressedWord> + '_
@@ -330,14 +257,15 @@ where
     /// [`into_compressed`]: #method.into_compressed
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`num_bits`]: #method.num_bits
-    pub fn num_words(&self) -> usize
+    pub fn num_words<'a>(&'a self) -> usize
     where
-        Backend: SizedBackend<CompressedWord>,
+        Backend: AsReadBackend<'a, CompressedWord, Queue>,
+        Backend::AsReadBackend: BoundedReadBackend<CompressedWord, Queue>,
     {
         if self.is_empty() {
             0
         } else {
-            self.bulk.len() + 1
+            self.bulk.as_read_backend().remaining() + 1
         }
     }
 
@@ -348,9 +276,10 @@ where
     ///
     /// The returned value is a multiple of the bitlength of the compressed word
     /// type `CompressedWord`.
-    pub fn num_bits(&self) -> usize
+    pub fn num_bits<'a>(&'a self) -> usize
     where
-        Backend: SizedBackend<CompressedWord>,
+        Backend: AsReadBackend<'a, CompressedWord, Queue>,
+        Backend::AsReadBackend: BoundedReadBackend<CompressedWord, Queue>,
     {
         CompressedWord::BITS * self.num_words()
     }
@@ -360,15 +289,99 @@ where
     }
 }
 
-// TODO: uncomment
-// impl<CompressedWord, State, const PRECISION: usize> IntoDecoder<PRECISION>
-//     for RangeEncoder<CompressedWord, State>
-// where
-//     CompressedWord: BitArray + Into<State>,
-//     State: BitArray + AsPrimitive<CompressedWord>,
-// {
-//     type IntoDecoder = RangeDecoder<CompressedWord, State, Vec<CompressedWord>>;
-// }
+impl<CompressedWord, State> RangeEncoder<CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    /// Discards all compressed data and resets the coder to the same state as
+    /// [`Coder::new`](#method.new).
+    pub fn clear(&mut self) {
+        self.bulk.clear();
+        self.state = CoderState::default();
+    }
+
+    /// Assembles the current compressed data into a single slice.
+    ///
+    /// This method is only implemented for encoders backed by a `Vec<CompressedWord>`
+    /// because we have to temporarily seal the encoder and then unseal it when the returned
+    /// `EncoderGuard` is dropped, which requires precise knowledge of the backend (and
+    /// which is also the reason why this method takes a `&mut self`receiver). If you're
+    /// using a different backend than a `Vec`, consider calling [`into_compressed`]
+    /// instead.
+    ///
+    /// TODO: update following documentation.
+    ///
+    /// This method is similar to [`as_compressed_raw`] with the difference that it
+    /// concatenates the `bulk` and `head` before returning them. The concatenation
+    /// truncates any trailing zero words, which is compatible with the constructor
+    /// [`from_compressed`].
+    ///
+    /// This method requires a `&mut self` receiver. If you only have a shared reference to
+    /// a `Coder`, consider calling [`as_compressed_raw`] or [`iter_compressed`] instead.
+    ///
+    /// The returned `CoderGuard` dereferences to `&[CompressedWord]`, thus providing
+    /// read-only access to the compressed data. If you need ownership of the compressed
+    /// data, consider calling [`into_compressed`] instead.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::stream::{models::Categorical, stack::DefaultAnsCoder, Decode};
+    ///
+    /// let mut coder = DefaultAnsCoder::new();
+    ///
+    /// // Push some data on the coder.
+    /// let symbols = vec![8, 2, 0, 7];
+    /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
+    /// let model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
+    ///     .unwrap();
+    /// coder.encode_iid_symbols_reverse(&symbols, &model).unwrap();
+    ///
+    /// // Inspect the compressed data.
+    /// dbg!(coder.get_compressed());
+    ///
+    /// // We can still use the coder afterwards.
+    /// let reconstructed = coder
+    ///     .decode_iid_symbols(4, &model)
+    ///     .collect::<Result<Vec<_>, _>>()
+    ///     .unwrap();
+    /// assert_eq!(reconstructed, symbols);
+    /// ```
+    ///
+    /// [`as_compressed_raw`]: #method.as_compressed_raw [`from_compressed`]:
+    /// #method.from_compressed [`iter_compressed`]: #method.iter_compressed
+    /// [`into_compressed`]: #method.into_compressed
+    pub fn get_compressed(&mut self) -> EncoderGuard<'_, CompressedWord, State> {
+        EncoderGuard::new(self)
+    }
+
+    /// A decoder for temporary use.
+    ///
+    /// Once the returned decoder gets dropped, you can continue using this encoder. If you
+    /// don't need this flexibility, call [`into_decoder`] instead.
+    ///
+    /// This method is only implemented for encoders backed by a `Vec<CompressedWord>`
+    /// because we have to temporarily seal the encoder and then unseal it when the returned
+    /// decoder is dropped, which requires precise knowledge of the backend (and which is
+    /// also the reason why this method takes a `&mut self`receiver). If you're using a
+    /// different backend than a `Vec`, consider calling [`into_decoder`] instead.
+    pub fn decoder<'a>(
+        &'a mut self,
+    ) -> RangeDecoder<CompressedWord, State, Cursor<EncoderGuard<'a, CompressedWord, State>>> {
+        RangeDecoder::<CompressedWord, State, Cursor<EncoderGuard<'a, CompressedWord, State>>>::from_compressed(self.get_compressed())
+    }
+}
+
+impl<CompressedWord, State, Backend, const PRECISION: usize> IntoDecoder<PRECISION>
+    for RangeEncoder<CompressedWord, State, Backend>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+    Backend: WriteBackend<CompressedWord> + IntoReadBackend<CompressedWord, Queue>,
+{
+    type IntoDecoder = RangeDecoder<CompressedWord, State, Backend::IntoReadBackend>;
+}
 
 impl<CompressedWord, State, const PRECISION: usize> Encode<PRECISION>
     for RangeEncoder<CompressedWord, State>
@@ -436,7 +449,7 @@ pub struct RangeDecoder<CompressedWord, State, Backend>
 where
     CompressedWord: BitArray,
     State: BitArray,
-    Backend: ReadQueueBackend<CompressedWord>,
+    Backend: ReadBackend<CompressedWord, Queue>,
 {
     bulk: Backend,
 
@@ -447,7 +460,7 @@ where
 }
 
 /// Type alias for a [`RangeDecoder`] with sane parameters for typical use cases.
-pub type DefaultRangeDecoder<Backend> = RangeDecoder<u32, u64, Backend>;
+pub type DefaultRangeDecoder<Backend = Vec<u32>> = RangeDecoder<u32, u64, Backend>;
 
 /// Type alias for a [`RangeDecoder`] for use with [lookup models]
 ///
@@ -475,7 +488,7 @@ pub type SmallRangeDecoder<Backend> = RangeDecoder<u16, u32, Backend>;
 // where
 //     CompressedWord: BitArray + Into<State>,
 //     State: BitArray + AsPrimitive<CompressedWord>,
-//     Backend: ReadQueueBackend<CompressedWord>,
+//     Backend: ReadBackend<CompressedWord,Queue>,
 //     for<'a> &'a Backend: IntoIterator<Item = &'a CompressedWord>,
 // {
 //     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -492,23 +505,58 @@ impl<CompressedWord, State, Backend> RangeDecoder<CompressedWord, State, Backend
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: ReadQueueBackend<CompressedWord>,
+    Backend: ReadBackend<CompressedWord, Queue>,
 {
-    pub fn from_compressed(compressed: Backend) -> Self {
+    pub fn from_compressed<Buf>(compressed: Buf) -> Self
+    where
+        Buf: IntoReadBackend<CompressedWord, Queue, IntoReadBackend = Backend>,
+    {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
         assert_eq!(State::BITS % CompressedWord::BITS, 0);
 
-        let point = Self::read_point(&mut compressed);
+        let mut bulk = compressed.into_read_backend();
+        let point = Self::read_point(&mut bulk);
 
-        Self {
-            bulk: compressed,
+        RangeDecoder {
+            bulk,
             state: CoderState::default(),
             point,
         }
     }
 
-    fn read_point(bulk: &mut Backend) -> State {
-        let num_read = 0;
+    pub fn for_compressed<'a, Buf>(compressed: &'a Buf) -> Self
+    where
+        Buf: AsReadBackend<'a, CompressedWord, Queue, AsReadBackend = Backend>,
+    {
+        assert!(State::BITS >= 2 * CompressedWord::BITS);
+        assert_eq!(State::BITS % CompressedWord::BITS, 0);
+
+        let mut bulk = compressed.as_read_backend();
+        let point = Self::read_point(&mut bulk);
+
+        RangeDecoder {
+            bulk,
+            state: CoderState::default(),
+            point,
+        }
+    }
+
+    pub fn from_raw_parts(
+        _bulk: Backend,
+        _state: State,
+    ) -> Result<Self, (Backend, CoderState<CompressedWord, State>)> {
+        assert!(State::BITS >= 2 * CompressedWord::BITS);
+        assert_eq!(State::BITS % CompressedWord::BITS, 0);
+
+        todo!()
+    }
+
+    pub fn into_raw_parts(self) -> (Backend, CoderState<CompressedWord, State>) {
+        (self.bulk, self.state)
+    }
+
+    fn read_point<B: ReadBackend<CompressedWord, Queue>>(bulk: &mut B) -> State {
+        let mut num_read = 0;
         let mut point = State::zero();
         while let Some(word) = bulk.read() {
             point = point << CompressedWord::BITS | word.into();
@@ -539,7 +587,7 @@ impl<CompressedWord, State, Backend> Code for RangeDecoder<CompressedWord, State
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: ReadQueueBackend<CompressedWord>,
+    Backend: ReadBackend<CompressedWord, Queue>,
 {
     type State = CoderState<CompressedWord, State>;
     type CompressedWord = CompressedWord;
@@ -549,7 +597,7 @@ where
     }
 
     fn maybe_empty(&self) -> bool {
-        self.bulk.maybe_empty()
+        self.bulk.maybe_exhausted()
             && self.point.wrapping_sub(&self.state.lower)
                 < State::one() << (State::BITS - CompressedWord::BITS)
     }
@@ -559,7 +607,7 @@ impl<CompressedWord, State, Backend> Pos for RangeDecoder<CompressedWord, State,
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: ReadQueueBackend<CompressedWord> + PosBackend<CompressedWord>,
+    Backend: ReadBackend<CompressedWord, Queue> + PosBackend<CompressedWord>,
 {
     fn pos(&self) -> usize {
         self.bulk
@@ -572,12 +620,12 @@ impl<CompressedWord, State, Backend> Seek for RangeDecoder<CompressedWord, State
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: ReadQueueBackend<CompressedWord> + SeekBackend<CompressedWord>,
+    Backend: ReadBackend<CompressedWord, Queue> + SeekBackend<CompressedWord>,
 {
     fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()> {
         let (pos, state) = pos_and_state;
 
-        self.bulk.seek(pos, false)?;
+        self.bulk.seek(pos)?;
         self.point = Self::read_point(&mut self.bulk);
         self.state = state;
 
@@ -588,27 +636,27 @@ where
 }
 
 impl<CompressedWord, State, Backend> From<RangeEncoder<CompressedWord, State, Backend>>
-    for RangeDecoder<CompressedWord, State, Backend::IntoReadQueueBackend>
+    for RangeDecoder<CompressedWord, State, Backend::IntoReadBackend>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: WriteBackend<CompressedWord> + IntoReadQueueBackend<CompressedWord>,
+    Backend: WriteBackend<CompressedWord> + IntoReadBackend<CompressedWord, Queue>,
 {
     fn from(encoder: RangeEncoder<CompressedWord, State, Backend>) -> Self {
-        Self::from_compressed(encoder.into_compressed().into_read_queue_backend())
+        encoder.into_decoder()
     }
 }
 
-// TODO: uncomment
-// impl<'encoder, CompressedWord, State, Backend>
-//     From<&'encoder mut RangeEncoder<CompressedWord, State, Backend>>
-//     for RangeDecoder<CompressedWord, State, CoderGuard<'encoder, CompressedWord, State>>
+// TODO
+// impl<'a, CompressedWord, State, Backend> From<&'a RangeEncoder<CompressedWord, State, Backend>>
+//     for RangeDecoder<CompressedWord, State, Backend::AsReadBackend>
 // where
 //     CompressedWord: BitArray + Into<State>,
 //     State: BitArray + AsPrimitive<CompressedWord>,
+//     Backend: WriteBackend<CompressedWord> + AsReadBackend<'a, CompressedWord, Queue>,
 // {
-//     fn from(encoder: &'encoder mut RangeEncoder<CompressedWord, State>) -> Self {
-//         encoder.decoder()
+//     fn from(encoder: &'a RangeEncoder<CompressedWord, State, Backend>) -> Self {
+//         encoder.as_decoder()
 //     }
 // }
 
@@ -617,7 +665,7 @@ impl<CompressedWord, State, Backend, const PRECISION: usize> Decode<PRECISION>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: ReadQueueBackend<CompressedWord>,
+    Backend: ReadBackend<CompressedWord, Queue>,
 {
     type DecodingError = DecodingError;
 
@@ -714,34 +762,30 @@ impl std::error::Error for DecodingError {}
 ///
 /// [`Coder`]: struct.Coder.html
 /// [`Coder::get_compressed`]: struct.Coder.html#method.get_compressed
-pub struct EncoderGuard<'a, CompressedWord, State, Backend>
+pub struct EncoderGuard<'a, CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: WriteBackend<CompressedWord>,
 {
-    inner: &'a mut RangeEncoder<CompressedWord, State, Backend>,
+    inner: &'a mut RangeEncoder<CompressedWord, State>,
 }
 
-// TODO: uncomment
-// impl<CompressedWord, State, Backend> Debug for CoderGuard<'_, CompressedWord, State, Backend>
-// where
-//     CompressedWord: BitArray + Into<State>,
-//     State: BitArray + AsPrimitive<CompressedWord>,
-//     Backend: WriteBackend<CompressedWord>,
-// {
-//     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-//         Debug::fmt(&**self, f)
-//     }
-// }
-
-impl<'a, CompressedWord, State, Backend> EncoderGuard<'a, CompressedWord, State, Backend>
+impl<CompressedWord, State> Debug for EncoderGuard<'_, CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: WriteBackend<CompressedWord> + SizedBackend<CompressedWord>,
 {
-    fn new(encoder: &'a mut RangeEncoder<CompressedWord, State, Backend>) -> Self {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        Debug::fmt(&**self, f)
+    }
+}
+
+impl<'a, CompressedWord, State> EncoderGuard<'a, CompressedWord, State>
+where
+    CompressedWord: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<CompressedWord>,
+{
+    fn new(encoder: &'a mut RangeEncoder<CompressedWord, State>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         if !encoder.is_empty() {
             let word = (encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
@@ -751,11 +795,10 @@ where
     }
 }
 
-impl<'a, CompressedWord, State, Backend> Drop for EncoderGuard<'a, CompressedWord, State, Backend>
+impl<'a, CompressedWord, State> Drop for EncoderGuard<'a, CompressedWord, State>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: WriteBackend<CompressedWord>,
 {
     fn drop(&mut self) {
         self.inner.bulk.pop(); // Does nothing if `coder.is_empty()`, as it should.
@@ -805,7 +848,7 @@ mod tests {
         let compressed = encoder.into_compressed();
         assert!(compressed.is_empty());
 
-        let decoder = DefaultRangeDecoder::from_compressed(&compressed);
+        let decoder = DefaultRangeDecoder::from_compressed(compressed);
         assert!(decoder.maybe_empty());
     }
 

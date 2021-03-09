@@ -98,7 +98,10 @@ impl ReadWriteLogic for Queue {}
 
 /// A trait for backends that write compressed words (used by encoders)
 pub trait WriteBackend<Word> {
-    // TODO: make this return a Result with associated error type (which may be infallible)
+    /// TODO:
+    /// - make this return a Result with associated error type (which may be infallible)
+    /// - also introduce a `BoundedWrite` trait (and implement it for mut cursors, which
+    ///   always write from left to right).
     fn write(&mut self, word: Word);
 
     fn extend(&mut self, iter: impl Iterator<Item = Word>) {
