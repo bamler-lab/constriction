@@ -6,7 +6,6 @@ use std::error::Error;
 use alloc::vec::Vec;
 use core::{
     borrow::Borrow,
-    convert::Infallible,
     fmt::{Debug, Display},
     marker::PhantomData,
     num::NonZeroUsize,
@@ -23,20 +22,22 @@ use super::{
     models::{DecoderModel, EncoderModel},
     Code, Decode, Encode, IntoDecoder, Pos, Seek,
 };
-use crate::{BitArray, CoderError, EncoderError, EncoderFrontendError, UnwrapInfallible};
+use crate::{
+    BitArray, CoderError, EncoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible,
+};
 
 /// Type of the internal state used by [`Encoder<CompressedWord, State>`],
 /// [`Decoder<CompressedWord, State>`]. Relevant for [`Seek`]ing.
 ///
 /// [`Seek`]: crate::Seek
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CoderState<CompressedWord, State> {
+pub struct CoderState<CompressedWord, State: BitArray> {
     lower: State,
 
     /// Invariant: `range >= State::one() << (State::BITS - CompressedWord::BITS)`
     /// Therefore, the highest order `CompressedWord` of `lower` is always sufficient to
     /// identify the current interval, so only it has to be flushed at the end.
-    range: State,
+    range: State::NonZero,
 
     /// We keep track of the `CompressedWord` type so that we can statically enforce
     /// the invariants for `lower` and `range`.
@@ -50,7 +51,7 @@ impl<CompressedWord, State: BitArray> CoderState<CompressedWord, State> {
     }
 
     /// Get the size of the current range
-    pub fn range(&self) -> State {
+    pub fn range(&self) -> State::NonZero {
         self.range
     }
 }
@@ -59,7 +60,7 @@ impl<CompressedWord: BitArray, State: BitArray> Default for CoderState<Compresse
     fn default() -> Self {
         Self {
             lower: State::zero(),
-            range: State::max_value(),
+            range: State::max_value().into_nonzero().expect("max_value() != 0"),
             phantom: PhantomData,
         }
     }
@@ -217,7 +218,7 @@ where
         Backend: AsReadBackend<'a, CompressedWord, Queue>,
         Backend::AsReadBackend: BoundedReadBackend<CompressedWord, Queue>,
     {
-        self.state.range == State::max_value() && self.bulk.as_read_backend().is_exhausted()
+        self.state.range.get() == State::max_value() && self.bulk.as_read_backend().is_exhausted()
     }
 
     /// Same as IntoDecoder::into_decoder(self) but can be used for any `PRECISION`
@@ -246,7 +247,7 @@ where
     /// Doesn't change `self.state` or `self.situation` so that this operation can be
     /// reversed if the backend supports removing words (see method `unseal`);
     fn seal(&mut self) -> Result<(), Backend::WriteError> {
-        if self.state.range == State::max_value() {
+        if self.state.range.get() == State::max_value() {
             // This condition only holds upon initialization because encoding a symbol first
             // reduces `range` and then only (possibly) right-shifts it, which introduces
             // some zero bits. We treat this case special and don't emit any words, so that
@@ -257,7 +258,7 @@ where
         let point = self
             .state
             .lower
-            .wrapping_add(&(self.state.range - State::one()));
+            .wrapping_add(&(self.state.range.get() - State::one()));
 
         if let EncoderSituation::Inverted(num_inverted, first_inverted_lower_word) = self.situation
         {
@@ -476,9 +477,11 @@ where
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
 
-        let scale = self.state.range >> PRECISION;
+        let scale = self.state.range.get() >> PRECISION;
         // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
-        self.state.range = scale * probability.into().into();
+        self.state.range = (scale * probability.into().into())
+            .into_nonzero()
+            .ok_or(EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
         let new_lower = self
             .state
             .lower
@@ -487,7 +490,7 @@ where
         // TODO: mark as unlikely branch.
         if let EncoderSituation::Inverted(num_inverted, first_inverted_lower_word) = self.situation
         {
-            if new_lower.wrapping_add(&self.state.range) > new_lower {
+            if new_lower.wrapping_add(&self.state.range.get()) > new_lower {
                 // We've transitioned from an inverted to a normal situation.
 
                 let (first_word, consecutive_words) = if new_lower < self.state.lower {
@@ -510,7 +513,7 @@ where
 
         self.state.lower = new_lower;
 
-        if self.state.range < State::one() << (State::BITS - CompressedWord::BITS) {
+        if self.state.range.get() < State::one() << (State::BITS - CompressedWord::BITS) {
             // Invariant `range >= State::one() << (State::BITS - CompressedWord::BITS)` is
             // violated. Since `left_cumulative_and_probability` succeeded, we know that
             // `probability != 0` and therefore:
@@ -519,7 +522,13 @@ where
             //         >= old_range >> CompressedWords::BITS
             // where `old_range` is the `range` at method entry, which satisfied invariant (*)
             // by assumption. Therefore, the following left-shift restores the invariant:
-            self.state.range = self.state.range << CompressedWord::BITS;
+            self.state.range = unsafe {
+                // SAFETY:
+                // - `range` is nonzero because it is a `State::NonZero`
+                // - Shifting `range` left by `CompressedWord::BITS` bits doesn't truncate
+                //   because we checked that `range < 1 << (State::BITS - CompressedWord::Bits)`.
+                (self.state.range.get() << CompressedWord::BITS).into_nonzero_unchecked()
+            };
 
             let lower_word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
             self.state.lower = self.state.lower << CompressedWord::BITS;
@@ -529,7 +538,7 @@ where
                 *num_inverted = NonZeroUsize::new(num_inverted.get().wrapping_add(1))
                     .expect("Cannot encode more symbols than what's addressable with usize.");
             } else {
-                if self.state.lower.wrapping_add(&self.state.range) > self.state.lower {
+                if self.state.lower.wrapping_add(&self.state.range.get()) > self.state.lower {
                     // Transition from a normal to a normal situation (the most common case).
                     self.bulk.write(lower_word)?;
                 } else {
@@ -713,11 +722,11 @@ where
         // The check for `self.state.range == State::max_value()` is for the special case of
         // an empty buffer.
         self.bulk.maybe_exhausted()
-            && (self.state.range == State::max_value()
+            && (self.state.range.get() == State::max_value()
                 || self
                     .state
                     .lower
-                    .wrapping_add(&self.state.range)
+                    .wrapping_add(&self.state.range.get())
                     .wrapping_sub(&self.point)
                     <= State::one() << (State::BITS - CompressedWord::BITS))
     }
@@ -809,7 +818,7 @@ where
         //   point (-) lower < range
         // where (-) denotes wrapping subtraction (in `Self::State`).
 
-        let scale = self.state.range >> PRECISION;
+        let scale = self.state.range.get() >> PRECISION;
         let quantile = self.point.wrapping_sub(&self.state.lower) / scale;
         if quantile >= State::one() << PRECISION {
             // This can only happen if both of the following conditions apply:
@@ -826,7 +835,9 @@ where
             .state
             .lower
             .wrapping_add(&(scale * left_sided_cumulative.into().into()));
-        self.state.range = scale * probability.into().into();
+        self.state.range = (scale * probability.into().into())
+            .into_nonzero()
+            .expect("TODO");
 
         // Invariant (*) is still satisfied at this point because:
         //   (point (-) lower) / scale = (point (-) old_lower) / scale (-) left_sided_cumulative
@@ -835,10 +846,16 @@ where
         // Therefore, we have:
         //   point (-) lower < scale * probability <= range
 
-        if self.state.range < State::one() << (State::BITS - CompressedWord::BITS) {
+        if self.state.range.get() < State::one() << (State::BITS - CompressedWord::BITS) {
             // First update `state` in the same way as we do in `encode_symbol`:
             self.state.lower = self.state.lower << CompressedWord::BITS;
-            self.state.range = self.state.range << CompressedWord::BITS;
+            self.state.range = unsafe {
+                // SAFETY:
+                // - `range` is nonzero because it is a `State::NonZero`
+                // - Shifting `range` left by `CompressedWord::BITS` bits doesn't truncate
+                //   because we checked that `range < 1 << (State::BITS - CompressedWord::Bits)`.
+                (self.state.range.get() << CompressedWord::BITS).into_nonzero_unchecked()
+            };
 
             // Then update `point`, which restores invariant (*):
             self.point = self.point << CompressedWord::BITS;

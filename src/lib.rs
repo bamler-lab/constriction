@@ -267,6 +267,7 @@ pub mod symbol;
 use core::{
     convert::Infallible,
     fmt::{Binary, Debug, Display, LowerHex, UpperHex},
+    num::{NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
 };
 
 use num::{
@@ -383,6 +384,16 @@ pub unsafe trait BitArray:
     /// "lengths" are typically not measured in bits in the Rust ecosystem.
     const BITS: usize = 8 * core::mem::size_of::<Self>();
 
+    type NonZero: NonZeroBitArray<Base = Self>;
+
+    fn into_nonzero(self) -> Option<Self::NonZero> {
+        Self::NonZero::new(self)
+    }
+
+    unsafe fn into_nonzero_unchecked(self) -> Self::NonZero {
+        Self::NonZero::new_unchecked(self)
+    }
+
     #[inline(always)]
     fn wrapping_pow2<const EXPONENT: usize>() -> Self {
         if EXPONENT >= Self::BITS {
@@ -391,6 +402,18 @@ pub unsafe trait BitArray:
             Self::one() << EXPONENT
         }
     }
+}
+
+pub unsafe trait NonZeroBitArray: Copy + Display + Debug {
+    type Base: BitArray;
+
+    const BITS: usize = Self::Base::BITS;
+
+    fn new(n: Self::Base) -> Option<Self>;
+
+    unsafe fn new_unchecked(n: Self::Base) -> Self;
+
+    fn get(self) -> Self::Base;
 }
 
 /// Iterates from most significant to least significant bits in chunks but skips any
@@ -410,12 +433,40 @@ where
         .map(move |shift| (data >> shift).as_())
 }
 
-unsafe impl BitArray for u8 {}
-unsafe impl BitArray for u16 {}
-unsafe impl BitArray for u32 {}
-unsafe impl BitArray for u64 {}
-unsafe impl BitArray for u128 {}
-unsafe impl BitArray for usize {}
+macro_rules! unsafe_impl_bit_array {
+    ($(($base:ty, $non_zero:ty)),+ $(,)?) => {
+        $(
+            unsafe impl BitArray for $base {
+                type NonZero = $non_zero;
+            }
+
+            unsafe impl NonZeroBitArray for $non_zero {
+                type Base = $base;
+
+                fn new(n: Self::Base) -> Option<Self> {
+                    Self::new(n)
+                }
+
+                unsafe fn new_unchecked(n: Self::Base) -> Self {
+                    Self::new_unchecked(n)
+                }
+
+                fn get(self) -> Self::Base {
+                    self.get()
+                }
+            }
+        )+
+    };
+}
+
+unsafe_impl_bit_array!(
+    (u8, NonZeroU8),
+    (u16, NonZeroU16),
+    (u32, NonZeroU32),
+    (u64, NonZeroU64),
+    (u128, NonZeroU128),
+    (usize, NonZeroUsize)
+);
 
 /// Private helper extension trait.
 ///
