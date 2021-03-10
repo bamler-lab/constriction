@@ -160,16 +160,10 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: WriteBackend<CompressedWord> + Default,
 {
-    /// This is essentially the same as `#[derive(Default)]`, except for the assertions.
+    /// This is essentially the same as `#[derive(Default)]`, except for the assertions on
+    /// `State::BITS` and `CompressedWord::BITS`.
     fn default() -> Self {
-        assert!(State::BITS >= 2 * CompressedWord::BITS);
-        assert_eq!(State::BITS % CompressedWord::BITS, 0);
-
-        Self {
-            bulk: Backend::default(),
-            state: CoderState::default(),
-            situation: EncoderSituation::Normal,
-        }
+        Self::with_backend(Backend::default())
     }
 }
 
@@ -197,6 +191,26 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: WriteBackend<CompressedWord>,
 {
+    /// Assumes that the `backend` is in a state where the encoder can start writing as if
+    /// it was an empty backend (i.e., if there's already some compressed data on `backend`,
+    /// then this is likely the wrong method to call since it will just concatanate the new
+    /// compressed data to the old one, without gluing them together).
+    ///
+    /// TODO: concatenation will actually corrupt the first stream in the way we currently
+    /// seal the encoder. We should seal it in a different way such that the data may be
+    /// followed by any other sequence of words without affecting the decoder. This may
+    /// require emitting an additional word in rare cases.
+    pub fn with_backend(backend: Backend) -> Self {
+        assert!(State::BITS >= 2 * CompressedWord::BITS);
+        assert_eq!(State::BITS % CompressedWord::BITS, 0);
+
+        Self {
+            bulk: backend,
+            state: CoderState::default(),
+            situation: EncoderSituation::Normal,
+        }
+    }
+
     /// Check if no data has been encoded yet.
     pub fn is_empty<'a>(&'a self) -> bool
     where
@@ -603,6 +617,20 @@ where
         assert_eq!(State::BITS % CompressedWord::BITS, 0);
 
         let mut bulk = compressed.into_read_backend();
+        let point = Self::read_point(&mut bulk)?;
+
+        Ok(RangeDecoder {
+            bulk,
+            state: CoderState::default(),
+            point,
+        })
+    }
+
+    pub fn with_backend(backend: Backend) -> Result<Self, Backend::ReadError> {
+        assert!(State::BITS >= 2 * CompressedWord::BITS);
+        assert_eq!(State::BITS % CompressedWord::BITS, 0);
+
+        let mut bulk = backend;
         let point = Self::read_point(&mut bulk)?;
 
         Ok(RangeDecoder {

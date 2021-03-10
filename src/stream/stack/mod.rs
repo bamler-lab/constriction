@@ -9,6 +9,7 @@ use core::{
     borrow::Borrow,
     convert::{Infallible, TryInto},
     fmt::Debug,
+    iter::Fuse,
     marker::PhantomData,
     ops::Deref,
 };
@@ -760,18 +761,20 @@ where
     }
 }
 
-impl<CompressedWord, State, Iter> AnsCoder<CompressedWord, State, IteratorBackend<Iter>>
+impl<CompressedWord, State, Iter, ReadError> AnsCoder<CompressedWord, State, IteratorBackend<Iter>>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
-    Iter: Iterator<Item = CompressedWord>,
+    Iter: Iterator<Item = Result<CompressedWord, ReadError>>,
+    IteratorBackend<Iter>: ReadBackend<CompressedWord, Stack, ReadError = ReadError>,
 {
-    pub fn from_reversed_compressed_iter(compressed: Iter) -> Result<Self, ()> {
-        Self::from_compressed(IteratorBackend::new(compressed)).map_err(|_| ())
+    pub fn from_reversed_compressed_iter(compressed: Iter) -> Result<Self, Fuse<Iter>> {
+        Self::from_compressed(IteratorBackend::new(compressed))
+            .map_err(|iterator_backend| iterator_backend.into_iter())
     }
 
-    pub fn from_reversed_binary_iter(data: Iter) -> Self {
-        Self::from_binary(IteratorBackend::new(data)).unwrap_infallible()
+    pub fn from_reversed_binary_iter(data: Iter) -> Result<Self, ReadError> {
+        Self::from_binary(IteratorBackend::new(data))
     }
 }
 

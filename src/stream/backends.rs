@@ -2,7 +2,6 @@
 //!
 //! # TODO:
 //!
-//! - generizise `Range{En,De}Coder`.
 //! - move this module up yet another level in the hierarchy and generizise symbol codes
 //!   over backends.
 //! - Also, add a trait for prefix codes and implement both a queue and a stack of prefix
@@ -12,9 +11,8 @@
 //!
 //! # Example
 //!
-//! TODO: turn this into a Range Coding example where both the encoder and the decoder
-//! operate on the fly (that actually requires changing how the range coder deals with carry
-//! bits, it has to become lazy).
+//! TODO: swap this out with the range coding example in the `tests` module, which operates
+//! on the fly during both encoding and decoding
 //!
 //! ```
 //! use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -40,7 +38,7 @@
 //!
 //!     // Write the compressed words to a file *in reverse order* (using `.rev()`), so
 //!     // that the resulting file can be decoded in normal order from front to back.
-//!     let mut file = BufWriter::new(File::create("backend_example.tmp").unwrap());
+//!     let mut file = BufWriter::new(File::create("backend_stack_example.tmp").unwrap());
 //!     for &word in compressed.iter().rev() {
 //!         file.write_u32::<LittleEndian>(word).unwrap();
 //!     }
@@ -53,8 +51,17 @@
 //!
 //!     // Open the file and iterate over its contents in `u32` words (wrapping it in a `BufReader`
 //!     // here isn't strictly necessary, it's just good practice when reading from a file).
-//!     let mut file = BufReader::new(File::open("backend_example.tmp").unwrap());
-//!     let word_iterator = std::iter::from_fn(move || file.read_u32::<LittleEndian>().ok());
+//!     let mut file = BufReader::new(File::open("backend_stack_example.tmp").unwrap());
+//!     let word_iterator = std::iter::from_fn(move || match file.read_u32::<LittleEndian>() {
+//!         Ok(word) => Some(Ok(word)), // Wrap the word in `Ok` to indicate that no I/O error occurred.
+//!         Err(err) => {
+//!             if err.kind() == std::io::ErrorKind::UnexpectedEof {
+//!                 None // Reached end of file, end iteration.
+//!             } else {
+//!                 Some(Err(err)) // Some other I/O error occurred. Propagate it up.
+//!             }
+//!         }
+//!     });
 //!
 //!     // Create a decoder that consumes an iterator over compressed words. This `decoder` will
 //!     // never keep the full compressed data in memory, it will just consume one compressed word
@@ -79,7 +86,7 @@
 //!     // `word_iterator` owns the file since we used a `move` clausure above to construct it.
 //!     // So dropping it calls `std::fs::File`'s destructor, which releases the file handle.
 //!     std::mem::drop(word_iterator);
-//!     std::fs::remove_file("backend_example.tmp").unwrap();
+//!     std::fs::remove_file("backend_stack_example.tmp").unwrap();
 //! }
 //!
 //! encode_to_file(1000);
@@ -125,6 +132,9 @@ pub trait ReadBackend<Word, S: Semantics> {
 }
 
 /// A trait for backends that write compressed words (used by encoders)
+///
+/// TODO: remove the trait bounds on these error types to make it easier to implement a new
+/// backend. Users can still add a bound if they want to.
 pub trait WriteBackend<Word> {
     #[cfg(not(feature = "std"))]
     type WriteError: Debug;
@@ -669,10 +679,8 @@ impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteBackend<'a, Word,
     }
 }
 
-// ADAPTER FOR ITERATORS ======================================================
+// READ ADAPTER FOR ITERATORS =================================================
 
-/// TODO: add `FallibleIteratorBackend` that iterates over `Result<Word, Selfl::ReadError>`.
-/// Then make `IteratorBackend` a type allias for `FallibleIteratorBackend<Infallible>`.
 #[derive(Clone, Debug)]
 pub struct IteratorBackend<Iter: Iterator> {
     inner: core::iter::Fuse<Iter>,
@@ -693,22 +701,231 @@ impl<Iter: Iterator> IntoIterator for IteratorBackend<Iter> {
     }
 }
 
-/// Since `IteratorBackend` doesn't implement `WriteBackend`, it is allowed to implement
-/// `ReadBackend` for all `ReadWriteLogic`s
-impl<Iter: Iterator, S: Semantics> ReadBackend<Iter::Item, S> for IteratorBackend<Iter> {
-    type ReadError = Infallible;
+#[cfg(not(feature = "std"))]
+impl<Iter, S, Word, ReadError> ReadBackend<Word, S> for IteratorBackend<Iter>
+where
+    Iter: Iterator<Item = Result<Word, ReadError>>,
+    S: Semantics,
+    ReadError: Debug,
+{
+    type ReadError = ReadError;
 
     #[inline(always)]
-    fn read(&mut self) -> Result<Option<Iter::Item>, Self::ReadError> {
+    fn read(&mut self) -> Result<Option<Word>, Self::ReadError> {
         Ok(self.inner.next())
     }
 }
 
-impl<Iter: ExactSizeIterator, S: Semantics> BoundedReadBackend<Iter::Item, S>
-    for IteratorBackend<Iter>
+/// Since `IteratorBackend` doesn't implement `WriteBackend`, it is allowed to implement
+/// `ReadBackend` for all `ReadWriteLogic`s
+#[cfg(feature = "std")]
+impl<Iter, S, Word, ReadError> ReadBackend<Word, S> for IteratorBackend<Iter>
+where
+    Iter: Iterator<Item = Result<Word, ReadError>>,
+    S: Semantics,
+    ReadError: Error,
+{
+    type ReadError = ReadError;
+
+    #[inline(always)]
+    fn read(&mut self) -> Result<Option<Word>, Self::ReadError> {
+        self.inner.next().transpose()
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<Iter, S, Word, ReadError> BoundedReadBackend<Word, S> for IteratorBackend<Iter>
+where
+    Iter: ExactSizeIterator<Item = Result<Word, ReadError>>,
+    S: Semantics,
+    ReadError: Debug,
 {
     #[inline(always)]
     fn remaining(&self) -> usize {
         self.inner.len()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<Iter, S, Word, ReadError> BoundedReadBackend<Word, S> for IteratorBackend<Iter>
+where
+    Iter: ExactSizeIterator<Item = Result<Word, ReadError>>,
+    S: Semantics,
+    ReadError: Error,
+{
+    #[inline(always)]
+    fn remaining(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+// WRITE ADAPTER FOR CALLBACKS ================================================
+
+#[derive(Clone, Debug)]
+pub struct FallibleCallbackWriteBackend<Callback> {
+    write_callback: Callback,
+}
+
+impl<Callback> FallibleCallbackWriteBackend<Callback> {
+    pub fn new(write_callback: Callback) -> Self {
+        Self { write_callback }
+    }
+
+    pub fn into_inner(self) -> Callback {
+        self.write_callback
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<Word, WriteError, Callback> WriteBackend<Word> for FallibleCallbackBackend<Callback>
+where
+    Callback: FnMut(Word) -> Result<(), WriteError>,
+    WriteError: Debug,
+{
+    type WriteError = WriteError;
+
+    fn write(&mut self, word: Word) -> Result<(), Self::WriteError> {
+        (self.write_callback)(word)
+    }
+}
+
+/// TODO: this feature gate is really unfortuante. Let's just get rid of these bounds on
+/// error types.
+#[cfg(feature = "std")]
+impl<Word, WriteError, Callback> WriteBackend<Word> for FallibleCallbackWriteBackend<Callback>
+where
+    Callback: FnMut(Word) -> Result<(), WriteError>,
+    WriteError: Error,
+{
+    type WriteError = WriteError;
+
+    fn write(&mut self, word: Word) -> Result<(), Self::WriteError> {
+        (self.write_callback)(word)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct InfallibleCallbackWriteBackend<Callback> {
+    write_callback: Callback,
+}
+
+impl<Callback> InfallibleCallbackWriteBackend<Callback> {
+    pub fn new(write_callback: Callback) -> Self {
+        Self { write_callback }
+    }
+
+    pub fn into_inner(self) -> Callback {
+        self.write_callback
+    }
+}
+
+impl<Word, Callback> WriteBackend<Word> for InfallibleCallbackWriteBackend<Callback>
+where
+    Callback: FnMut(Word),
+{
+    type WriteError = Infallible;
+
+    fn write(&mut self, word: Word) -> Result<(), Infallible> {
+        Ok((self.write_callback)(word))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn backend() {
+        use crate::stream::{
+            backends::{FallibleCallbackWriteBackend, IteratorBackend},
+            models::DefaultLeakyQuantizer,
+            queue::{DefaultRangeDecoder, DefaultRangeEncoder},
+            Code, Decode, Encode,
+        };
+        use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+        use statrs::distribution::Normal;
+        use std::{
+            fs::File,
+            io::{BufReader, BufWriter},
+        };
+
+        fn encode_to_file_on_the_fly(amt: u32) {
+            // Some simple entropy model, just for demonstration purpose.
+            let quantizer = DefaultLeakyQuantizer::new(-256..=255);
+            let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
+
+            // Some long-ish sequence of test symbols, made up in a reproducible way.
+            let symbols = (0..amt).map(|i| {
+                let cheap_hash = i.wrapping_mul(0x6979_E2F3).wrapping_add(0x0059_0E91);
+                (cheap_hash >> (32 - 9)) as i32 - 256
+            });
+
+            // We're going to write the compressed words to a file on the fly. So let's open
+            // a file and build ourselves a backend that writes to this file in a
+            // well-defined byte order. (Wrapping the `File` it in a `BufWriter` here isn't
+            // strictly necessary, it's just good practice when writing to a file)
+            let mut file = BufWriter::new(File::create("backend_queue_example.tmp").unwrap());
+            let write_backend =
+                FallibleCallbackWriteBackend::new(move |word| file.write_u32::<LittleEndian>(word));
+
+            // Encapsulate the backend in a Range Encoder and encode (i.e., compress) the symbols.
+            let mut encoder = DefaultRangeEncoder::with_backend(write_backend);
+            encoder.encode_iid_symbols(symbols, &model).unwrap();
+
+            // Dropping the encoder currently doesn't automatically seal the compressed bit
+            // string (TODO: see if we can change this). So we have to seal it manually by
+            // extracting the backend.
+            std::mem::drop(encoder.into_compressed());
+        }
+
+        fn decode_from_file_on_the_fly(amt: u32) {
+            // Same toy entropy model that we used for encoding.
+            let quantizer = DefaultLeakyQuantizer::new(-256..=255);
+            let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
+
+            // Open the file and iterate over its contents in `u32` words (wrapping it in a
+            // `BufReader` here isn't strictly necessary, it's just good practice when
+            // reading from a file). We're deliberately being pedantic about the errors here
+            // in order to show how I/O errors can be reported to the encoder.
+            let mut file = BufReader::new(File::open("backend_queue_example.tmp").unwrap());
+            let word_iterator = std::iter::from_fn(move || match file.read_u32::<LittleEndian>() {
+                Ok(word) => Some(Ok(word)), // Wrap the word in `Ok` to indicate that no I/O error occurred.
+                Err(err) => {
+                    if err.kind() == std::io::ErrorKind::UnexpectedEof {
+                        None // Reached end of file, end iteration.
+                    } else {
+                        Some(Err(err)) // Some other I/O error occurred. Propagate it up.
+                    }
+                }
+            });
+
+            // Create a decoder that consumes an iterator over compressed words. This `decoder` will
+            // never keep the full compressed data in memory, it will just consume one compressed word
+            // at a time whenever its small internal state underflows. Note that an `AnsCoder` that is
+            // backed by an iterator only implements the `Decode` trait but not the `Encode` trait
+            // because encoding additional data would require modifying the compressed data over which
+            // the iterator iterates.
+            let backend = IteratorBackend::new(word_iterator);
+            let mut decoder = DefaultRangeDecoder::with_backend(backend).unwrap();
+
+            // Decode the symbols and verify their correctness.
+            for (i, symbol) in decoder.decode_iid_symbols(amt as usize, &model).enumerate() {
+                let cheap_hash = (i as u32)
+                    .wrapping_mul(0x6979_E2F3)
+                    .wrapping_add(0x0059_0E91);
+                let expected = (cheap_hash >> (32 - 9)) as i32 - 256;
+                assert_eq!(symbol.unwrap(), expected);
+            }
+
+            // Recover the original iterator over compressed words and verify that it's been exhausted.
+            let mut word_iterator = decoder.into_raw_parts().0.into_iter();
+            assert!(word_iterator.next().is_none());
+
+            // `word_iterator` owns the file since we used a `move` clausure above to construct it.
+            // So dropping it calls `std::fs::File`'s destructor, which releases the file handle.
+            std::mem::drop(word_iterator);
+            std::fs::remove_file("backend_queue_example.tmp").unwrap();
+        }
+
+        encode_to_file_on_the_fly(1000);
+        decode_from_file_on_the_fly(1000);
     }
 }
