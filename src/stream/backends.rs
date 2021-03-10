@@ -521,6 +521,11 @@ impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Stack> for Cursor<Buf> {
             }
         }
     }
+
+    #[inline(always)]
+    fn maybe_exhausted(&self) -> bool {
+        BoundedReadBackend::<Word, Stack>::is_exhausted(self)
+    }
 }
 
 impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Queue> for Cursor<Buf> {
@@ -533,6 +538,11 @@ impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Queue> for Cursor<Buf> {
             self.pos += 1;
         }
         Ok(maybe_word)
+    }
+
+    #[inline(always)]
+    fn maybe_exhausted(&self) -> bool {
+        BoundedReadBackend::<Word, Queue>::is_exhausted(self)
     }
 }
 
