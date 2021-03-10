@@ -9,6 +9,7 @@ use core::{
     convert::Infallible,
     fmt::{Debug, Display},
     marker::PhantomData,
+    num::NonZeroUsize,
     ops::Deref,
 };
 
@@ -64,55 +65,6 @@ impl<CompressedWord: BitArray, State: BitArray> Default for CoderState<Compresse
     }
 }
 
-/// TODO:
-///
-/// Before implementing lazy variant, test if we can't just check whether `upper` gets cut
-/// off when we flush, and then flush once more and reset state to default.
-/// - how much does this cost in practice?
-/// - can this be exploited by adversaries?
-///
-/// Sketch of lazy variant:
-///
-/// ```text
-/// struct RangeEncoder {
-///     bulk: Backend,
-///     state: CoderState,
-///     num_inverted: usize, // zero if not inverted
-///     before_inversion: CompressedWord
-/// }
-///
-/// then, in encode_symbol, after updating state:
-///
-/// if num_inverted != 0 {// unlikely branch.
-///     let fill_word = if new_lower < old_lower {
-///         before_inversion += 1;
-///         Some(0)
-///     } else if new_upper > old_upper {
-///         Some(CompressedWord::max_value())
-///     } else {
-///         None
-///     };
-///
-///     if let Some(fill_word) = will_word {
-///         emit(before_inversion);
-///         for i in 0..(num_inverted-1) {
-///             emit(fill_word)
-///         }
-///         num_inverted = 0;
-///     }
-/// }
-///
-/// and in normal flush sequence:
-///
-/// if have_to_flush {
-///     if num_inverted == 0 {
-///         // proceed as usual and emit word
-///     } else {
-///         num_inverted += 1;
-///         // don't emit word
-///     }
-/// }
-/// ```
 pub struct RangeEncoder<CompressedWord, State, Backend = Vec<CompressedWord>>
 where
     CompressedWord: BitArray,
@@ -121,6 +73,21 @@ where
 {
     bulk: Backend,
     state: CoderState<CompressedWord, State>,
+    situation: EncoderSituation<CompressedWord>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum EncoderSituation<CompressedWord> {
+    Normal,
+
+    /// Wraps `num_inverted` and `first_inverted_lower_word`
+    Inverted(NonZeroUsize, CompressedWord),
+}
+
+impl<CompressedWord> Default for EncoderSituation<CompressedWord> {
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 /// Type alias for an [`RangeEncoder`] with sane parameters for typical use cases.
@@ -177,7 +144,12 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
 {
     fn pos(&self) -> usize {
-        self.bulk.len()
+        let num_inverted = if let EncoderSituation::Inverted(num_inverted, _) = self.situation {
+            num_inverted.get()
+        } else {
+            0
+        };
+        self.bulk.len() + num_inverted
     }
 }
 
@@ -204,6 +176,7 @@ where
         Self {
             bulk: Vec::new(),
             state: CoderState::default(),
+            situation: EncoderSituation::Normal,
         }
     }
 }
@@ -238,14 +211,54 @@ where
     }
 
     pub fn into_compressed(mut self) -> Result<Backend, Backend::WriteError> {
-        if self.state != Default::default() {
-            // TODO: double check if this is the correct condition.
-            let word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            self.bulk.write(word)?;
-        }
+        self.seal()?;
         Ok(self.bulk)
     }
 
+    /// Private method; flushes held-back words if in inverted situation and adds a single
+    /// additional word that identifies the range (unless no symbols have been encoded yet,
+    /// in which case this is a no-op).
+    ///
+    /// Doesn't change `self.state` or `self.situation` so that this operation can be
+    /// reversed if the backend supports removing words (see method `unseal`);
+    fn seal(&mut self) -> Result<(), Backend::WriteError> {
+        if self.state.range == State::max_value() {
+            // This condition only holds upon initialization because encoding a symbol first
+            // reduces `range` and then only (possibly) right-shifts it, which introduces
+            // some zero bits. We treat this case special and don't emit any words, so that
+            // an empty sequence of symbols gets encoded to an empty sequence of words.
+            return Ok(());
+        }
+
+        let point = self
+            .state
+            .lower
+            .wrapping_add(&(self.state.range - State::one()));
+
+        if let EncoderSituation::Inverted(num_inverted, first_inverted_lower_word) = self.situation
+        {
+            let (first_word, consecutive_words) = if point < self.state.lower {
+                (
+                    first_inverted_lower_word + CompressedWord::one(),
+                    CompressedWord::zero(),
+                )
+            } else {
+                (first_inverted_lower_word, CompressedWord::max_value())
+            };
+
+            self.bulk.write(first_word)?;
+            for _ in 1..num_inverted.get() {
+                self.bulk.write(consecutive_words)?;
+            }
+        }
+
+        let word = (point >> (State::BITS - CompressedWord::BITS)).as_();
+        self.bulk.write(word)?;
+
+        Ok(())
+    }
+
+    /// TODO: this is out of date
     pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = CompressedWord> + '_
     where
         &'a Backend: IntoIterator<Item = &'a CompressedWord>,
@@ -363,6 +376,8 @@ where
     /// assert_eq!(reconstructed, symbols);
     /// ```
     ///
+    /// TODO: this is currently out of date
+    ///
     /// [`as_compressed_raw`]: #method.as_compressed_raw [`from_compressed`]:
     /// #method.from_compressed [`iter_compressed`]: #method.iter_compressed
     /// [`into_compressed`]: #method.into_compressed
@@ -383,7 +398,21 @@ where
     pub fn decoder<'a>(
         &'a mut self,
     ) -> RangeDecoder<CompressedWord, State, Cursor<EncoderGuard<'a, CompressedWord, State>>> {
-        RangeDecoder::<CompressedWord, State, Cursor<EncoderGuard<'a, CompressedWord, State>>>::from_compressed(self.get_compressed()).unwrap_infallible()
+        RangeDecoder::from_compressed(self.get_compressed()).unwrap_infallible()
+    }
+
+    fn unseal(&mut self) {
+        if self.bulk.is_empty() {
+            return;
+        }
+
+        self.bulk.pop();
+
+        if let EncoderSituation::Inverted(num_inverted, _) = self.situation {
+            for _ in 0..num_inverted.get() {
+                self.bulk.pop();
+            }
+        }
     }
 }
 
@@ -423,23 +452,38 @@ where
             .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
 
         let scale = self.state.range >> PRECISION;
+        // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
+        self.state.range = scale * probability.into().into();
         let new_lower = self
             .state
             .lower
             .wrapping_add(&(scale * left_sided_cumulative.into().into()));
-        if new_lower < self.state.lower {
-            // Addition has wrapped around, so we have to propagate back the carry bit.
-            for word in self.bulk.iter_mut().rev() {
-                *word = word.wrapping_add(&CompressedWord::one());
-                if *word != CompressedWord::zero() {
-                    break;
+
+        // TODO: mark as unlikely branch.
+        if let EncoderSituation::Inverted(num_inverted, first_inverted_lower_word) = self.situation
+        {
+            if new_lower.wrapping_add(&self.state.range) > new_lower {
+                // We've transitioned from an inverted to a normal situation.
+
+                let (first_word, consecutive_words) = if new_lower < self.state.lower {
+                    (
+                        first_inverted_lower_word + CompressedWord::one(),
+                        CompressedWord::zero(),
+                    )
+                } else {
+                    (first_inverted_lower_word, CompressedWord::max_value())
+                };
+
+                self.bulk.write(first_word)?;
+                for _ in 1..num_inverted.get() {
+                    self.bulk.write(consecutive_words)?;
                 }
+
+                self.situation = EncoderSituation::Normal;
             }
         }
-        self.state.lower = new_lower;
 
-        // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
-        self.state.range = scale * probability.into().into();
+        self.state.lower = new_lower;
 
         if self.state.range < State::one() << (State::BITS - CompressedWord::BITS) {
             // Invariant `range >= State::one() << (State::BITS - CompressedWord::BITS)` is
@@ -452,9 +496,25 @@ where
             // by assumption. Therefore, the following left-shift restores the invariant:
             self.state.range = self.state.range << CompressedWord::BITS;
 
-            let word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            self.bulk.push(word);
+            let lower_word = (self.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
             self.state.lower = self.state.lower << CompressedWord::BITS;
+
+            if let EncoderSituation::Inverted(num_inverted, _) = &mut self.situation {
+                // Transition from an inverted to an inverted situation (TODO: mark as unlikely branch).
+                *num_inverted = NonZeroUsize::new(num_inverted.get().wrapping_add(1))
+                    .expect("Cannot encode more symbols than what's addressable with usize.");
+            } else {
+                if self.state.lower.wrapping_add(&self.state.range) > self.state.lower {
+                    // Transition from a normal to a normal situation (the most common case).
+                    self.bulk.write(lower_word)?;
+                } else {
+                    // Transition from a normal to an inverted situation.
+                    self.situation = EncoderSituation::Inverted(
+                        NonZeroUsize::new(1).expect("1 != 0"),
+                        lower_word,
+                    );
+                }
+            }
         }
 
         Ok(())
@@ -586,13 +646,8 @@ where
         }
 
         if num_read < State::BITS / CompressedWord::BITS {
-            if num_read == 0 {
-                // Special case: an empty compressed stream is treated like one with a single
-                // `CompressedWord` of value zero.
-                point = State::max_value() >> CompressedWord::BITS
-            } else {
-                point = point << (State::BITS - num_read * CompressedWord::BITS)
-                    | State::max_value() >> num_read * CompressedWord::BITS;
+            if num_read != 0 {
+                point = point << (State::BITS - num_read * CompressedWord::BITS);
             }
             // TODO: do we need to advance the Backend's `pos` beyond the end to make
             // `PosBackend` consistent with its implementation for the encoder?
@@ -616,9 +671,16 @@ where
     }
 
     fn maybe_empty(&self) -> bool {
+        // The check for `self.state.range == State::max_value()` is for the special case of
+        // an empty buffer.
         self.bulk.maybe_exhausted()
-            && self.point.wrapping_sub(&self.state.lower)
-                < State::one() << (State::BITS - CompressedWord::BITS)
+            && (self.state.range == State::max_value()
+                || self
+                    .state
+                    .lower
+                    .wrapping_add(&self.state.range)
+                    .wrapping_sub(&self.point)
+                    <= State::one() << (State::BITS - CompressedWord::BITS))
     }
 }
 
@@ -754,8 +816,10 @@ where
             self.state.range = self.state.range << CompressedWord::BITS;
 
             // Then update `point`, which restores invariant (*):
-            let word = self.bulk.read()?.unwrap_or(CompressedWord::max_value());
-            self.point = self.point << CompressedWord::BITS | word.into();
+            self.point = self.point << CompressedWord::BITS;
+            if let Some(word) = self.bulk.read()? {
+                self.point = self.point | word.into();
+            }
 
             // TODO: register reads past end.
         }
@@ -797,8 +861,7 @@ where
     fn new(encoder: &'a mut RangeEncoder<CompressedWord, State>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         if !encoder.is_empty() {
-            let word = (encoder.state.lower >> (State::BITS - CompressedWord::BITS)).as_();
-            encoder.bulk.write(word).unwrap_infallible();
+            encoder.seal().unwrap_infallible();
         }
         Self { inner: encoder }
     }
@@ -810,7 +873,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
 {
     fn drop(&mut self) {
-        self.inner.bulk.pop(); // Does nothing if `coder.is_empty()`, as it should.
+        self.inner.unseal();
     }
 }
 
@@ -919,13 +982,18 @@ mod tests {
     }
 
     #[test]
+    fn compress_many_u32_u64_8() {
+        generic_compress_many::<u32, u64, u8, 8>();
+    }
+
+    #[test]
     fn compress_many_u16_u64_16() {
         generic_compress_many::<u16, u64, u16, 16>();
     }
 
     #[test]
-    fn compress_many_u32_u64_8() {
-        generic_compress_many::<u32, u64, u8, 8>();
+    fn compress_many_u16_u64_12() {
+        generic_compress_many::<u16, u64, u16, 12>();
     }
 
     #[test]
@@ -944,6 +1012,11 @@ mod tests {
     }
 
     #[test]
+    fn compress_many_u16_u32_12() {
+        generic_compress_many::<u16, u32, u16, 12>();
+    }
+
+    #[test]
     fn compress_many_u16_u32_8() {
         generic_compress_many::<u16, u32, u8, 8>();
     }
@@ -951,6 +1024,11 @@ mod tests {
     #[test]
     fn compress_many_u8_u32_8() {
         generic_compress_many::<u8, u32, u8, 8>();
+    }
+
+    #[test]
+    fn compress_many_u8_u16_8() {
+        generic_compress_many::<u8, u16, u8, 8>();
     }
 
     fn generic_compress_many<CompressedWord, State, Probability, const PRECISION: usize>()

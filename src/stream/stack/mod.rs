@@ -1339,13 +1339,18 @@ mod tests {
     }
 
     #[test]
+    fn compress_many_u32_u64_8() {
+        generic_compress_many::<u32, u64, u8, 8>();
+    }
+
+    #[test]
     fn compress_many_u16_u64_16() {
         generic_compress_many::<u16, u64, u16, 16>();
     }
 
     #[test]
-    fn compress_many_u32_u64_8() {
-        generic_compress_many::<u32, u64, u8, 8>();
+    fn compress_many_u16_u64_12() {
+        generic_compress_many::<u16, u64, u16, 12>();
     }
 
     #[test]
@@ -1364,6 +1369,11 @@ mod tests {
     }
 
     #[test]
+    fn compress_many_u16_u32_12() {
+        generic_compress_many::<u16, u32, u16, 12>();
+    }
+
+    #[test]
     fn compress_many_u16_u32_8() {
         generic_compress_many::<u16, u32, u8, 8>();
     }
@@ -1371,6 +1381,11 @@ mod tests {
     #[test]
     fn compress_many_u8_u32_8() {
         generic_compress_many::<u8, u32, u8, 8>();
+    }
+
+    #[test]
+    fn compress_many_u8_u16_8() {
+        generic_compress_many::<u8, u16, u8, 8>();
     }
 
     fn generic_compress_many<CompressedWord, State, Probability, const PRECISION: usize>()

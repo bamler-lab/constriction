@@ -63,7 +63,9 @@ take its extremal value of `1 << PRECISION` without wrapping.
 Note that, even if `right == 1 << PRECISION`, it is not guaranteed that `new_upper = upper`
 since `scale * right = (range >> PRECISION) << PRECISION`, which may (and typically will)
 truncate. The numbers between `new_upper` (inclusive) and `upper` (exclusive) are
-irrepresentable and cannot be decoded.
+irrepresentable (however, the current *decoder* implementation at the time of writing this
+document doesn't check for this and decodes these values to symbols with the maximum
+quantile, which makes the decoder non-injective).
 
 ## Second Part of the Update Step: Flushing and Rescaling
 
@@ -224,10 +226,10 @@ One of three things can happen:
 
 1. The addition `lower (+) scale * left` does not wrap but the addition in
    `lower (+) scale * right` does wrap; or
-2. one of the above two additions wrap; or
+2. the addition `lower (+) scale * right` wraps but the other one doesn't; or
 3. both of the above two additions wrap.
 
-(The fourth combination where the addition wraps for `scale * left` but not for
+(The fourth combination where the addition wraps for `lower (+) scale * left` but not for
 `scale * right` is impossible since `left < right`.)
 
 In case 1 above, we're transitioning from an inverted into an inverted situation, so we
