@@ -25,7 +25,7 @@ use super::{
 };
 use crate::{
     bit_array_to_chunks_truncated, BitArray, CoderError, EncoderError, EncoderFrontendError,
-    UnwrapInfallible,
+    NonZeroBitArray, UnwrapInfallible,
 };
 
 /// Entropy coder for both encoding and decoding on a stack
@@ -467,19 +467,16 @@ where
     #[inline(always)]
     pub(crate) fn decode_remainder_off_state<D, const PRECISION: usize>(
         &mut self,
-        probability: D::Probability,
-    ) -> Result<D::Probability, ()>
+        probability: <D::Probability as BitArray>::NonZero,
+    ) -> D::Probability
     where
         D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
     {
-        let remainder = (self.state % probability.into().into()).as_().as_();
-        self.state = self
-            .state
-            .checked_div(&probability.into().into())
-            .ok_or(())?;
-        Ok(remainder)
+        let remainder = (self.state % probability.get().into().into()).as_().as_();
+        self.state = self.state / probability.get().into().into();
+        remainder
     }
 
     #[inline(always)]
@@ -709,12 +706,12 @@ where
     pub(crate) fn encode_remainder_onto_state<D, const PRECISION: usize>(
         &mut self,
         remainder: D::Probability,
-        probability: D::Probability,
+        probability: <D::Probability as BitArray>::NonZero,
     ) where
         D: EntropyModel<PRECISION>,
         D::Probability: Into<CompressedWord>,
     {
-        self.state = self.state * probability.into().into() + remainder.into().into();
+        self.state = self.state * probability.get().into().into() + remainder.into().into();
     }
 }
 
@@ -1054,15 +1051,13 @@ where
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
 
-        if (self.state >> (State::BITS - PRECISION)) >= probability.into().into() {
+        if (self.state >> (State::BITS - PRECISION)) >= probability.get().into().into() {
             self.flush_state()?;
             // At this point, the invariant on `self.state` (see its doc comment) is
             // temporarily violated, but it will be restored below.
         }
 
-        let remainder = self
-            .decode_remainder_off_state::<D, PRECISION>(probability)
-            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
+        let remainder = self.decode_remainder_off_state::<D, PRECISION>(probability);
         self.append_quantile_to_state::<D, PRECISION>(left_sided_cumulative + remainder);
 
         Ok(())

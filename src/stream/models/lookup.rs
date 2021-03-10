@@ -18,6 +18,7 @@ use core::{
     hash::Hash,
     marker::PhantomData,
     mem::MaybeUninit,
+    num::NonZeroU16,
 };
 
 use num::cast::AsPrimitive;
@@ -32,7 +33,7 @@ where
     Symbol: Hash + Eq,
     Probability: BitArray,
 {
-    symbol_to_left_cumulative_and_probability: HashMap<Symbol, (Probability, Probability)>,
+    symbol_to_left_cumulative_and_probability: HashMap<Symbol, (Probability, Probability::NonZero)>,
 }
 
 /// Type alias for an [`EncoderHashLookupTable`] with sane settings.
@@ -112,7 +113,9 @@ where
                 match symbol_to_left_cumulative_and_probability.entry(symbol) {
                     Occupied(_) => Err(()),
                     Vacant(slot) => {
-                        slot.insert((left_sided_cumulative, probability));
+                        if let Some(probability) = probability.into_nonzero() {
+                            slot.insert((left_sided_cumulative, probability));
+                        }
                         Ok(())
                     }
                 }
@@ -158,7 +161,9 @@ where
                 match symbol_to_left_cumulative_and_probability.entry(symbol) {
                     Occupied(_) => Err(()),
                     Vacant(slot) => {
-                        slot.insert((left_sided_cumulative, probability));
+                        if let Some(probability) = probability.into_nonzero() {
+                            slot.insert((left_sided_cumulative, probability));
+                        }
                         Ok(())
                     }
                 }
@@ -170,7 +175,9 @@ where
                 match symbol_to_left_cumulative_and_probability.entry(symbol) {
                     Occupied(_) => return Err(()),
                     Vacant(slot) => {
-                        slot.insert((Probability::wrapping_pow2::<PRECISION>(), remainder));
+                        if let Some(remainder) = remainder.into_nonzero() {
+                            slot.insert((Probability::wrapping_pow2::<PRECISION>(), remainder));
+                        }
                     }
                 }
 
@@ -189,7 +196,7 @@ where
 
     pub fn encoder_table(
         &self,
-    ) -> impl ExactSizeIterator<Item = (&Symbol, Probability, Probability)> {
+    ) -> impl ExactSizeIterator<Item = (&Symbol, Probability, Probability::NonZero)> {
         self.symbol_to_left_cumulative_and_probability.iter().map(
             |(symbol, &(left_sided_cumulative, probability))| {
                 (symbol, left_sided_cumulative, probability)
@@ -241,7 +248,7 @@ where
 /// };
 ///
 /// let probabilities = [1489, 745, 1489, 373];
-/// let encoder_model = DefaultEncoderArrayLookupTable::from_probabilities(
+/// let encoder_model = DefaultEncoderArrayLookupTable::from_nonzero_probabilities(
 ///     probabilities.iter().cloned()
 /// )
 /// .unwrap();
@@ -278,14 +285,14 @@ where
 /// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
 /// [`DefaultRangeEncoder`]: super::super::queue::DefaultRangeEncoder
 pub type DefaultEncoderArrayLookupTable<Symbol> =
-    EncoderArrayLookupTable<Symbol, Box<[(u16, u16)]>, 12>;
+    EncoderArrayLookupTable<Symbol, Box<[(u16, NonZeroU16)]>, 12>;
 
 impl<Probability, const PRECISION: usize>
-    EncoderArrayLookupTable<Probability, Box<[(Probability, Probability)]>, PRECISION>
+    EncoderArrayLookupTable<Probability, Box<[(Probability, Probability::NonZero)]>, PRECISION>
 where
     Probability: BitArray,
 {
-    pub fn from_probabilities(
+    pub fn from_nonzero_probabilities(
         probabilities: impl IntoIterator<Item = Probability>,
     ) -> Result<Self, ()> {
         assert!(PRECISION > 0);
@@ -299,7 +306,7 @@ where
             probabilities.map(|probability| ((), *probability.borrow())),
             |(), left_sided_cumulative, probability| {
                 symbol_to_left_cumulative_and_probability
-                    .push((left_sided_cumulative, probability));
+                    .push((left_sided_cumulative, probability.into_nonzero().ok_or(())?));
                 Ok(())
             },
         )?;
@@ -315,7 +322,7 @@ where
         })
     }
 
-    pub fn from_partial_probabilities<I>(partial_probabilities: I) -> Result<Self, ()>
+    pub fn from_partial_nozero_probabilities<I>(partial_probabilities: I) -> Result<Self, ()>
     where
         I: IntoIterator,
         I::Item: AsRef<Probability>,
@@ -331,13 +338,15 @@ where
             probabilities.map(|probability| ((), *probability.as_ref())),
             |(), left_sided_cumulative, probability| {
                 symbol_to_left_cumulative_and_probability
-                    .push((left_sided_cumulative, probability));
+                    .push((left_sided_cumulative, probability.into_nonzero().ok_or(())?));
                 Ok(())
             },
         )?;
 
-        symbol_to_left_cumulative_and_probability
-            .push((Probability::wrapping_pow2::<PRECISION>(), remainder));
+        symbol_to_left_cumulative_and_probability.push((
+            Probability::wrapping_pow2::<PRECISION>(),
+            remainder.into_nonzero().ok_or(())?,
+        ));
 
         Ok(Self {
             symbol_to_left_cumulative_and_probability: symbol_to_left_cumulative_and_probability
@@ -351,7 +360,7 @@ impl<Probability, Table, const PRECISION: usize>
     EncoderArrayLookupTable<Probability, Table, PRECISION>
 where
     Probability: BitArray,
-    Table: AsRef<[(Probability, Probability)]>,
+    Table: AsRef<[(Probability, Probability::NonZero)]>,
 {
     pub fn num_symbols(&self) -> usize {
         self.symbol_to_left_cumulative_and_probability
@@ -361,7 +370,7 @@ where
 
     pub fn encoder_table(
         &self,
-    ) -> impl ExactSizeIterator<Item = (usize, Probability, Probability)> + '_ {
+    ) -> impl ExactSizeIterator<Item = (usize, Probability, Probability::NonZero)> + '_ {
         self.symbol_to_left_cumulative_and_probability
             .as_ref()
             .iter()
@@ -670,11 +679,14 @@ where
             Vec::with_capacity(symbols_and_probabilities.size_hint().0 + 1);
 
         for (symbol, probability) in symbols_and_probabilities {
-            if probability != Probability::zero() {
-                let index = left_sided_cumulative_and_symbol.len().as_();
-                left_sided_cumulative_and_symbol.push((quantile_to_index.len().as_(), symbol));
-                quantile_to_index.resize(quantile_to_index.len() + probability.into(), index);
-            }
+            // Note that we have to add even entries with zero probability to
+            // `left_sided_cumulative_and_symbol` so that the indices match up if we use an
+            // `IndexSymbolTable`. That's OK for a decoder model because those indices will
+            // be unreachable from any quantile anyway (we just have to watch out for zero
+            // probabilities in the method `encoder_table`).
+            let index = left_sided_cumulative_and_symbol.len().as_();
+            left_sided_cumulative_and_symbol.push((quantile_to_index.len().as_(), symbol));
+            quantile_to_index.resize(quantile_to_index.len() + probability.into(), index);
         }
 
         if quantile_to_index.len() != 1 << PRECISION {
@@ -776,16 +788,16 @@ where
 {
     pub fn encoder_table(
         &self,
-    ) -> impl ExactSizeIterator<Item = (&Symbol, Probability, Probability)> {
+    ) -> impl Iterator<Item = (&Symbol, Probability, Probability::NonZero)> {
         let mut iter = self.left_sided_cumulative_and_symbol.0.as_ref().iter();
         let mut old_entry = iter.next().expect("Table has at least 2 entries.");
 
-        iter.map(move |new_entry| {
+        iter.filter_map(move |new_entry| {
             let left_sided_cumulative = old_entry.0;
             let probability = new_entry.0.wrapping_sub(&left_sided_cumulative);
             let symbol = &old_entry.1;
             old_entry = new_entry;
-            (symbol, left_sided_cumulative, probability)
+            Some((symbol, left_sided_cumulative, probability.into_nonzero()?))
         })
     }
 
@@ -808,22 +820,23 @@ where
 {
     pub fn encoder_table(
         &self,
-    ) -> impl ExactSizeIterator<Item = (usize, Probability, Probability)> + '_ {
+    ) -> impl Iterator<Item = (usize, Probability, Probability::NonZero)> + '_ {
         let mut iter = self.left_sided_cumulative_and_symbol.0.as_ref().iter();
         let mut old_cumulative = iter.next().expect("Table has at least 2 entries.").0;
 
-        iter.enumerate().map(move |(symbol, (new_cumulative, ()))| {
-            let left_sided_cumulative = old_cumulative;
-            let probability = new_cumulative.wrapping_sub(&left_sided_cumulative);
-            old_cumulative = *new_cumulative;
-            (symbol, left_sided_cumulative, probability)
-        })
+        iter.enumerate()
+            .filter_map(move |(symbol, (new_cumulative, ()))| {
+                let left_sided_cumulative = old_cumulative;
+                let probability = new_cumulative.wrapping_sub(&left_sided_cumulative);
+                old_cumulative = *new_cumulative;
+                Some((symbol, left_sided_cumulative, probability.into_nonzero()?))
+            })
     }
 
     pub fn to_encoder_model(
         &self,
     ) -> Result<
-        EncoderArrayLookupTable<Probability, Box<[(Probability, Probability)]>, PRECISION>,
+        EncoderArrayLookupTable<Probability, Box<[(Probability, Probability::NonZero)]>, PRECISION>,
         (),
     > {
         self.try_into()
@@ -850,7 +863,7 @@ where
     fn left_cumulative_and_probability(
         &self,
         symbol: impl core::borrow::Borrow<Self::Symbol>,
-    ) -> Result<(Self::Probability, Self::Probability), ()> {
+    ) -> Result<(Probability, Probability::NonZero), ()> {
         self.symbol_to_left_cumulative_and_probability
             .get(symbol.borrow())
             .ok_or(())
@@ -871,13 +884,13 @@ impl<Probability, Table, const PRECISION: usize> EncoderModel<PRECISION>
     for EncoderArrayLookupTable<Probability, Table, PRECISION>
 where
     Probability: BitArray,
-    Table: AsRef<[(Probability, Probability)]>,
+    Table: AsRef<[(Probability, Probability::NonZero)]>,
 {
     #[inline(always)]
     fn left_cumulative_and_probability(
         &self,
         symbol: impl core::borrow::Borrow<Self::Symbol>,
-    ) -> Result<(Self::Probability, Self::Probability), ()> {
+    ) -> Result<(Probability, Probability::NonZero), ()> {
         self.symbol_to_left_cumulative_and_probability
             .as_ref()
             .get(*symbol.borrow())
@@ -962,8 +975,8 @@ where
     #[inline(always)]
     fn quantile_function(
         &self,
-        quantile: Self::Probability,
-    ) -> (Self::Symbol, Self::Probability, Self::Probability) {
+        quantile: Probability,
+    ) -> (Symbol, Probability, Probability::NonZero) {
         if Probability::BITS != PRECISION {
             // It would be nice if we could avoid this but we currently don't statically enforce
             // `quantile` to fit into `PRECISION` bits.
@@ -991,11 +1004,16 @@ where
             )
         };
 
-        (
-            symbol,
-            left_sided_cumulative,
-            next_cumulative.wrapping_sub(&left_sided_cumulative),
-        )
+        let probability = unsafe {
+            // SAFETY: The constructors ensure that `cdf` is strictly increasing (in
+            // wrapping arithmetic) except at indices that can't be reached from
+            // `quantile_to_index`).
+            next_cumulative
+                .wrapping_sub(&left_sided_cumulative)
+                .into_nonzero_unchecked()
+        };
+
+        (symbol, left_sided_cumulative, probability)
     }
 }
 
@@ -1051,7 +1069,7 @@ impl<Table, Probability, const PRECISION: usize>
     >
 where
     Probability: BitArray + Into<usize>,
-    Table: AsRef<[(Probability, Probability)]>,
+    Table: AsRef<[(Probability, Probability::NonZero)]>,
     usize: AsPrimitive<Probability>,
 {
     fn from(encoder_model: &EncoderArrayLookupTable<Probability, Table, PRECISION>) -> Self {
@@ -1085,7 +1103,7 @@ fn invert_encoder_table<'a, Probability, Symbol, I, const PRECISION: usize>(
 where
     Probability: BitArray + 'a,
     Symbol: Clone,
-    I: ExactSizeIterator<Item = (Symbol, &'a (Probability, Probability))>,
+    I: ExactSizeIterator<Item = (Symbol, &'a (Probability, Probability::NonZero))>,
 {
     let mut left_sided_cumulative_and_symbol =
         Vec::with_capacity(symbol_to_left_cumulative_and_probability.len() + 1);
@@ -1188,7 +1206,7 @@ where
 
 impl<Probability, Table1, Table2, const PRECISION: usize>
     TryFrom<&DecoderLookupTable<usize, Probability, Table1, IndexSymbolTable<Table2>, PRECISION>>
-    for EncoderArrayLookupTable<Probability, Box<[(Probability, Probability)]>, PRECISION>
+    for EncoderArrayLookupTable<Probability, Box<[(Probability, Probability::NonZero)]>, PRECISION>
 where
     Probability: BitArray,
     Table1: AsRef<[Probability]>,
@@ -1255,7 +1273,7 @@ mod test {
             let (left_cumulative, probability) = encoder_model
                 .left_cumulative_and_probability(symbol)
                 .unwrap();
-            for quantile in left_cumulative..left_cumulative + probability {
+            for quantile in left_cumulative..left_cumulative + probability.get() {
                 assert_eq!(
                     decoder_model.quantile_function(quantile),
                     (symbol, left_cumulative, probability)
@@ -1291,9 +1309,10 @@ mod test {
     #[test]
     fn minimal_array() {
         let probabilities = vec![3u8, 18, 1, 42];
-        let encoder_model =
-            EncoderArrayLookupTable::<_, _, 6>::from_probabilities(probabilities.iter().cloned())
-                .unwrap();
+        let encoder_model = EncoderArrayLookupTable::<_, _, 6>::from_nonzero_probabilities(
+            probabilities.iter().cloned(),
+        )
+        .unwrap();
         let decoder_model = encoder_model.to_decoder_model();
         assert_eq!(encoder_model, decoder_model.to_encoder_model().unwrap());
 
@@ -1302,7 +1321,7 @@ mod test {
             let (left_cumulative, probability) = encoder_model
                 .left_cumulative_and_probability(symbol)
                 .unwrap();
-            for quantile in left_cumulative..left_cumulative + probability {
+            for quantile in left_cumulative..left_cumulative + probability.get() {
                 assert_eq!(
                     decoder_model.quantile_function(quantile),
                     (symbol, left_cumulative, probability)

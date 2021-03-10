@@ -45,7 +45,7 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Self::Symbol>,
-    ) -> Result<(Self::Probability, Self::Probability), ()>;
+    ) -> Result<(Self::Probability, <Self::Probability as BitArray>::NonZero), ()>;
 }
 
 pub trait DecoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
@@ -54,7 +54,11 @@ pub trait DecoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     fn quantile_function(
         &self,
         quantile: Self::Probability,
-    ) -> (Self::Symbol, Self::Probability, Self::Probability);
+    ) -> (
+        Self::Symbol,
+        Self::Probability,
+        <Self::Probability as BitArray>::NonZero,
+    );
 }
 
 impl<D, const PRECISION: usize> EntropyModel<PRECISION> for &D
@@ -72,7 +76,7 @@ where
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Self::Symbol>,
-    ) -> Result<(Self::Probability, Self::Probability), ()> {
+    ) -> Result<(Self::Probability, <Self::Probability as BitArray>::NonZero), ()> {
         (*self).left_cumulative_and_probability(symbol)
     }
 }
@@ -84,7 +88,11 @@ where
     fn quantile_function(
         &self,
         quantile: Self::Probability,
-    ) -> (Self::Symbol, Self::Probability, Self::Probability) {
+    ) -> (
+        Self::Symbol,
+        Self::Probability,
+        <Self::Probability as BitArray>::NonZero,
+    ) {
         (*self).quantile_function(quantile)
     }
 }
@@ -250,10 +258,19 @@ where
     Probability: BitArray + Into<F>,
     CD: Univariate<F, F>,
 {
+    /// Performs (one direction of) the quantization.
+    ///
+    /// # Panics
+    ///
+    /// If the underlying probability distribution is invalid, i.e., if the quantization
+    /// leads to a zero probability despite the added leakiness (and despite the fact that
+    /// the constructor checks that `min_symbol_inclusive < max_symbol_inclusive`, i.e.,
+    /// that there are at least two symbols with nonzero probability and therefore the
+    /// probability of a single symbol cannot overflow).
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Symbol>,
-    ) -> Result<(Probability, Probability), ()> {
+    ) -> Result<(Probability, Probability::NonZero), ()> {
         let half = F::one() / (F::one() + F::one());
 
         let min_symbol_inclusive = self.quantizer.min_symbol_inclusive;
@@ -289,7 +306,10 @@ where
             non_leaky + slack + Probability::one()
         };
 
-        let probability = right_sided_cumulative.wrapping_sub(&left_sided_cumulative);
+        let probability = right_sided_cumulative
+            .wrapping_sub(&left_sided_cumulative)
+            .into_nonzero()
+            .expect("Invalid underlying continuous probability distribution.");
 
         Ok((left_sided_cumulative, probability))
     }
@@ -303,7 +323,10 @@ where
     Probability: BitArray + Into<F>,
     CD: Univariate<F, F> + InverseCDF<F>,
 {
-    fn quantile_function(&self, quantile: Probability) -> (Self::Symbol, Probability, Probability) {
+    fn quantile_function(
+        &self,
+        quantile: Probability,
+    ) -> (Self::Symbol, Probability, Probability::NonZero) {
         let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
         // This check should usually compile away in inlined and verifiably correct usages
         // of this method.
@@ -336,6 +359,8 @@ where
             non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_()
         };
 
+        // SAFETY: We have to ensure that all paths lead to a state where
+        // `right_sided_cumulative != left_sided_cumulative`.
         let right_sided_cumulative = if left_sided_cumulative > quantile {
             // Our initial guess for `symbol` was too high. Reduce it until we're good.
             loop {
@@ -344,6 +369,7 @@ where
 
                 if symbol == min_symbol_inclusive {
                     left_sided_cumulative = Probability::zero();
+                    // SAFETY: `right_sided_cumulative > quantile >= 0 = left_sided_cumulative`
                     break right_sided_cumulative;
                 }
 
@@ -352,6 +378,7 @@ where
                 left_sided_cumulative =
                     non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_();
                 if left_sided_cumulative <= quantile {
+                    // SAFETY: `right_sided_cumulative > quantile >= left_sided_cumulative`
                     break right_sided_cumulative;
                 }
             }
@@ -361,7 +388,12 @@ where
             // keep increasing `symbol` until it is.
             loop {
                 if symbol == max_symbol_inclusive {
-                    break max_probability.wrapping_add(&Probability::one());
+                    // SAFETY: we have to manually check here.
+                    let right_sided_cumulative = max_probability.wrapping_add(&Probability::one());
+                    if right_sided_cumulative == left_sided_cumulative {
+                        panic!("Invalid underlying continuous probability distribution.");
+                    }
+                    break right_sided_cumulative;
                 }
 
                 let non_leaky: Probability =
@@ -370,6 +402,7 @@ where
                     + symbol.wrapping_sub(&min_symbol_inclusive).as_()
                     + Probability::one();
                 if right_sided_cumulative > quantile {
+                    // SAFETY: we have `left_sided_cumulative <= quantile < right_sided_sided_cumulative`
                     break right_sided_cumulative;
                 }
 
@@ -378,7 +411,12 @@ where
             }
         };
 
-        let probability = right_sided_cumulative.wrapping_sub(&left_sided_cumulative);
+        let probability = unsafe {
+            // SAFETY: see above "SAFETY" comments on all paths that lead here.
+            right_sided_cumulative
+                .wrapping_sub(&left_sided_cumulative)
+                .into_nonzero_unchecked()
+        };
         (symbol, left_sided_cumulative, probability)
     }
 }
@@ -396,8 +434,9 @@ pub struct Categorical<Probability, const PRECISION: usize> {
     /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
     ///   this may be relaxed in the future)
     /// - `cdf[0] == 0`
-    /// - `cdf` is monotonically nondecreasing except that it may wrap around only at
+    /// - `cdf` is monotonically increasing except that it may wrap around only at
     ///   the very last entry (this happens iff `PRECISION == Probability::BITS`).
+    ///   Thus, all probabilities within range are guaranteed to be nonzero.
     cdf: Vec<Probability>,
 }
 
@@ -575,7 +614,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
 
         slots.sort_by_key(|slot| slot.original_index);
 
-        Ok(Self::from_fixed_point_probabilities(
+        Ok(Self::from_nonzero_fixed_point_probabilities(
             slots.into_iter().map(|slot| slot.weight),
         ))
     }
@@ -583,13 +622,14 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// Constructs a distribution with a PMF given in fixed point arithmetic.
     ///
     /// This is a low level method that allows, e.g,. reconstructing a probability
-    /// distribution previously exported with [`fixed_point_probabilities`]. The
-    /// more common way to construct a `Categorical` distribution is via
+    /// distribution previously exported with [`fixed_point_probabilities`]. The more common
+    /// way to construct a `Categorical` distribution is via
     /// [`from_floating_point_probabilities`].
     ///
-    /// The entries of `probabilities` have to (logically) sum up to `1 << PRECISION`,
-    /// where `PRECISION` is a const generic parameter on the `Categorical`
-    /// distribution.
+    /// The entries of `probabilities` have to be nonzero and (logically) sum up to
+    /// `1 << PRECISION`, where `PRECISION` is a const generic parameter on the
+    /// `Categorical` distribution. Further, all probabilities have to be nonzero (which is
+    /// statically enforced by the trait bound on the iterator's items).
     ///
     /// # Panics
     ///
@@ -606,13 +646,13 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// // `probabilities` sums up to `1 << PRECISION` as required:
     /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
     ///
-    /// let model = Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities);
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
     ///
-    /// If `PRECISION` is set to the maximum value supported by the `CompressedWord`
-    /// type `Probability`, then the provided probabilities still have to *logically* sum up to
+    /// If `PRECISION` is set to the maximum value supported by the `CompressedWord` type
+    /// `Probability`, then the provided probabilities still have to *logically* sum up to
     /// `1 << PRECISION` (i.e., the summation has to wrap around exactly once):
     ///
     /// ```
@@ -622,7 +662,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// // `probabilities` sums up to `1 << 32` (logically), i.e., it wraps around once.
     /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
     ///
-    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
@@ -633,7 +673,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// use constriction::stream::models::Categorical;
     /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
     /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
-    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities); // PANICS.
+    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
     /// ```
     ///
     /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
@@ -641,44 +681,40 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```should_panic
     /// use constriction::stream::models::Categorical;
     /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
-    /// let model = Categorical::<u32, 24>::from_fixed_point_probabilities(&probabilities); // PANICS.
+    /// let model = Categorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
     /// ```
     ///
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
     /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
-    pub fn from_fixed_point_probabilities<I>(probabilities: I) -> Self
+    pub fn from_nonzero_fixed_point_probabilities<I>(probabilities: I) -> Self
     where
         I: IntoIterator,
         I::Item: Borrow<Probability>,
     {
         assert!(PRECISION > 0 && PRECISION <= Probability::BITS);
 
+        // We accumulate all validity checks into single branches at the end in order to
+        // keep the loop itself branchless.
         let mut laps: usize = 0;
         let mut accum = Probability::zero();
         let mut fingerprint = Probability::zero();
+        let mut has_zero = false;
 
-        let mut cdf = core::iter::once(Probability::zero())
+        let cdf = core::iter::once(Probability::zero())
             .chain(probabilities.into_iter().map(|prob| {
                 let old_accum = accum;
                 accum = accum.wrapping_add(prob.borrow());
                 laps += (accum < old_accum) as usize; // branchless check if we've wrapped around
+                has_zero = has_zero || *prob.borrow() == Probability::zero(); // branchless check for any zeros
                 fingerprint = fingerprint | *prob.borrow(); // branchless check for degenerateness
                 accum
             }))
             .collect::<Vec<_>>();
 
+        assert!(!has_zero);
         if PRECISION == Probability::BITS {
             assert_eq!(laps, 1);
             assert!(cdf.last() == Some(&Probability::zero()));
-
-            // Truncate trailing zero probabilities to ensure that `cdf` is monotonically
-            // nondecreasing except at the very last entry.
-            let (last, _) = cdf
-                .iter()
-                .enumerate()
-                .rfind(|(_, &x)| x != Probability::zero())
-                .unwrap();
-            cdf.resize(last + 2, Probability::zero()); // Should never make cdf larger.
         } else {
             assert_eq!(laps, 0);
             let expected_last = Probability::wrapping_pow2::<PRECISION>();
@@ -694,7 +730,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// This method may be used together with [`domain`](#method.domain) to export
     /// the model into a format that will be stable across minor version
     /// changes of this library. The model can then be reconstructed via
-    /// [`from_fixed_point_probabilities`](#method.from_fixed_point_probabilities).
+    /// [`from_nonzero_fixed_point_probabilities`](#method.from_nonzero_fixed_point_probabilities).
     ///
     /// The entries of the returned iterator add up to `Probability::max_value() + 1`
     /// (logically).
@@ -739,7 +775,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// `Probability: Into<F>`). In this case, the yielded probabilities sum up *exactly* to one,
     /// and passing them to [`from_floating_point_probabilities`] will reconstruct the
     /// exact same model (although using [`fixed_point_probabilities`] and
-    /// [`from_fixed_point_probabilities`] would be cheaper for this purpose).
+    /// [`from_nonzero_fixed_point_probabilities`] would be cheaper for this purpose).
     ///
     /// The trait bound `Probability: Into<F>` is a conservative bound. In reality, whether or not
     /// the conversion can be guaranteed to be lossless depends on the const generic
@@ -761,7 +797,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// use constriction::stream::models::Categorical;
     ///
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -770,7 +806,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
     /// [`floating_point_probabilities_lossy`]: #method.floating_point_probabilities_lossy
     /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
-    /// [`from_fixed_point_probabilities`]: #method.from_fixed_point_probabilities
+    /// [`from_nonzero_fixed_point_probabilities`]: #method.from_nonzero_fixed_point_probabilities
     pub fn floating_point_probabilities<'s, F>(
         &'s self,
     ) -> impl Iterator<Item = F> + ExactSizeIterator + 's
@@ -799,7 +835,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// ```compile_fail
     /// use constriction::stream::models::Categorical;
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f32>>();
     /// //                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Compiler error: trait bound not satisfied
@@ -813,7 +849,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// use constriction::stream::models::Categorical;
     ///
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model = Categorical::<u32, 32>::from_fixed_point_probabilities(&probabilities);
+    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = model.floating_point_probabilities_lossy().collect::<Vec<f32>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -889,7 +925,7 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<usize>,
-    ) -> Result<(Probability, Probability), ()> {
+    ) -> Result<(Probability, Probability::NonZero), ()> {
         let index: usize = *symbol.borrow();
 
         let (cdf, next_cdf) = unsafe {
@@ -903,14 +939,22 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
             )
         };
 
-        Ok((cdf, next_cdf.wrapping_sub(&cdf)))
+        let probability = unsafe {
+            // SAFETY: The constructors ensure that no probabilities within bounds are nonzero.
+            next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
+        };
+
+        Ok((cdf, probability))
     }
 }
 
 impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
     for Categorical<Probability, PRECISION>
 {
-    fn quantile_function(&self, quantile: Probability) -> (Self::Symbol, Probability, Probability) {
+    fn quantile_function(
+        &self,
+        quantile: Probability,
+    ) -> (Self::Symbol, Probability, Probability::NonZero) {
         let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
         // This check should usually compile away in inlined and verifiably correct usages
         // of this method.
@@ -950,7 +994,12 @@ impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
         let cdf = unsafe { *self.cdf.get_unchecked(left) };
         let next_cdf = unsafe { *self.cdf.get_unchecked(right) };
 
-        (left, cdf, next_cdf.wrapping_sub(&cdf))
+        let probability = unsafe {
+            // SAFETY: The constructors ensure that no probabilities within bounds are nonzero.
+            next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
+        };
+
+        (left, cdf, probability)
     }
 }
 
@@ -1059,13 +1108,13 @@ mod tests {
         for symbol in domain {
             let (left_cumulative, prob) = model.left_cumulative_and_probability(symbol).unwrap();
             assert_eq!(left_cumulative as u64, sum);
-            sum += prob as u64;
+            sum += prob.get() as u64;
 
             let expected = (symbol, left_cumulative, prob);
             assert_eq!(model.quantile_function(left_cumulative), expected);
             assert_eq!(model.quantile_function((sum - 1) as u32), expected);
             assert_eq!(
-                model.quantile_function(left_cumulative + prob / 2),
+                model.quantile_function(left_cumulative + prob.get() / 2),
                 expected
             );
         }

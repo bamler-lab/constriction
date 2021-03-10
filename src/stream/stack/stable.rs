@@ -12,7 +12,7 @@ use super::{
     super::models::{DecoderModel, EncoderModel},
     AnsCoder, Code, Decode, Encode, EncoderError, TryCodingError,
 };
-use crate::{BitArray, CoderError, EncoderFrontendError, UnwrapInfallible};
+use crate::{BitArray, CoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible};
 
 #[derive(Debug, Clone)]
 struct Coder<CompressedWord, State, const PRECISION: usize>
@@ -727,7 +727,7 @@ where
             .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
 
         if self.0.waste.state()
-            < probability.into().into() << (State::BITS - CompressedWord::BITS - PRECISION)
+            < probability.get().into().into() << (State::BITS - CompressedWord::BITS - PRECISION)
         {
             self.0
                 .waste
@@ -743,8 +743,7 @@ where
         let remainder = self
             .0
             .waste
-            .decode_remainder_off_state::<D, PRECISION>(probability)
-            .map_err(|()| EncoderError::BackendError(WriteError::CapacityExceeded))?;
+            .decode_remainder_off_state::<D, PRECISION>(probability);
 
         if (self.0.supply.state() >> (State::BITS - PRECISION)) != State::zero() {
             self.0.supply.flush_state();

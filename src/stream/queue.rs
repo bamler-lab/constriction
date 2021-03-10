@@ -479,7 +479,7 @@ where
 
         let scale = self.state.range.get() >> PRECISION;
         // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
-        self.state.range = (scale * probability.into().into())
+        self.state.range = (scale * probability.get().into().into())
             .into_nonzero()
             .ok_or(EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
         let new_lower = self
@@ -835,7 +835,7 @@ where
             .state
             .lower
             .wrapping_add(&(scale * left_sided_cumulative.into().into()));
-        self.state.range = (scale * probability.into().into())
+        self.state.range = (scale * probability.get().into().into())
             .into_nonzero()
             .expect("TODO");
 
