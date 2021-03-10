@@ -31,7 +31,7 @@ use crate::{
 ///
 /// [`Seek`]: crate::Seek
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CoderState<CompressedWord, State: BitArray> {
+pub struct RangeCoderState<CompressedWord, State: BitArray> {
     lower: State,
 
     /// Invariant: `range >= State::one() << (State::BITS - CompressedWord::BITS)`
@@ -44,7 +44,7 @@ pub struct CoderState<CompressedWord, State: BitArray> {
     phantom: PhantomData<CompressedWord>,
 }
 
-impl<CompressedWord, State: BitArray> CoderState<CompressedWord, State> {
+impl<CompressedWord, State: BitArray> RangeCoderState<CompressedWord, State> {
     /// Get the lower bound of the current range (inclusive)
     pub fn lower(&self) -> State {
         self.lower
@@ -56,7 +56,7 @@ impl<CompressedWord, State: BitArray> CoderState<CompressedWord, State> {
     }
 }
 
-impl<CompressedWord: BitArray, State: BitArray> Default for CoderState<CompressedWord, State> {
+impl<CompressedWord: BitArray, State: BitArray> Default for RangeCoderState<CompressedWord, State> {
     fn default() -> Self {
         Self {
             lower: State::zero(),
@@ -73,7 +73,7 @@ where
     Backend: WriteBackend<CompressedWord>,
 {
     bulk: Backend,
-    state: CoderState<CompressedWord, State>,
+    state: RangeCoderState<CompressedWord, State>,
     situation: EncoderSituation<CompressedWord>,
 }
 
@@ -131,7 +131,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: WriteBackend<CompressedWord>,
 {
-    type State = CoderState<CompressedWord, State>;
+    type State = RangeCoderState<CompressedWord, State>;
     type CompressedWord = CompressedWord;
 
     fn state(&self) -> Self::State {
@@ -180,7 +180,7 @@ where
 
         Self {
             bulk: Vec::new(),
-            state: CoderState::default(),
+            state: RangeCoderState::default(),
             situation: EncoderSituation::Normal,
         }
     }
@@ -207,7 +207,7 @@ where
 
         Self {
             bulk: backend,
-            state: CoderState::default(),
+            state: RangeCoderState::default(),
             situation: EncoderSituation::Normal,
         }
     }
@@ -350,7 +350,7 @@ where
     /// [`Coder::new`](#method.new).
     pub fn clear(&mut self) {
         self.bulk.clear();
-        self.state = CoderState::default();
+        self.state = RangeCoderState::default();
     }
 
     /// Assembles the current compressed data into a single slice.
@@ -564,7 +564,7 @@ where
 {
     bulk: Backend,
 
-    state: CoderState<CompressedWord, State>,
+    state: RangeCoderState<CompressedWord, State>,
 
     /// Invariant: `point.wrapping_sub(&state.lower) < state.range`
     point: State,
@@ -630,7 +630,7 @@ where
 
         Ok(RangeDecoder {
             bulk,
-            state: CoderState::default(),
+            state: RangeCoderState::default(),
             point,
         })
     }
@@ -644,7 +644,7 @@ where
 
         Ok(RangeDecoder {
             bulk,
-            state: CoderState::default(),
+            state: RangeCoderState::default(),
             point,
         })
     }
@@ -661,7 +661,7 @@ where
 
         Ok(RangeDecoder {
             bulk,
-            state: CoderState::default(),
+            state: RangeCoderState::default(),
             point,
         })
     }
@@ -669,14 +669,14 @@ where
     pub fn from_raw_parts(
         _bulk: Backend,
         _state: State,
-    ) -> Result<Self, (Backend, CoderState<CompressedWord, State>)> {
+    ) -> Result<Self, (Backend, RangeCoderState<CompressedWord, State>)> {
         assert!(State::BITS >= 2 * CompressedWord::BITS);
         assert_eq!(State::BITS % CompressedWord::BITS, 0);
 
         todo!()
     }
 
-    pub fn into_raw_parts(self) -> (Backend, CoderState<CompressedWord, State>) {
+    pub fn into_raw_parts(self) -> (Backend, RangeCoderState<CompressedWord, State>) {
         (self.bulk, self.state)
     }
 
@@ -711,7 +711,7 @@ where
     State: BitArray + AsPrimitive<CompressedWord>,
     Backend: ReadBackend<CompressedWord, Queue>,
 {
-    type State = CoderState<CompressedWord, State>;
+    type State = RangeCoderState<CompressedWord, State>;
     type CompressedWord = CompressedWord;
 
     fn state(&self) -> Self::State {
