@@ -684,19 +684,6 @@ where
     }
 }
 
-impl<CompressedWord, State, Backend> Pos for RangeDecoder<CompressedWord, State, Backend>
-where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
-    Backend: ReadBackend<CompressedWord, Queue> + PosBackend<CompressedWord>,
-{
-    fn pos(&self) -> usize {
-        self.bulk
-            .pos()
-            .saturating_sub(State::BITS / CompressedWord::BITS)
-    }
-}
-
 impl<CompressedWord, State, Backend> Seek for RangeDecoder<CompressedWord, State, Backend>
 where
     CompressedWord: BitArray + Into<State>,
@@ -1148,16 +1135,16 @@ mod tests {
 
         let mut decoder = encoder.decoder();
 
-        // Verify that decoding leads to the same positions and states.
-        for (chunk, &pos_and_state) in symbols.iter().zip(&jump_table) {
-            assert_eq!(decoder.pos_and_state(), pos_and_state);
+        // Verify we can decode the chunks normally (we can't veryify that coding and
+        // decoding lead to same `pos_and_state` because the range decoder currently doesn't
+        // implement `Pos` due to complications at the stream end.)
+        for (chunk, _) in symbols.iter().zip(&jump_table) {
             let decoded = decoder
                 .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
             assert_eq!(&decoded, chunk);
         }
-        assert_eq!(decoder.pos_and_state(), final_pos_and_state);
         assert!(decoder.maybe_empty());
 
         // Seek to some random offsets in the jump table and decode one chunk

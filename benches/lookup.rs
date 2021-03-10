@@ -160,6 +160,7 @@ where
 
     let data = make_data(&symbols, 10_000);
     let mut encoder = RangeEncoder::<CompressedWord, State>::new();
+    let reset_snapshot = encoder.pos_and_state();
 
     let label_suffix = format!(
         "{}_{}_{}_{}",
@@ -184,7 +185,6 @@ where
     let decoder_model = encoder_model.to_decoder_model();
 
     let mut decoder = encoder.into_decoder().unwrap();
-    let reset_snapshot = decoder.pos_and_state();
 
     c.bench_function(&format!("range_decoding_{}", label_suffix), |b| {
         b.iter(|| {
