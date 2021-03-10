@@ -138,10 +138,11 @@ where
     }
 }
 
-impl<CompressedWord, State> Pos for RangeEncoder<CompressedWord, State>
+impl<CompressedWord, State, Backend> Pos for RangeEncoder<CompressedWord, State, Backend>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Backend: WriteBackend<CompressedWord> + PosBackend<CompressedWord>,
 {
     fn pos(&self) -> usize {
         let num_inverted = if let EncoderSituation::Inverted(num_inverted, _) = self.situation {
@@ -149,17 +150,26 @@ where
         } else {
             0
         };
-        self.bulk.len() + num_inverted
+        self.bulk.pos() + num_inverted
     }
 }
 
-impl<CompressedWord, State> Default for RangeEncoder<CompressedWord, State>
+impl<CompressedWord, State, Backend> Default for RangeEncoder<CompressedWord, State, Backend>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Backend: WriteBackend<CompressedWord> + Default,
 {
+    /// This is essentially the same as `#[derive(Default)]`, except for the assertions.
     fn default() -> Self {
-        Self::new()
+        assert!(State::BITS >= 2 * CompressedWord::BITS);
+        assert_eq!(State::BITS % CompressedWord::BITS, 0);
+
+        Self {
+            bulk: Backend::default(),
+            state: CoderState::default(),
+            situation: EncoderSituation::Normal,
+        }
     }
 }
 
@@ -426,13 +436,14 @@ where
     type IntoDecoder = RangeDecoder<CompressedWord, State, Backend::IntoReadBackend>;
 }
 
-impl<CompressedWord, State, const PRECISION: usize> Encode<PRECISION>
-    for RangeEncoder<CompressedWord, State>
+impl<CompressedWord, State, Backend, const PRECISION: usize> Encode<PRECISION>
+    for RangeEncoder<CompressedWord, State, Backend>
 where
     CompressedWord: BitArray + Into<State>,
     State: BitArray + AsPrimitive<CompressedWord>,
+    Backend: WriteBackend<CompressedWord>,
 {
-    type BackendError = Infallible;
+    type BackendError = Backend::WriteError;
 
     fn encode_symbol<D>(
         &mut self,
@@ -776,7 +787,6 @@ where
             // This can only happen if both of the following conditions apply:
             // (i) we are decoding invalid compressed data; and
             // (ii) we use entropy models with varying `PRECISION`s.
-            // TODO: Is (ii) necessary? Aren't there always unreachable pockets due to rounding?
             return Err(CoderError::FrontendError(FrontendError::InvalidData));
         }
 
@@ -1176,6 +1186,28 @@ mod tests {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum FrontendError {
+    /// This can only happen if both of the following conditions apply:
+    ///
+    /// 1. we are decoding invalid compressed data; and
+    /// 2. we use entropy models with varying `PRECISION`s.
+    ///
+    /// Unless you change the `PRECISION` mid-decoding this error cannot occur. However,
+    /// note that the encoder is not surjective, i.e., it cannot reach all possible values.
+    /// The reason why the decoder still doesn't err (unless varying `PRECISION`s are used)
+    /// is that it is not injective, i.e., it maps the bit strings that are unreachable by
+    /// the encoder to symbols that could have been encoded into a different bit string.
+    ///
+    /// The lack of injectivity of the encoder makes the Range Coder implementation in this
+    /// library unsuitable for bitsback coding. Even though you can encode an arbitrary bit
+    /// string into a sequence of symbols using any entropy model, decoding the sequence of
+    /// symbols with the same entropy models won't always give you the same bit string. In
+    /// other words,
+    ///
+    /// - `range_decode(range_encode(sequence_of_symbols)) = sequence_of_symbols` for all
+    ///   `sequence_of_symbols`; but
+    /// - `range_encode(range_encode(bit_string)) != bit_string` in general.
+    ///
+    /// If you need equality in the second relation, use an [`AnsCoder`].
     InvalidData,
 }
 
