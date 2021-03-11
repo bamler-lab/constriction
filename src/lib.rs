@@ -386,10 +386,12 @@ pub unsafe trait BitArray:
 
     type NonZero: NonZeroBitArray<Base = Self>;
 
+    #[inline(always)]
     fn into_nonzero(self) -> Option<Self::NonZero> {
         Self::NonZero::new(self)
     }
 
+    #[inline(always)]
     unsafe fn into_nonzero_unchecked(self) -> Self::NonZero {
         Self::NonZero::new_unchecked(self)
     }
@@ -443,14 +445,17 @@ macro_rules! unsafe_impl_bit_array {
             unsafe impl NonZeroBitArray for $non_zero {
                 type Base = $base;
 
+                #[inline(always)]
                 fn new(n: Self::Base) -> Option<Self> {
                     Self::new(n)
                 }
 
+                #[inline(always)]
                 unsafe fn new_unchecked(n: Self::Base) -> Self {
                     Self::new_unchecked(n)
                 }
 
+                #[inline(always)]
                 fn get(self) -> Self::Base {
                     self.get()
                 }
