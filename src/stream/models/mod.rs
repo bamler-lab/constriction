@@ -73,6 +73,7 @@ impl<D, const PRECISION: usize> EncoderModel<PRECISION> for &D
 where
     D: EncoderModel<PRECISION>,
 {
+    #[inline(always)]
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Self::Symbol>,
@@ -85,6 +86,7 @@ impl<D, const PRECISION: usize> DecoderModel<PRECISION> for &D
 where
     D: DecoderModel<PRECISION>,
 {
+    #[inline(always)]
     fn quantile_function(
         &self,
         quantile: Self::Probability,
