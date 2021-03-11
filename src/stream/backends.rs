@@ -11,16 +11,27 @@
 //!
 //! # Example
 //!
-//! TODO: swap this out with the range coding example in the `tests` module, which operates
-//! on the fly during both encoding and decoding
+//! The following example encodes and decodes data to and from a file. It uses custom
+//! backends that directly write each word to, and read each word from the file. This
+//! particular use case of the backend API is not necessarily practical—if you encode all
+//! data at once then it's usually simpler to use the default backend, which writes to an
+//! in-memory buffer, and then call `.get_compressed()` when you're done to get the buffer.
+//! But custom backends similar to the ones used in this example could also be used to add
+//! additional processing to the compressed data, such as multiplexing or demultiplexing
+//! for some container format.
 //!
 //! ```
+//! use constriction::stream::{
+//!     backends::{FallibleCallbackWriteBackend, IteratorBackend},
+//!     models::DefaultLeakyQuantizer,
+//!     queue::{DefaultRangeDecoder, DefaultRangeEncoder},
+//!     Decode, Encode,
+//! };
 //! use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-//! use constriction::stream::{stack::DefaultAnsCoder, models::DefaultLeakyQuantizer, Code, Decode};
 //! use statrs::distribution::Normal;
 //! use std::{fs::File, io::{BufReader, BufWriter}};
 //!
-//! fn encode_to_file(amt: u32) {
+//! fn encode_to_file_on_the_fly(amt: u32) {
 //!     // Some simple entropy model, just for demonstration purpose.
 //!     let quantizer = DefaultLeakyQuantizer::new(-256..=255);
 //!     let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
@@ -31,17 +42,21 @@
 //!         (cheap_hash >> (32 - 9)) as i32 - 256
 //!     });
 //!
-//!     // Encode (compress) the symbols.
-//!     let mut encoder = DefaultAnsCoder::new();
-//!     encoder.encode_iid_symbols_reverse(symbols, &model).unwrap();
-//!     let compressed = encoder.into_compressed().unwrap();
+//!     // Open a file and build a backend that writes to this file one word at a time.
+//!     // (Wrapping the `File` it in a `BufWriter` isn't strictly necessary here,
+//!     // it's just good practice when writing to a file.)
+//!     let mut file = BufWriter::new(File::create("backend_queue_example.tmp").unwrap());
+//!     let write_backend =
+//!         FallibleCallbackWriteBackend::new(move |word| file.write_u32::<LittleEndian>(word));
 //!
-//!     // Write the compressed words to a file *in reverse order* (using `.rev()`), so
-//!     // that the resulting file can be decoded in normal order from front to back.
-//!     let mut file = BufWriter::new(File::create("backend_stack_example.tmp").unwrap());
-//!     for &word in compressed.iter().rev() {
-//!         file.write_u32::<LittleEndian>(word).unwrap();
-//!     }
+//!     // Encapsulate the backend in a `RangeEncoder` and encode (i.e., compress) the symbols.
+//!     let mut encoder = DefaultRangeEncoder::with_backend(write_backend);
+//!     encoder.encode_iid_symbols(symbols, &model).unwrap();
+//!
+//!     // Dropping the encoder doesn't automatically seal the compressed bit string because that
+//!     // could fail. We explicitly have to seal it by calling `.into_compressed()` (which returns
+//!     // the backend since that's what logically "holds" the compressed data.)
+//!     std::mem::drop(encoder.into_compressed().unwrap());
 //! }
 //!
 //! fn decode_from_file_on_the_fly(amt: u32) {
@@ -50,10 +65,11 @@
 //!     let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
 //!
 //!     // Open the file and iterate over its contents in `u32` words (wrapping it in a `BufReader`
-//!     // here isn't strictly necessary, it's just good practice when reading from a file).
-//!     let mut file = BufReader::new(File::open("backend_stack_example.tmp").unwrap());
+//!     // is again just for good practice). We're deliberately being pedantic about the errors
+//!     // here in order to show how backend errors can be reported to the encoder.
+//!     let mut file = BufReader::new(File::open("backend_queue_example.tmp").unwrap());
 //!     let word_iterator = std::iter::from_fn(move || match file.read_u32::<LittleEndian>() {
-//!         Ok(word) => Some(Ok(word)), // Wrap the word in `Ok` to indicate that no I/O error occurred.
+//!         Ok(word) => Some(Ok(word)),
 //!         Err(err) => {
 //!             if err.kind() == std::io::ErrorKind::UnexpectedEof {
 //!                 None // Reached end of file, end iteration.
@@ -63,13 +79,9 @@
 //!         }
 //!     });
 //!
-//!     // Create a decoder that consumes an iterator over compressed words. This `decoder` will
-//!     // never keep the full compressed data in memory, it will just consume one compressed word
-//!     // at a time whenever its small internal state underflows. Note that an `AnsCoder` that is
-//!     // backed by an iterator only implements the `Decode` trait but not the `Encode` trait
-//!     // because encoding additional data would require modifying the compressed data over which
-//!     // the iterator iterates.
-//!     let mut decoder = DefaultAnsCoder::from_reversed_compressed_iter(word_iterator).unwrap();
+//!     // Create a decoder that decodes on the fly from our iterator.
+//!     let mut decoder =
+//!         DefaultRangeDecoder::with_backend(IteratorBackend::new(word_iterator)).unwrap();
 //!
 //!     // Decode the symbols and verify their correctness.
 //!     for (i, symbol) in decoder.decode_iid_symbols(amt as usize, &model).enumerate() {
@@ -77,7 +89,6 @@
 //!         let expected = (cheap_hash >> (32 - 9)) as i32 - 256;
 //!         assert_eq!(symbol.unwrap(), expected);
 //!     }
-//!     assert!(decoder.is_empty());
 //!
 //!     // Recover the original iterator over compressed words and verify that it's been exhausted.
 //!     let mut word_iterator = decoder.into_raw_parts().0.into_iter();
@@ -86,10 +97,10 @@
 //!     // `word_iterator` owns the file since we used a `move` clausure above to construct it.
 //!     // So dropping it calls `std::fs::File`'s destructor, which releases the file handle.
 //!     std::mem::drop(word_iterator);
-//!     std::fs::remove_file("backend_stack_example.tmp").unwrap();
+//!     std::fs::remove_file("backend_queue_example.tmp").unwrap();
 //! }
 //!
-//! encode_to_file(1000);
+//! encode_to_file_on_the_fly(1000);
 //! decode_from_file_on_the_fly(1000);
 //! ```
 
@@ -832,81 +843,54 @@ where
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn backend() {
-        use crate::stream::{
-            backends::{FallibleCallbackWriteBackend, IteratorBackend},
-            models::DefaultLeakyQuantizer,
-            queue::{DefaultRangeDecoder, DefaultRangeEncoder},
-            Code, Decode, Encode,
-        };
-        use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-        use statrs::distribution::Normal;
-        use std::{
-            fs::File,
-            io::{BufReader, BufWriter},
-        };
+    use crate::stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Code, Decode};
+    use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+    use statrs::distribution::Normal;
+    use std::{
+        fs::File,
+        io::{BufReader, BufWriter},
+    };
 
-        fn encode_to_file_on_the_fly(amt: u32) {
-            // Some simple entropy model, just for demonstration purpose.
+    #[test]
+    fn decode_on_the_fly_stack() {
+        fn encode_to_file(amt: u32) {
             let quantizer = DefaultLeakyQuantizer::new(-256..=255);
             let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
 
-            // Some long-ish sequence of test symbols, made up in a reproducible way.
             let symbols = (0..amt).map(|i| {
                 let cheap_hash = i.wrapping_mul(0x6979_E2F3).wrapping_add(0x0059_0E91);
                 (cheap_hash >> (32 - 9)) as i32 - 256
             });
 
-            // We're going to write the compressed words to a file on the fly. So let's open
-            // a file and build ourselves a backend that writes to this file in a
-            // well-defined byte order. (Wrapping the `File` it in a `BufWriter` here isn't
-            // strictly necessary, it's just good practice when writing to a file)
-            let mut file = BufWriter::new(File::create("backend_queue_example.tmp").unwrap());
-            let write_backend =
-                FallibleCallbackWriteBackend::new(move |word| file.write_u32::<LittleEndian>(word));
+            let mut encoder = DefaultAnsCoder::new();
+            encoder.encode_iid_symbols_reverse(symbols, &model).unwrap();
+            let compressed = encoder.into_compressed().unwrap();
 
-            // Encapsulate the backend in a Range Encoder and encode (i.e., compress) the symbols.
-            let mut encoder = DefaultRangeEncoder::with_backend(write_backend);
-            encoder.encode_iid_symbols(symbols, &model).unwrap();
-
-            // Dropping the encoder currently doesn't automatically seal the compressed bit
-            // string (TODO: see if we can change this). So we have to seal it manually by
-            // extracting the backend.
-            std::mem::drop(encoder.into_compressed());
+            let mut file = BufWriter::new(File::create("backend_stack_example.tmp").unwrap());
+            for &word in compressed.iter().rev() {
+                file.write_u32::<LittleEndian>(word).unwrap();
+            }
         }
 
         fn decode_from_file_on_the_fly(amt: u32) {
-            // Same toy entropy model that we used for encoding.
             let quantizer = DefaultLeakyQuantizer::new(-256..=255);
             let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
 
-            // Open the file and iterate over its contents in `u32` words (wrapping it in a
-            // `BufReader` here isn't strictly necessary, it's just good practice when
-            // reading from a file). We're deliberately being pedantic about the errors here
-            // in order to show how I/O errors can be reported to the encoder.
-            let mut file = BufReader::new(File::open("backend_queue_example.tmp").unwrap());
+            let mut file = BufReader::new(File::open("backend_stack_example.tmp").unwrap());
             let word_iterator = std::iter::from_fn(move || match file.read_u32::<LittleEndian>() {
-                Ok(word) => Some(Ok(word)), // Wrap the word in `Ok` to indicate that no I/O error occurred.
+                Ok(word) => Some(Ok(word)),
                 Err(err) => {
                     if err.kind() == std::io::ErrorKind::UnexpectedEof {
-                        None // Reached end of file, end iteration.
+                        None
                     } else {
-                        Some(Err(err)) // Some other I/O error occurred. Propagate it up.
+                        Some(Err(err))
                     }
                 }
             });
 
-            // Create a decoder that consumes an iterator over compressed words. This `decoder` will
-            // never keep the full compressed data in memory, it will just consume one compressed word
-            // at a time whenever its small internal state underflows. Note that an `AnsCoder` that is
-            // backed by an iterator only implements the `Decode` trait but not the `Encode` trait
-            // because encoding additional data would require modifying the compressed data over which
-            // the iterator iterates.
-            let backend = IteratorBackend::new(word_iterator);
-            let mut decoder = DefaultRangeDecoder::with_backend(backend).unwrap();
+            let mut decoder =
+                DefaultAnsCoder::from_reversed_compressed_iter(word_iterator).unwrap();
 
-            // Decode the symbols and verify their correctness.
             for (i, symbol) in decoder.decode_iid_symbols(amt as usize, &model).enumerate() {
                 let cheap_hash = (i as u32)
                     .wrapping_mul(0x6979_E2F3)
@@ -914,18 +898,16 @@ mod tests {
                 let expected = (cheap_hash >> (32 - 9)) as i32 - 256;
                 assert_eq!(symbol.unwrap(), expected);
             }
+            assert!(decoder.is_empty());
 
-            // Recover the original iterator over compressed words and verify that it's been exhausted.
             let mut word_iterator = decoder.into_raw_parts().0.into_iter();
             assert!(word_iterator.next().is_none());
 
-            // `word_iterator` owns the file since we used a `move` clausure above to construct it.
-            // So dropping it calls `std::fs::File`'s destructor, which releases the file handle.
             std::mem::drop(word_iterator);
-            std::fs::remove_file("backend_queue_example.tmp").unwrap();
+            std::fs::remove_file("backend_stack_example.tmp").unwrap();
         }
 
-        encode_to_file_on_the_fly(1000);
+        encode_to_file(1000);
         decode_from_file_on_the_fly(1000);
     }
 }

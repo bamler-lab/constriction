@@ -231,7 +231,7 @@
 //!
 //! // We'll get a different compressed representation than in the ANS Coding
 //! // example because we're using a different entropy coding algorithm ...
-//! assert_eq!(compressed, [0x1C31EFEB, 0x87B430DA]);
+//! assert_eq!(compressed, [0x1C31EFEC, 0x257DF32F]);
 //!
 //! // ... but as long as we decode with the matching algorithm we can still reconstruct the data:
 //! assert_eq!(decode_sample_data(compressed), [23, -15, 78, 43, -69]);
@@ -395,21 +395,19 @@ pub unsafe trait BitArray:
     unsafe fn into_nonzero_unchecked(self) -> Self::NonZero {
         Self::NonZero::new_unchecked(self)
     }
+}
 
-    #[inline(always)]
-    fn wrapping_pow2<const EXPONENT: usize>() -> Self {
-        if EXPONENT >= Self::BITS {
-            Self::zero()
-        } else {
-            Self::one() << EXPONENT
-        }
+#[inline(always)]
+fn wrapping_pow2<T: BitArray, const EXPONENT: usize>() -> T {
+    if EXPONENT >= T::BITS {
+        T::zero()
+    } else {
+        T::one() << EXPONENT
     }
 }
 
 pub unsafe trait NonZeroBitArray: Copy + Display + Debug {
     type Base: BitArray;
-
-    const BITS: usize = Self::Base::BITS;
 
     fn new(n: Self::Base) -> Option<Self>;
 

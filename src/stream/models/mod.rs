@@ -12,7 +12,7 @@ use core::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::RangeInclusive}
 use num::{cast::AsPrimitive, traits::WrappingSub, Float, PrimInt};
 use statrs::distribution::{InverseCDF, Univariate};
 
-use super::BitArray;
+use crate::{wrapping_pow2, BitArray};
 
 /// A trait for probability distributions that can be used as entropy models.
 ///
@@ -717,7 +717,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
             assert!(cdf.last() == Some(&Probability::zero()));
         } else {
             assert_eq!(laps, 0);
-            let expected_last = Probability::wrapping_pow2::<PRECISION>();
+            let expected_last = wrapping_pow2::<Probability, PRECISION>();
             assert!(fingerprint != expected_last);
             assert!(cdf.last() == Some(&expected_last));
         }

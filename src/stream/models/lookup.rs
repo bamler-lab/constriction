@@ -23,7 +23,7 @@ use core::{
 
 use num::cast::AsPrimitive;
 
-use crate::BitArray;
+use crate::{wrapping_pow2, BitArray};
 
 use super::{DecoderModel, EncoderModel, EntropyModel};
 
@@ -70,11 +70,11 @@ where
 ///
 /// let mut small_range_encoder = SmallRangeEncoder::new();
 /// small_range_encoder.encode_iid_symbols(original.chars(), &encoder_model).unwrap();
-/// assert_eq!(small_range_encoder.into_compressed().unwrap(), [1984u16, 56408]);
+/// assert_eq!(small_range_encoder.into_compressed().unwrap(), [0x07C0u16, 0xEB8B]);
 ///
 /// let mut default_range_encoder = DefaultRangeEncoder::new();
 /// default_range_encoder.encode_iid_symbols(original.chars(), &encoder_model).unwrap();
-/// assert_eq!(default_range_encoder.into_compressed().unwrap(), [130092885u32]);
+/// assert_eq!(default_range_encoder.into_compressed().unwrap(), [0x07C11EBFu32]);
 /// ```
 ///
 /// See example in [`DefaultDecoderGenericLookupTable`] for decoding the above compressed
@@ -176,7 +176,7 @@ where
                     Occupied(_) => return Err(()),
                     Vacant(slot) => {
                         if let Some(remainder) = remainder.into_nonzero() {
-                            slot.insert((Probability::wrapping_pow2::<PRECISION>(), remainder));
+                            slot.insert((wrapping_pow2::<Probability, PRECISION>(), remainder));
                         }
                     }
                 }
@@ -257,19 +257,19 @@ where
 ///
 /// let mut small_ans_coder = SmallAnsCoder::new();
 /// small_ans_coder.encode_iid_symbols_reverse(&original, &encoder_model).unwrap();
-/// assert_eq!(small_ans_coder.into_compressed().unwrap(), [55942u16, 10569]);
+/// assert_eq!(small_ans_coder.into_compressed().unwrap(), [0xDA86u16, 0x2949]);
 ///
 /// let mut default_ans_coder = DefaultAnsCoder::new();
 /// default_ans_coder.encode_iid_symbols_reverse(&original, &encoder_model).unwrap();
-/// assert_eq!(default_ans_coder.into_compressed().unwrap(), [692705926u32]);
+/// assert_eq!(default_ans_coder.into_compressed().unwrap(), [0x2949DA86u32]);
 ///
 /// let mut small_range_encoder = SmallRangeEncoder::new();
 /// small_range_encoder.encode_iid_symbols(&original, &encoder_model).unwrap();
-/// assert_eq!(small_range_encoder.into_compressed().unwrap(), [48376u16, 16073]);
+/// assert_eq!(small_range_encoder.into_compressed().unwrap(), [0xBCF8u16, 0x4DC9]);
 ///
 /// let mut default_range_encoder = DefaultRangeEncoder::new();
 /// default_range_encoder.encode_iid_symbols(&original, &encoder_model).unwrap();
-/// assert_eq!(default_range_encoder.into_compressed().unwrap(), [3170399034u32]);
+/// assert_eq!(default_range_encoder.into_compressed().unwrap(), [0xBCF882A4u32]);
 /// ```
 ///
 /// See example in [`DefaultDecoderIndexLookupTable`] for decoding the above compressed bit
@@ -344,7 +344,7 @@ where
         )?;
 
         symbol_to_left_cumulative_and_probability.push((
-            Probability::wrapping_pow2::<PRECISION>(),
+            wrapping_pow2::<Probability, PRECISION>(),
             remainder.into_nonzero().ok_or(())?,
         ));
 
@@ -417,7 +417,7 @@ where
         operation(symbol, old_left_sided_cumulative, probability)?;
     }
 
-    let total = Probability::wrapping_pow2::<PRECISION>();
+    let total = wrapping_pow2::<Probability, PRECISION>();
     if (left_sided_cumulative < total && laps == 0)
         || left_sided_cumulative == total && laps == (PRECISION == Probability::BITS) as usize
     {
@@ -477,25 +477,25 @@ where
 ///
 /// let expected = [2, 1, 3, 0, 0, 2, 0, 2, 1, 0, 2];
 ///
-/// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![55942, 10569]).unwrap();
+/// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![0xDA86, 0x2949]).unwrap();
 /// let reconstructed = small_ans_coder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
 /// assert!(small_ans_coder.is_empty());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![692705926]).unwrap();
+/// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![0x2949DA86]).unwrap();
 /// let reconstructed = default_ans_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
 /// assert!(default_ans_decoder.is_empty());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![48376, 16073]).unwrap();
+/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0xBCF8, 0x4DC9]).unwrap();
 /// let reconstructed = small_range_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
 /// assert!(small_range_decoder.maybe_empty());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![3170399034]).unwrap();
+/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0xBCF882A4]).unwrap();
 /// let reconstructed = default_range_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
 /// assert!(default_range_decoder.maybe_empty());
@@ -547,19 +547,19 @@ pub type DefaultDecoderIndexLookupTable<Symbol> =
 /// assert!(small_ans_coder.is_empty());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![261378078]).unwrap();
+/// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![0x0F94501E]).unwrap();
 /// let reconstructed = default_ans_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
 /// assert!(default_ans_decoder.is_empty());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![1984, 56408]).unwrap();
+/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0x07C0, 0xEB8B]).unwrap();
 /// let reconstructed = small_range_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
 /// assert!(small_range_decoder.maybe_empty());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![130092885]).unwrap();
+/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0x07C11EBF]).unwrap();
 /// let reconstructed = default_range_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
 /// assert!(default_range_decoder.maybe_empty());
@@ -697,7 +697,7 @@ where
                 "We already pushed at least one entry because quantile_to_index.len() != 1 << PRECISION != 0");
             let dummy_symbol = dummy_symbol.clone();
             left_sided_cumulative_and_symbol
-                .push((Probability::wrapping_pow2::<PRECISION>(), dummy_symbol));
+                .push((wrapping_pow2::<Probability, PRECISION>(), dummy_symbol));
 
             Ok(Self {
                 quantile_to_index: quantile_to_index.into_boxed_slice(),
@@ -752,7 +752,7 @@ where
 
             // Reuse the last symbol for the additional closing entry. This will never be read.
             left_sided_cumulative_and_symbol
-                .push((Probability::wrapping_pow2::<PRECISION>(), symbol));
+                .push((wrapping_pow2::<Probability, PRECISION>(), symbol));
 
             Ok(Self {
                 quantile_to_index: quantile_to_index.into_boxed_slice(),
@@ -1118,7 +1118,7 @@ where
             "We already pushed at least one entry because quantile_to_index.len() != 1 << PRECISION != 0");
     let dummy_symbol = dummy_symbol.clone();
     left_sided_cumulative_and_symbol
-        .push((Probability::wrapping_pow2::<PRECISION>(), dummy_symbol));
+        .push((wrapping_pow2::<Probability, PRECISION>(), dummy_symbol));
 
     left_sided_cumulative_and_symbol.into_boxed_slice()
 }

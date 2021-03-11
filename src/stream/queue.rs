@@ -586,24 +586,6 @@ pub type DefaultRangeDecoder<Backend = Vec<u32>> = RangeDecoder<u32, u64, Backen
 /// [`DefaultDecoderGenericLookupTable`]: super::models::lookup::DefaultDecoderGenericLookupTable
 pub type SmallRangeDecoder<Backend> = RangeDecoder<u16, u32, Backend>;
 
-// TODO: uncomment
-// impl<Word, State, Backend> Debug for RangeDecoder<Word, State, Backend>
-// where
-//     Word: BitArray + Into<State>,
-//     State: BitArray + AsPrimitive<Word>,
-//     Backend: ReadBackend<Word,Queue>,
-//     for<'a> &'a Backend: IntoIterator<Item = &'a Word>,
-// {
-//     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-//         f.debug_list()
-//             .entries(
-//                 bit_array_to_chunks_exact(self.state.lower)
-//                     .chain(self.bulk.as_ref().iter().cloned()),
-//             )
-//             .finish()
-//     }
-// }
-
 impl<Word, State, Backend> RangeDecoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
