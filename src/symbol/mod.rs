@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 use alloc::vec::Vec;
 use core::{borrow::Borrow, convert::Infallible, iter::FromIterator};
 
-use crate::{BitArray, EncoderError};
+use crate::{BitArray, EncoderError, EncoderFrontendError};
 
 #[derive(Debug)]
 pub enum DecodingError {
@@ -18,9 +18,33 @@ pub trait Codebook {
     fn num_symbols(&self) -> usize;
 }
 pub trait EncoderCodebook: Codebook {
-    type BitIterator: Iterator<Item = bool>;
+    fn encode_symbol_prefix(
+        &self,
+        symbol: usize,
+        mut emit: impl FnMut(bool),
+    ) -> Result<(), EncoderFrontendError> {
+        let mut reverse_codeword = SmallBitVec::<usize>::new();
+        self.encode_symbol_suffix(symbol, |bit| reverse_codeword.push(bit))?;
 
-    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncoderError<Infallible>>;
+        for bit in reverse_codeword.into_iter_reverse() {
+            emit(bit);
+        }
+        Ok(())
+    }
+
+    fn encode_symbol_suffix(
+        &self,
+        symbol: usize,
+        mut emit: impl FnMut(bool),
+    ) -> Result<(), EncoderFrontendError> {
+        let mut reverse_codeword = SmallBitVec::<usize>::new();
+        self.encode_symbol_prefix(symbol, |bit| reverse_codeword.push(bit))?;
+
+        for bit in reverse_codeword.into_iter_reverse() {
+            emit(bit);
+        }
+        Ok(())
+    }
 }
 
 pub trait DecoderCodebook: Codebook {
@@ -34,10 +58,22 @@ impl<C: Codebook> Codebook for &C {
 }
 
 impl<C: EncoderCodebook> EncoderCodebook for &C {
-    type BitIterator = C::BitIterator;
+    #[inline(always)]
+    fn encode_symbol_prefix(
+        &self,
+        symbol: usize,
+        emit: impl FnMut(bool),
+    ) -> Result<(), EncoderFrontendError> {
+        (*self).encode_symbol_prefix(symbol, emit)
+    }
 
-    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncoderError<Infallible>> {
-        (*self).encode_symbol(symbol)
+    #[inline(always)]
+    fn encode_symbol_suffix(
+        &self,
+        symbol: usize,
+        emit: impl FnMut(bool),
+    ) -> Result<(), EncoderFrontendError> {
+        (*self).encode_symbol_suffix(symbol, emit)
     }
 }
 
@@ -79,8 +115,8 @@ pub struct BitVecIterRev<W: BitArray, V: GenericVec<W> = Vec<W>> {
     inner: BitVec<W, V>,
 }
 
-type SmallBitVec<W> = BitVec<W, SmallVec<[W; 1]>>;
-type SmallBitVecReverseIterator<W> = BitVecIterRev<W, SmallVec<[W; 1]>>;
+pub type SmallBitVec<W> = BitVec<W, SmallVec<[W; 1]>>;
+pub type SmallBitVecIterRev<W> = BitVecIterRev<W, SmallVec<[W; 1]>>;
 
 impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
     pub fn new() -> Self {
@@ -229,7 +265,9 @@ impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
         symbol: usize,
         codebook: impl EncoderCodebook,
     ) -> Result<(), EncoderError<Infallible>> {
-        Ok(self.extend(codebook.encode_symbol(symbol)?))
+        codebook
+            .encode_symbol_prefix(symbol, |bit| self.push(bit))
+            .map_err(EncoderError::FrontendError)
     }
 
     pub fn encode_symbols<S, C>(
@@ -281,8 +319,8 @@ impl<W: BitArray, V: GenericVec<W>> FromIterator<bool> for BitVec<W, V> {
 impl<W: BitArray, V: GenericVec<W>> Extend<bool> for BitVec<W, V> {
     fn extend<T: IntoIterator<Item = bool>>(&mut self, iter: T) {
         // TODO: when specialization becomes stable, distinguish between extending from a
-        // `SmallBitVecReverseIterator` and other iterators. For extending from
-        // `SmallBitVecReverseIterator`, leave it as is. For other iterators, calculate
+        // `SmallBitVecIterRev` and other iterators. For extending from
+        // `SmallBitVecIterRev`, leave it as is. For other iterators, calculate
         // the number of added words upfront and insert a `reserve` call here.
         for bit in iter {
             self.push(bit);

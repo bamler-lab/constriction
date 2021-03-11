@@ -6,11 +6,8 @@ use num::Float;
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
 use core::{borrow::Borrow, cmp::Reverse, convert::Infallible, marker::PhantomData, ops::Add};
 
-use super::{
-    Codebook, DecoderCodebook, DecodingError, EncoderCodebook, SmallBitVec,
-    SmallBitVecReverseIterator,
-};
-use crate::{BitArray, EncoderError, EncoderFrontendError, UnwrapInfallible};
+use super::{Codebook, DecoderCodebook, DecodingError, EncoderCodebook};
+use crate::{BitArray, EncoderFrontendError, UnwrapInfallible};
 
 /// The type parameter `W` is used in the implementation of [`EncoderCodebook`],
 /// which temporarily builds up the reversed codeword in a `SmallBitVec<W>` before
@@ -124,14 +121,15 @@ impl<W: BitArray> Codebook for EncoderHuffmanTree<W> {
 }
 
 impl<W: BitArray> EncoderCodebook for EncoderHuffmanTree<W> {
-    type BitIterator = SmallBitVecReverseIterator<W>;
-
-    fn encode_symbol(&self, symbol: usize) -> Result<Self::BitIterator, EncoderError<Infallible>> {
+    fn encode_symbol_suffix(
+        &self,
+        symbol: usize,
+        mut emit: impl FnMut(bool),
+    ) -> Result<(), EncoderFrontendError> {
         if symbol > self.nodes.len() / 2 {
-            return Err(EncoderFrontendError::ImpossibleSymbol.into_encoder_error());
+            return Err(EncoderFrontendError::ImpossibleSymbol);
         }
 
-        let mut reverse_codeword = SmallBitVec::<W>::new();
         let mut node_index = symbol;
         loop {
             let node = unsafe {
@@ -145,11 +143,11 @@ impl<W: BitArray> EncoderCodebook for EncoderHuffmanTree<W> {
             if node == 0 {
                 break;
             }
-            reverse_codeword.push(node & 1 != 0);
+            emit(node & 1 != 0);
             node_index = node >> 1;
         }
 
-        Ok(reverse_codeword.into_iter_reverse())
+        Ok(())
     }
 }
 
@@ -315,7 +313,7 @@ impl<F: Float> Add for NonNanFloat<F> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use super::{super::SmallBitVec, *};
     extern crate std;
     use std::string::String;
 
@@ -324,10 +322,12 @@ mod test {
         fn encode_all_symbols<W: BitArray>(tree: &EncoderHuffmanTree<W>) -> Vec<String> {
             (0..tree.num_symbols())
                 .map(|symbol| {
-                    tree.encode_symbol(symbol)
-                        .unwrap()
-                        .map(|bit| if bit { '1' } else { '0' })
-                        .collect::<String>()
+                    let mut codeword = String::new();
+                    tree.encode_symbol_prefix(symbol, |bit| {
+                        codeword.push(if bit { '1' } else { '0' })
+                    })
+                    .unwrap();
+                    codeword
                 })
                 .collect()
         }
@@ -372,7 +372,11 @@ mod test {
             encoder_tree: &EncoderHuffmanTree<W>,
         ) {
             for symbol in 0..encoder_tree.num_symbols() {
-                let mut codeword = encoder_tree.encode_symbol(symbol).unwrap();
+                let mut codeword = SmallBitVec::<usize>::new();
+                encoder_tree
+                    .encode_symbol_suffix(symbol, |bit| codeword.push(bit))
+                    .unwrap();
+                let mut codeword = codeword.into_iter_reverse();
                 let decoded = decoder_tree.decode_symbol(&mut codeword).unwrap();
                 assert_eq!(symbol, decoded);
                 assert!(codeword.next().is_none());
