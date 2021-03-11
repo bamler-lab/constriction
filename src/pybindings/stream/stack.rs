@@ -1,4 +1,4 @@
-use core::fmt::Display;
+use core::{convert::Infallible, fmt::Display};
 use std::{error::Error, format, prelude::v1::*, vec};
 
 use numpy::{PyArray1, PyReadonlyArray1};
@@ -9,7 +9,7 @@ use crate::{
         models::{Categorical, LeakyQuantizer},
         Decode, TryCodingError,
     },
-    EncoderError,
+    CoderError, EncoderError, EncoderFrontendError, UnwrapInfallible,
 };
 
 use statrs::distribution::Normal;
@@ -179,7 +179,7 @@ impl AnsCoder {
     ///     compressed.tofile(file)
     /// ```
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> &'p PyArray1<u32> {
-        PyArray1::from_slice(py, &*self.inner.get_compressed())
+        PyArray1::from_slice(py, &*self.inner.get_compressed().unwrap())
     }
 
     /// Encodes a sequence of symbols using (leaky) Gaussian entropy models.
@@ -374,11 +374,7 @@ impl AnsCoder {
         Ok(PyArray1::from_iter(
             py,
             self.inner.decode_iid_symbols(amt, &model).map(|symbol| {
-                let symbol = match symbol {
-                    Ok(symbol) => symbol,
-                    Err(never) => match never {},
-                };
-                (symbol as i32).wrapping_add(min_supported_symbol)
+                (symbol.unwrap_infallible() as i32).wrapping_add(min_supported_symbol)
             }),
         ))
     }
@@ -400,14 +396,20 @@ impl<CodingError: Error + Into<PyErr>, ModelError: Error>
     }
 }
 
-impl<WriteError: Display> From<EncoderError<WriteError>> for PyErr {
-    fn from(err: EncoderError<WriteError>) -> Self {
+impl<FrontendError: Into<PyErr>> From<CoderError<FrontendError, Infallible>> for PyErr {
+    fn from(err: CoderError<FrontendError, Infallible>) -> Self {
         match err {
-            EncoderFrontendError::ImpossibleSymbol.into_encoder_error() => {
+            CoderError::FrontendError(err) => err.into(),
+            CoderError::BackendError(infallible) => Err(infallible).unwrap_infallible(),
+        }
+    }
+}
+
+impl From<EncoderFrontendError> for PyErr {
+    fn from(err: EncoderFrontendError) -> Self {
+        match err {
+            EncoderFrontendError::ImpossibleSymbol => {
                 pyo3::exceptions::PyKeyError::new_err(err.to_string())
-            }
-            EncoderError::WriteError(err) => {
-                pyo3::exceptions::PyBufferError::new_err(err.to_string())
             }
         }
     }
