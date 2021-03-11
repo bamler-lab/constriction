@@ -15,58 +15,58 @@ use super::{
 use crate::{BitArray, CoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible};
 
 #[derive(Debug, Clone)]
-struct Coder<CompressedWord, State, const PRECISION: usize>
+struct Coder<Word, State, const PRECISION: usize>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
     /// The supply of bits.
     ///
     /// Satisfies the normal invariant of a `AnsCoder`.
-    supply: AnsCoder<CompressedWord, State>,
+    supply: AnsCoder<Word, State>,
 
     /// Remaining information not used up by decoded symbols.
     ///
     /// Satisfies different invariants than a usual `AnsCoder`:
-    /// - `waste.state() >= State::one() << (State::BITS - PRECISION - CompressedWord::BITS)`
+    /// - `waste.state() >= State::one() << (State::BITS - PRECISION - Word::BITS)`
     ///   unless `waste.buf().is_empty()`; and
     /// - `waste.state() < State::one() << (State::BITS - PRECISION)`
-    waste: AnsCoder<CompressedWord, State>,
+    waste: AnsCoder<Word, State>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Encoder<CompressedWord, State, const PRECISION: usize>(
-    Coder<CompressedWord, State, PRECISION>,
+pub struct Encoder<Word, State, const PRECISION: usize>(
+    Coder<Word, State, PRECISION>,
 )
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>;
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>;
 
 #[derive(Debug, Clone)]
-pub struct Decoder<CompressedWord, State, const PRECISION: usize>(
-    Coder<CompressedWord, State, PRECISION>,
+pub struct Decoder<Word, State, const PRECISION: usize>(
+    Coder<Word, State, PRECISION>,
 )
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>;
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>;
 
-impl<CompressedWord, State, const PRECISION: usize> Decoder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Decoder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
     fn new(
-        ans: AnsCoder<CompressedWord, State>,
-    ) -> Result<Self, Option<AnsCoder<CompressedWord, State>>> {
-        assert!(CompressedWord::BITS > 0);
-        assert!(State::BITS >= 2 * CompressedWord::BITS);
-        assert!(State::BITS % CompressedWord::BITS == 0);
-        assert!(PRECISION <= CompressedWord::BITS);
+        ans: AnsCoder<Word, State>,
+    ) -> Result<Self, Option<AnsCoder<Word, State>>> {
+        assert!(Word::BITS > 0);
+        assert!(State::BITS >= 2 * Word::BITS);
+        assert!(State::BITS % Word::BITS == 0);
+        assert!(PRECISION <= Word::BITS);
         assert!(PRECISION > 0);
 
         // The following also assures that `ans.buf()` is no-empty since
-        // `State::BITS / CompressedWord::BITS - 1 >= 1`.
-        if ans.bulk().len() < State::BITS / CompressedWord::BITS - 1 {
+        // `State::BITS / Word::BITS - 1 >= 1`.
+        if ans.bulk().len() < State::BITS / Word::BITS - 1 {
             // Not enough data to initialize `supply` and `waste`.
             return Err(Some(ans));
         }
@@ -81,7 +81,7 @@ where
         };
 
         let mut waste = AnsCoder::with_state_and_empty_bulk(waste_state);
-        if PRECISION == CompressedWord::BITS {
+        if PRECISION == Word::BITS {
             waste.flush_state();
         }
 
@@ -144,8 +144,8 @@ where
     pub fn change_precision<const NEW_PRECISION: usize>(
         self,
     ) -> Result<
-        Decoder<CompressedWord, State, NEW_PRECISION>,
-        Decoder<CompressedWord, State, PRECISION>,
+        Decoder<Word, State, NEW_PRECISION>,
+        Decoder<Word, State, PRECISION>,
     > {
         match self.0.change_precision() {
             Ok(coder) => Ok(Decoder(coder)),
@@ -163,11 +163,11 @@ where
     /// `stable::Encoder`.
     ///
     /// [`stable::Encoder`]: Encoder
-    pub fn into_encoder(self) -> Encoder<CompressedWord, State, PRECISION> {
+    pub fn into_encoder(self) -> Encoder<Word, State, PRECISION> {
         Encoder(self.0)
     }
 
-    pub fn finish(self) -> (Vec<CompressedWord>, AnsCoder<CompressedWord, State>) {
+    pub fn finish(self) -> (Vec<Word>, AnsCoder<Word, State>) {
         let (prefix, supply_state) = self.0.supply.into_raw_parts();
         let suffix = unsafe {
             // SAFETY: `stable::Decoder` always reserves enough `supply.state`.
@@ -180,32 +180,32 @@ where
         (prefix, suffix)
     }
 
-    pub fn finish_and_concatenate(self) -> AnsCoder<CompressedWord, State> {
+    pub fn finish_and_concatenate(self) -> AnsCoder<Word, State> {
         unsafe {
             // UNSAFE: `stable::Decoder` always reserves enough `supply.state`.
             concatenate(self.finish())
         }
     }
 
-    pub fn supply(&self) -> &AnsCoder<CompressedWord, State> {
+    pub fn supply(&self) -> &AnsCoder<Word, State> {
         self.0.supply()
     }
 
-    pub fn supply_mut(&mut self) -> &mut AnsCoder<CompressedWord, State> {
+    pub fn supply_mut(&mut self) -> &mut AnsCoder<Word, State> {
         self.0.supply_mut()
     }
 
     pub fn waste_mut<'a>(
         &'a mut self,
-    ) -> impl DerefMut<Target = AnsCoder<CompressedWord, State>> + Drop + 'a {
+    ) -> impl DerefMut<Target = AnsCoder<Word, State>> + Drop + 'a {
         self.0.waste_mut()
     }
 
     pub fn into_supply_and_waste(
         self,
     ) -> (
-        AnsCoder<CompressedWord, State>,
-        AnsCoder<CompressedWord, State>,
+        AnsCoder<Word, State>,
+        AnsCoder<Word, State>,
     ) {
         // `self.waste` satisfies slightly different invariants than a usual `AnsCoder`.
         // We therefore first restore the usual `AnsCoder` invariant.
@@ -213,53 +213,53 @@ where
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> TryFrom<AnsCoder<CompressedWord, State>>
-    for Decoder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> TryFrom<AnsCoder<Word, State>>
+    for Decoder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    type Error = Option<AnsCoder<CompressedWord, State>>;
+    type Error = Option<AnsCoder<Word, State>>;
 
     fn try_from(
-        ans: AnsCoder<CompressedWord, State>,
-    ) -> Result<Self, Option<AnsCoder<CompressedWord, State>>> {
+        ans: AnsCoder<Word, State>,
+    ) -> Result<Self, Option<AnsCoder<Word, State>>> {
         Self::new(ans)
     }
 }
 
 /// TODO: check if this can be made generic over the backend
-impl<CompressedWord, State, const PRECISION: usize> From<Decoder<CompressedWord, State, PRECISION>>
-    for AnsCoder<CompressedWord, State>
+impl<Word, State, const PRECISION: usize> From<Decoder<Word, State, PRECISION>>
+    for AnsCoder<Word, State>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    fn from(decoder: Decoder<CompressedWord, State, PRECISION>) -> Self {
+    fn from(decoder: Decoder<Word, State, PRECISION>) -> Self {
         decoder.finish_and_concatenate()
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> Encoder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Encoder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    fn new(ans: AnsCoder<CompressedWord, State>) -> Result<Self, AnsCoder<CompressedWord, State>> {
-        assert!(CompressedWord::BITS > 0);
-        assert!(State::BITS >= 2 * CompressedWord::BITS);
-        assert!(State::BITS % CompressedWord::BITS == 0);
-        assert!(PRECISION <= CompressedWord::BITS);
+    fn new(ans: AnsCoder<Word, State>) -> Result<Self, AnsCoder<Word, State>> {
+        assert!(Word::BITS > 0);
+        assert!(State::BITS >= 2 * Word::BITS);
+        assert!(State::BITS % Word::BITS == 0);
+        assert!(PRECISION <= Word::BITS);
         assert!(PRECISION > 0);
 
         // The following also assures that `ans.buf()` is no-empty since
-        // `State::BITS / CompressedWord::BITS - 1 >= 1`.
-        if ans.bulk().len() < State::BITS / CompressedWord::BITS - 1 {
+        // `State::BITS / Word::BITS - 1 >= 1`.
+        if ans.bulk().len() < State::BITS / Word::BITS - 1 {
             // Not enough data to initialize `supply` and `waste`.
             return Err(ans);
         }
 
-        if ans.bulk.last() == Some(&CompressedWord::zero()) {
+        if ans.bulk.last() == Some(&Word::zero()) {
             // Invalid data that couldn't have been produced by `stable::Decoder::finish()`.
             return Err(ans);
         }
@@ -283,8 +283,8 @@ where
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
-        D::Probability: Into<CompressedWord>,
-        CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Word>,
+        Word: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = (S, D)>,
         I::IntoIter: DoubleEndedIterator,
     {
@@ -299,8 +299,8 @@ where
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
-        D::Probability: Into<CompressedWord>,
-        CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Word>,
+        Word: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = core::result::Result<(S, D), E>>,
         I::IntoIter: DoubleEndedIterator,
     {
@@ -316,8 +316,8 @@ where
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
-        D::Probability: Into<CompressedWord>,
-        CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Word>,
+        Word: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = S>,
         I::IntoIter: DoubleEndedIterator,
     {
@@ -346,8 +346,8 @@ where
     pub fn change_precision<const NEW_PRECISION: usize>(
         self,
     ) -> Result<
-        Encoder<CompressedWord, State, NEW_PRECISION>,
-        Encoder<CompressedWord, State, PRECISION>,
+        Encoder<Word, State, NEW_PRECISION>,
+        Encoder<Word, State, PRECISION>,
     > {
         match self.0.change_precision() {
             Ok(coder) => Ok(Encoder(coder)),
@@ -365,25 +365,25 @@ where
     /// `stable::Decoder`.
     ///
     /// [`stable::Decoder`]: Decoder
-    pub fn into_decoder(self) -> Decoder<CompressedWord, State, PRECISION> {
+    pub fn into_decoder(self) -> Decoder<Word, State, PRECISION> {
         Decoder(self.0)
     }
 
     pub fn finish(
         mut self,
-    ) -> Result<(Vec<CompressedWord>, AnsCoder<CompressedWord, State>), Self> {
-        if PRECISION == CompressedWord::BITS {
-            if self.0.waste.state() >> (State::BITS - 2 * CompressedWord::BITS) != State::one()
+    ) -> Result<(Vec<Word>, AnsCoder<Word, State>), Self> {
+        if PRECISION == Word::BITS {
+            if self.0.waste.state() >> (State::BITS - 2 * Word::BITS) != State::one()
                 || self.0.waste.refill_state_maybe_truncating().is_err()
             {
                 // Waste's state (without leading 1 bit) doesn't fit into integer number of
-                // `CompressedWord`s, or there is not enough data on `waste`.
+                // `Word`s, or there is not enough data on `waste`.
                 return Err(self);
             }
         } else {
-            if self.0.waste.state() >> (State::BITS - CompressedWord::BITS) != State::one() {
+            if self.0.waste.state() >> (State::BITS - Word::BITS) != State::one() {
                 // Waste's state (without leading 1 bit) doesn't fit into integer number of
-                // `CompressedWord`s, or there is not enough data on `waste`.
+                // `Word`s, or there is not enough data on `waste`.
                 return Err(self);
             }
         }
@@ -393,7 +393,7 @@ where
 
         while waste_state != State::one() {
             buf.push(waste_state.as_());
-            waste_state = waste_state >> CompressedWord::BITS;
+            waste_state = waste_state >> Word::BITS;
         }
 
         let suffix = unsafe {
@@ -404,32 +404,32 @@ where
         Ok((prefix, suffix))
     }
 
-    pub fn finish_and_concatenate(self) -> Result<AnsCoder<CompressedWord, State>, Self> {
+    pub fn finish_and_concatenate(self) -> Result<AnsCoder<Word, State>, Self> {
         unsafe {
             // UNSAFE: `stable::Encoder` always reserves enough `supply.state`.
             Ok(concatenate(self.finish()?))
         }
     }
 
-    pub fn supply(&self) -> &AnsCoder<CompressedWord, State> {
+    pub fn supply(&self) -> &AnsCoder<Word, State> {
         self.0.supply()
     }
 
-    pub fn supply_mut(&mut self) -> &mut AnsCoder<CompressedWord, State> {
+    pub fn supply_mut(&mut self) -> &mut AnsCoder<Word, State> {
         self.0.supply_mut()
     }
 
     pub fn waste_mut<'a>(
         &'a mut self,
-    ) -> impl DerefMut<Target = AnsCoder<CompressedWord, State>> + Drop + 'a {
+    ) -> impl DerefMut<Target = AnsCoder<Word, State>> + Drop + 'a {
         self.0.waste_mut()
     }
 
     pub fn into_supply_and_waste(
         self,
     ) -> (
-        AnsCoder<CompressedWord, State>,
-        AnsCoder<CompressedWord, State>,
+        AnsCoder<Word, State>,
+        AnsCoder<Word, State>,
     ) {
         // `self.waste` satisfies slightly different invariants than a usual `AnsCoder`.
         // We therefore first restore the usual `AnsCoder` invariant.
@@ -437,47 +437,47 @@ where
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> TryFrom<AnsCoder<CompressedWord, State>>
-    for Encoder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> TryFrom<AnsCoder<Word, State>>
+    for Encoder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    type Error = AnsCoder<CompressedWord, State>;
+    type Error = AnsCoder<Word, State>;
 
     fn try_from(
-        ans: AnsCoder<CompressedWord, State>,
-    ) -> Result<Self, AnsCoder<CompressedWord, State>> {
+        ans: AnsCoder<Word, State>,
+    ) -> Result<Self, AnsCoder<Word, State>> {
         Self::new(ans)
     }
 }
 
 /// TODO: check if this can be made generic over the backend
-impl<CompressedWord, State, const PRECISION: usize>
-    TryFrom<Encoder<CompressedWord, State, PRECISION>> for AnsCoder<CompressedWord, State>
+impl<Word, State, const PRECISION: usize>
+    TryFrom<Encoder<Word, State, PRECISION>> for AnsCoder<Word, State>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    type Error = Encoder<CompressedWord, State, PRECISION>;
+    type Error = Encoder<Word, State, PRECISION>;
 
     fn try_from(
-        decoder: Encoder<CompressedWord, State, PRECISION>,
-    ) -> Result<Self, Encoder<CompressedWord, State, PRECISION>> {
+        decoder: Encoder<Word, State, PRECISION>,
+    ) -> Result<Self, Encoder<Word, State, PRECISION>> {
         decoder.finish_and_concatenate()
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> Coder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Coder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
     pub fn change_precision<const NEW_PRECISION: usize>(
         mut self,
-    ) -> Result<Coder<CompressedWord, State, NEW_PRECISION>, Coder<CompressedWord, State, PRECISION>>
+    ) -> Result<Coder<Word, State, NEW_PRECISION>, Coder<Word, State, PRECISION>>
     {
-        assert!(NEW_PRECISION <= CompressedWord::BITS);
+        assert!(NEW_PRECISION <= Word::BITS);
 
         if NEW_PRECISION > PRECISION {
             if self.waste.state() >= State::one() << (State::BITS - NEW_PRECISION) {
@@ -487,7 +487,7 @@ where
             }
         } else if NEW_PRECISION < PRECISION {
             if self.waste.state()
-                < State::one() << (State::BITS - NEW_PRECISION - CompressedWord::BITS)
+                < State::one() << (State::BITS - NEW_PRECISION - Word::BITS)
             {
                 if self.waste.refill_state_maybe_truncating().is_err() {
                     return Err(self);
@@ -501,25 +501,25 @@ where
         })
     }
 
-    pub fn supply(&self) -> &AnsCoder<CompressedWord, State> {
+    pub fn supply(&self) -> &AnsCoder<Word, State> {
         &self.supply
     }
 
-    pub fn supply_mut(&mut self) -> &mut AnsCoder<CompressedWord, State> {
+    pub fn supply_mut(&mut self) -> &mut AnsCoder<Word, State> {
         &mut self.supply
     }
 
     pub fn waste_mut<'a>(
         &'a mut self,
-    ) -> impl DerefMut<Target = AnsCoder<CompressedWord, State>> + Drop + 'a {
+    ) -> impl DerefMut<Target = AnsCoder<Word, State>> + Drop + 'a {
         WasteGuard::<'a, _, _, PRECISION>::new(&mut self.waste)
     }
 
     pub fn into_supply_and_waste(
         mut self,
     ) -> (
-        AnsCoder<CompressedWord, State>,
-        AnsCoder<CompressedWord, State>,
+        AnsCoder<Word, State>,
+        AnsCoder<Word, State>,
     ) {
         // `self.waste` satisfies slightly different invariants than a usual `AnsCoder`.
         // We therefore first restore the usual `AnsCoder` invariant.
@@ -531,21 +531,21 @@ where
 
 #[derive(Debug, Clone)]
 pub struct CoderState<State> {
-    /// Invariant: `supply >= State::one() << (State::BITS - CompressedWord::BITS)`
+    /// Invariant: `supply >= State::one() << (State::BITS - Word::BITS)`
     pub supply: State,
 
     /// Invariants:
-    /// - `waste >= State::one() << (State::BITS - PRECISION - CompressedWord::BITS)`
+    /// - `waste >= State::one() << (State::BITS - PRECISION - Word::BITS)`
     /// - `waste < State::one() << (State::BITS - PRECISION)`
     pub waste: State,
 }
 
-impl<CompressedWord, State, const PRECISION: usize> Code for Coder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Code for Coder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    type CompressedWord = CompressedWord;
+    type Word = Word;
     type State = CoderState<State>;
 
     fn state(&self) -> Self::State {
@@ -562,13 +562,13 @@ where
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> Code
-    for Encoder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Code
+    for Encoder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    type CompressedWord = CompressedWord;
+    type Word = Word;
     type State = CoderState<State>;
 
     fn state(&self) -> Self::State {
@@ -580,13 +580,13 @@ where
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> Code
-    for Decoder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Code
+    for Decoder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    type CompressedWord = CompressedWord;
+    type Word = Word;
     type State = CoderState<State>;
 
     fn state(&self) -> Self::State {
@@ -605,21 +605,21 @@ where
 pub enum FrontendError {
     /// Not enough binary data available to decode the symbol.
     ///
-    /// Note that a [`stable::Decoder<State, CompressedWord, PRECISION>`]
+    /// Note that a [`stable::Decoder<State, Word, PRECISION>`]
     /// - consumes `PRECISION` bits of compressed data for each decoded symbol, even for
     ///   symbols with low information content under the used entropy model (the
     ///   superfluous information content will be appended to the `stable::Decoder`'s
     ///   [`waste`]); and it
-    /// - retains up to `2 * State::BITS - CompressedWord::BITS` bits of compressed data
+    /// - retains up to `2 * State::BITS - Word::BITS` bits of compressed data
     ///   that it won't decode into any symbols (these bits are needed to initialize the
     ///   `stable::Decoder`'s `waste`, and for proper "sealing" of the binary data in
     ///   [`stable::Decoder::finish`]).
     ///
     /// Thus, when you want to decode `n` symbols with a [`stable::Decoder`], you should
     /// construct it from a [`AnsCoder`] where [`num_valid_bits`] reports at least
-    /// `n * PRECISION + 2 * State::BITS - CompressedWord::BITS`.
+    /// `n * PRECISION + 2 * State::BITS - Word::BITS`.
     ///
-    /// [`stable::Decoder<State, CompressedWord, PRECISION>`]: Decoder
+    /// [`stable::Decoder<State, Word, PRECISION>`]: Decoder
     /// [`stable::Decoder`]: Decoder
     /// [`waste`]: Decoder::waste
     /// [`stable::Decoder::finish`]: Decoder::finish
@@ -658,11 +658,11 @@ impl core::fmt::Display for WriteError {
 #[cfg(feature = "std")]
 impl std::error::Error for WriteError {}
 
-impl<CompressedWord, State, const PRECISION: usize> Decode<PRECISION>
-    for Decoder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Decode<PRECISION>
+    for Decoder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
     type FrontendError = FrontendError;
 
@@ -675,8 +675,8 @@ where
     ) -> Result<D::Symbol, CoderError<Self::FrontendError, Self::BackendError>>
     where
         D: DecoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>,
     {
         let quantile = self.0.supply.chop_quantile_off_state::<D, PRECISION>();
         if self.0.supply.try_refill_state_if_necessary().is_err() {
@@ -704,11 +704,11 @@ where
     }
 }
 
-impl<CompressedWord, State, const PRECISION: usize> Encode<PRECISION>
-    for Encoder<CompressedWord, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Encode<PRECISION>
+    for Encoder<Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
     type BackendError = WriteError;
 
@@ -719,15 +719,15 @@ where
     ) -> Result<(), EncoderError<WriteError>>
     where
         D: EncoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Self::Word>,
+        Word: AsPrimitive<D::Probability>,
     {
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
 
         if self.0.waste.state()
-            < probability.get().into().into() << (State::BITS - CompressedWord::BITS - PRECISION)
+            < probability.get().into().into() << (State::BITS - Word::BITS - PRECISION)
         {
             self.0
                 .waste
@@ -756,21 +756,21 @@ where
     }
 }
 
-struct WasteGuard<'a, CompressedWord, State, const PRECISION: usize>
+struct WasteGuard<'a, Word, State, const PRECISION: usize>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    waste: &'a mut AnsCoder<CompressedWord, State>,
+    waste: &'a mut AnsCoder<Word, State>,
 }
 
-impl<'a, CompressedWord, State, const PRECISION: usize>
-    WasteGuard<'a, CompressedWord, State, PRECISION>
+impl<'a, Word, State, const PRECISION: usize>
+    WasteGuard<'a, Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    fn new(waste: &'a mut AnsCoder<CompressedWord, State>) -> Self {
+    fn new(waste: &'a mut AnsCoder<Word, State>) -> Self {
         // `stable::Coder::waste` satisfies slightly different invariants than a usual
         // `AnsCoder`. We therefore restore the usual `AnsCoder` invariant here. This is reversed
         // when the `WasteGuard` gets dropped.
@@ -780,35 +780,35 @@ where
     }
 }
 
-impl<'a, CompressedWord, State, const PRECISION: usize> Deref
-    for WasteGuard<'a, CompressedWord, State, PRECISION>
+impl<'a, Word, State, const PRECISION: usize> Deref
+    for WasteGuard<'a, Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
-    type Target = AnsCoder<CompressedWord, State>;
+    type Target = AnsCoder<Word, State>;
 
     fn deref(&self) -> &Self::Target {
         self.waste
     }
 }
 
-impl<'a, CompressedWord, State, const PRECISION: usize> DerefMut
-    for WasteGuard<'a, CompressedWord, State, PRECISION>
+impl<'a, Word, State, const PRECISION: usize> DerefMut
+    for WasteGuard<'a, Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.waste
     }
 }
 
-impl<'a, CompressedWord, State, const PRECISION: usize> Drop
-    for WasteGuard<'a, CompressedWord, State, PRECISION>
+impl<'a, Word, State, const PRECISION: usize> Drop
+    for WasteGuard<'a, Word, State, PRECISION>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
     fn drop(&mut self) {
         // Reverse the mutation done in `CoderGuard::new` to restore `stable::Coder`'s
@@ -819,12 +819,12 @@ where
     }
 }
 
-unsafe fn concatenate<CompressedWord, State>(
-    (mut prefix, suffix): (Vec<CompressedWord>, AnsCoder<CompressedWord, State>),
-) -> AnsCoder<CompressedWord, State>
+unsafe fn concatenate<Word, State>(
+    (mut prefix, suffix): (Vec<Word>, AnsCoder<Word, State>),
+) -> AnsCoder<Word, State>
 where
-    CompressedWord: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<CompressedWord>,
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
 {
     let (suffix_buf, state) = suffix.into_raw_parts();
 
@@ -925,14 +925,14 @@ mod test {
         generic_restore_many::<u8, u32, u8, 8>(1024, 1000);
     }
 
-    fn generic_restore_many<CompressedWord, State, Probability, const PRECISION: usize>(
+    fn generic_restore_many<Word, State, Probability, const PRECISION: usize>(
         amt_compressed_words: usize,
         amt_symbols: usize,
     ) where
-        State: BitArray + AsPrimitive<CompressedWord>,
-        CompressedWord: BitArray + Into<State> + AsPrimitive<Probability>,
-        Probability: BitArray + Into<CompressedWord> + AsPrimitive<usize> + Into<f64>,
-        u64: AsPrimitive<CompressedWord>,
+        State: BitArray + AsPrimitive<Word>,
+        Word: BitArray + Into<State> + AsPrimitive<Probability>,
+        Probability: BitArray + Into<Word> + AsPrimitive<usize> + Into<f64>,
+        u64: AsPrimitive<Word>,
         u32: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
         f64: AsPrimitive<Probability>,
@@ -947,11 +947,11 @@ mod test {
 
         // Make the last compressed word have a random number of leading zero bits so that
         // we test various filling levels.
-        let leading_zeros = (rng.next_u32() % (CompressedWord::BITS as u32 - 1)) as usize;
+        let leading_zeros = (rng.next_u32() % (Word::BITS as u32 - 1)) as usize;
         let last_word = compressed.last_mut().unwrap();
         *last_word =
-            *last_word | CompressedWord::one() << (CompressedWord::BITS - leading_zeros - 1);
-        *last_word = *last_word & CompressedWord::max_value() >> leading_zeros;
+            *last_word | Word::one() << (Word::BITS - leading_zeros - 1);
+        *last_word = *last_word & Word::max_value() >> leading_zeros;
 
         let distributions = (0..amt_symbols)
             .map(|_| {

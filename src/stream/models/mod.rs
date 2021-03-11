@@ -651,7 +651,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
     ///
-    /// If `PRECISION` is set to the maximum value supported by the `CompressedWord` type
+    /// If `PRECISION` is set to the maximum value supported by the `Word` type
     /// `Probability`, then the provided probabilities still have to *logically* sum up to
     /// `1 << PRECISION` (i.e., the summation has to wrap around exactly once):
     ///

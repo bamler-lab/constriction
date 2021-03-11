@@ -37,10 +37,10 @@ fn test_normal<Encoder, Probability, I, R, const PRECISION: usize, const REVERSE
 ) -> R
 where
     Encoder: Encode<PRECISION> + Default + IntoDecoder<PRECISION>,
-    Probability: BitArray + Into<f64> + Into<Encoder::CompressedWord>,
+    Probability: BitArray + Into<f64> + Into<Encoder::Word>,
     i32: AsPrimitive<Probability>,
     f64: AsPrimitive<Probability>,
-    Encoder::CompressedWord: AsPrimitive<Probability>,
+    Encoder::Word: AsPrimitive<Probability>,
     I: FnOnce(&Encoder) -> R,
 {
     const DOMAIN: RangeInclusive<i32> = -127..=127;
@@ -90,7 +90,7 @@ macro_rules! batch {
                 );
                 let coder_label = stringify!($stack_type);
                 let probability_label = stringify!($probability);
-                let word_size = <<$stack_type as ::constriction::stream::Code>::CompressedWord as ::constriction::BitArray>::BITS;
+                let word_size = <<$stack_type as ::constriction::stream::Code>::Word as ::constriction::BitArray>::BITS;
 
                 compare(
                     coder_label,

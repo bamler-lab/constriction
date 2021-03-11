@@ -347,7 +347,7 @@ impl<BackendError: Display, FrontendError: Display> From<BackendError>
 /// Short fixed-length bit strings are fundamental building blocks of efficient
 /// entropy coding algorithms. They are currently used for the following purposes:
 /// - to represent the smallest unit of compressed data (see
-///   [`Code::CompressedWord`]);
+///   [`Code::Word`]);
 /// - to represent probabilities in fixed point arithmetic (see
 ///   [`EntropyModel::Probability`]); and
 /// - the internal state of entropy coders (see [`Code::State`]) is typically

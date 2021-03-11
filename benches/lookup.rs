@@ -42,25 +42,25 @@ fn round_trip_u16_u32_u16_12(c: &mut Criterion) {
     round_trip::<u16, u32, u16, 12>(c);
 }
 
-fn round_trip<CompressedWord, State, Probability, const PRECISION: usize>(c: &mut Criterion)
+fn round_trip<Word, State, Probability, const PRECISION: usize>(c: &mut Criterion)
 where
     Probability: BitArray,
     u32: AsPrimitive<Probability>,
-    CompressedWord: BitArray + AsPrimitive<Probability> + From<Probability>,
-    State: BitArray + AsPrimitive<CompressedWord> + AsPrimitive<usize> + From<CompressedWord>,
+    Word: BitArray + AsPrimitive<Probability> + From<Probability>,
+    State: BitArray + AsPrimitive<Word> + AsPrimitive<usize> + From<Word>,
     u64: From<Probability>,
     usize: From<Probability> + AsPrimitive<Probability>,
 {
-    ans_round_trip::<CompressedWord, State, Probability, PRECISION>(c);
-    range_round_trip::<CompressedWord, State, Probability, PRECISION>(c);
+    ans_round_trip::<Word, State, Probability, PRECISION>(c);
+    range_round_trip::<Word, State, Probability, PRECISION>(c);
 }
 
-fn ans_round_trip<CompressedWord, State, Probability, const PRECISION: usize>(c: &mut Criterion)
+fn ans_round_trip<Word, State, Probability, const PRECISION: usize>(c: &mut Criterion)
 where
     Probability: BitArray,
     u32: AsPrimitive<Probability>,
-    CompressedWord: BitArray + AsPrimitive<Probability> + From<Probability>,
-    State: BitArray + AsPrimitive<CompressedWord> + AsPrimitive<usize> + From<CompressedWord>,
+    Word: BitArray + AsPrimitive<Probability> + From<Probability>,
+    State: BitArray + AsPrimitive<Word> + AsPrimitive<usize> + From<Word>,
     u64: From<Probability>,
     usize: From<Probability> + AsPrimitive<Probability>,
 {
@@ -72,11 +72,11 @@ where
         .unwrap();
 
     let data = make_data(&symbols, 10_000);
-    let mut encoder = AnsCoder::<CompressedWord, State>::new();
+    let mut encoder = AnsCoder::<Word, State>::new();
 
     let label_suffix = format!(
         "{}_{}_{}_{}",
-        type_name::<CompressedWord>(),
+        type_name::<Word>(),
         type_name::<State>(),
         type_name::<Probability>(),
         PRECISION
@@ -142,12 +142,12 @@ where
     assert!(forward_decoder.is_empty());
 }
 
-fn range_round_trip<CompressedWord, State, Probability, const PRECISION: usize>(c: &mut Criterion)
+fn range_round_trip<Word, State, Probability, const PRECISION: usize>(c: &mut Criterion)
 where
     Probability: BitArray,
     u32: AsPrimitive<Probability>,
-    CompressedWord: BitArray + AsPrimitive<Probability> + From<Probability>,
-    State: BitArray + AsPrimitive<CompressedWord> + AsPrimitive<usize> + From<CompressedWord>,
+    Word: BitArray + AsPrimitive<Probability> + From<Probability>,
+    State: BitArray + AsPrimitive<Word> + AsPrimitive<usize> + From<Word>,
     u64: From<Probability>,
     usize: From<Probability> + AsPrimitive<Probability>,
 {
@@ -159,12 +159,12 @@ where
         .unwrap();
 
     let data = make_data(&symbols, 10_000);
-    let mut encoder = RangeEncoder::<CompressedWord, State>::new();
+    let mut encoder = RangeEncoder::<Word, State>::new();
     let reset_snapshot = encoder.pos_and_state();
 
     let label_suffix = format!(
         "{}_{}_{}_{}",
-        type_name::<CompressedWord>(),
+        type_name::<Word>(),
         type_name::<State>(),
         type_name::<Probability>(),
         PRECISION

@@ -40,7 +40,7 @@
 //!
 //! TODO:
 //! - define term "word".
-//! - rename `CompressedWord` to `Word` crate wide
+//! - rename `Word` to `Word` crate wide
 //!
 //! # Comparison of the Implemented Algorithms
 //!
@@ -167,10 +167,10 @@ use num::cast::AsPrimitive;
 
 /// TODO:
 /// - make `PRECISION` a generic parameter of `Code`. This makes it more consistent with the
-///   fact that `CompressedWord` and `state` are also defined on `Code`.
+///   fact that `Word` and `state` are also defined on `Code`.
 /// - simplify `IntoDecoder`: has same `PRECISION` as the original Code.
 pub trait Code {
-    type CompressedWord: BitArray;
+    type Word: BitArray;
     type State: Clone;
 
     /// Returns the current internal state of the coder.
@@ -254,8 +254,8 @@ pub trait Encode<const PRECISION: usize>: Code {
     ) -> Result<(), EncoderError<Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>;
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>;
 
     fn encode_symbols<S, D>(
         &mut self,
@@ -264,8 +264,8 @@ pub trait Encode<const PRECISION: usize>: Code {
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>,
     {
         for (symbol, model) in symbols_and_models.into_iter() {
             self.encode_symbol(symbol, model)?;
@@ -281,8 +281,8 @@ pub trait Encode<const PRECISION: usize>: Code {
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>,
     {
         for symbol_and_model in symbols_and_models.into_iter() {
             let (symbol, model) =
@@ -301,8 +301,8 @@ pub trait Encode<const PRECISION: usize>: Code {
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>,
     {
         self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, model)))
     }
@@ -327,8 +327,8 @@ pub trait Decode<const PRECISION: usize>: Code {
     ) -> Result<D::Symbol, CoderError<Self::FrontendError, Self::BackendError>>
     where
         D: DecoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>;
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>;
 
     /// TODO: This would be much nicer to denote as
     /// `fn decode_symbols(...) -> impl Iterator`
@@ -340,8 +340,8 @@ pub trait Decode<const PRECISION: usize>: Code {
     where
         I: IntoIterator<Item = D> + 's,
         D: DecoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>,
     {
         DecodeSymbols {
             decoder: self,
@@ -356,8 +356,8 @@ pub trait Decode<const PRECISION: usize>: Code {
     where
         I: IntoIterator<Item = Result<D, E>> + 's,
         D: DecoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>,
     {
         TryDecodeSymbols {
             decoder: self,
@@ -379,8 +379,8 @@ pub trait Decode<const PRECISION: usize>: Code {
     ) -> DecodeIidSymbols<'s, Self, D, PRECISION>
     where
         D: DecoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>,
     {
         DecodeIidSymbols {
             decoder: self,
@@ -408,8 +408,8 @@ pub trait Decode<const PRECISION: usize>: Code {
     ) -> Result<(), CoderError<Self::FrontendError, Self::BackendError>>
     where
         D: DecoderModel<PRECISION>,
-        D::Probability: Into<Self::CompressedWord>,
-        Self::CompressedWord: AsPrimitive<D::Probability>,
+        D::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<D::Probability>,
         I: IntoIterator,
     {
         for x in iterator.into_iter() {
@@ -455,8 +455,8 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// where
 ///     Encoder: Encode<PRECISION> + IntoDecoder<PRECISION>, // <-- Different trait bound.
 ///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32>,
-///     D::Probability: Into<Encoder::CompressedWord>,
-///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
+///     D::Probability: Into<Encoder::Word>,
+///     Encoder::Word: num::cast::AsPrimitive<D::Probability>
 /// {
 ///     encoder.encode_symbol(137, &model);
 ///     let mut decoder = encoder.into_decoder();
@@ -487,7 +487,7 @@ pub trait IntoDecoder<const PRECISION: usize>: Code + Sized {
     ///
     /// [`into_decoder`]: Self::into_decoder
     type IntoDecoder: From<Self>
-        + Code<CompressedWord = Self::CompressedWord, State = Self::State>
+        + Code<Word = Self::Word, State = Self::State>
         + Decode<PRECISION>;
 
     /// Performs the conversion.
@@ -541,8 +541,8 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 ///     Encoder: Encode<PRECISION>,
 ///     for<'a> Encoder: AsDecoder<'a, PRECISION>, // <-- Different trait bound.
 ///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32>,
-///     D::Probability: Into<Encoder::CompressedWord>,
-///     Encoder::CompressedWord: num::cast::AsPrimitive<D::Probability>
+///     D::Probability: Into<Encoder::Word>,
+///     Encoder::Word: num::cast::AsPrimitive<D::Probability>
 /// {
 ///     encoder.encode_symbol(137, &model);
 ///     let mut decoder = encoder.as_decoder();
@@ -570,7 +570,7 @@ pub trait AsDecoder<'a, const PRECISION: usize>: Code + 'a {
     ///
     /// [`as_decoder`]: Self::as_decoder
     type AsDecoder: From<&'a Self>
-        + Code<CompressedWord = Self::CompressedWord, State = Self::State>
+        + Code<Word = Self::Word, State = Self::State>
         + Decode<PRECISION>
         + 'a;
 
@@ -591,7 +591,7 @@ pub trait AsDecoder<'a, const PRECISION: usize>: Code + 'a {
 /// to jump back to these snapshots. See examples in the documentations of [`Seek`]
 /// and [`Seek::seek`].
 pub trait Pos: Code {
-    /// Returns the position in the compressed data, in units of `CompressedWord`s.
+    /// Returns the position in the compressed data, in units of `Word`s.
     ///
     /// It is up to the entropy coder to define what constitutes the beginning and end
     /// positions within the compressed data (for example, a [`AnsCoder`] begins encoding
@@ -680,9 +680,9 @@ pub trait Seek: Code {
     /// data and the `State` to which the entropy coder should be restored. Both values
     /// are absolute (i.e., seeking happens independently of the current state or
     /// position of the entropy coder). The position is measured in units of
-    /// `CompressedWord`s (see second example below where we manipulate a position
+    /// `Word`s (see second example below where we manipulate a position
     /// obtained from `Pos::pos_and_state` in order to reflect a manual reordering of
-    /// the `CompressedWord`s in the compressed data).
+    /// the `Word`s in the compressed data).
     ///
     /// # Examples
     ///
@@ -709,10 +709,10 @@ pub trait Seek: Code {
     /// `pos_and_state` manually. For example, a [`DefaultAnsCoder`] encodes data from
     /// front to back and then decodes the data in the reverse direction from back to
     /// front. Decoding from back to front may be inconvenient in some use cases, so one
-    /// might prefer to instead reverse the order of the `CompressedWord`s once encoding
+    /// might prefer to instead reverse the order of the `Word`s once encoding
     /// is finished, and then decode them in the more natural direction from front to
     /// back. Reversing the compressed data changes the position of each
-    /// `CompressedWord`, and so any positions obtained from `Pos` need to be adjusted
+    /// `Word`, and so any positions obtained from `Pos` need to be adjusted
     /// accordingly before they may be passed to `seek`, as in the following example:
     ///
     /// ```
@@ -762,8 +762,8 @@ where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = D>,
     D: DecoderModel<PRECISION>,
-    Decoder::CompressedWord: AsPrimitive<D::Probability>,
-    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::Word: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::Word>,
 {
     type Item = Result<
         <I::Item as EntropyModel<PRECISION>>::Symbol,
@@ -787,8 +787,8 @@ where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = D> + ExactSizeIterator,
     D: DecoderModel<PRECISION>,
-    Decoder::CompressedWord: AsPrimitive<D::Probability>,
-    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::Word: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::Word>,
 {
 }
 
@@ -804,8 +804,8 @@ where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>>,
     D: DecoderModel<PRECISION>,
-    Decoder::CompressedWord: AsPrimitive<D::Probability>,
-    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::Word: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::Word>,
 {
     type Item = Result<
         D::Symbol,
@@ -832,8 +832,8 @@ where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>> + ExactSizeIterator,
     D: DecoderModel<PRECISION>,
-    Decoder::CompressedWord: AsPrimitive<D::Probability>,
-    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::Word: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::Word>,
 {
 }
 
@@ -849,8 +849,8 @@ impl<'a, Decoder, D, const PRECISION: usize> Iterator
 where
     Decoder: Decode<PRECISION>,
     D: DecoderModel<PRECISION>,
-    Decoder::CompressedWord: AsPrimitive<D::Probability>,
-    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::Word: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::Word>,
 {
     type Item = Result<D::Symbol, CoderError<Decoder::FrontendError, Decoder::BackendError>>;
 
@@ -873,8 +873,8 @@ impl<'a, Decoder, D, const PRECISION: usize> ExactSizeIterator
 where
     Decoder: Decode<PRECISION>,
     D: DecoderModel<PRECISION>,
-    Decoder::CompressedWord: AsPrimitive<D::Probability>,
-    D::Probability: Into<Decoder::CompressedWord>,
+    Decoder::Word: AsPrimitive<D::Probability>,
+    D::Probability: Into<Decoder::Word>,
 {
 }
 
