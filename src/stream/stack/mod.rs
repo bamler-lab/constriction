@@ -474,8 +474,18 @@ where
         D::Probability: Into<CompressedWord>,
         CompressedWord: AsPrimitive<D::Probability>,
     {
-        let remainder = (self.state % probability.get().into().into()).as_().as_();
-        self.state = self.state / probability.get().into().into();
+        let probability = probability.get();
+        unsafe {
+            // SAFETY: This is trivially save because `probability` came from a `NonZero` above.
+            // We really shouldn't have to insert need to give the compiler this hint but removing
+            // it leads to a massive (~30%) performance regression in our tests (TODO: file bug).
+            if probability == num::zero::<D::Probability>() {
+                std::hint::unreachable_unchecked();
+            }
+        }
+
+        let remainder = (self.state % probability.into().into()).as_().as_();
+        self.state = self.state / probability.into().into();
         remainder
     }
 
