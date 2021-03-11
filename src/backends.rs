@@ -21,11 +21,13 @@
 //! for some container format.
 //!
 //! ```
-//! use constriction::stream::{
+//! use constriction::{
 //!     backends::{FallibleCallbackWriteBackend, IteratorBackend},
-//!     models::DefaultLeakyQuantizer,
-//!     queue::{DefaultRangeDecoder, DefaultRangeEncoder},
-//!     Decode, Encode,
+//!     stream::{
+//!         models::DefaultLeakyQuantizer,
+//!         queue::{DefaultRangeDecoder, DefaultRangeEncoder},
+//!         Decode, Encode,
+//!     },
 //! };
 //! use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 //! use statrs::distribution::Normal;
@@ -843,7 +845,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Code, Decode};
+    use crate::stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
     use statrs::distribution::Normal;
     use std::{

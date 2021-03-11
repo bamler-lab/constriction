@@ -151,7 +151,6 @@
 //! [`Infallible`]: core::convert::Infallible
 //! [`seek`]: Seek::seek
 
-pub mod backends;
 pub mod models;
 pub mod queue;
 pub mod stack;
@@ -486,9 +485,7 @@ pub trait IntoDecoder<const PRECISION: usize>: Code + Sized {
     /// TODO: I no longer think we want to depend on `From` here.
     ///
     /// [`into_decoder`]: Self::into_decoder
-    type IntoDecoder: From<Self>
-        + Code<Word = Self::Word, State = Self::State>
-        + Decode<PRECISION>;
+    type IntoDecoder: From<Self> + Code<Word = Self::Word, State = Self::State> + Decode<PRECISION>;
 
     /// Performs the conversion.
     ///

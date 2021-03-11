@@ -16,14 +16,14 @@ use core::{
 use num::cast::AsPrimitive;
 
 use super::{
-    backends::{
-        self, AsReadBackend, AsSeekReadBackend, BoundedReadBackend, Cursor, IntoSeekReadBackend,
-        IteratorBackend, ReadBackend, ReverseReads, Stack, WriteBackend,
-    },
     models::{DecoderModel, EncoderModel, EntropyModel},
     AsDecoder, Code, Decode, Encode, Pos, Seek, TryCodingError,
 };
 use crate::{
+    backends::{
+        self, AsReadBackend, AsSeekReadBackend, BoundedReadBackend, Cursor, IntoSeekReadBackend,
+        IteratorBackend, ReadBackend, ReverseReads, Stack, WriteBackend,
+    },
     bit_array_to_chunks_truncated, BitArray, CoderError, EncoderError, EncoderFrontendError,
     NonZeroBitArray, UnwrapInfallible,
 };
@@ -257,11 +257,7 @@ where
 }
 
 impl<'a, Word, State, Backend> From<&'a AnsCoder<Word, State, Backend>>
-    for AnsCoder<
-        Word,
-        State,
-        <Backend as AsReadBackend<'a, Word, Stack>>::AsReadBackend,
-    >
+    for AnsCoder<Word, State, <Backend as AsReadBackend<'a, Word, Stack>>::AsReadBackend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -477,8 +473,8 @@ where
         let probability = probability.get();
         unsafe {
             // SAFETY: This is trivially save because `probability` came from a `NonZero` above.
-            // We really shouldn't have to insert need to give the compiler this hint but removing
-            // it leads to a massive (~30%) performance regression in our tests (TODO: file bug).
+            // We really shouldn't have to give the compiler this hint but removing it leads to a
+            // massive (~30%) performance regression in our tests (TODO: file rust bug).
             if probability == num::zero::<D::Probability>() {
                 std::hint::unreachable_unchecked();
             }
@@ -668,9 +664,7 @@ where
     /// backing data store `Backend = Vec<Word>`.
     ///
     /// [`into_seekable_decoder`]: Self::into_seekable_decoder
-    pub fn seekable_decoder<'a>(
-        &'a self,
-    ) -> AnsCoder<Word, State, Backend::AsSeekReadBackend>
+    pub fn seekable_decoder<'a>(&'a self) -> AnsCoder<Word, State, Backend::AsSeekReadBackend>
     where
         Backend: AsSeekReadBackend<'a, Word, Stack>,
     {
@@ -688,9 +682,7 @@ where
     /// from the calling function or put on the heap.
     ///
     /// [`seekable_decoder`]: Self::seekable_decoder
-    pub fn into_seekable_decoder(
-        self,
-    ) -> AnsCoder<Word, State, Backend::IntoSeekReadBackend>
+    pub fn into_seekable_decoder(self) -> AnsCoder<Word, State, Backend::IntoSeekReadBackend>
     where
         Backend: IntoSeekReadBackend<Word, Stack>,
     {
@@ -1213,9 +1205,7 @@ where
     State: BitArray + AsPrimitive<Word>,
     Backend: WriteBackend<Word> + ReadBackend<Word, Stack>,
 {
-    fn new(
-        ans: &'a mut AnsCoder<Word, State, Backend>,
-    ) -> Result<Self, Backend::WriteError> {
+    fn new(ans: &'a mut AnsCoder<Word, State, Backend>) -> Result<Self, Backend::WriteError> {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         for chunk in bit_array_to_chunks_truncated(ans.state).rev() {
             ans.bulk.write(chunk)?

@@ -261,6 +261,7 @@ use std::error::Error;
 #[cfg(feature = "pybindings")]
 mod pybindings;
 
+pub mod backends;
 pub mod stream;
 pub mod symbol;
 

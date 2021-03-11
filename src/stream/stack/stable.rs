@@ -35,17 +35,13 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct Encoder<Word, State, const PRECISION: usize>(
-    Coder<Word, State, PRECISION>,
-)
+pub struct Encoder<Word, State, const PRECISION: usize>(Coder<Word, State, PRECISION>)
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>;
 
 #[derive(Debug, Clone)]
-pub struct Decoder<Word, State, const PRECISION: usize>(
-    Coder<Word, State, PRECISION>,
-)
+pub struct Decoder<Word, State, const PRECISION: usize>(Coder<Word, State, PRECISION>)
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>;
@@ -55,9 +51,7 @@ where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
-    fn new(
-        ans: AnsCoder<Word, State>,
-    ) -> Result<Self, Option<AnsCoder<Word, State>>> {
+    fn new(ans: AnsCoder<Word, State>) -> Result<Self, Option<AnsCoder<Word, State>>> {
         assert!(Word::BITS > 0);
         assert!(State::BITS >= 2 * Word::BITS);
         assert!(State::BITS % Word::BITS == 0);
@@ -143,10 +137,7 @@ where
     /// [`into_decoder`]: Encoder::into_decoder
     pub fn change_precision<const NEW_PRECISION: usize>(
         self,
-    ) -> Result<
-        Decoder<Word, State, NEW_PRECISION>,
-        Decoder<Word, State, PRECISION>,
-    > {
+    ) -> Result<Decoder<Word, State, NEW_PRECISION>, Decoder<Word, State, PRECISION>> {
         match self.0.change_precision() {
             Ok(coder) => Ok(Decoder(coder)),
             Err(coder) => Err(Decoder(coder)),
@@ -201,12 +192,7 @@ where
         self.0.waste_mut()
     }
 
-    pub fn into_supply_and_waste(
-        self,
-    ) -> (
-        AnsCoder<Word, State>,
-        AnsCoder<Word, State>,
-    ) {
+    pub fn into_supply_and_waste(self) -> (AnsCoder<Word, State>, AnsCoder<Word, State>) {
         // `self.waste` satisfies slightly different invariants than a usual `AnsCoder`.
         // We therefore first restore the usual `AnsCoder` invariant.
         self.0.into_supply_and_waste()
@@ -221,9 +207,7 @@ where
 {
     type Error = Option<AnsCoder<Word, State>>;
 
-    fn try_from(
-        ans: AnsCoder<Word, State>,
-    ) -> Result<Self, Option<AnsCoder<Word, State>>> {
+    fn try_from(ans: AnsCoder<Word, State>) -> Result<Self, Option<AnsCoder<Word, State>>> {
         Self::new(ans)
     }
 }
@@ -345,10 +329,7 @@ where
     /// [`stable::Decoder::change_precision`]: Decoder::change_precision
     pub fn change_precision<const NEW_PRECISION: usize>(
         self,
-    ) -> Result<
-        Encoder<Word, State, NEW_PRECISION>,
-        Encoder<Word, State, PRECISION>,
-    > {
+    ) -> Result<Encoder<Word, State, NEW_PRECISION>, Encoder<Word, State, PRECISION>> {
         match self.0.change_precision() {
             Ok(coder) => Ok(Encoder(coder)),
             Err(coder) => Err(Encoder(coder)),
@@ -369,9 +350,7 @@ where
         Decoder(self.0)
     }
 
-    pub fn finish(
-        mut self,
-    ) -> Result<(Vec<Word>, AnsCoder<Word, State>), Self> {
+    pub fn finish(mut self) -> Result<(Vec<Word>, AnsCoder<Word, State>), Self> {
         if PRECISION == Word::BITS {
             if self.0.waste.state() >> (State::BITS - 2 * Word::BITS) != State::one()
                 || self.0.waste.refill_state_maybe_truncating().is_err()
@@ -425,12 +404,7 @@ where
         self.0.waste_mut()
     }
 
-    pub fn into_supply_and_waste(
-        self,
-    ) -> (
-        AnsCoder<Word, State>,
-        AnsCoder<Word, State>,
-    ) {
+    pub fn into_supply_and_waste(self) -> (AnsCoder<Word, State>, AnsCoder<Word, State>) {
         // `self.waste` satisfies slightly different invariants than a usual `AnsCoder`.
         // We therefore first restore the usual `AnsCoder` invariant.
         self.0.into_supply_and_waste()
@@ -445,16 +419,14 @@ where
 {
     type Error = AnsCoder<Word, State>;
 
-    fn try_from(
-        ans: AnsCoder<Word, State>,
-    ) -> Result<Self, AnsCoder<Word, State>> {
+    fn try_from(ans: AnsCoder<Word, State>) -> Result<Self, AnsCoder<Word, State>> {
         Self::new(ans)
     }
 }
 
 /// TODO: check if this can be made generic over the backend
-impl<Word, State, const PRECISION: usize>
-    TryFrom<Encoder<Word, State, PRECISION>> for AnsCoder<Word, State>
+impl<Word, State, const PRECISION: usize> TryFrom<Encoder<Word, State, PRECISION>>
+    for AnsCoder<Word, State>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -475,8 +447,7 @@ where
 {
     pub fn change_precision<const NEW_PRECISION: usize>(
         mut self,
-    ) -> Result<Coder<Word, State, NEW_PRECISION>, Coder<Word, State, PRECISION>>
-    {
+    ) -> Result<Coder<Word, State, NEW_PRECISION>, Coder<Word, State, PRECISION>> {
         assert!(NEW_PRECISION <= Word::BITS);
 
         if NEW_PRECISION > PRECISION {
@@ -486,9 +457,7 @@ where
                 }
             }
         } else if NEW_PRECISION < PRECISION {
-            if self.waste.state()
-                < State::one() << (State::BITS - NEW_PRECISION - Word::BITS)
-            {
+            if self.waste.state() < State::one() << (State::BITS - NEW_PRECISION - Word::BITS) {
                 if self.waste.refill_state_maybe_truncating().is_err() {
                     return Err(self);
                 }
@@ -515,12 +484,7 @@ where
         WasteGuard::<'a, _, _, PRECISION>::new(&mut self.waste)
     }
 
-    pub fn into_supply_and_waste(
-        mut self,
-    ) -> (
-        AnsCoder<Word, State>,
-        AnsCoder<Word, State>,
-    ) {
+    pub fn into_supply_and_waste(mut self) -> (AnsCoder<Word, State>, AnsCoder<Word, State>) {
         // `self.waste` satisfies slightly different invariants than a usual `AnsCoder`.
         // We therefore first restore the usual `AnsCoder` invariant.
         let _ = self.waste.try_refill_state_if_necessary();
@@ -562,8 +526,7 @@ where
     }
 }
 
-impl<Word, State, const PRECISION: usize> Code
-    for Encoder<Word, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Code for Encoder<Word, State, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -580,8 +543,7 @@ where
     }
 }
 
-impl<Word, State, const PRECISION: usize> Code
-    for Decoder<Word, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Code for Decoder<Word, State, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -658,8 +620,7 @@ impl core::fmt::Display for WriteError {
 #[cfg(feature = "std")]
 impl std::error::Error for WriteError {}
 
-impl<Word, State, const PRECISION: usize> Decode<PRECISION>
-    for Decoder<Word, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Decode<PRECISION> for Decoder<Word, State, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -704,8 +665,7 @@ where
     }
 }
 
-impl<Word, State, const PRECISION: usize> Encode<PRECISION>
-    for Encoder<Word, State, PRECISION>
+impl<Word, State, const PRECISION: usize> Encode<PRECISION> for Encoder<Word, State, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -764,8 +724,7 @@ where
     waste: &'a mut AnsCoder<Word, State>,
 }
 
-impl<'a, Word, State, const PRECISION: usize>
-    WasteGuard<'a, Word, State, PRECISION>
+impl<'a, Word, State, const PRECISION: usize> WasteGuard<'a, Word, State, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -780,8 +739,7 @@ where
     }
 }
 
-impl<'a, Word, State, const PRECISION: usize> Deref
-    for WasteGuard<'a, Word, State, PRECISION>
+impl<'a, Word, State, const PRECISION: usize> Deref for WasteGuard<'a, Word, State, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -793,8 +751,7 @@ where
     }
 }
 
-impl<'a, Word, State, const PRECISION: usize> DerefMut
-    for WasteGuard<'a, Word, State, PRECISION>
+impl<'a, Word, State, const PRECISION: usize> DerefMut for WasteGuard<'a, Word, State, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -804,8 +761,7 @@ where
     }
 }
 
-impl<'a, Word, State, const PRECISION: usize> Drop
-    for WasteGuard<'a, Word, State, PRECISION>
+impl<'a, Word, State, const PRECISION: usize> Drop for WasteGuard<'a, Word, State, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -949,8 +905,7 @@ mod test {
         // we test various filling levels.
         let leading_zeros = (rng.next_u32() % (Word::BITS as u32 - 1)) as usize;
         let last_word = compressed.last_mut().unwrap();
-        *last_word =
-            *last_word | Word::one() << (Word::BITS - leading_zeros - 1);
+        *last_word = *last_word | Word::one() << (Word::BITS - leading_zeros - 1);
         *last_word = *last_word & Word::max_value() >> leading_zeros;
 
         let distributions = (0..amt_symbols)

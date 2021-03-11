@@ -15,15 +15,16 @@ use core::{
 use num::cast::AsPrimitive;
 
 use super::{
-    backends::{
-        AsReadBackend, BoundedReadBackend, Cursor, IntoReadBackend, PosBackend, Queue, ReadBackend,
-        SeekBackend, WriteBackend,
-    },
     models::{DecoderModel, EncoderModel},
     Code, Decode, Encode, IntoDecoder, Pos, Seek,
 };
 use crate::{
     BitArray, CoderError, EncoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible,
+    backends::{
+        AsReadBackend, BoundedReadBackend, Cursor, IntoReadBackend, PosBackend, Queue, ReadBackend,
+        SeekBackend, WriteBackend,
+    },
+
 };
 
 /// Type of the internal state used by [`Encoder<Word, State>`],
