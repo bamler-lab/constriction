@@ -767,12 +767,14 @@ where
         CoderError<Decoder::FrontendError, Decoder::BackendError>,
     >;
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         self.models
             .next()
             .map(|model| self.decoder.decode_symbol(model))
     }
 
+    #[inline(always)]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.models.size_hint()
     }

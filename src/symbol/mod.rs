@@ -1,586 +1,605 @@
 //! Symbol Codes (mainly provided for teaching purpose; typically inferior to stream codes)
+//!
+//! # TODO
+//!
+//! - implement `Pos` and `Seek` for `SymbolCoder` and for `QueueDecoder`.
 
-pub mod huffman;
-
-use smallvec::SmallVec;
+pub mod codebooks;
 
 use alloc::vec::Vec;
-use core::{borrow::Borrow, convert::Infallible, iter::FromIterator};
+use core::{
+    borrow::Borrow,
+    iter::{Repeat, Take},
+    marker::PhantomData,
+};
 
-use crate::{BitArray, EncoderError, EncoderFrontendError};
+use crate::{
+    backends::{
+        self, AsReadBackend, BoundedReadBackend, IntoReadBackend, Queue, ReadBackend, Stack,
+        WriteBackend,
+    },
+    BitArray, CoderError, EncoderError,
+};
 
-#[derive(Debug)]
-pub enum DecodingError {
-    OutOfCompressedData,
-}
+use self::codebooks::{DecoderCodebook, EncoderCodebook, SymbolCodeError};
 
-pub trait Codebook {
-    fn num_symbols(&self) -> usize;
-}
-pub trait EncoderCodebook: Codebook {
-    fn encode_symbol_prefix(
-        &self,
-        symbol: usize,
-        mut emit: impl FnMut(bool),
-    ) -> Result<(), EncoderFrontendError> {
-        let mut reverse_codeword = SmallBitVec::<usize>::new();
-        self.encode_symbol_suffix(symbol, |bit| reverse_codeword.push(bit))?;
+// TRAITS FOR READING AND WRITNIG STREAMS OF BITS =============================
 
-        for bit in reverse_codeword.into_iter_reverse() {
-            emit(bit);
-        }
-        Ok(())
-    }
+pub trait ReadBitStream<S: backends::Semantics> {
+    type ReadError;
 
-    fn encode_symbol_suffix(
-        &self,
-        symbol: usize,
-        mut emit: impl FnMut(bool),
-    ) -> Result<(), EncoderFrontendError> {
-        let mut reverse_codeword = SmallBitVec::<usize>::new();
-        self.encode_symbol_prefix(symbol, |bit| reverse_codeword.push(bit))?;
+    fn read_bit(&mut self) -> Result<Option<bool>, Self::ReadError>;
 
-        for bit in reverse_codeword.into_iter_reverse() {
-            emit(bit);
-        }
-        Ok(())
-    }
-}
-
-pub trait DecoderCodebook: Codebook {
-    fn decode_symbol(&self, source: impl Iterator<Item = bool>) -> Result<usize, DecodingError>;
-}
-
-impl<C: Codebook> Codebook for &C {
-    fn num_symbols(&self) -> usize {
-        (*self).num_symbols()
-    }
-}
-
-impl<C: EncoderCodebook> EncoderCodebook for &C {
-    #[inline(always)]
-    fn encode_symbol_prefix(
-        &self,
-        symbol: usize,
-        emit: impl FnMut(bool),
-    ) -> Result<(), EncoderFrontendError> {
-        (*self).encode_symbol_prefix(symbol, emit)
-    }
-
-    #[inline(always)]
-    fn encode_symbol_suffix(
-        &self,
-        symbol: usize,
-        emit: impl FnMut(bool),
-    ) -> Result<(), EncoderFrontendError> {
-        (*self).encode_symbol_suffix(symbol, emit)
-    }
-}
-
-impl<C: DecoderCodebook> DecoderCodebook for &C {
-    fn decode_symbol(&self, source: impl Iterator<Item = bool>) -> Result<usize, DecodingError> {
-        (*self).decode_symbol(source)
-    }
-}
-
-pub trait GenericVec<T>: Default + AsRef<[T]> + AsMut<[T]> {
-    fn with_capacity(capacity: usize) -> Self;
-    fn push(&mut self, x: T);
-    fn pop(&mut self) -> Option<T>;
-    fn clear(&mut self);
-    fn resize_with(&mut self, new_len: usize, f: impl FnMut() -> T);
-
-    fn is_empty(&self) -> bool {
-        self.as_ref().len() == 0
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct BitVec<W: BitArray, V: GenericVec<W> = Vec<W>> {
-    buf: V,
-
-    /// A `BitArray` with at most one set bit, satisfying the following invariant:
-    /// - if the `BitVec` is empty then `mask_last_written == W::zero()` and `buf` is
-    ///   empty;
-    /// - otherwise, `mask_last_written` has a single set bit, `buf` is not empty, and
-    ///   the last `push`ed bit is equal to
-    ///   `*buf.last().unwrap() & mask_last_written != W::zero()`.
-    mask_last_written: W,
-}
-
-pub type DefaultBitVec = BitVec<u32>;
-
-#[derive(Debug)]
-pub struct BitVecIterRev<W: BitArray, V: GenericVec<W> = Vec<W>> {
-    inner: BitVec<W, V>,
-}
-
-pub type SmallBitVec<W> = BitVec<W, SmallVec<[W; 1]>>;
-pub type SmallBitVecIterRev<W> = BitVecIterRev<W, SmallVec<[W; 1]>>;
-
-impl<W: BitArray, V: GenericVec<W>> BitVec<W, V> {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
-    pub fn with_bit_capacity(bit_capacity: usize) -> Self {
-        Self {
-            buf: V::with_capacity((bit_capacity + W::BITS - 1) / W::BITS),
-            mask_last_written: W::zero(),
-        }
-    }
-
-    pub fn from_buf_and_bit_len(buf: V, bit_len: usize) -> Result<Self, ()> {
-        let num_words = (bit_len + W::BITS - 1) / W::BITS;
-        if buf.as_ref().len() != num_words {
-            Err(())
-        } else {
-            let mask_last_written = if num_words == 0 {
-                W::zero()
-            } else {
-                W::one() << ((bit_len - 1) % W::BITS)
-            };
-
-            Ok(Self {
-                buf,
-                mask_last_written,
-            })
-        }
-    }
-
-    pub fn push(&mut self, bit: bool) {
-        let write_mask = self.mask_last_written << 1;
-        self.mask_last_written = if write_mask != W::zero() {
-            if bit {
-                let last_word = self
-                    .buf
-                    .as_mut()
-                    .last_mut()
-                    .expect("buf is not empty since mask_last_written != 0.");
-                *last_word = *last_word | write_mask;
-            };
-            write_mask
-        } else {
-            self.buf.push(if bit { W::one() } else { W::zero() });
-            W::one()
-        };
-    }
-
-    pub fn pop(&mut self) -> Option<bool> {
-        let old_mask = self.mask_last_written;
-        let new_mask = old_mask >> 1;
-
-        let bit = if new_mask != W::zero() {
-            // Most common case, therefore reachable with only a single branch.
-            self.mask_last_written = new_mask;
-            let last_word = self
-                .buf
-                .as_mut()
-                .last_mut()
-                .expect("`old_mask != 0`, so `buf` is not empty.");
-            let bit = *last_word & old_mask;
-            *last_word = *last_word ^ bit;
-            bit
-        } else if old_mask != W::zero() {
-            let last_word = self
-                .buf
-                .pop()
-                .expect("`old_mask != 0`, so `buf` is not empty.");
-            self.mask_last_written = if self.buf.is_empty() {
-                W::zero()
-            } else {
-                W::one() << (W::BITS - 1)
-            };
-            last_word & old_mask
-        } else {
-            return None;
-        };
-
-        Some(bit != W::zero())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.mask_last_written == W::zero()
-    }
-
-    pub fn len(&self) -> usize {
-        let capacity = self.buf.as_ref().len() * W::BITS;
-        let unused = if self.mask_last_written == W::zero() {
-            0
-        } else {
-            self.mask_last_written.leading_zeros()
-        };
-
-        capacity - unused as usize
-    }
-
-    pub fn buf(&self) -> &[W] {
-        self.buf.as_ref()
-    }
-
-    pub fn clear(&mut self) {
-        self.buf.clear();
-        self.mask_last_written = W::zero();
-    }
-
-    pub fn into_iter_reverse(self) -> BitVecIterRev<W, V> {
-        BitVecIterRev { inner: self }
-    }
-
-    /// TODO: test
-    pub fn discard(&mut self, amt: usize) -> Result<(), ()> {
-        let mut num_words = amt / W::BITS;
-        let remainder = amt % W::BITS;
-
-        let old_mask = self.mask_last_written;
-        let mut new_mask = old_mask >> remainder;
-        if new_mask == W::zero() {
-            num_words += 1;
-            new_mask = old_mask << (W::BITS - remainder);
-        }
-
-        if let Some(new_len) = self.buf.as_ref().len().checked_sub(num_words) {
-            self.buf.resize_with(new_len, W::zero);
-            self.mask_last_written = new_mask;
-
-            if let Some(last_word) = self.buf.as_mut().last_mut() {
-                let mask = (new_mask - W::one()) << 1 | W::one();
-                *last_word = *last_word & mask;
-            } else {
-                self.mask_last_written = W::zero();
-            }
-        } else if amt != 0 {
-            // The test for `amt != 0` is for case where `BitVec` was originally empty, in
-            // which case calling `discard(0)` leads to `num_words == 1`, which is larger
-            // than `buf.len()` but the call should still be allowed.
-            self.clear();
-            return Err(());
-        }
-
-        Ok(())
-    }
-
-    pub fn encode_symbol(
+    fn decode_symbol<C: DecoderCodebook>(
         &mut self,
-        symbol: usize,
-        codebook: impl EncoderCodebook,
-    ) -> Result<(), EncoderError<Infallible>> {
-        codebook
-            .encode_symbol_prefix(symbol, |bit| self.push(bit))
-            .map_err(EncoderError::FrontendError)
-    }
+        codebook: C,
+    ) -> Result<C::Symbol, CoderError<SymbolCodeError<C::InvalidCodeword>, Self::ReadError>>;
 
-    pub fn encode_symbols<S, C>(
-        &mut self,
-        symbols_and_codebooks: impl IntoIterator<Item = (S, C)>,
-    ) -> Result<(), EncoderError<Infallible>>
-    where
-        S: Borrow<usize>,
-        C: EncoderCodebook,
-    {
-        for (symbol, codebook) in symbols_and_codebooks.into_iter() {
-            self.encode_symbol(*symbol.borrow(), codebook)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn encode_iid_symbols<S>(
-        &mut self,
-        symbols: impl IntoIterator<Item = S>,
-        codebook: &impl EncoderCodebook,
-    ) -> Result<(), EncoderError<Infallible>>
-    where
-        S: Borrow<usize>,
-    {
-        self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, codebook)))
-    }
-
-    pub fn iter(&self) -> BitVecIter<W, &[W]> {
-        self.into()
-    }
-
-    pub fn into_iter(self) -> BitVecIter<W, V> {
-        self.into()
-    }
-}
-
-impl<W: BitArray, V: GenericVec<W>> FromIterator<bool> for BitVec<W, V> {
-    fn from_iter<T: IntoIterator<Item = bool>>(iter: T) -> Self {
-        let iter = iter.into_iter();
-        let mut bit_vec = Self::with_bit_capacity(iter.size_hint().0);
-        for bit in iter {
-            bit_vec.push(bit)
-        }
-        bit_vec
-    }
-}
-
-impl<W: BitArray, V: GenericVec<W>> Extend<bool> for BitVec<W, V> {
-    fn extend<T: IntoIterator<Item = bool>>(&mut self, iter: T) {
-        // TODO: when specialization becomes stable, distinguish between extending from a
-        // `SmallBitVecIterRev` and other iterators. For extending from
-        // `SmallBitVecIterRev`, leave it as is. For other iterators, calculate
-        // the number of added words upfront and insert a `reserve` call here.
-        for bit in iter {
-            self.push(bit);
-        }
-    }
-}
-
-impl<W: BitArray, V: GenericVec<W>> Iterator for BitVecIterRev<W, V> {
-    type Item = bool;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.pop()
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.inner.len();
-        (len, Some(len))
-    }
-
-    fn count(self) -> usize
-    where
-        Self: Sized,
-    {
-        self.len()
-    }
-
-    fn last(self) -> Option<Self::Item>
-    where
-        Self: Sized,
-    {
-        self.inner
-            .buf
-            .as_ref()
-            .first()
-            .map(|&x| x & W::one() != W::zero())
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.inner.discard(n).ok()?;
-        self.next()
-    }
-}
-
-impl<W: BitArray, V: GenericVec<W>> ExactSizeIterator for BitVecIterRev<W, V> {}
-
-#[derive(Debug)]
-pub struct BitVecIter<W: BitArray, B: AsRef<[W]>> {
-    buf: B,
-    next_pos: usize,
-    last_word_allowed_bits: W,
-    current_word: W,
-    current_allowed_bits: W,
-    mask_next_to_read: W,
-}
-
-impl<'buf, W: BitArray, V: GenericVec<W>> From<&'buf BitVec<W, V>> for BitVecIter<W, &'buf [W]> {
-    fn from(bit_vec: &'buf BitVec<W, V>) -> Self {
-        Self {
-            buf: bit_vec.buf.as_ref(),
-            next_pos: 0,
-            last_word_allowed_bits: (bit_vec.mask_last_written << 1).wrapping_sub(&W::one()),
-            current_word: W::zero(),
-            current_allowed_bits: W::max_value(),
-            mask_next_to_read: W::zero(),
-        }
-    }
-}
-
-impl<W: BitArray, V: GenericVec<W>> From<BitVec<W, V>> for BitVecIter<W, V> {
-    fn from(bit_vec: BitVec<W, V>) -> Self {
-        Self {
-            buf: bit_vec.buf,
-            next_pos: 0,
-            last_word_allowed_bits: (bit_vec.mask_last_written << 1).wrapping_sub(&W::one()),
-            current_word: W::zero(),
-            current_allowed_bits: W::max_value(),
-            mask_next_to_read: W::zero(),
-        }
-    }
-}
-
-impl<W: BitArray, B: AsRef<[W]>> Iterator for BitVecIter<W, B> {
-    type Item = bool;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.mask_next_to_read & self.current_allowed_bits != W::zero() {
-            // Most common case, therefore reachable with only a single branch.
-            let bit = self.current_word & self.mask_next_to_read != W::zero();
-            self.mask_next_to_read = self.mask_next_to_read << 1;
-            Some(bit)
-        } else if self.mask_next_to_read == W::zero() {
-            if self.next_pos >= self.buf.as_ref().len() {
-                None
-            } else {
-                self.current_word = self.buf.as_ref()[self.next_pos]; // TODO: use get_unchecked
-                self.next_pos += 1;
-                self.mask_next_to_read = W::one() << 1;
-                if self.next_pos == self.buf.as_ref().len() {
-                    self.current_allowed_bits = self.last_word_allowed_bits
-                }
-                Some(self.current_word & W::one() != W::zero())
-            }
-        } else {
-            None
-        }
-    }
-}
-
-impl<W: BitArray, B: AsRef<[W]>> BitVecIter<W, B> {
-    pub fn decode_symbol(
-        &mut self,
-        codebook: impl DecoderCodebook,
-    ) -> Result<usize, DecodingError> {
-        codebook.decode_symbol(self)
-    }
-
-    pub fn decode_symbols<'s, I, C>(
-        &'s mut self,
-        codebooks: I,
-    ) -> DecodeSymbols<'s, Self, I::IntoIter>
+    fn decode_symbols<'s, I, C>(&'s mut self, codebooks: I) -> DecodeSymbols<'s, Self, I, S>
     where
         I: IntoIterator<Item = C> + 's,
         C: DecoderCodebook,
     {
-        // TODO: It would be much nicer to implement this just as a `map`, but it doesn't
-        // currently seem to work with lifetimes (because of 'buf).
         DecodeSymbols {
-            bit_iterator: self,
-            codebooks: codebooks.into_iter(),
+            bit_stream: self,
+            codebooks,
+            semantics: PhantomData,
         }
     }
 
-    pub fn decode_iid_symbols<'s, 'c, C>(
-        &'s mut self,
+    fn decode_iid_symbols<'a, C>(
+        &'a mut self,
         amt: usize,
-        codebook: &'c C,
-    ) -> DecodeIidSymbols<'s, 'c, Self, C>
+        codebook: &'a C,
+    ) -> DecodeSymbols<'a, Self, Take<Repeat<&'a C>>, S>
     where
         C: DecoderCodebook,
     {
-        DecodeIidSymbols {
-            bit_iterator: self,
-            codebook,
-            amt,
+        self.decode_symbols(std::iter::repeat(codebook).take(amt))
+    }
+}
+
+pub trait WriteBitStream<S: backends::Semantics> {
+    type WriteError;
+
+    fn write_bit(&mut self, bit: bool) -> Result<(), Self::WriteError>;
+
+    fn encode_symbol<Symbol, C>(
+        &mut self,
+        symbol: Symbol,
+        codebook: C,
+    ) -> Result<(), EncoderError<Self::WriteError>>
+    where
+        C: EncoderCodebook,
+        Symbol: Borrow<C::Symbol>;
+
+    fn encode_symbols<Symbol, C>(
+        &mut self,
+        symbols_and_codebooks: impl IntoIterator<Item = (Symbol, C)>,
+    ) -> Result<(), EncoderError<Self::WriteError>>
+    where
+        C: EncoderCodebook,
+        Symbol: Borrow<C::Symbol>,
+    {
+        for (symbol, codebook) in symbols_and_codebooks.into_iter() {
+            self.encode_symbol(symbol, codebook)?;
         }
+
+        Ok(())
+    }
+
+    fn encode_iid_symbols<Symbol, C>(
+        &mut self,
+        symbols: impl IntoIterator<Item = Symbol>,
+        codebook: &C,
+    ) -> Result<(), EncoderError<Self::WriteError>>
+    where
+        C: EncoderCodebook,
+        Symbol: Borrow<C::Symbol>,
+    {
+        self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, codebook)))
     }
 }
 
 #[derive(Debug)]
-pub struct DecodeSymbols<'a, BI, CI> {
-    bit_iterator: &'a mut BI,
-    codebooks: CI,
+pub struct DecodeSymbols<'a, Stream: ?Sized, I, S: backends::Semantics> {
+    bit_stream: &'a mut Stream,
+    codebooks: I,
+    semantics: PhantomData<S>,
 }
 
-impl<'bi, BI, CI> Iterator for DecodeSymbols<'bi, BI, CI>
+impl<'a, Stream, I, C, S> Iterator for DecodeSymbols<'a, Stream, I, S>
 where
-    BI: Iterator<Item = bool>,
-    CI: Iterator,
-    CI::Item: DecoderCodebook,
-{
-    type Item = Result<usize, DecodingError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(
-            self.codebooks
-                .next()?
-                .decode_symbol(&mut *self.bit_iterator),
-        )
-    }
-}
-
-#[derive(Debug)]
-pub struct DecodeIidSymbols<'bi, 'c, BI, C> {
-    bit_iterator: &'bi mut BI,
-    codebook: &'c C,
-    amt: usize,
-}
-
-impl<'bi, 'c, BI, C> Iterator for DecodeIidSymbols<'bi, 'c, BI, C>
-where
-    BI: Iterator<Item = bool>,
+    S: backends::Semantics,
+    Stream: ReadBitStream<S>,
     C: DecoderCodebook,
+    I: Iterator<Item = C>,
 {
-    type Item = Result<usize, DecodingError>;
+    type Item =
+        Result<C::Symbol, CoderError<SymbolCodeError<C::InvalidCodeword>, Stream::ReadError>>;
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.amt != 0 {
-            self.amt -= 1;
-            Some(self.codebook.decode_symbol(&mut *self.bit_iterator))
-        } else {
-            None
+        Some(self.bit_stream.decode_symbol(self.codebooks.next()?))
+    }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.codebooks.size_hint()
+    }
+}
+
+impl<'a, Stream, I, C, S> ExactSizeIterator for DecodeSymbols<'a, Stream, I, S>
+where
+    S: backends::Semantics,
+    Stream: ReadBitStream<S>,
+    C: DecoderCodebook,
+    I: ExactSizeIterator<Item = C>,
+{
+}
+
+// ADAPTER THAT TURNS A BACKEND INTO A BIT STREAM =============================
+
+/// Generic symbol coder for 3 out of 4 possible cases
+///
+/// You likely won't spell out this type explicitly. It's more convenient to use one of the
+/// type aliases [`QueueEncoder`] or [`StackCoder`] (or the more opinionated aliases
+/// [`DefaultQueueEncoder`] and [`DefaultStackCoder`]).
+///
+/// Depending on the type parameter `S`, this type supports:
+/// - encoding on a queue (i.e., writing prefix codes); this is type aliased as
+///   [`QueueEncoder`].
+/// - encoding and decoding on a stack (i.e., writing suffix codes and reading them back in
+///   reoverserder). This is type aliased as [`StackCoder`].
+///
+/// This type does not support decoding from a queue. Use a [`QueueDecoder`] for this
+/// purpose.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct SymbolCoder<Word: BitArray, S: backends::Semantics, B = Vec<Word>> {
+    backend: B,
+    current_word: Word,
+
+    /// A `BitArray` with at most one set bit:
+    /// - `mask_last_written == 0` if all bits written so far have already been flushed to
+    ///   the backend (in case of a write backend) and/or if reading the next bit would
+    ///   require obtaining a new word from the backend (in case of a read backend); This
+    ///   includes the case of an empty `QueueEncoder`. In all of these cases, `current_word`
+    ///  as to be zero.
+    /// - otherwise, `mask_last_written` has a single set bit which marks the position in
+    ///   `current_word` where the next bit should be written if any.
+    mask_last_written: Word,
+
+    semantics: PhantomData<S>,
+}
+
+pub type QueueEncoder<Word, B = Vec<Word>> = SymbolCoder<Word, Queue, B>;
+pub type StackCoder<Word, B = Vec<Word>> = SymbolCoder<Word, Stack, B>;
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct QueueDecoder<Word: BitArray, B> {
+    backend: B,
+    current_word: Word,
+
+    /// If zero then `current_word` is meaningless and has to be read in from `backend`.
+    mask_next_to_read: Word,
+}
+
+pub type DefaultQueueEncoder = QueueEncoder<u32, Vec<u32>>;
+pub type DefaultQueueDecoder = QueueDecoder<u32, Vec<u32>>;
+pub type DefaultStackCoder = StackCoder<u32, Vec<u32>>;
+
+// GENERIC IMPLEMENTATIONS ====================================================
+
+impl<Word: BitArray, S: backends::Semantics, B> SymbolCoder<Word, S, B> {
+    pub fn new() -> Self
+    where
+        B: Default,
+    {
+        Default::default()
+    }
+
+    /// Returns the correct len for, e.g., `B = Vec<Word>` regardless of whether `S = Queue`
+    /// or `S = Stack`.
+    pub fn len(&self) -> usize
+    where
+        B: BoundedReadBackend<Word, Stack>,
+    {
+        self.backend
+            .remaining()
+            .checked_mul(Word::BITS)
+            .expect("len overflows addressable space")
+            .checked_add(if self.mask_last_written == Word::zero() {
+                0
+            } else {
+                (self.mask_last_written.trailing_zeros() + 1) as usize
+            })
+            .expect("len overflows addressable space")
+    }
+
+    /// See comment for [`len`].
+    pub fn is_empty(&self) -> bool
+    where
+        B: BoundedReadBackend<Word, Stack>,
+    {
+        self.mask_last_written == Word::zero() && self.backend.is_exhausted()
+    }
+}
+
+// SPECIAL IMPLEMENTATIONS FOR VEC ============================================
+
+impl<Word: BitArray> StackCoder<Word, Vec<Word>> {
+    pub fn with_bit_capacity(bit_capacity: usize) -> Self {
+        Self {
+            // Reserve capacity for one additional bit for sealing.
+            backend: Vec::with_capacity(bit_capacity / Word::BITS + 1),
+            ..Default::default()
         }
     }
 }
 
-// fn f<'buf>(iter: BitVecIter<'buf, u32>, codebooks: Vec<DecoderHuffmanTree>) {
-//     let codebook_slice = &codebooks[..];
-//     let new_iter = iter.decode_symbols(codebook_slice);
-
-//     // return new_iter;  <-- forbidden since `iter` and `codebook` will be dropped
-// }
-
-impl<T> GenericVec<T> for Vec<T> {
-    fn with_capacity(capacity: usize) -> Self {
-        Vec::with_capacity(capacity)
-    }
-
-    fn push(&mut self, x: T) {
-        self.push(x)
-    }
-
-    fn pop(&mut self) -> Option<T> {
-        self.pop()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.is_empty()
-    }
-
-    fn clear(&mut self) {
-        self.clear()
-    }
-
-    fn resize_with(&mut self, new_len: usize, f: impl FnMut() -> T) {
-        self.resize_with(new_len, f)
+impl<Word: BitArray> QueueEncoder<Word, Vec<Word>> {
+    pub fn with_bit_capacity(bit_capacity: usize) -> Self {
+        Self {
+            backend: Vec::with_capacity((bit_capacity + Word::BITS - 1) / Word::BITS),
+            ..Default::default()
+        }
     }
 }
 
-impl<T> GenericVec<T> for SmallVec<[T; 1]> {
-    fn with_capacity(capacity: usize) -> Self {
-        SmallVec::with_capacity(capacity)
+// IMPLEMENTATIONS FOR A QUEUE ================================================
+
+impl<Word: BitArray, B> QueueEncoder<Word, B> {
+    pub fn from_compressed(compressed: B) -> Self
+    where
+        B: Default,
+    {
+        Self {
+            backend: compressed,
+            ..Default::default()
+        }
     }
 
-    fn push(&mut self, x: T) {
-        self.push(x)
+    pub fn into_decoder(self) -> Result<QueueDecoder<Word, B::IntoReadBackend>, B::WriteError>
+    where
+        B: WriteBackend<Word> + IntoReadBackend<Word, Queue>,
+    {
+        Ok(QueueDecoder::from_compressed(
+            self.into_compressed()?.into_read_backend(),
+        ))
     }
 
-    fn pop(&mut self) -> Option<T> {
-        self.pop()
+    pub fn into_compressed(mut self) -> Result<B, B::WriteError>
+    where
+        B: WriteBackend<Word>,
+    {
+        // Queues don't need to be sealed, so just flush the remaining word if any.
+        if self.mask_last_written != Word::zero() {
+            self.backend.write(self.current_word)?;
+        }
+        Ok(self.backend)
     }
 
-    fn is_empty(&self) -> bool {
-        self.is_empty()
+    pub fn into_overshooting_iter(
+        self,
+    ) -> Result<
+        impl Iterator<Item = Result<bool, <B::IntoReadBackend as ReadBackend<Word, Queue>>::ReadError>>,
+        B::WriteError,
+    >
+    where
+        B: WriteBackend<Word> + IntoReadBackend<Word, Queue>,
+    {
+        // TODO: return `impl ExactSizeIterator` for `B: BoundedReadBackend` once
+        // specialization is stable
+        self.into_decoder()
+    }
+}
+
+impl<Word: BitArray, B: WriteBackend<Word>> WriteBitStream<Queue> for QueueEncoder<Word, B> {
+    type WriteError = B::WriteError;
+
+    fn write_bit(&mut self, bit: bool) -> Result<(), Self::WriteError> {
+        let write_mask = self.mask_last_written << 1;
+        self.mask_last_written = if write_mask != Word::zero() {
+            let new_bit = if bit { write_mask } else { Word::zero() };
+            self.current_word = self.current_word | new_bit;
+            write_mask
+        } else {
+            if self.mask_last_written != Word::zero() {
+                self.backend.write(self.current_word)?;
+            }
+            self.current_word = if bit { Word::one() } else { Word::zero() };
+            Word::one()
+        };
+
+        Ok(())
     }
 
-    fn clear(&mut self) {
-        self.clear()
+    #[inline(always)]
+    fn encode_symbol<Symbol, C>(
+        &mut self,
+        symbol: Symbol,
+        codebook: C,
+    ) -> Result<(), EncoderError<Self::WriteError>>
+    where
+        C: EncoderCodebook,
+        Symbol: Borrow<C::Symbol>,
+    {
+        codebook.encode_symbol_prefix(symbol, |bit| self.write_bit(bit))
+    }
+}
+
+impl<Word: BitArray, B> QueueDecoder<Word, B> {
+    pub fn from_compressed(compressed: B) -> Self {
+        Self {
+            backend: compressed,
+            current_word: Word::zero(),
+            mask_next_to_read: Word::zero(),
+        }
     }
 
-    fn resize_with(&mut self, new_len: usize, f: impl FnMut() -> T) {
-        self.resize_with(new_len, f)
+    /// We don't keep track of the exact length of a queue, so we can only say with
+    /// certainty if we can detect that there's something left.
+    pub fn maybe_exhausted(&self) -> bool
+    where
+        B: BoundedReadBackend<Word, Queue>,
+    {
+        let mask_remaining_bits = !self.mask_next_to_read.wrapping_sub(&Word::one());
+        self.current_word & mask_remaining_bits == Word::zero() && self.backend.is_exhausted()
+    }
+}
+
+impl<Word: BitArray, B: ReadBackend<Word, Queue>> ReadBitStream<Queue> for QueueDecoder<Word, B> {
+    type ReadError = B::ReadError;
+
+    #[inline(always)]
+    fn decode_symbol<C: DecoderCodebook>(
+        &mut self,
+        codebook: C,
+    ) -> Result<C::Symbol, CoderError<SymbolCodeError<C::InvalidCodeword>, Self::ReadError>> {
+        codebook.decode_symbol(self)
+    }
+
+    fn read_bit(&mut self) -> Result<Option<bool>, Self::ReadError> {
+        if self.mask_next_to_read == Word::zero() {
+            match self.backend.read() {
+                Ok(Some(next_word)) => {
+                    self.current_word = next_word;
+                    self.mask_next_to_read = Word::one();
+                }
+                Ok(None) => return Ok(None),
+                Err(err) => return Err(err),
+            }
+        }
+
+        let bit = self.current_word & self.mask_next_to_read != Word::zero();
+        // No need to unset the bit in `current_word` since we're only reading, never writing.
+        self.mask_next_to_read = self.mask_next_to_read << 1;
+        Ok(Some(bit))
+    }
+}
+
+impl<Word: BitArray, B: ReadBackend<Word, Queue>> Iterator for QueueDecoder<Word, B> {
+    type Item = Result<bool, B::ReadError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.read_bit().transpose()
+    }
+}
+
+// IMPLEMENTATIONS FOR A STACK ================================================
+
+impl<Word: BitArray, B: WriteBackend<Word>> StackCoder<Word, B> {
+    /// # Errors
+    ///
+    /// - Returns `Err(CoderError::FrontendError(compressed))` if `compressed` ends in a
+    ///   zero which is not allowed for stacks (because we need a terminal "one" bit to
+    ///   identify the head position). Note that "EOF" is not considered an error, and the
+    ///   method will return with a success if called with an empty backend.
+    /// - Returns `Err(CoderError::BackendError(err))` if reading the last word from the
+    ///   backend resulted in `Err(err)`.
+    /// - Returns `Ok(stack_coder)` in all other cases, including the case where the backend
+    ///   is empty.
+    pub fn from_compressed(mut compressed: B) -> Result<Self, CoderError<B, B::ReadError>>
+    where
+        B: ReadBackend<Word, Stack>,
+    {
+        let (current_word, mask_last_written) = if let Some(last_word) = compressed.read()? {
+            if last_word == Word::zero() {
+                // A stack of compressed data must not end in a zero word.
+                return Err(CoderError::FrontendError(compressed));
+            }
+            let mask_end_bit = Word::one() << last_word.trailing_zeros() as usize;
+            (last_word ^ mask_end_bit, mask_end_bit >> 1)
+        } else {
+            (Word::zero(), Word::zero())
+        };
+
+        Ok(Self {
+            backend: compressed,
+            current_word,
+            mask_last_written,
+            semantics: PhantomData,
+        })
+    }
+
+    pub fn into_compressed(mut self) -> Result<B, B::WriteError> {
+        // Stacks need to be sealed by one additional bit so that the end can be discovered.
+        self.write_bit(true)?;
+        if self.mask_last_written != Word::zero() {
+            self.backend.write(self.current_word)?;
+        }
+        Ok(self.backend)
+    }
+
+    #[inline(always)]
+    pub fn encode_symbols_reverse<Symbol, C, I>(
+        &mut self,
+        symbols_and_codebooks: I,
+    ) -> Result<(), EncoderError<B::WriteError>>
+    where
+        Symbol: Borrow<C::Symbol>,
+        C: EncoderCodebook,
+        I: IntoIterator<Item = (Symbol, C)>,
+        I::IntoIter: DoubleEndedIterator,
+    {
+        self.encode_symbols(symbols_and_codebooks.into_iter().rev())
+    }
+
+    #[inline(always)]
+    pub fn encode_iid_symbols_reverse<Symbol, C, I>(
+        &mut self,
+        symbols: I,
+        codebook: &C,
+    ) -> Result<(), EncoderError<B::WriteError>>
+    where
+        Symbol: Borrow<C::Symbol>,
+        C: EncoderCodebook,
+        I: IntoIterator<Item = Symbol>,
+        I::IntoIter: DoubleEndedIterator,
+    {
+        self.encode_iid_symbols(symbols.into_iter().rev(), codebook)
+    }
+
+    pub fn into_decoder(self) -> SymbolCoder<Word, Stack, B::IntoReadBackend>
+    where
+        B: IntoReadBackend<Word, Stack>,
+    {
+        SymbolCoder {
+            backend: self.backend.into_read_backend(),
+            current_word: self.current_word,
+            mask_last_written: self.mask_last_written,
+            semantics: PhantomData,
+        }
+    }
+
+    pub fn as_decoder<'a>(&'a self) -> SymbolCoder<Word, Stack, B::AsReadBackend>
+    where
+        B: AsReadBackend<'a, Word, Stack>,
+    {
+        SymbolCoder {
+            backend: self.backend.as_read_backend(),
+            current_word: self.current_word,
+            mask_last_written: self.mask_last_written,
+            semantics: PhantomData,
+        }
+    }
+
+    /// Consumes the coder and returns an iterator over bits (in reverse direction)
+    ///
+    /// You often don't need to call this method since a `StackCoder` is already an iterator
+    /// if the backend implements `ReadBackend<Word, Stack>` (as the default backend
+    /// `Vec<Word>` does).
+    pub fn into_iter(
+        self,
+    ) -> impl Iterator<Item = Result<bool, <B::IntoReadBackend as ReadBackend<Word, Stack>>::ReadError>>
+    where
+        B: IntoReadBackend<Word, Stack>,
+    {
+        self.into_decoder()
+    }
+
+    /// Returns an iterator over bits (in reverse direction) that leaves the current coder untouched.
+    ///
+    /// You often don't need to call this method since a `StackCoder` is already an iterator
+    /// if the backend implements `ReadBackend<Word, Stack>` (as the default backend
+    /// `Vec<Word>` does).
+    pub fn iter<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = Result<bool, <<B as AsReadBackend<'a,Word,Stack>>::AsReadBackend as ReadBackend<Word, Stack>>::ReadError>> + 'a
+    where
+        B: AsReadBackend<'a, Word, Stack>,
+    {
+        self.as_decoder()
+    }
+}
+
+impl<Word: BitArray, B: WriteBackend<Word>> WriteBitStream<Stack> for StackCoder<Word, B> {
+    type WriteError = B::WriteError;
+
+    fn write_bit(&mut self, bit: bool) -> Result<(), Self::WriteError> {
+        let write_mask = self.mask_last_written << 1;
+        self.mask_last_written = if write_mask != Word::zero() {
+            let new_bit = if bit { write_mask } else { Word::zero() };
+            self.current_word = self.current_word | new_bit;
+            write_mask
+        } else {
+            if self.mask_last_written != Word::zero() {
+                self.backend.write(self.current_word)?;
+            }
+            self.current_word = if bit { Word::one() } else { Word::zero() };
+            Word::one()
+        };
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn encode_symbol<Symbol, C>(
+        &mut self,
+        symbol: Symbol,
+        codebook: C,
+    ) -> Result<(), EncoderError<Self::WriteError>>
+    where
+        Symbol: Borrow<C::Symbol>,
+        C: EncoderCodebook,
+    {
+        codebook.encode_symbol_suffix(symbol, |bit| self.write_bit(bit))
+    }
+}
+
+impl<Word: BitArray, B: ReadBackend<Word, Stack>> ReadBitStream<Stack> for StackCoder<Word, B> {
+    type ReadError = B::ReadError;
+
+    #[inline(always)]
+    fn decode_symbol<C: DecoderCodebook>(
+        &mut self,
+        codebook: C,
+    ) -> Result<C::Symbol, CoderError<SymbolCodeError<C::InvalidCodeword>, Self::ReadError>> {
+        codebook.decode_symbol(self)
+    }
+
+    fn read_bit(&mut self) -> Result<Option<bool>, Self::ReadError> {
+        if self.mask_last_written == Word::zero() {
+            self.current_word = if let Some(next_word) = self.backend.read()? {
+                next_word
+            } else {
+                // Reached end of stream (this is considered `Ok`).
+                return Ok(None);
+            };
+            self.mask_last_written = Word::one() << (Word::BITS - 1);
+        }
+
+        let bit = self.current_word & self.mask_last_written;
+        self.current_word = self.current_word ^ bit;
+        self.mask_last_written = self.mask_last_written >> 1;
+        Ok(Some(bit != Word::zero()))
+    }
+}
+
+impl<Word: BitArray, B: ReadBackend<Word, Stack>> Iterator for StackCoder<Word, B> {
+    type Item = Result<bool, B::ReadError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.read_bit().transpose()
+    }
+
+    // TODO: override `size_hint` for `B: BoundedReadBackend` when specialization is stable.
+}
+
+impl<Word: BitArray, B: BoundedReadBackend<Word, Stack>> ExactSizeIterator for StackCoder<Word, B> {
+    fn len(&self) -> usize {
+        StackCoder::len(self)
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::{
-        huffman::{DecoderHuffmanTree, EncoderHuffmanTree},
+        codebooks::huffman::{DecoderHuffmanTree, EncoderHuffmanTree},
         *,
     };
+
+    use crate::UnwrapInfallible;
 
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},
@@ -590,54 +609,55 @@ mod test {
     extern crate std;
 
     #[test]
-    fn bit_vec() {
-        let mut bit_vec = BitVec::<u32>::new();
-        assert_eq!(bit_vec.len(), 0);
-        assert!(bit_vec.is_empty());
+    fn bit_queue() {
+        let mut bit_queue = DefaultQueueEncoder::new();
+        assert_eq!(bit_queue.len(), 0);
+        assert!(bit_queue.is_empty());
 
         let amt = 150;
         let mut bool_vec = Vec::with_capacity(amt);
         let mut rng = Xoshiro256StarStar::seed_from_u64(123);
         for _ in 0..amt {
             let bit = rng.next_u32() % 2 != 0;
-            bit_vec.push(bit);
+            bit_queue.write_bit(bit).unwrap();
             bool_vec.push(bit);
         }
 
-        assert_eq!(bit_vec.len(), amt);
-        assert!(!bit_vec.is_empty());
+        assert_eq!(bit_queue.len(), amt);
+        assert!(!bit_queue.is_empty());
 
-        for bit in bit_vec.into_iter_reverse() {
-            assert_eq!(bit, bool_vec.pop().unwrap());
+        let mut queue_iter = bit_queue.into_overshooting_iter().unwrap_infallible();
+        for expected in bool_vec {
+            assert_eq!(queue_iter.next().unwrap().unwrap_infallible(), expected);
         }
 
-        assert!(bool_vec.is_empty());
+        for remaining in queue_iter {
+            assert_eq!(remaining.unwrap_infallible(), false);
+        }
     }
 
     #[test]
-    fn bit_vec_iter() {
-        let amt = 100;
-        let mut bit_vec = BitVec::<u16>::new();
+    fn bit_stack() {
+        let mut bit_stack = DefaultStackCoder::new();
+        assert_eq!(bit_stack.len(), 0);
+        assert!(bit_stack.is_empty());
+
+        let amt = 150;
         let mut bool_vec = Vec::with_capacity(amt);
-        let mut rng = Xoshiro256StarStar::seed_from_u64(1234);
+        let mut rng = Xoshiro256StarStar::seed_from_u64(123);
         for _ in 0..amt {
             let bit = rng.next_u32() % 2 != 0;
-            bit_vec.push(bit);
+            bit_stack.write_bit(bit).unwrap();
             bool_vec.push(bit);
         }
-        assert_eq!(bit_vec.len(), amt);
-        assert!(!bit_vec.is_empty());
 
-        let mut count = 0;
-        for bit in bit_vec.iter() {
-            assert_eq!(bit, bool_vec[count]);
-            count += 1;
-        }
-        assert_eq!(count, amt);
+        assert_eq!(bit_stack.len(), amt);
+        assert!(!bit_stack.is_empty());
+        assert!(bool_vec.into_iter().rev().eq(bit_stack.map(Result::unwrap)));
     }
 
     #[test]
-    fn encode_decode_iid() {
+    fn encode_decode_iid_queue() {
         let amt = 1000;
         let mut rng = Xoshiro256StarStar::seed_from_u64(12345);
         let symbols = (0..amt)
@@ -645,23 +665,54 @@ mod test {
             .collect::<Vec<_>>();
 
         let probabilities = [2, 2, 4, 1, 1];
-        let encoder = EncoderHuffmanTree::from_probabilities::<u32, _>(&probabilities);
-        let decoder = DecoderHuffmanTree::from_probabilities::<u32, _>(&probabilities);
+        let encoder_codebook = EncoderHuffmanTree::from_probabilities::<u32, _>(&probabilities);
+        let decoder_codebook = DecoderHuffmanTree::from_probabilities::<u32, _>(&probabilities);
 
-        let mut compressed = BitVec::<u32>::new();
+        let mut encoder = DefaultQueueEncoder::new();
 
-        assert_eq!(compressed.len(), 0);
-        compressed.encode_iid_symbols(&symbols, &encoder).unwrap();
-        assert!(compressed.len() > amt);
+        assert_eq!(encoder.len(), 0);
+        encoder
+            .encode_iid_symbols(&symbols, &encoder_codebook)
+            .unwrap();
+        assert!(encoder.len() > amt);
 
-        let mut bit_iter = compressed.iter();
-        let reconstructed = bit_iter
-            .decode_iid_symbols(amt, &decoder)
+        let mut decoder = encoder.into_decoder().unwrap_infallible();
+        let reconstructed = decoder
+            .decode_iid_symbols(amt, &decoder_codebook)
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
         assert_eq!(reconstructed, symbols);
-        assert!(bit_iter.next().is_none());
+        assert!(decoder.maybe_exhausted());
+    }
+
+    #[test]
+    fn encode_decode_iid_stack() {
+        let amt = 1000;
+        let mut rng = Xoshiro256StarStar::seed_from_u64(12345);
+        let symbols = (0..amt)
+            .map(|_| (rng.next_u32() % 5) as usize)
+            .collect::<Vec<_>>();
+
+        let probabilities = [2, 2, 4, 1, 1];
+        let encoder_codebook = EncoderHuffmanTree::from_probabilities::<u32, _>(&probabilities);
+        let decoder_codebook = DecoderHuffmanTree::from_probabilities::<u32, _>(&probabilities);
+
+        let mut coder = DefaultStackCoder::new();
+
+        assert_eq!(coder.len(), 0);
+        coder
+            .encode_iid_symbols_reverse(&symbols, &encoder_codebook)
+            .unwrap();
+        assert!(coder.len() > amt);
+
+        let reconstructed = coder
+            .decode_iid_symbols(amt, &decoder_codebook)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(reconstructed, symbols);
+        assert!(coder.is_empty());
     }
 
     #[test]
@@ -677,7 +728,7 @@ mod test {
         }
 
         let amt = 1000;
-        let mut compressed = BitVec::<u32>::new();
+        let mut compressed = DefaultQueueEncoder::new();
 
         assert_eq!(compressed.len(), 0);
         compressed
@@ -690,8 +741,8 @@ mod test {
             .unwrap();
         assert!(compressed.len() > amt);
 
-        let mut bit_iter = compressed.iter();
-        let reconstructed = bit_iter
+        let mut decoder = compressed.into_decoder().unwrap_infallible();
+        let reconstructed = decoder
             .decode_symbols(
                 iter_probs_and_symbols(amt)
                     .map(|(probs, _)| DecoderHuffmanTree::from_probabilities::<u32, _>(&probs)),
@@ -699,6 +750,6 @@ mod test {
             .map(Result::unwrap);
 
         assert!(reconstructed.eq(iter_probs_and_symbols(amt).map(|(_, symbol)| symbol)));
-        assert!(bit_iter.next().is_none());
+        assert!(decoder.maybe_exhausted());
     }
 }

@@ -114,17 +114,18 @@ use core::{
     convert::Infallible,
     fmt::{Debug, Display},
 };
+use smallvec::SmallVec;
 
 // READ WRITE LOGICS ==========================================================
 
-pub trait Semantics {}
+pub trait Semantics: Default {}
 
-#[allow(missing_debug_implementations)] // Can't be instantiated.
-pub enum Stack {}
+#[derive(Debug, Default)]
+pub struct Stack {}
 impl Semantics for Stack {}
 
-#[allow(missing_debug_implementations)] // Can't be instantiated.
-pub enum Queue {}
+#[derive(Debug, Default)]
+pub struct Queue {}
 impl Semantics for Queue {}
 
 // MAIN TRAITS FOR CAPABILITIES OF BACKENDS ===================================
@@ -252,6 +253,15 @@ impl<Word> WriteBackend<Word> for Vec<Word> {
         self.push(word);
         Ok(())
     }
+
+    fn extend(&mut self, iter: impl Iterator<Item = Word>) -> Result<(), Self::WriteError> {
+        core::iter::Extend::extend(self, iter);
+        Ok(())
+    }
+
+    fn maybe_full(&self) -> bool {
+        false
+    }
 }
 
 impl<Word> ReadBackend<Word, Stack> for Vec<Word> {
@@ -276,6 +286,66 @@ impl<Word> BoundedReadBackend<Word, Stack> for Vec<Word> {
 }
 
 impl<Word> PosBackend<Word> for Vec<Word> {
+    fn pos(&self) -> usize {
+        self.len()
+    }
+}
+
+// IMPLEMENTATIONS FOR `SmallVec<Word>` =======================================
+
+impl<Array> WriteBackend<Array::Item> for SmallVec<Array>
+where
+    Array: smallvec::Array,
+{
+    type WriteError = Infallible;
+
+    #[inline(always)]
+    fn write(&mut self, word: Array::Item) -> Result<(), Self::WriteError> {
+        self.push(word);
+        Ok(())
+    }
+
+    fn extend(&mut self, iter: impl Iterator<Item = Array::Item>) -> Result<(), Self::WriteError> {
+        core::iter::Extend::extend(self, iter);
+        Ok(())
+    }
+
+    fn maybe_full(&self) -> bool {
+        false
+    }
+}
+
+impl<Array> ReadBackend<Array::Item, Stack> for SmallVec<Array>
+where
+    Array: smallvec::Array,
+{
+    type ReadError = Infallible;
+
+    #[inline(always)]
+    fn read(&mut self) -> Result<Option<Array::Item>, Self::ReadError> {
+        Ok(self.pop())
+    }
+
+    #[inline(always)]
+    fn maybe_exhausted(&self) -> bool {
+        self.is_empty()
+    }
+}
+
+impl<Array> BoundedReadBackend<Array::Item, Stack> for SmallVec<Array>
+where
+    Array: smallvec::Array,
+{
+    #[inline(always)]
+    fn remaining(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<Array> PosBackend<Array::Item> for SmallVec<Array>
+where
+    Array: smallvec::Array,
+{
     fn pos(&self) -> usize {
         self.len()
     }

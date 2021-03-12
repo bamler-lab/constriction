@@ -6,15 +6,11 @@ use num::Float;
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
 use core::{borrow::Borrow, cmp::Reverse, convert::Infallible, marker::PhantomData, ops::Add};
 
-use super::{Codebook, DecoderCodebook, DecodingError, EncoderCodebook};
-use crate::{BitArray, EncoderFrontendError, UnwrapInfallible};
+use super::{Codebook, DecoderCodebook, EncoderCodebook, SymbolCodeError};
+use crate::{BitArray, CoderError, EncoderError, EncoderFrontendError, UnwrapInfallible};
 
-/// The type parameter `W` is used in the implementation of [`EncoderCodebook`],
-/// which temporarily builds up the reversed codeword in a `SmallBitVec<W>` before
-/// reversing it back to its intended order. The default `W = usize` is usually a
-/// good choice.
 #[derive(Debug, Clone)]
-pub struct EncoderHuffmanTree<W: BitArray = usize> {
+pub struct EncoderHuffmanTree {
     /// A `Vec` of size `num_symbols * 2 - 1`, where the first `num_symbol` items
     /// correspond to the symbols, i.e., leaf nodes of the Huffman tree, and the
     /// remaining items are ancestors. An entry with value `x: usize` represents a node
@@ -27,8 +23,6 @@ pub struct EncoderHuffmanTree<W: BitArray = usize> {
     ///
     /// It is guaranteed that `num_symbols != 0` i.e., `nodes` is not empty.
     nodes: Vec<usize>,
-
-    phantom: PhantomData<W>,
 }
 
 impl EncoderHuffmanTree {
@@ -107,27 +101,27 @@ impl EncoderHuffmanTree {
             next_node_index += 1;
         }
 
-        Ok(Self {
-            nodes,
-            phantom: PhantomData,
-        })
+        Ok(Self { nodes })
     }
 }
 
-impl<W: BitArray> Codebook for EncoderHuffmanTree<W> {
+impl Codebook for EncoderHuffmanTree {
+    type Symbol = usize;
+
     fn num_symbols(&self) -> usize {
         self.nodes.len() / 2 + 1
     }
 }
 
-impl<W: BitArray> EncoderCodebook for EncoderHuffmanTree<W> {
-    fn encode_symbol_suffix(
+impl EncoderCodebook for EncoderHuffmanTree {
+    fn encode_symbol_suffix<BackendError>(
         &self,
-        symbol: usize,
-        mut emit: impl FnMut(bool),
-    ) -> Result<(), EncoderFrontendError> {
+        symbol: impl Borrow<Self::Symbol>,
+        mut emit: impl FnMut(bool) -> Result<(), BackendError>,
+    ) -> Result<(), EncoderError<BackendError>> {
+        let symbol = *symbol.borrow();
         if symbol > self.nodes.len() / 2 {
-            return Err(EncoderFrontendError::ImpossibleSymbol);
+            return Err(EncoderFrontendError::ImpossibleSymbol.into_coder_error());
         }
 
         let mut node_index = symbol;
@@ -143,7 +137,7 @@ impl<W: BitArray> EncoderCodebook for EncoderHuffmanTree<W> {
             if node == 0 {
                 break;
             }
-            emit(node & 1 != 0);
+            emit(node & 1 != 0)?;
             node_index = node >> 1;
         }
 
@@ -223,22 +217,29 @@ impl DecoderHuffmanTree {
 }
 
 impl Codebook for DecoderHuffmanTree {
+    type Symbol = usize;
+
     fn num_symbols(&self) -> usize {
         self.nodes.len() + 1
     }
 }
 
 impl DecoderCodebook for DecoderHuffmanTree {
-    fn decode_symbol(
+    type InvalidCodeword = Infallible;
+
+    fn decode_symbol<BackendError>(
         &self,
-        mut source: impl Iterator<Item = bool>,
-    ) -> Result<usize, DecodingError> {
+        mut source: impl Iterator<Item = Result<bool, BackendError>>,
+    ) -> Result<Self::Symbol, CoderError<SymbolCodeError<Self::InvalidCodeword>, BackendError>>
+    {
         let num_nodes = self.nodes.len();
         let num_symbols = num_nodes + 1;
         let mut node_index = 2 * num_nodes; // Start at root node.
 
         while node_index >= num_symbols {
-            let bit = source.next().ok_or(DecodingError::OutOfCompressedData)?;
+            let bit = source
+                .next()
+                .ok_or(SymbolCodeError::OutOfCompressedData.into_coder_error())??;
             unsafe {
                 // SAFETY:
                 // - `node_index >= num_symbols` within this loop, so `node_index - num_symbols`
@@ -313,18 +314,21 @@ impl<F: Float> Add for NonNanFloat<F> {
 
 #[cfg(test)]
 mod test {
-    use super::{super::SmallBitVec, *};
+    use super::{
+        super::{super::WriteBitStream, SmallBitStack},
+        *,
+    };
     extern crate std;
     use std::string::String;
 
     #[test]
     fn encoder_huffman_tree() {
-        fn encode_all_symbols<W: BitArray>(tree: &EncoderHuffmanTree<W>) -> Vec<String> {
+        fn encode_all_symbols(tree: &EncoderHuffmanTree) -> Vec<String> {
             (0..tree.num_symbols())
                 .map(|symbol| {
                     let mut codeword = String::new();
                     tree.encode_symbol_prefix(symbol, |bit| {
-                        codeword.push(if bit { '1' } else { '0' })
+                        Result::<_, Infallible>::Ok(codeword.push(if bit { '1' } else { '0' }))
                     })
                     .unwrap();
                     codeword
@@ -367,16 +371,15 @@ mod test {
 
     #[test]
     fn decoder_huffman_tree() {
-        fn test_decoding_all_symbols<W: BitArray>(
+        fn test_decoding_all_symbols(
             decoder_tree: &DecoderHuffmanTree,
-            encoder_tree: &EncoderHuffmanTree<W>,
+            encoder_tree: &EncoderHuffmanTree,
         ) {
             for symbol in 0..encoder_tree.num_symbols() {
-                let mut codeword = SmallBitVec::<usize>::new();
+                let mut codeword = SmallBitStack::new();
                 encoder_tree
-                    .encode_symbol_suffix(symbol, |bit| codeword.push(bit))
+                    .encode_symbol_suffix(symbol, |bit| codeword.write_bit(bit))
                     .unwrap();
-                let mut codeword = codeword.into_iter_reverse();
                 let decoded = decoder_tree.decode_symbol(&mut codeword).unwrap();
                 assert_eq!(symbol, decoded);
                 assert!(codeword.next().is_none());

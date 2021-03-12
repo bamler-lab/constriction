@@ -1051,7 +1051,7 @@ where
     {
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
+            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
         if (self.state >> (State::BITS - PRECISION)) >= probability.get().into().into() {
             self.flush_state()?;

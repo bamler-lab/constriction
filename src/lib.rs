@@ -277,6 +277,41 @@ use num::{
     PrimInt, Unsigned,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoderError<FrontendError, BackendError> {
+    FrontendError(FrontendError),
+    BackendError(BackendError),
+}
+
+impl<BackendError: Display, FrontendError: Display> Display
+    for CoderError<FrontendError, BackendError>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::FrontendError(err) => write!(f, "Invalid compressed data: {}", err),
+            Self::BackendError(err) => write!(f, "Error while reading compressed data: {}", err),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<BackendError: Error, FrontendError: Error> Error for CoderError<FrontendError, BackendError> {}
+
+impl<FrontendError, BackendError> From<BackendError> for CoderError<FrontendError, BackendError> {
+    fn from(read_error: BackendError) -> Self {
+        Self::BackendError(read_error)
+    }
+}
+
+impl<FrontendError> CoderError<FrontendError, Infallible> {
+    fn into_frontend_error(self) -> FrontendError {
+        match self {
+            CoderError::FrontendError(frontend_error) => frontend_error,
+            CoderError::BackendError(infallible) => match infallible {},
+        }
+    }
+}
+
 type EncoderError<BackendError> = CoderError<EncoderFrontendError, BackendError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,42 +342,10 @@ impl Display for EncoderFrontendError {
 impl Error for EncoderFrontendError {}
 
 impl EncoderFrontendError {
-    fn into_encoder_error<BackendError>(self) -> EncoderError<BackendError> {
+    fn into_coder_error<BackendError>(self) -> EncoderError<BackendError> {
         EncoderError::FrontendError(self)
     }
 }
-
-/// TODO: rename into `CoderError<FrontendError, BackendError>`, and use it for both
-/// encodand decoding. (Force encoders to use a common `FrontendError`, which only has the
-/// variant `InvalidSymbol`.)
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CoderError<FrontendError, BackendError> {
-    FrontendError(FrontendError),
-    BackendError(BackendError),
-}
-
-impl<BackendError: Display, FrontendError: Display> Display
-    for CoderError<FrontendError, BackendError>
-{
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::FrontendError(err) => write!(f, "Invalid compressed data: {}", err),
-            Self::BackendError(err) => write!(f, "Error while reading compressed data: {}", err),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl<BackendError: Error, FrontendError: Error> Error for CoderError<FrontendError, BackendError> {}
-
-impl<BackendError: Display, FrontendError: Display> From<BackendError>
-    for CoderError<FrontendError, BackendError>
-{
-    fn from(read_error: BackendError) -> Self {
-        Self::BackendError(read_error)
-    }
-}
-
 /// A trait for bit strings of fixed (and usually small) length.
 ///
 /// Short fixed-length bit strings are fundamental building blocks of efficient

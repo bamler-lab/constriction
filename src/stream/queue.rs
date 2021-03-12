@@ -471,13 +471,13 @@ where
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
+            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
         let scale = self.state.range.get() >> PRECISION;
         // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
         self.state.range = (scale * probability.get().into().into())
             .into_nonzero()
-            .ok_or(EncoderFrontendError::ImpossibleSymbol.into_encoder_error())?;
+            .ok_or(EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
         let new_lower = self
             .state
             .lower
