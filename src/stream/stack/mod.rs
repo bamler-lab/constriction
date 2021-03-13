@@ -17,12 +17,12 @@ use num::cast::AsPrimitive;
 
 use super::{
     models::{DecoderModel, EncoderModel, EntropyModel},
-    AsDecoder, Code, Decode, Encode, Pos, Seek, TryCodingError,
+    AsDecoder, Code, Decode, Encode, IntoDecoder, Pos, Seek, TryCodingError,
 };
 use crate::{
     backends::{
-        self, AsReadBackend, AsSeekReadBackend, BoundedReadBackend, Cursor, IntoSeekReadBackend,
-        IteratorBackend, ReadBackend, ReverseReads, Stack, WriteBackend,
+        self, AsReadBackend, AsSeekReadBackend, BoundedReadBackend, Cursor, IntoReadBackend,
+        IntoSeekReadBackend, IteratorBackend, ReadBackend, ReverseReads, Stack, WriteBackend,
     },
     bit_array_to_chunks_truncated, BitArray, CoderError, EncoderError, EncoderFrontendError,
     NonZeroBitArray, UnwrapInfallible,
@@ -256,6 +256,24 @@ where
     }
 }
 
+impl<Word, State, Backend, const PRECISION: usize> IntoDecoder<PRECISION>
+    for AnsCoder<Word, State, Backend>
+where
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
+    Backend: WriteBackend<Word> + IntoReadBackend<Word, Stack>,
+{
+    type IntoDecoder = AnsCoder<Word, State, Backend::IntoReadBackend>;
+
+    fn into_decoder(self) -> Self::IntoDecoder {
+        AnsCoder {
+            bulk: self.bulk.into_read_backend(),
+            state: self.state,
+            phantom: PhantomData,
+        }
+    }
+}
+
 impl<'a, Word, State, Backend> From<&'a AnsCoder<Word, State, Backend>>
     for AnsCoder<Word, State, <Backend as AsReadBackend<'a, Word, Stack>>::AsReadBackend>
 where
@@ -277,9 +295,13 @@ impl<'a, Word, State, Backend, const PRECISION: usize> AsDecoder<'a, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: AsReadBackend<'a, Word, Stack>,
+    Backend: WriteBackend<Word> + AsReadBackend<'a, Word, Stack>,
 {
     type AsDecoder = AnsCoder<Word, State, Backend::AsReadBackend>;
+
+    fn as_decoder(&'a self) -> Self::AsDecoder {
+        self.into()
+    }
 }
 
 impl<Word, State> AnsCoder<Word, State, Vec<Word>>

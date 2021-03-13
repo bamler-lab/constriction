@@ -163,10 +163,6 @@ use crate::{BitArray, CoderError, EncoderError};
 use models::{DecoderModel, EncoderModel, EntropyModel};
 use num::cast::AsPrimitive;
 
-/// TODO:
-/// - make `PRECISION` a generic parameter of `Code`. This makes it more consistent with the
-///   fact that `Word` and `state` are also defined on `Code`.
-/// - simplify `IntoDecoder`: has same `PRECISION` as the original Code.
 pub trait Code {
     type Word: BitArray;
     type State: Clone;
@@ -193,7 +189,6 @@ pub trait Code {
     }
 }
 
-/// TODO: rethink `PRECISION` parameter. Try again to encapsulate it in `Probability`
 pub trait Encode<const PRECISION: usize>: Code {
     /// The error type for writing out encoded data.
     ///
@@ -284,7 +279,7 @@ pub trait Decode<const PRECISION: usize>: Code {
         D::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<D::Probability>;
 
-    /// TODO: This would be much nicer to denote as
+    /// LATER: This would be much nicer to denote as
     /// `fn decode_symbols(...) -> impl Iterator`
     /// but existential return types are currently not allowed in trait methods.
     fn decode_symbols<'s, I, D>(
@@ -471,31 +466,12 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// encode_and_decode(encoder, model);
 /// ```
 ///
-pub trait IntoDecoder<const PRECISION: usize>: Code + Sized {
+pub trait IntoDecoder<const PRECISION: usize>: Encode<PRECISION> {
     /// The target type of the conversion.
-    ///
-    /// This is the important part of the `IntoDecoder` trait. The actual conversion in
-    /// [`into_decoder`] just delegates to `self.into()`. From a caller's perspective,
-    /// the advantage of using the `IntoDecoder` trait rather than directly calling
-    /// `self.into()` is that `IntoDecoder::IntoDecoder` defines a suitable return type
-    /// so the caller doesn't need to specify one.
-    ///
-    /// TODO: I no longer think we want to depend on `From` here.
-    ///
-    /// [`into_decoder`]: Self::into_decoder
-    type IntoDecoder: From<Self> + Code<Word = Self::Word, State = Self::State> + Decode<PRECISION>;
+    type IntoDecoder: Decode<PRECISION, Word = Self::Word, State = Self::State>;
 
     /// Performs the conversion.
-    ///
-    /// The default implementation delegates to `self.into()`. There is usually no
-    /// reason to overwrite the default implementation.
-    fn into_decoder(self) -> Self::IntoDecoder {
-        self.into()
-    }
-}
-
-impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> for Decoder {
-    type IntoDecoder = Self;
+    fn into_decoder(self) -> Self::IntoDecoder;
 }
 
 /// A trait for constructing a temporary matching decoder.
@@ -554,28 +530,12 @@ impl<Decoder: Decode<PRECISION>, const PRECISION: usize> IntoDecoder<PRECISION> 
 /// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
 /// encode_decode_encode(&mut encoder, model);
 /// ```
-pub trait AsDecoder<'a, const PRECISION: usize>: Code + 'a {
+pub trait AsDecoder<'a, const PRECISION: usize>: Encode<PRECISION> + 'a {
     /// The target type of the conversion.
-    ///
-    /// This is the important part of the `AsDecoder` trait. The actual conversion in
-    /// [`as_decoder`] just delegates to `self.into()`. From a caller's perspective, the
-    /// advantage of using the `AsDecoder` trait rather than directly calling
-    /// `self.into()` is that `AsDecoder::AsDecoder` defines a suitable return type so
-    /// the caller doesn't need to specify one.
-    ///
-    /// [`as_decoder`]: Self::as_decoder
-    type AsDecoder: From<&'a Self>
-        + Code<Word = Self::Word, State = Self::State>
-        + Decode<PRECISION>
-        + 'a;
+    type AsDecoder: Decode<PRECISION, Word = Self::Word, State = Self::State> + 'a;
 
     /// Performs the conversion.
-    ///
-    /// The default implementation delegates to `self.into()`. There is usually no
-    /// reason to overwrite the default implementation.
-    fn as_decoder(&'a self) -> Self::AsDecoder {
-        self.into()
-    }
+    fn as_decoder(&'a self) -> Self::AsDecoder;
 }
 
 /// A trait for entropy coders that keep track of their current position within the

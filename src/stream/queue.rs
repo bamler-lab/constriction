@@ -447,6 +447,10 @@ where
     Backend: WriteBackend<Word> + IntoReadBackend<Word, Queue>,
 {
     type IntoDecoder = RangeDecoder<Word, State, Backend::IntoReadBackend>;
+
+    fn into_decoder(self) -> Self::IntoDecoder {
+        self.into()
+    }
 }
 
 impl<Word, State, Backend, const PRECISION: usize> Encode<PRECISION>
