@@ -146,8 +146,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// - replace `constriction.stream.ans.AnsCoder` with
 ///   `constriction.stream.range.RangeDecoder` (note that Range Coding distinguishes between
 ///   an encoder and a decoder type since the encoder writes to the back while the decoder
-///   reads from the front; by contrast, ANS Coding reads and writes at the same position
-///   and allows interleaving reads and writes).
+///   reads from the front; by contrast, ANS Coding is a stack, i.e., it reads and writes at
+///   the same position and allows interleaving reads and writes).
 ///
 /// You could also use a symbol code like Huffman Coding (see submodule `symbol`) but that
 /// would have considerably worse compression performance, especially on large files, since

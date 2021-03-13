@@ -40,7 +40,6 @@
 //!
 //! TODO:
 //! - define term "word".
-//! - rename `Word` to `Word` crate wide
 //!
 //! # Comparison of the Implemented Algorithms
 //!
@@ -273,6 +272,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         Ok(())
     }
 
+    #[inline(always)]
     fn try_encode_symbols<S, D, E>(
         &mut self,
         symbols_and_models: impl IntoIterator<Item = Result<(S, D), E>>,
@@ -292,6 +292,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         Ok(())
     }
 
+    #[inline(always)]
     fn encode_iid_symbols<S, D>(
         &mut self,
         symbols: impl IntoIterator<Item = S>,
@@ -811,6 +812,7 @@ where
         TryCodingError<CoderError<Decoder::FrontendError, Decoder::BackendError>, E>,
     >;
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         self.models.next().map(|model| {
             Ok(self
@@ -819,6 +821,7 @@ where
         })
     }
 
+    #[inline(always)]
     fn size_hint(&self) -> (usize, Option<usize>) {
         // We don't terminate when we encounter an error, so the size doesn't change.
         self.models.size_hint()
@@ -853,6 +856,7 @@ where
 {
     type Item = Result<D::Symbol, CoderError<Decoder::FrontendError, Decoder::BackendError>>;
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.amt != 0 {
             self.amt -= 1;
@@ -862,6 +866,7 @@ where
         }
     }
 
+    #[inline(always)]
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.amt, Some(self.amt))
     }

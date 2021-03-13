@@ -1,14 +1,5 @@
 //! Sources and sinks of compressed data
 //!
-//! # TODO:
-//!
-//! - move this module up yet another level in the hierarchy and generizise symbol codes
-//!   over backends.
-//! - Also, add a trait for prefix codes and implement both a queue and a stack of prefix
-//!   codes, where the stack inferts the bit order. Note that Huffman coding is actually
-//!   easier to do on a stack. So genarlize `HuffmanEncoderCodebook` such that it doesn't
-//!   need the temporary `SmallVec` when encoding on a stack.
-//!
 //! # Example
 //!
 //! The following example encodes and decodes data to and from a file. It uses custom
@@ -445,13 +436,11 @@ pub struct Cursor<Buf> {
 }
 
 impl<Buf> Cursor<Buf> {
-    /// TODO: rename into `new_at_buf_start`
     #[inline(always)]
     pub fn new_at_write_beginning(buf: Buf) -> Self {
         Self { buf, pos: 0 }
     }
 
-    /// TODO: rename into `new_at_buf_end`
     #[inline(always)]
     pub fn new_at_write_end<Word>(buf: Buf) -> Self
     where

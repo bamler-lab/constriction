@@ -155,7 +155,7 @@
 //!
 //! Try out the above examples and verify that decoding reconstructs the original data. Then
 //! see how easy `constriction` makes it to replace the ANS coder with a range coder by
-//! making the following substitutions (TODO: verify that this is actually correct)
+//! making the following substitutions.
 //!
 //! **In the encoder,**
 //!
@@ -163,16 +163,17 @@
 //!   `constriction::stream::queue::DefaultRangeEncoder`; and
 //! - replace `coder.encode_symbols_reverse` with `coder.encode_symbols` (you no longer need
 //!   to encode symbols in reverse order since Range Coding operates as a queue, i.e.,
-//!   first-in-first-out). You'll also have to add the line `use
-//!   constriction::stream::Encode;` to bring the trait method `encode_symbols` into scope.
+//!   first-in-first-out). You'll also have to add the line
+//!   `use constriction::stream::Encode;` to bring the trait method `encode_symbols` into
+//!   scope.
 //!
 //! **In the decoder,**
 //!
 //! - replace `constriction::stream::stack::DefaultAnsCoder` with
 //!   `constriction::stream::queue::DefaultRangeDecoder` (note that Range Coding
 //!   distinguishes between an encoder and a decoder type since the encoder writes to the
-//!   back while the decoder reads from the front; by contrast, ANS Coding reads and writes
-//!   at the same position and allows interleaving reads and writes).
+//!   back while the decoder reads from the front; by contrast, ANS Coding is a stack, i.e.,
+//!   it reads and writes at the same position and allows interleaving reads and writes).
 //!
 //! You could also use a symbol code like Huffman Coding (see module [`symbol`]) but that
 //! would have considerably worse compression performance, especially on large files, since
@@ -346,6 +347,7 @@ impl EncoderFrontendError {
         EncoderError::FrontendError(self)
     }
 }
+
 /// A trait for bit strings of fixed (and usually small) length.
 ///
 /// Short fixed-length bit strings are fundamental building blocks of efficient
@@ -422,8 +424,6 @@ pub unsafe trait NonZeroBitArray: Copy + Display + Debug {
 
 /// Iterates from most significant to least significant bits in chunks but skips any
 /// initial zero chunks.
-///
-/// TODO: is this still used anywhere?
 fn bit_array_to_chunks_truncated<Data, Chunk>(
     data: Data,
 ) -> impl Iterator<Item = Chunk> + ExactSizeIterator + DoubleEndedIterator
