@@ -1,8 +1,5 @@
 //! TODO: mirror as much of the `stack` API as possible
 
-#[cfg(feature = "std")]
-use std::error::Error;
-
 use alloc::vec::Vec;
 use core::{
     borrow::Borrow,
@@ -19,12 +16,11 @@ use super::{
     Code, Decode, Encode, IntoDecoder, Pos, Seek,
 };
 use crate::{
-    BitArray, CoderError, EncoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible,
     backends::{
         AsReadBackend, BoundedReadBackend, Cursor, IntoReadBackend, PosBackend, Queue, ReadBackend,
         SeekBackend, WriteBackend,
     },
-
+    BitArray, CoderError, EncoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible,
 };
 
 /// Type of the internal state used by [`Encoder<Word, State>`],
@@ -1238,4 +1234,4 @@ impl Display for FrontendError {
 }
 
 #[cfg(feature = "std")]
-impl Error for FrontendError {}
+impl std::error::Error for FrontendError {}

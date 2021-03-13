@@ -31,6 +31,21 @@
 		},
 		{
 			"type": "cargo",
+			"command": "build",
+			"args": [
+				"--no-default-features"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "rust: cargo build --no-default-features",
+			"presentation": {
+				"clear": true
+			},
+		},
+		{
+			"type": "cargo",
 			"command": "test",
 			"problemMatcher": [
 				"$rustc"

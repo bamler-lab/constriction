@@ -1,4 +1,4 @@
-use core::{convert::Infallible, fmt::Display};
+use core::convert::Infallible;
 use std::{error::Error, format, prelude::v1::*, vec};
 
 use numpy::{PyArray1, PyReadonlyArray1};
@@ -9,7 +9,7 @@ use crate::{
         models::{Categorical, LeakyQuantizer},
         Decode, TryCodingError,
     },
-    CoderError, EncoderError, EncoderFrontendError, UnwrapInfallible,
+    CoderError, EncoderFrontendError, UnwrapInfallible,
 };
 
 use statrs::distribution::Normal;

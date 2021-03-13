@@ -476,7 +476,7 @@ where
             // We really shouldn't have to give the compiler this hint but removing it leads to a
             // massive (~30%) performance regression in our tests (TODO: file rust bug).
             if probability == num::zero::<D::Probability>() {
-                std::hint::unreachable_unchecked();
+                core::hint::unreachable_unchecked();
             }
         }
 
@@ -1224,7 +1224,7 @@ where
     fn drop(&mut self) {
         // Revert what we did in `Self::new`.
         for _ in bit_array_to_chunks_truncated::<_, Word>(self.inner.state) {
-            std::mem::drop(self.inner.bulk.read());
+            core::mem::drop(self.inner.bulk.read());
         }
     }
 }

@@ -154,10 +154,10 @@ pub mod models;
 pub mod queue;
 pub mod stack;
 
-#[cfg(feature = "std")]
-use std::error::Error;
-
-use core::{borrow::Borrow, fmt::Display};
+use core::{
+    borrow::Borrow,
+    fmt::{Debug, Display},
+};
 
 use crate::{BitArray, CoderError, EncoderError};
 use models::{DecoderModel, EncoderModel, EntropyModel};
@@ -233,17 +233,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     /// [`WriteBackend`], which is typically [`Infallible`] for automatically growing
     /// in-memory backends (such as `Vec`). But it may be an inhabitated error type if
     /// you're, e.g., encoding directly to a file or socket.
-    #[cfg(not(feature = "std"))]
     type BackendError: Debug;
-
-    /// The error type for writing out encoded data.
-    ///
-    /// This will typically be the [`WriteError`] type of the of an underlying
-    /// [`WriteBackend`], which is typically [`Infallible`] for automatically growing
-    /// in-memory backends (such as `Vec`). But it may be an inhabitated error type if
-    /// you're, e.g., encoding directly to a file or socket.
-    #[cfg(feature = "std")]
-    type BackendError: Error;
 
     fn encode_symbol<D>(
         &mut self,
@@ -309,17 +299,8 @@ pub trait Encode<const PRECISION: usize>: Code {
 }
 
 pub trait Decode<const PRECISION: usize>: Code {
-    #[cfg(not(feature = "std"))]
-    type BackendError: Debug;
-
-    #[cfg(feature = "std")]
-    type BackendError: Error;
-
-    #[cfg(not(feature = "std"))]
     type FrontendError: Debug;
-
-    #[cfg(feature = "std")]
-    type FrontendError: Error;
+    type BackendError: Debug;
 
     fn decode_symbol<D>(
         &mut self,
@@ -913,10 +894,10 @@ impl<CodingError: Display, ModelError: Display> Display
 }
 
 #[cfg(feature = "std")]
-impl<CodingError: Error + 'static, ModelError: Error + 'static> Error
+impl<CodingError: std::error::Error + 'static, ModelError: std::error::Error + 'static> std::error::Error
     for TryCodingError<CodingError, ModelError>
 {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidEntropyModel(source) => Some(source),
             Self::CodingError(source) => Some(source),

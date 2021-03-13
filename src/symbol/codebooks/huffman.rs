@@ -1,10 +1,13 @@
-#[cfg(feature = "std")]
-use std::error::Error;
-
 use num::Float;
 
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
-use core::{borrow::Borrow, cmp::Reverse, convert::Infallible, ops::Add};
+use core::{
+    borrow::Borrow,
+    cmp::Reverse,
+    convert::Infallible,
+    fmt::{Debug, Display},
+    ops::Add,
+};
 
 use super::{Codebook, DecoderCodebook, EncoderCodebook, SymbolCodeError};
 use crate::{CoderError, EncoderError, EncoderFrontendError, UnwrapInfallible};
@@ -38,7 +41,7 @@ impl EncoderHuffmanTree {
         .unwrap_infallible()
     }
 
-    pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, ()>
+    pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, NanError>
     where
         P: Float + Clone + Add<Output = P>,
         I: IntoIterator,
@@ -173,7 +176,7 @@ impl DecoderHuffmanTree {
         .unwrap_infallible()
     }
 
-    pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, ()>
+    pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, NanError>
     where
         P: Float + Clone + Add<Output = P>,
         I: IntoIterator,
@@ -259,27 +262,15 @@ impl DecoderCodebook for DecoderHuffmanTree {
     }
 }
 
-pub trait TryIntoOrd {
-    type Target: Ord;
-
-    #[cfg(not(feature = "std"))]
-    type Error: Debug;
-
-    #[cfg(feature = "std")]
-    type Error: Error;
-
-    fn try_into(self) -> Result<Self::Target, Self::Error>;
-}
-
 #[derive(PartialOrd, Clone, Copy)]
 struct NonNanFloat<F: Float> {
     inner: F,
 }
 
 impl<F: Float> NonNanFloat<F> {
-    fn new(x: F) -> Result<Self, ()> {
+    fn new(x: F) -> Result<Self, NanError> {
         if x.is_nan() {
-            Err(())
+            Err(NanError::NaN)
         } else {
             Ok(Self { inner: x })
         }
@@ -311,6 +302,22 @@ impl<F: Float> Add for NonNanFloat<F> {
         }
     }
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum NanError {
+    NaN,
+}
+
+impl Display for NanError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NaN => write!(f, "NaN Encountered."),
+        }
+    }
+}
+
+#[cfg(std)]
+impl std::error::Error for NanError {}
 
 #[cfg(test)]
 mod test {

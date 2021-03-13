@@ -1,7 +1,11 @@
 pub mod exp_golomb;
 pub mod huffman;
 
-use core::{borrow::Borrow, convert::Infallible};
+use core::{
+    borrow::Borrow,
+    convert::Infallible,
+    fmt::{Debug, Display},
+};
 
 use smallvec::SmallVec;
 
@@ -23,6 +27,30 @@ pub enum SymbolCodeError<InvalidCodeword = Infallible> {
 impl<InvalidCodeword> SymbolCodeError<InvalidCodeword> {
     pub fn into_coder_error<BackendError>(self) -> CoderError<Self, BackendError> {
         CoderError::FrontendError(self)
+    }
+}
+
+impl<InvalidCodeword: Display> Display for SymbolCodeError<InvalidCodeword> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::OutOfCompressedData => write!(
+                f,
+                "The compressed data ended before the current codeword was complete."
+            ),
+            Self::InvalidCodeword(err) => write!(f, "Invalid codeword for this codebook: {}", err),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<InvalidCodeword: std::error::Error + 'static> std::error::Error
+    for SymbolCodeError<InvalidCodeword>
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::OutOfCompressedData => None,
+            Self::InvalidCodeword(source) => Some(source),
+        }
     }
 }
 

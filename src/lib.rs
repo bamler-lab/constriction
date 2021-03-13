@@ -256,9 +256,6 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-#[cfg(feature = "std")]
-use std::error::Error;
-
 #[cfg(feature = "pybindings")]
 mod pybindings;
 
@@ -296,7 +293,16 @@ impl<BackendError: Display, FrontendError: Display> Display
 }
 
 #[cfg(feature = "std")]
-impl<BackendError: Error, FrontendError: Error> Error for CoderError<FrontendError, BackendError> {}
+impl<FrontendError: std::error::Error + 'static, BackendError: std::error::Error + 'static>
+    std::error::Error for CoderError<FrontendError, BackendError>
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::FrontendError(source) => Some(source),
+            Self::BackendError(source) => Some(source),
+        }
+    }
+}
 
 impl<FrontendError, BackendError> From<BackendError> for CoderError<FrontendError, BackendError> {
     fn from(read_error: BackendError) -> Self {
@@ -340,7 +346,7 @@ impl Display for EncoderFrontendError {
 }
 
 #[cfg(feature = "std")]
-impl Error for EncoderFrontendError {}
+impl std::error::Error for EncoderFrontendError {}
 
 impl EncoderFrontendError {
     fn into_coder_error<BackendError>(self) -> EncoderError<BackendError> {

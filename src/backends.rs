@@ -97,9 +97,6 @@
 //! decode_from_file_on_the_fly(1000);
 //! ```
 
-#[cfg(feature = "std")]
-use std::error::Error;
-
 use alloc::vec::Vec;
 use core::{
     convert::Infallible,
@@ -123,11 +120,7 @@ impl Semantics for Queue {}
 
 /// A trait for backends that read compressed words (used by decoders)
 pub trait ReadBackend<Word, S: Semantics> {
-    #[cfg(not(feature = "std"))]
     type ReadError: Debug;
-
-    #[cfg(feature = "std")]
-    type ReadError: std::error::Error;
 
     fn read(&mut self) -> Result<Option<Word>, Self::ReadError>;
 
@@ -137,15 +130,8 @@ pub trait ReadBackend<Word, S: Semantics> {
 }
 
 /// A trait for backends that write compressed words (used by encoders)
-///
-/// TODO: remove the trait bounds on these error types to make it easier to implement a new
-/// backend. Users can still add a bound if they want to.
 pub trait WriteBackend<Word> {
-    #[cfg(not(feature = "std"))]
     type WriteError: Debug;
-
-    #[cfg(feature = "std")]
-    type WriteError: std::error::Error;
 
     fn write(&mut self, word: Word) -> Result<(), Self::WriteError>;
 
@@ -584,7 +570,7 @@ impl Display for BoundedWriteError {
 }
 
 #[cfg(feature = "std")]
-impl Error for BoundedWriteError {}
+impl std::error::Error for BoundedWriteError {}
 
 impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Stack> for Cursor<Buf> {
     type ReadError = Infallible;
@@ -773,29 +759,13 @@ impl<Iter: Iterator> IntoIterator for IteratorBackend<Iter> {
     }
 }
 
-#[cfg(not(feature = "std"))]
+/// Since `IteratorBackend` doesn't implement `WriteBackend`, it is allowed to implement
+/// `ReadBackend` for all `ReadWriteLogic`s
 impl<Iter, S, Word, ReadError> ReadBackend<Word, S> for IteratorBackend<Iter>
 where
     Iter: Iterator<Item = Result<Word, ReadError>>,
     S: Semantics,
     ReadError: Debug,
-{
-    type ReadError = ReadError;
-
-    #[inline(always)]
-    fn read(&mut self) -> Result<Option<Word>, Self::ReadError> {
-        Ok(self.inner.next())
-    }
-}
-
-/// Since `IteratorBackend` doesn't implement `WriteBackend`, it is allowed to implement
-/// `ReadBackend` for all `ReadWriteLogic`s
-#[cfg(feature = "std")]
-impl<Iter, S, Word, ReadError> ReadBackend<Word, S> for IteratorBackend<Iter>
-where
-    Iter: Iterator<Item = Result<Word, ReadError>>,
-    S: Semantics,
-    ReadError: Error,
 {
     type ReadError = ReadError;
 
@@ -805,25 +775,11 @@ where
     }
 }
 
-#[cfg(not(feature = "std"))]
 impl<Iter, S, Word, ReadError> BoundedReadBackend<Word, S> for IteratorBackend<Iter>
 where
     Iter: ExactSizeIterator<Item = Result<Word, ReadError>>,
     S: Semantics,
     ReadError: Debug,
-{
-    #[inline(always)]
-    fn remaining(&self) -> usize {
-        self.inner.len()
-    }
-}
-
-#[cfg(feature = "std")]
-impl<Iter, S, Word, ReadError> BoundedReadBackend<Word, S> for IteratorBackend<Iter>
-where
-    Iter: ExactSizeIterator<Item = Result<Word, ReadError>>,
-    S: Semantics,
-    ReadError: Error,
 {
     #[inline(always)]
     fn remaining(&self) -> usize {
@@ -848,26 +804,10 @@ impl<Callback> FallibleCallbackWriteBackend<Callback> {
     }
 }
 
-#[cfg(not(feature = "std"))]
-impl<Word, WriteError, Callback> WriteBackend<Word> for FallibleCallbackBackend<Callback>
-where
-    Callback: FnMut(Word) -> Result<(), WriteError>,
-    WriteError: Debug,
-{
-    type WriteError = WriteError;
-
-    fn write(&mut self, word: Word) -> Result<(), Self::WriteError> {
-        (self.write_callback)(word)
-    }
-}
-
-/// TODO: this feature gate is really unfortuante. Let's just get rid of these bounds on
-/// error types.
-#[cfg(feature = "std")]
 impl<Word, WriteError, Callback> WriteBackend<Word> for FallibleCallbackWriteBackend<Callback>
 where
     Callback: FnMut(Word) -> Result<(), WriteError>,
-    WriteError: Error,
+    WriteError: Debug,
 {
     type WriteError = WriteError;
 
