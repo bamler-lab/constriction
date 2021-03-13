@@ -62,19 +62,19 @@ where
 ///
 /// let mut small_ans_coder = SmallAnsCoder::new();
 /// small_ans_coder.encode_iid_symbols_reverse(original.chars(), &encoder_model).unwrap();
-/// assert_eq!(small_ans_coder.into_compressed().unwrap(), [20510u16, 3988]);
+/// assert_eq!(small_ans_coder.into_compressed().unwrap(), [0x501Eu16, 0xF94]);
 ///
 /// let mut default_ans_coder = DefaultAnsCoder::new();
 /// default_ans_coder.encode_iid_symbols_reverse(original.chars(), &encoder_model).unwrap();
-/// assert_eq!(default_ans_coder.into_compressed().unwrap(), [261378078u32]);
+/// assert_eq!(default_ans_coder.into_compressed().unwrap(), [0x0F94501Eu32]);
 ///
 /// let mut small_range_encoder = SmallRangeEncoder::new();
 /// small_range_encoder.encode_iid_symbols(original.chars(), &encoder_model).unwrap();
-/// assert_eq!(small_range_encoder.into_compressed().unwrap(), [0x07C0u16, 0xEB8B]);
+/// assert_eq!(small_range_encoder.into_compressed().unwrap(), [0x07C0u16, 0xDC59]);
 ///
 /// let mut default_range_encoder = DefaultRangeEncoder::new();
 /// default_range_encoder.encode_iid_symbols(original.chars(), &encoder_model).unwrap();
-/// assert_eq!(default_range_encoder.into_compressed().unwrap(), [0x07C11EBFu32]);
+/// assert_eq!(default_range_encoder.into_compressed().unwrap(), [0x07C10F56u32]);
 /// ```
 ///
 /// See example in [`DefaultDecoderGenericLookupTable`] for decoding the above compressed
@@ -265,11 +265,11 @@ where
 ///
 /// let mut small_range_encoder = SmallRangeEncoder::new();
 /// small_range_encoder.encode_iid_symbols(&original, &encoder_model).unwrap();
-/// assert_eq!(small_range_encoder.into_compressed().unwrap(), [0xBCF8u16, 0x4DC9]);
+/// assert_eq!(small_range_encoder.into_compressed().unwrap(), [0xBCF8u16, 0x3ECA]);
 ///
 /// let mut default_range_encoder = DefaultRangeEncoder::new();
 /// default_range_encoder.encode_iid_symbols(&original, &encoder_model).unwrap();
-/// assert_eq!(default_range_encoder.into_compressed().unwrap(), [0xBCF882A4u32]);
+/// assert_eq!(default_range_encoder.into_compressed().unwrap(), [0xBCF8733Bu32]);
 /// ```
 ///
 /// See example in [`DefaultDecoderIndexLookupTable`] for decoding the above compressed bit
@@ -489,13 +489,13 @@ where
 /// assert!(default_ans_decoder.is_empty());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0xBCF8, 0x4DC9]).unwrap();
+/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0xBCF8, 0x3ECA]).unwrap();
 /// let reconstructed = small_range_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
 /// assert!(small_range_decoder.maybe_exhausted());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0xBCF882A4]).unwrap();
+/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0xBCF8733B]).unwrap();
 /// let reconstructed = default_range_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
 /// assert!(default_range_decoder.maybe_exhausted());
@@ -541,7 +541,7 @@ pub type DefaultDecoderIndexLookupTable<Symbol> =
 ///
 /// let expected = "Mississippi";
 ///
-/// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![20510, 3988]).unwrap();
+/// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![0x501E, 0xF94]).unwrap();
 /// let reconstructed = small_ans_coder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
 /// assert!(small_ans_coder.is_empty());
@@ -553,13 +553,13 @@ pub type DefaultDecoderIndexLookupTable<Symbol> =
 /// assert!(default_ans_decoder.is_empty());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0x07C0, 0xEB8B]).unwrap();
+/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0x07C0, 0xDC59]).unwrap();
 /// let reconstructed = small_range_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
 /// assert!(small_range_decoder.maybe_exhausted());
 /// assert_eq!(reconstructed, expected);
 ///
-/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0x07C11EBF]).unwrap();
+/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0x07C10F56]).unwrap();
 /// let reconstructed = default_range_decoder
 ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<String, _>>().unwrap();
 /// assert!(default_range_decoder.maybe_exhausted());

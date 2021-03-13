@@ -63,6 +63,7 @@ impl<Word: BitArray, State: BitArray> Default for RangeCoderState<Word, State> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct RangeEncoder<Word, State, Backend = Vec<Word>>
 where
     Word: BitArray,
@@ -74,7 +75,7 @@ where
     situation: EncoderSituation<Word>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EncoderSituation<Word> {
     Normal,
 
@@ -109,18 +110,6 @@ pub type DefaultRangeEncoder<Backend = Vec<u32>> = RangeEncoder<u32, u64, Backen
 /// [`DefaultEncoderArrayLookupTable`]: super::models::lookup::DefaultEncoderArrayLookupTable
 /// [`DefaultEncoderHashLookupTable`]: super::models::lookup::DefaultEncoderHashLookupTable
 pub type SmallRangeEncoder<Backend = Vec<u16>> = RangeEncoder<u16, u32, Backend>;
-
-impl<Word, State, Backend> Debug for RangeEncoder<Word, State, Backend>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word>,
-    for<'a> &'a Backend: IntoIterator<Item = &'a Word>,
-{
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_list().entries(self.iter_compressed()).finish()
-    }
-}
 
 impl<Word, State, Backend> Code for RangeEncoder<Word, State, Backend>
 where
@@ -190,14 +179,19 @@ where
     Backend: WriteBackend<Word>,
 {
     /// Assumes that the `backend` is in a state where the encoder can start writing as if
-    /// it was an empty backend (i.e., if there's already some compressed data on `backend`,
-    /// then this is likely the wrong method to call since it will just concatanate the new
-    /// compressed data to the old one, without gluing them together).
+    /// it was an empty backend. If there's already some compressed data on `backend`, then
+    /// this method will just concatanate the new sequence of `Word`s to the existing
+    /// sequence of `Word`s without gluing them together. This is likely not what you want
+    /// since you won't be able to decode the data in one go (however, it is Ok to
+    /// concatenate arbitrary data to the output of a `RangeEncoder`; it won't invalidate
+    /// the existing data).
     ///
-    /// TODO: concatenation will actually corrupt the first stream in the way we currently
-    /// seal the encoder. We should seal it in a different way such that the data may be
-    /// followed by any other sequence of words without affecting the decoder. This may
-    /// require emitting an additional word in rare cases.
+    /// If you need an entropy coder that can be interrupted and serialized/deserialized
+    /// (i.e., an encoder that can encode some symbols, return the compressed bit string as
+    /// a sequence of `Words`, load the `Words` back in at a later point and then encode
+    /// some more symbols), then consider using an [`AnsCoder`].
+    ///
+    /// [`AnsCoder`]: super::stack::AnsCoder
     pub fn with_backend(backend: Backend) -> Self {
         assert!(State::BITS >= 2 * Word::BITS);
         assert_eq!(State::BITS % Word::BITS, 0);
@@ -241,9 +235,10 @@ where
         Ok(self.bulk)
     }
 
-    /// Private method; flushes held-back words if in inverted situation and adds a single
-    /// additional word that identifies the range (unless no symbols have been encoded yet,
-    /// in which case this is a no-op).
+    /// Private method; flushes held-back words if in inverted situation and adds one or two
+    /// additional words that identify the range regardless of what the compressed data may
+    /// be concatenated with (unless no symbols have been encoded yet, in which case this is
+    /// a no-op).
     ///
     /// Doesn't change `self.state` or `self.situation` so that this operation can be
     /// reversed if the backend supports removing words (see method `unseal`);
@@ -259,13 +254,15 @@ where
         let point = self
             .state
             .lower
-            .wrapping_add(&(self.state.range.get() - State::one()));
+            .wrapping_add(&((State::one() << (State::BITS - Word::BITS)) - State::one()));
 
         if let EncoderSituation::Inverted(num_inverted, first_inverted_lower_word) = self.situation
         {
             let (first_word, consecutive_words) = if point < self.state.lower {
+                // Unlikely case (addition has wrapped).
                 (first_inverted_lower_word + Word::one(), Word::zero())
             } else {
+                // Likely case.
                 (first_inverted_lower_word, Word::max_value())
             };
 
@@ -275,21 +272,38 @@ where
             }
         }
 
-        let word = (point >> (State::BITS - Word::BITS)).as_();
-        self.bulk.write(word)?;
+        let point_word = (point >> (State::BITS - Word::BITS)).as_();
+        self.bulk.write(point_word)?;
+
+        let upper_word = (self.state.lower.wrapping_add(&self.state.range.get())
+            >> (State::BITS - Word::BITS))
+            .as_();
+        if upper_word == point_word {
+            self.bulk.write(Word::zero())?;
+        }
 
         Ok(())
     }
 
-    /// TODO: this is out of date
-    pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = Word> + '_
-    where
-        &'a Backend: IntoIterator<Item = &'a Word>,
-    {
-        let bulk_iter = self.bulk.into_iter().cloned();
-        let last = (self.state.lower >> (State::BITS - Word::BITS)).as_();
-        let state_iter = core::iter::once(last);
-        bulk_iter.chain(state_iter)
+    fn num_seal_words(&self) -> usize {
+        if self.state.range.get() == State::max_value() {
+            return 0;
+        }
+
+        let point = self
+            .state
+            .lower
+            .wrapping_add(&((State::one() << (State::BITS - Word::BITS)) - State::one()));
+        let point_word = (point >> (State::BITS - Word::BITS)).as_();
+        let upper_word = (self.state.lower.wrapping_add(&self.state.range.get())
+            >> (State::BITS - Word::BITS))
+            .as_();
+        let mut count = if upper_word == point_word { 2 } else { 1 };
+
+        if let EncoderSituation::Inverted(num_inverted, _) = self.situation {
+            count += num_inverted.get();
+        }
+        count
     }
 
     /// Returns the number of compressed words on the ans.
@@ -312,11 +326,7 @@ where
         Backend: AsReadBackend<'a, Word, Queue>,
         Backend::AsReadBackend: BoundedReadBackend<Word, Queue>,
     {
-        if self.is_empty() {
-            0
-        } else {
-            self.bulk.as_read_backend().remaining() + 1
-        }
+        self.bulk.as_read_backend().remaining() + self.num_seal_words()
     }
 
     /// Returns the size of the current queue of compressed data in bits.
@@ -425,16 +435,9 @@ where
     }
 
     fn unseal(&mut self) {
-        if self.bulk.is_empty() {
-            return;
-        }
-
-        self.bulk.pop();
-
-        if let EncoderSituation::Inverted(num_inverted, _) = self.situation {
-            for _ in 0..num_inverted.get() {
-                self.bulk.pop();
-            }
+        for _ in 0..self.num_seal_words() {
+            let word = self.bulk.pop();
+            debug_assert!(word.is_some());
         }
     }
 }
@@ -690,16 +693,16 @@ where
     /// Same as `Decoder::maybe_exhausted`, but can be called on a concrete type without
     /// type annotations.
     pub fn maybe_exhausted<'a>(&'a self) -> bool {
+        // The maximum possible difference between `point` and `lower`, even if the
+        // compressed data was concatenated with a lot of one bits.
+        let max_difference =
+            ((State::one() << (State::BITS - Word::BITS)) << 1).wrapping_sub(&State::one());
+
         // The check for `self.state.range == State::max_value()` is for the special case of
         // an empty buffer.
         self.bulk.maybe_exhausted()
             && (self.state.range.get() == State::max_value()
-                || self
-                    .state
-                    .lower
-                    .wrapping_add(&self.state.range.get())
-                    .wrapping_sub(&self.point)
-                    <= State::one() << (State::BITS - Word::BITS))
+                || self.point.wrapping_sub(&self.state.lower) < max_difference)
     }
 }
 

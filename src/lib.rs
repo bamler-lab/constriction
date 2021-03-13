@@ -232,7 +232,7 @@
 //!
 //! // We'll get a different compressed representation than in the ANS Coding
 //! // example because we're using a different entropy coding algorithm ...
-//! assert_eq!(compressed, [0x1C31EFEC, 0x257DF32F]);
+//! assert_eq!(compressed, [0x1C31EFEB, 0x87B430DA]);
 //!
 //! // ... but as long as we decode with the matching algorithm we can still reconstruct the data:
 //! assert_eq!(decode_sample_data(compressed), [23, -15, 78, 43, -69]);

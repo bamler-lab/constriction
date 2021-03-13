@@ -33,7 +33,7 @@ update. The first part of the update goes as follows:
 ### In Parameterization with `lower` and `range`
 
 We start by looking up the left cumulative distribution `left` and the `probability` of the
-symbol that we want to encode in the entropy model. These satisfy the invariants 
+symbol that we want to encode in the entropy model. These satisfy the invariants
 `left < (1 >> PRECISION)` and `1 < probability <= (1 >> PRECISION)` (all encodable symbols
 must have a nonzero probability). We then perform the following updates:
 
@@ -107,7 +107,7 @@ If `upper_word != lower_word` then:
   - `new_new_range < 1 << State::BITS` (because step 2 above cannot truncate), and thus the
     addition wraps around *exactly once*. Thus, we can write out the wrapping addition
     explicitly: `new_new_upper = new_new_lower + new_new_range - 1 << State::Bits` where `+`
-    and `-` denote normal (non-wrapping) arithmetic. We can rewrite this as 
+    and `-` denote normal (non-wrapping) arithmetic. We can rewrite this as
     `new_new_upper = new_new_lower - (1 << State::BITS - new_new_range)` where the term in
     the brackets is strictly positive since `new_new_range < 1 << State::BITS`.
 
@@ -174,7 +174,6 @@ In detail:
     `new_range` to `new_new_range` doesn't truncate, so the addition
     `new_new_lower (+) new_new_range` also has to wrap, meaning that the new situation is
     also inverted.
-
 
 ### Transitioning from an Inverted Situation During Rescaling
 
@@ -248,7 +247,6 @@ emit them now and then set the `num_words` counter to zero:
 - in case 3 above: emit `first_inverted_lower_word [+] 1` (which actually can't wrap in this
   case), followed by `num_inverted - 1` copies of `0`, then set `num_inverted` to zero.
 
-
 ## Putting it All Together
 
 The following diagram summarizes the operations we do in each one of the possible
@@ -273,25 +271,27 @@ inverted -------------+----> inverted ------------------> inverted
 
 ## Finishing Up (Sealing the Coder)
 
-When encoding finishes, we have to make sure that we have emitted enough words to uniquely
-identify the current interval. The compressed bit string may represent any number in the
-half open and possibly wrapping interval from `lower` (inclusively) to `upper`
-(exclusively). For simplicity, we chose a value within this interval that has only zero bits
-in all but the most significant word. This is always possible due to the invariant
-`range >= 1 << (State::BITS - Word::BITS)`. Therefore, we have to emit only the most
-signifciant word of this value (in addition to any possibly still held-back words).
+When encoding finishes we have to make sure that we have emitted enough words to uniquely
+identify the current interval. Any number in the half open interval from `lower`
+(inclusively) to `upper = lower (+) range` (exclusively) is a valid representation of the
+compressed data. Due to our invariant `range >= 1 << (State::BITS - Word::BITS)` it would in
+principle suffice to transmit only the most significant word of `lower` to identify the
+interval. However, we want to add an additional guarantee that makes it harder to misuse the
+range coder: we want to be able to decode the compressed data even if it is concatenated
+with some arbitrary further words. We achieve this with the following procedure:
 
-To find such a word, we take the value `point := mask(upper (-) 1)` where `mask()` sets all
-bits that are not in the most significant word to zero. This can be written as
-`point = upper (-) x` where `x > 0` and `x <= 1 << (State::BITS - Word::BITS)` which is
-`<= range` by our invariant. Thus, `point = upper (-) x` is at least one and at most `range`
-below `upper`, i.e., it is in the interval `[lower, upper)` as required.
+1. Define the number `point := lower (+) 1 << (State::BITS - Word::BITS) (-) 1`, which is in
+   the interval because it is less than `range` above `lower`.
+2. If we are in an inverted situation then we flush the held-back words:
+   - if `point > lower` (the likely case) then we emit `first_inverted_lower_word` followed
+     by `num_inverted - 1` copies of `Word::max_value()`;
+   - if `point < lower` then we emit `first_inverted_lower_word + 1` followed by
+     `num_inverted - 1` zero words.
+3. We emit the most significant word of `point`.
+4. If the most significant word of `upper` is equal to the most significant word of `point`
+   then we emit a zero word.
 
-If we're in an inverted situation, then we first flush all not yet emitted words. If
-`point < lower` (the likely case in an inverted situation) then we emit
-`first_inverted_lower_word [+] 1` followed by `num_inverted - 1` zeros. If `point >= lower`
-(which can only happen if `upper == 0`) then we emit `first_inverted_lower_word` followed by
-`num_inverted  - 1` copies of `Word::max_value()`.
-
-Finally regardless of whether we were in a normal or inverted situation, we emit the highest
-significant word of `point`. This concludes the compressed bit string.
+Step 1 above ensures that, even if we end up emitting only the highest significant word of
+`point` and it gets concatenated with a lot of zeros, the number that a decoder will read in
+will not be too low. Step 4 ensures that, even if the emitted words get concatenated with a
+lot of one bits then the number that a decoder will read in will not be too large.
