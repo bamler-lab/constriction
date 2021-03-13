@@ -163,6 +163,18 @@ use crate::{BitArray, CoderError, EncoderError};
 use models::{DecoderModel, EncoderModel, EntropyModel};
 use num::cast::AsPrimitive;
 
+/// Base trait for stream encoders and decoders
+///
+/// # Naming Convention
+///
+/// This trait is deliberately called `Code` (as in the verb "to code") and not `Coder` so
+/// that the term `Coder` can still be used for generic arguments, i.e., it is legal to
+/// write `impl Wrapper<Coder> where Coder: Code`. Using the verb for trait names and the
+/// noun for types has precedence in the standard library: see, e.g., the [`BufRead`] trait,
+/// which is implemented by the [`BufReader`] type.
+///
+/// [`BufRead`]: std::io::BufRead
+/// [`BufReader`]: std::io::BufReader
 pub trait Code {
     type Word: BitArray;
     type State: Clone;
@@ -189,6 +201,12 @@ pub trait Code {
     }
 }
 
+/// Base trait for stream encoders
+///
+/// # Naming Convention
+///
+/// This trait is deliberately called `Encode` and not `Encoder`. See corresponding comment
+/// for the [`Code`] trait for the reasoning.
 pub trait Encode<const PRECISION: usize>: Code {
     /// The error type for writing out encoded data.
     ///
@@ -266,6 +284,12 @@ pub trait Encode<const PRECISION: usize>: Code {
     }
 }
 
+/// Base trait for stream decoders
+///
+/// # Naming Convention
+///
+/// This trait is deliberately called `Decode` and not `Decoder`. See corresponding comment
+/// for the [`Code`] trait for the reasoning.
 pub trait Decode<const PRECISION: usize>: Code {
     type FrontendError: Debug;
     type BackendError: Debug;
