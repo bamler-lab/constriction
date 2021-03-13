@@ -55,7 +55,7 @@ pub trait ReadBitStream<S: backends::Semantics> {
     where
         C: DecoderCodebook,
     {
-        self.decode_symbols(std::iter::repeat(codebook).take(amt))
+        self.decode_symbols(core::iter::repeat(codebook).take(amt))
     }
 }
 
@@ -605,8 +605,6 @@ mod test {
         rand_core::{RngCore, SeedableRng},
         Xoshiro256StarStar,
     };
-
-    extern crate std;
 
     #[test]
     fn bit_queue() {

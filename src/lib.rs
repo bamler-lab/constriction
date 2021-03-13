@@ -475,10 +475,7 @@ unsafe_impl_bit_array!(
     (usize, NonZeroUsize)
 );
 
-/// Private helper extension trait.
-///
-/// TODO: maybe make this public and then use it in doc tests.
-trait UnwrapInfallible<T> {
+pub trait UnwrapInfallible<T> {
     fn unwrap_infallible(self) -> T;
 }
 

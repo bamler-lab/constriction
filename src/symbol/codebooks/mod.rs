@@ -1,3 +1,4 @@
+pub mod exp_golomb;
 pub mod huffman;
 
 use core::{borrow::Borrow, convert::Infallible};
@@ -27,10 +28,6 @@ impl<InvalidCodeword> SymbolCodeError<InvalidCodeword> {
 
 pub trait Codebook {
     type Symbol;
-
-    /// TODO: maybe remove this --> we want to support symbol codes with infinite codebooks,
-    /// such as codes for integers.
-    fn num_symbols(&self) -> usize;
 }
 
 pub trait EncoderCodebook: Codebook {
@@ -76,10 +73,6 @@ pub trait DecoderCodebook: Codebook {
 
 impl<C: Codebook> Codebook for &C {
     type Symbol = C::Symbol;
-
-    fn num_symbols(&self) -> usize {
-        (*self).num_symbols()
-    }
 }
 
 impl<C: EncoderCodebook> EncoderCodebook for &C {

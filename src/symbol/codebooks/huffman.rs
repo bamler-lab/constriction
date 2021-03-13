@@ -4,10 +4,10 @@ use std::error::Error;
 use num::Float;
 
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
-use core::{borrow::Borrow, cmp::Reverse, convert::Infallible, marker::PhantomData, ops::Add};
+use core::{borrow::Borrow, cmp::Reverse, convert::Infallible, ops::Add};
 
 use super::{Codebook, DecoderCodebook, EncoderCodebook, SymbolCodeError};
-use crate::{BitArray, CoderError, EncoderError, EncoderFrontendError, UnwrapInfallible};
+use crate::{CoderError, EncoderError, EncoderFrontendError, UnwrapInfallible};
 
 #[derive(Debug, Clone)]
 pub struct EncoderHuffmanTree {
@@ -103,14 +103,14 @@ impl EncoderHuffmanTree {
 
         Ok(Self { nodes })
     }
+
+    pub fn num_symbols(&self) -> usize {
+        self.nodes.len() / 2 + 1
+    }
 }
 
 impl Codebook for EncoderHuffmanTree {
     type Symbol = usize;
-
-    fn num_symbols(&self) -> usize {
-        self.nodes.len() / 2 + 1
-    }
 }
 
 impl EncoderCodebook for EncoderHuffmanTree {
@@ -214,14 +214,14 @@ impl DecoderHuffmanTree {
 
         Ok(Self { nodes })
     }
+
+    pub fn num_symbols(&self) -> usize {
+        self.nodes.len() + 1
+    }
 }
 
 impl Codebook for DecoderHuffmanTree {
     type Symbol = usize;
-
-    fn num_symbols(&self) -> usize {
-        self.nodes.len() + 1
-    }
 }
 
 impl DecoderCodebook for DecoderHuffmanTree {
