@@ -1003,10 +1003,6 @@ where
     fn state(&self) -> Self::State {
         self.state
     }
-
-    fn maybe_empty(&self) -> bool {
-        self.is_empty()
-    }
 }
 
 impl<Word, State, Backend, const PRECISION: usize> Encode<PRECISION>
@@ -1063,6 +1059,10 @@ where
         self.append_quantile_to_state::<D, PRECISION>(left_sided_cumulative + remainder);
 
         Ok(())
+    }
+
+    fn maybe_full(&self) -> bool {
+        self.bulk.maybe_full()
     }
 }
 
@@ -1156,6 +1156,10 @@ where
         let _ = self.try_refill_state_if_necessary();
 
         Ok(symbol)
+    }
+
+    fn maybe_exhausted(&self) -> bool {
+        self.is_empty()
     }
 }
 

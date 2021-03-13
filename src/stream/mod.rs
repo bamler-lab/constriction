@@ -176,52 +176,20 @@ pub trait Code {
     /// This method is usually used together with [`Seek::seek`].
     fn state(&self) -> Self::State;
 
-    /// Check if there might be no compressed data available.
-    ///
-    /// This method is useful to check for consistency, e.g., when decoding data with a
-    /// [`Decode`]. This method returns `true` if there *might* not be any compressed data.
-    /// This can have several causes, e.g.:
-    /// - the method is called on a newly constructed empty encoder or decoder; or
-    /// - the user is decoding in-memory data and called `maybe_empty` after decoding all
-    ///   available compressed data; or
-    /// - it is unknown whether there is any compressed data left.
-    ///
-    /// The last item in the above list deserves further explanation. It is not always
-    /// possible to tell whether any compressed data is available. For example, when
-    /// encoding data onto or decoding data from a stream (like a network socket), then the
-    /// coder is not required to keep track of whether or not any compressed data has
-    /// already been emitted or can still be received, respectively. In such a case, when it
-    /// is not known whether any compressed data is available, `maybe_empty` *must* return
-    /// `true`.
-    ///
-    /// The contrapositive of the above requirement is that, when `maybe_empty` returns
-    /// `false`, then some compressed data is definitely available. Therefore, `maybe_empty`
-    /// can used to check for data corruption: if the user of this library believes that
-    /// they have decoded all available compressed data but `maybe_empty` returns `false`,
-    /// then the decoded data must have been corrupted. However, the converse is not true:
-    /// if `maybe_empty` returns `true` then this is not necessarily a particularly strong
-    /// guarantee of data integrity.
-    ///
-    /// Note that it is always legal to call [`decode_symbol`] even on an empty [`Decode`].
-    /// Some decoder implementations may even always return and `Ok(_)` value (with an
-    /// arbitrary but deterministically constructed wrapped symbol) even if the decoder is
-    /// empty,
-    ///
-    /// # Implementation Guide
-    ///
-    /// The default implementation always returns `true` since this is always a *valid*
-    /// (albeit not necessarily the most useful) return value. If you overwrite this method,
-    /// you may return `false` only if there is definitely some compressed data available.
-    /// When in doubt, return `true`.
-    ///
-    /// # TODO
-    ///
-    /// - split this into `maybe_exhausted` and `maybe_empty`, defined on `Decode` and
-    ///   `Encode`, respectively, which may return different things on a queue.
-    ///
-    /// [`decode_symbol`]: Decode::decode_symbol
-    fn maybe_empty(&self) -> bool {
-        true
+    /// Convenience forwarding method to simplify type annotations.
+    fn encoder_maybe_full<const PRECISION: usize>(&self) -> bool
+    where
+        Self: Encode<PRECISION>,
+    {
+        self.maybe_full()
+    }
+
+    /// Convenience forwarding method to simplify type annotations.
+    fn decoder_maybe_exhausted<const PRECISION: usize>(&self) -> bool
+    where
+        Self: Decode<PRECISION>,
+    {
+        self.maybe_exhausted()
     }
 }
 
@@ -295,6 +263,11 @@ pub trait Encode<const PRECISION: usize>: Code {
         Self::Word: AsPrimitive<D::Probability>,
     {
         self.encode_symbols(symbols.into_iter().map(|symbol| (symbol, model)))
+    }
+
+    /// Check if there might not be any room to encode more data.
+    fn maybe_full(&self) -> bool {
+        true
     }
 }
 
@@ -398,6 +371,49 @@ pub trait Decode<const PRECISION: usize>: Code {
         }
 
         Ok(())
+    }
+
+    /// Check if there might be no compressed data left for decoding.
+    ///
+    /// This method is useful to check for consistency, e.g., when decoding data with a
+    /// [`Decode`]. This method returns `true` if there *might* not be any compressed data.
+    /// This can have several causes, e.g.:
+    /// - the method is called on a newly constructed empty encoder or decoder; or
+    /// - the user is decoding in-memory data and called `maybe_empty` after decoding all
+    ///   available compressed data; or
+    /// - it is unknown whether there is any compressed data left.
+    ///
+    /// The last item in the above list deserves further explanation. It is not always
+    /// possible to tell whether any compressed data is available. For example, when
+    /// encoding data onto or decoding data from a stream (like a network socket), then the
+    /// coder is not required to keep track of whether or not any compressed data has
+    /// already been emitted or can still be received, respectively. In such a case, when it
+    /// is not known whether any compressed data is available, `maybe_empty` *must* return
+    /// `true`.
+    ///
+    /// The contrapositive of the above requirement is that, when `maybe_empty` returns
+    /// `false`, then some compressed data is definitely available. Therefore, `maybe_empty`
+    /// can used to check for data corruption: if the user of this library believes that
+    /// they have decoded all available compressed data but `maybe_empty` returns `false`,
+    /// then the decoded data must have been corrupted. However, the converse is not true:
+    /// if `maybe_empty` returns `true` then this is not necessarily a particularly strong
+    /// guarantee of data integrity.
+    ///
+    /// Note that it is always legal to call [`decode_symbol`] even on an empty [`Decode`].
+    /// Some decoder implementations may even always return and `Ok(_)` value (with an
+    /// arbitrary but deterministically constructed wrapped symbol) even if the decoder is
+    /// empty,
+    ///
+    /// # Implementation Guide
+    ///
+    /// The default implementation always returns `true` since this is always a *valid*
+    /// (albeit not necessarily the most useful) return value. If you overwrite this method,
+    /// you may return `false` only if there is definitely some compressed data available.
+    /// When in doubt, return `true`.
+    ///
+    /// [`decode_symbol`]: Decode::decode_symbol
+    fn maybe_exhausted(&self) -> bool {
+        true
     }
 }
 
@@ -894,8 +910,8 @@ impl<CodingError: Display, ModelError: Display> Display
 }
 
 #[cfg(feature = "std")]
-impl<CodingError: std::error::Error + 'static, ModelError: std::error::Error + 'static> std::error::Error
-    for TryCodingError<CodingError, ModelError>
+impl<CodingError: std::error::Error + 'static, ModelError: std::error::Error + 'static>
+    std::error::Error for TryCodingError<CodingError, ModelError>
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {

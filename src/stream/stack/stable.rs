@@ -518,12 +518,6 @@ where
             waste: self.waste.state(),
         }
     }
-
-    fn maybe_empty(&self) -> bool {
-        // `self.supply.state()` must always be above threshold if we still want to call
-        // `finish_decoding`, so we only check if `supply.buf` is empty here.
-        self.supply.bulk().is_empty()
-    }
 }
 
 impl<Word, State, const PRECISION: usize> Code for Encoder<Word, State, PRECISION>
@@ -537,10 +531,6 @@ where
     fn state(&self) -> Self::State {
         self.0.state()
     }
-
-    fn maybe_empty(&self) -> bool {
-        self.0.maybe_empty()
-    }
 }
 
 impl<Word, State, const PRECISION: usize> Code for Decoder<Word, State, PRECISION>
@@ -553,10 +543,6 @@ where
 
     fn state(&self) -> Self::State {
         self.0.state()
-    }
-
-    fn maybe_empty(&self) -> bool {
-        self.0.maybe_empty()
     }
 }
 
@@ -663,6 +649,12 @@ where
 
         Ok(symbol)
     }
+
+    fn maybe_exhausted(&self) -> bool {
+        // `self.supply.state()` must always be above threshold if we still want to call
+        // `finish_decoding`, so we only check if `supply.bulk` is empty here.
+        self.supply().bulk().is_empty()
+    }
 }
 
 impl<Word, State, const PRECISION: usize> Encode<PRECISION> for Encoder<Word, State, PRECISION>
@@ -713,6 +705,10 @@ where
             .append_quantile_to_state::<D, PRECISION>(left_sided_cumulative + remainder);
 
         Ok(())
+    }
+
+    fn maybe_full(&self) -> bool {
+        self.supply().bulk.is_empty()
     }
 }
 
@@ -930,7 +926,7 @@ mod test {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert!(!stable_decoder.maybe_empty());
+        assert!(!stable_decoder.maybe_exhausted());
 
         // Test two ways to construct a `stable::Encoder`: direct conversion from a
         // `stable::Decoder`, and converting to a `AnsCoder` and then to a `stable::Encoder`.

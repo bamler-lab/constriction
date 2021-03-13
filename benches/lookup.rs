@@ -203,7 +203,7 @@ where
         .map(Result::unwrap)
         .collect::<Vec<_>>();
     assert_eq!(decoded, data);
-    assert!(decoder.maybe_empty());
+    assert!(decoder.decoder_maybe_exhausted::<PRECISION>());
 }
 
 fn make_symbols_and_probabilities<Probability>(

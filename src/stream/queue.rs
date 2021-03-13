@@ -218,6 +218,12 @@ where
         self.state.range.get() == State::max_value() && self.bulk.as_read_backend().is_exhausted()
     }
 
+    /// Same as `Encoder::maybe_full`, but can be called on a concrete type without type
+    /// annotations.
+    pub fn maybe_full<'a>(&'a self) -> bool {
+        self.bulk.maybe_full()
+    }
+
     /// Same as IntoDecoder::into_decoder(self) but can be used for any `PRECISION`
     /// and therefore doesn't require type arguments on the caller side.
     ///
@@ -542,6 +548,10 @@ where
 
         Ok(())
     }
+
+    fn maybe_full(&self) -> bool {
+        RangeEncoder::maybe_full(self)
+    }
 }
 
 #[derive(Debug)]
@@ -672,6 +682,21 @@ where
 
         Ok(point)
     }
+
+    /// Same as `Decoder::maybe_exhausted`, but can be called on a concrete type without
+    /// type annotations.
+    pub fn maybe_exhausted<'a>(&'a self) -> bool {
+        // The check for `self.state.range == State::max_value()` is for the special case of
+        // an empty buffer.
+        self.bulk.maybe_exhausted()
+            && (self.state.range.get() == State::max_value()
+                || self
+                    .state
+                    .lower
+                    .wrapping_add(&self.state.range.get())
+                    .wrapping_sub(&self.point)
+                    <= State::one() << (State::BITS - Word::BITS))
+    }
 }
 
 impl<Word, State, Backend> Code for RangeDecoder<Word, State, Backend>
@@ -685,19 +710,6 @@ where
 
     fn state(&self) -> Self::State {
         self.state
-    }
-
-    fn maybe_empty(&self) -> bool {
-        // The check for `self.state.range == State::max_value()` is for the special case of
-        // an empty buffer.
-        self.bulk.maybe_exhausted()
-            && (self.state.range.get() == State::max_value()
-                || self
-                    .state
-                    .lower
-                    .wrapping_add(&self.state.range.get())
-                    .wrapping_sub(&self.point)
-                    <= State::one() << (State::BITS - Word::BITS))
     }
 }
 
@@ -837,6 +849,10 @@ where
 
         Ok(symbol)
     }
+
+    fn maybe_exhausted(&self) -> bool {
+        RangeDecoder::maybe_exhausted(self)
+    }
 }
 
 /// Provides temporary read-only access to the compressed data wrapped in an
@@ -932,7 +948,7 @@ mod tests {
         assert!(compressed.is_empty());
 
         let decoder = DefaultRangeDecoder::from_compressed(compressed).unwrap();
-        assert!(decoder.maybe_empty());
+        assert!(decoder.maybe_exhausted());
     }
 
     #[test]
@@ -974,7 +990,7 @@ mod tests {
         for symbol in symbols {
             assert_eq!(decoder.decode_symbol(&model).unwrap(), symbol);
         }
-        assert!(decoder.maybe_empty());
+        assert!(decoder.maybe_exhausted());
     }
 
     #[test]
@@ -1127,7 +1143,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert!(decoder.maybe_empty());
+        assert!(decoder.maybe_exhausted());
 
         assert_eq!(symbols_categorical, reconstructed_categorical);
         assert_eq!(symbols_gaussian, reconstructed_gaussian);
@@ -1169,7 +1185,7 @@ mod tests {
                 .unwrap();
             assert_eq!(&decoded, chunk);
         }
-        assert!(decoder.maybe_empty());
+        assert!(decoder.maybe_exhausted());
 
         // Seek to some random offsets in the jump table and decode one chunk
         for i in 0..100 {
@@ -1191,9 +1207,9 @@ mod tests {
 
         // Test jumping to end (but first make sure we're not already at the end).
         decoder.seek(jump_table[0]).unwrap();
-        assert!(!decoder.maybe_empty());
+        assert!(!decoder.maybe_exhausted());
         decoder.seek(final_pos_and_state).unwrap();
-        assert!(decoder.maybe_empty());
+        assert!(decoder.maybe_exhausted());
     }
 }
 
