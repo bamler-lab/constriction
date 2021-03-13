@@ -465,7 +465,18 @@ macro_rules! unsafe_impl_bit_array {
 
                 #[inline(always)]
                 fn get(self) -> Self::Base {
-                    self.get()
+                    let non_zero = self.get();
+                    unsafe {
+                        // SAFETY: This is trivially save because `non_zero` came from a
+                        // `NonZero` type. We really shouldn't have to give the compiler
+                        // this hint but removing it leads to a massive (~30%) performance
+                        // regression in our tests (TODO: file rust bug).
+                        if non_zero == num::zero::<$base>() {
+                            core::hint::unreachable_unchecked();
+                        } else{
+                            non_zero
+                        }
+                    }
                 }
             }
         )+

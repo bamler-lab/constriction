@@ -492,18 +492,8 @@ where
         D::Probability: Into<Word>,
         Word: AsPrimitive<D::Probability>,
     {
-        let probability = probability.get();
-        unsafe {
-            // SAFETY: This is trivially save because `probability` came from a `NonZero` above.
-            // We really shouldn't have to give the compiler this hint but removing it leads to a
-            // massive (~30%) performance regression in our tests (TODO: file rust bug).
-            if probability == num::zero::<D::Probability>() {
-                core::hint::unreachable_unchecked();
-            }
-        }
-
-        let remainder = (self.state % probability.into().into()).as_().as_();
-        self.state = self.state / probability.into().into();
+        let remainder = (self.state % probability.get().into().into()).as_().as_();
+        self.state = self.state / probability.get().into().into();
         remainder
     }
 
