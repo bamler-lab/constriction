@@ -1,3 +1,58 @@
+//! # Motivation
+//!
+//! TODO: explain
+//!
+//! ```
+//! use constriction::stream::{
+//!     models::DefaultCategorical, stack::DefaultAnsCoder, chain::DefaultChainCoder, Decode
+//! };
+//!
+//! /// Shorthand for decoding a sequence of symbols with categorical entropy models.
+//! fn decode_categoricals<Decoder: Decode<24, Word = u32>>(
+//!     decoder: &mut Decoder,
+//!     probabilities: &[[f64; 4]],
+//! ) -> Vec<usize> {
+//!     let entropy_models = probabilities
+//!         .iter()
+//!         .map(|probs| DefaultCategorical::from_floating_point_probabilities(probs).unwrap());
+//!     decoder.decode_symbols(entropy_models).collect::<Result<Vec<_>, _>>().unwrap()
+//! }
+//!
+//! // Let's define some sample binary data and some probabilities for our entropy models
+//! let data = vec![0x80d1_4131, 0xdda9_7c6c, 0x5017_a640, 0x01170a3d];
+//! let mut probabilities = [
+//!     [0.1, 0.7, 0.1, 0.1], // Probabilities for the entropy model of the first decoded symbol.
+//!     [0.2, 0.2, 0.1, 0.5], // Probabilities for the entropy model of the second decoded symbol.
+//!     [0.2, 0.1, 0.4, 0.3], // Probabilities for the entropy model of the third decoded symbol.
+//! ];
+//!
+//! // Decoding the binary data with an `AnsCoder` results in the symbols `[0, 0, 1]`.
+//! let mut ans_coder = DefaultAnsCoder::from_binary(data.clone()).unwrap();
+//! let symbols = decode_categoricals(&mut ans_coder, &probabilities);
+//! assert_eq!(symbols, [0, 0, 1]);
+//!
+//! // Even if we modify only the first entropy model (slightly), all decoded symbols can change:
+//! probabilities[0] = [0.09, 0.71, 0.1, 0.1]; // was: `[0.1, 0.7, 0.1, 0.1]`
+//! let mut ans_coder = DefaultAnsCoder::from_binary(data.clone()).unwrap();
+//! let symbols = decode_categoricals(&mut ans_coder, &probabilities);
+//! assert_eq!(symbols, [1, 0, 3]);
+//! // It's no surprise that the first symbol changed since we modified its entropy model. But
+//! // note that the third symbol changed too, even though we hadn't modified its entropy model.
+//!
+//! // Let's try the same with a `ChainCoder`:
+//! probabilities[0] = [0.1, 0.7, 0.1, 0.1]; // Restore original entropy model for first symbol.
+//! let mut chain_coder = DefaultChainCoder::from_binary(data.clone()).unwrap();
+//! let symbols = decode_categoricals(&mut chain_coder, &probabilities);
+//! assert_eq!(symbols, [0, 3, 3]);
+//! // We got different symbols than for the `AnsCoder`, of course, but that's not the point here.
+//!
+//! probabilities[0] = [0.09, 0.71, 0.1, 0.1]; // Modify the first entropy model again slightly.
+//! let mut chain_coder = DefaultChainCoder::from_binary(data).unwrap();
+//! let symbols = decode_categoricals(&mut chain_coder, &probabilities);
+//! assert_eq!(symbols, [1, 3, 3]);
+//! // The only symbol that changed was the one whose entropy model we had modified.
+//! ```
+
 use alloc::vec::Vec;
 
 use core::{borrow::Borrow, fmt::Display};
@@ -55,6 +110,7 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
     /// Private on purpose.
     fn new<B: ReadBackend<Word, Stack>>(
         source: &mut B,
+        push_one: bool,
     ) -> Result<ChainCoderHeads<Word, State, PRECISION>, CoderError<(), B::ReadError>>
     where
         Word: Into<State>,
@@ -64,9 +120,13 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
         assert!(PRECISION <= Word::BITS);
 
         let threshold = State::one() << (State::BITS - Word::BITS - PRECISION);
-        let mut remainders_head = match source.read()? {
-            Some(word) if word != Word::zero() => word.into(),
-            _ => return Err(CoderError::FrontendError(())),
+        let mut remainders_head = if push_one {
+            State::one()
+        } else {
+            match source.read()? {
+                Some(word) if word != Word::zero() => word.into(),
+                _ => return Err(CoderError::FrontendError(())),
+            }
         };
         while remainders_head < threshold {
             remainders_head = remainders_head << Word::BITS
@@ -95,6 +155,9 @@ where
     ///
     /// Retuns an error if `quantiles` does not have enough words, if reading from
     /// `quantiles` lead to an error, or if the first word read from `quantiles` is zero.
+    ///
+    /// TODO: rename to `from_compressed` since it has similar constraints as
+    /// `AnsCoder::from_compressed`
     pub fn from_quantiles(
         mut quantiles: QuantilesBackend,
     ) -> Result<Self, CoderError<QuantilesBackend, QuantilesBackend::ReadError>>
@@ -102,7 +165,7 @@ where
         QuantilesBackend: ReadBackend<Word, Stack>,
         RemaindersBackend: Default,
     {
-        let heads = match ChainCoderHeads::new(&mut quantiles) {
+        let heads = match ChainCoderHeads::new(&mut quantiles, false) {
             Ok(heads) => heads,
             Err(CoderError::FrontendError(())) => return Err(CoderError::FrontendError(quantiles)),
             Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
@@ -111,6 +174,27 @@ where
 
         Ok(Self {
             quantiles,
+            remainders,
+            heads,
+        })
+    }
+
+    pub fn from_binary(
+        mut data: QuantilesBackend,
+    ) -> Result<Self, CoderError<QuantilesBackend, QuantilesBackend::ReadError>>
+    where
+        QuantilesBackend: ReadBackend<Word, Stack>,
+        RemaindersBackend: Default,
+    {
+        let heads = match ChainCoderHeads::new(&mut data, true) {
+            Ok(heads) => heads,
+            Err(CoderError::FrontendError(())) => return Err(CoderError::FrontendError(data)),
+            Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
+        };
+        let remainders = RemaindersBackend::default();
+
+        Ok(Self {
+            quantiles: data,
             remainders,
             heads,
         })
@@ -133,7 +217,7 @@ where
             Some(word) => word,
             _ => return Err(CoderError::FrontendError(remainders)),
         };
-        let mut heads = match ChainCoderHeads::new(&mut remainders) {
+        let mut heads = match ChainCoderHeads::new(&mut remainders, false) {
             Ok(heads) => heads,
             Err(CoderError::FrontendError(())) => {
                 return Err(CoderError::FrontendError(remainders))
@@ -178,6 +262,8 @@ where
     /// in `from_quantiles` and returns `(remainders, quantiles)`. You could concatenate
     /// these two and call [`from_quantiles`] on the result, or you could call
     /// [`from_quantiles`] just on the second item of the returned tuple.
+    ///
+    /// TODO: rename to `into_compressed`
     pub fn into_quantiles(
         mut self,
     ) -> Result<(RemaindersBackend, QuantilesBackend), CoderError<Self, QuantilesBackend::WriteError>>
@@ -193,6 +279,29 @@ where
             self.quantiles.write(self.heads.remainders.as_())?;
             self.heads.remainders = self.heads.remainders >> Word::BITS;
         }
+
+        Ok((self.remainders, self.quantiles))
+    }
+
+    pub fn into_binary(
+        mut self,
+    ) -> Result<(RemaindersBackend, QuantilesBackend), CoderError<Self, QuantilesBackend::WriteError>>
+    where
+        QuantilesBackend: WriteBackend<Word>,
+    {
+        if !self.is_whole()
+            || (State::BITS - self.heads.remainders.leading_zeros() as usize - 1) % Word::BITS != 0
+        {
+            return Err(CoderError::FrontendError(self));
+        }
+
+        // Transfer remainders head onto `quantiles`.
+        while self.heads.remainders > State::one() {
+            self.quantiles.write(self.heads.remainders.as_())?;
+            self.heads.remainders = self.heads.remainders >> Word::BITS;
+        }
+
+        debug_assert!(self.heads.remainders == State::one());
 
         Ok((self.remainders, self.quantiles))
     }
@@ -392,7 +501,6 @@ where
     where
         RemaindersBackend: WriteBackend<Word> + ReadBackend<Word, Stack>,
     {
-        // TODO: encapsulate error type
         if NEW_PRECISION > PRECISION {
             self.increase_precision()
                 .map_err(ChangePrecisionError::Write)
@@ -557,13 +665,13 @@ where
             }
             word
         } else {
-            let quantile = self.heads.quantiles.get();
+            let word = self.heads.quantiles.get();
             self.heads.quantiles = unsafe {
                 // SAFETY: `heads.quantiles.get() >= 1 << PRECISION`, so shifting right by
                 // `PRECISION` doesn't result in zero.
                 Word::NonZero::new_unchecked(self.heads.quantiles.get() >> PRECISION)
             };
-            quantile
+            word
         };
 
         let quantile = if PRECISION == Word::BITS {

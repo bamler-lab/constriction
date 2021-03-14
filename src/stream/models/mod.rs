@@ -442,6 +442,9 @@ pub struct Categorical<Probability, const PRECISION: usize> {
     cdf: Vec<Probability>,
 }
 
+pub type DefaultCategorical = Categorical<u32, 24>;
+pub type SmallCategorical = Categorical<u16, 12>;
+
 impl<Probability, const PRECISION: usize> Debug for Categorical<Probability, PRECISION>
 where
     Probability: BitArray + Debug,
