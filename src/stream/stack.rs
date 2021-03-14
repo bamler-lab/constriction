@@ -2,8 +2,6 @@
 //!
 //!
 
-pub mod stable;
-
 use alloc::vec::Vec;
 use core::{
     borrow::Borrow,
@@ -961,13 +959,13 @@ where
 {
     pub fn into_stable_decoder<const PRECISION: usize>(
         self,
-    ) -> Result<stable::Decoder<Word, State, PRECISION>, Option<Self>> {
+    ) -> Result<zip_ans::Decoder<Word, State, PRECISION>, Option<Self>> {
         self.try_into()
     }
 
     pub fn into_stable_encoder<const PRECISION: usize>(
         self,
-    ) -> Result<stable::Encoder<Word, State, PRECISION>, Self> {
+    ) -> Result<zip_ans::Encoder<Word, State, PRECISION>, Self> {
         self.try_into()
     }
 }

@@ -9,8 +9,9 @@ use core::{
 use num::cast::AsPrimitive;
 
 use super::{
-    super::models::{DecoderModel, EncoderModel},
-    AnsCoder, Code, Decode, Encode, EncoderError, TryCodingError,
+    models::{DecoderModel, EncoderModel},
+    stack::AnsCoder,
+    Code, Decode, Encode, EncoderError, TryCodingError,
 };
 use crate::{BitArray, CoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible};
 
@@ -22,7 +23,7 @@ where
 {
     /// The supply of bits.
     ///
-    /// Satisfies the normal invariant of a `AnsCoder`.
+    /// Satisfies the normal invariant of an `AnsCoder`.
     supply: AnsCoder<Word, State>,
 
     /// Remaining information not used up by decoded symbols.

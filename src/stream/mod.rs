@@ -153,6 +153,7 @@
 pub mod models;
 pub mod queue;
 pub mod stack;
+pub mod chain;
 
 use core::{
     borrow::Borrow,
