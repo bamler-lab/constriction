@@ -23,11 +23,9 @@ use crate::{
     BitArray, CoderError, EncoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible,
 };
 
-/// Type of the internal state used by [`Encoder<Word, State>`],
-/// [`Decoder<Word, State>`]. Relevant for [`Seek`]ing.
-///
-/// [`Seek`]: crate::Seek
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Type of the internal state used by [`RangeEncoder<Word, State>`] and
+/// [`RangeDecoder<Word, State>`]. Relevant for [`Seek`]ing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq,Hash)]
 pub struct RangeCoderState<Word, State: BitArray> {
     lower: State,
 

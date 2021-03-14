@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use core::{
     borrow::Borrow,
     convert::{Infallible, TryFrom},
+    fmt::Display,
     ops::{Deref, DerefMut},
 };
 
@@ -10,77 +11,238 @@ use num::cast::AsPrimitive;
 
 use super::{
     models::{DecoderModel, EncoderModel},
-    stack::AnsCoder,
     Code, Decode, Encode, EncoderError, TryCodingError,
 };
-use crate::{BitArray, CoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible};
+use crate::{
+    backends::{ReadBackend, Stack, WriteBackend},
+    BitArray, CoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible,
+};
 
 #[derive(Debug, Clone)]
-struct Coder<Word, State, const PRECISION: usize>
+struct ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
-    /// The supply of bits.
-    ///
-    /// Satisfies the normal invariant of an `AnsCoder`.
-    supply: AnsCoder<Word, State>,
+    /// The compressed bit string. Read from by encoder, written to by decoder.
+    quantiles: QuantilesBackend,
 
-    /// Remaining information not used up by decoded symbols.
-    ///
-    /// Satisfies different invariants than a usual `AnsCoder`:
-    /// - `waste.state() >= State::one() << (State::BITS - PRECISION - Word::BITS)`
-    ///   unless `waste.buf().is_empty()`; and
-    /// - `waste.state() < State::one() << (State::BITS - PRECISION)`
-    waste: AnsCoder<Word, State>,
+    /// Left-over information from decoding. Written to by encoder, read from by decoder.
+    remainders: RemaindersBackend,
+
+    heads: ChainCoderHeads<Word, State, PRECISION>,
 }
 
-#[derive(Debug, Clone)]
-pub struct Encoder<Word, State, const PRECISION: usize>(Coder<Word, State, PRECISION>)
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>;
+/// Type of the internal state used by [`ChainCoder<Word, State>`]. Relevant for
+/// [`Seek`]ing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ChainCoderHeads<Word: BitArray, State: BitArray, const PRECISION: usize> {
+    /// All bits following the highest order bit (which is a given in a `NonZero`) are
+    /// leftover bits from previous reads from `quantiles` that still need to be consumed.
+    /// Thus, there are at most `Word::BITS - 1` leftover bits at any time.
+    quantiles: Word::NonZero,
 
-#[derive(Debug, Clone)]
-pub struct Decoder<Word, State, const PRECISION: usize>(Coder<Word, State, PRECISION>)
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>;
+    /// Satisfies invariants:
+    /// - `heads.remainders >= 1 << (State::BITS - Word::BITS - PRECISION)`; and
+    /// - `heads.remainders < 1 << (State::BITS - PRECISION)`
+    remainders: State,
+}
 
-impl<Word, State, const PRECISION: usize> Decoder<Word, State, PRECISION>
+impl<Word: BitArray, State: BitArray, const PRECISION: usize>
+    ChainCoderHeads<Word, State, PRECISION>
+{
+    /// Returns `true` iff there's currently an integer amount of `Words` on `quantiles`
+    #[inline(always)]
+    pub fn is_whole(self) -> bool {
+        self.quantiles.get() == Word::one()
+    }
+
+    fn new<B: ReadBackend<Word, Stack>>(
+        source: &mut B,
+    ) -> Result<ChainCoderHeads<Word, State, PRECISION>, CoderError<B, B::ReadError>>
+    where
+        Word: Into<State>,
+    {
+        assert!(State::BITS >= Word::BITS + PRECISION);
+        assert!(PRECISION > 0);
+        assert!(PRECISION <= Word::BITS);
+
+        let threshold = State::one() << (State::BITS - Word::BITS - PRECISION);
+        let mut remainders_head = match source.read()? {
+            Some(word) if word != Word::zero() => word.into(),
+            _ => return Err(CoderError::Frontend(source)),
+        };
+        while remainders_head < threshold {
+            remainders_head = remainders_head << Word::BITS
+                | source.read()?.ok_or(CoderError::Frontend(source))?.into();
+        }
+
+        Ok(ChainCoderHeads {
+            quantiles: Word::one().into_nonzero().expect("1 != 0"),
+            remainders: remainders_head,
+        })
+    }
+}
+
+type DefaultChainCoder = ChainCoder<u32, u64, Vec<u32>, Vec<u32>, 24>;
+type SmallChainCoder = ChainCoder<u16, u32, Vec<u16>, Vec<u16>, 12>;
+
+impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize>
+    ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
-    fn new(ans: AnsCoder<Word, State>) -> Result<Self, Option<AnsCoder<Word, State>>> {
-        assert!(Word::BITS > 0);
-        assert!(State::BITS >= 2 * Word::BITS);
-        assert!(State::BITS % Word::BITS == 0);
-        assert!(PRECISION <= Word::BITS);
-        assert!(PRECISION > 0);
+    /// Creates a new `ChainCoder` ready for decoding from the provided `quantiles`, which
+    /// must have enough words to initialize the chain heads and must not have a zero word
+    /// at the current read position.
+    ///
+    /// Retuns an error if `quantiles` does not have enough words, if reading from
+    /// `quantiles` lead to an error, or if the first word read from `quantiles` is zero.
+    pub fn from_quantiles(
+        quantiles: QuantilesBackend,
+    ) -> Result<Self, CoderError<RemaindersBackend, QuantilesBackend::ReadError>>
+    where
+        QuantilesBackend: ReadBackend<Word, Stack>,
+        RemaindersBackend: Default,
+    {
+        let heads = ChainCoderHeads::new(&mut quantiles)?;
+        let remainders = RemaindersBackend::default();
 
-        // The following also assures that `ans.buf()` is no-empty since
-        // `State::BITS / Word::BITS - 1 >= 1`.
-        if ans.bulk().len() < State::BITS / Word::BITS - 1 {
-            // Not enough data to initialize `supply` and `waste`.
-            return Err(Some(ans));
-        }
+        Ok(Self {
+            quantiles,
+            remainders,
+            heads,
+        })
+    }
 
-        let (buf, supply_state) = ans.into_raw_parts();
-        let prefix = AnsCoder::from_binary(buf).map_err(|_| None)?;
-        let (supply_buf, waste_state) = prefix.into_raw_parts();
-
-        let supply = unsafe {
-            // SAFETY: `ans` had non-empty `buf`, so its state satisfies invariant.
-            AnsCoder::from_raw_parts(supply_buf, supply_state)
+    /// Creates a new `ChainCoder` ready for encoding some symbols together with the
+    /// provided `remainders`, which must have enough words to initialize the chain heads
+    /// and must start with at least two nonzero words.
+    ///
+    /// Retuns an error if `quantiles` does not have enough words, if reading from
+    /// `quantiles` lead to an error, or if the first word read from `quantiles` is zero.
+    pub fn from_remainders(
+        mut remainders: RemaindersBackend,
+    ) -> Result<Self, CoderError<RemaindersBackend, RemaindersBackend::ReadError>>
+    where
+        RemaindersBackend: ReadBackend<Word, Stack>,
+        QuantilesBackend: Default,
+    {
+        let quantiles_head = match remainders.read()?.and_then(Word::into_nonzero) {
+            Some(word) => word,
+            _ => return Err(CoderError::Frontend(remainders)),
         };
+        let mut heads = ChainCoderHeads::new(&mut remainders)?;
+        heads.quantiles = quantiles_head;
 
-        let mut waste = AnsCoder::with_state_and_empty_bulk(waste_state);
-        if PRECISION == Word::BITS {
-            waste.flush_state();
+        let quantiles = QuantilesBackend::default();
+
+        Ok(Self {
+            quantiles,
+            remainders,
+            heads,
+        })
+    }
+
+    /// Transfers any fractional `Word` left on `quantiles` to `remainders` and returns
+    /// (quantiles, remainders). You could contatenate these two and call
+    /// [`from_remainders`] on them, or you could call [`from_remainders`] just on the
+    /// second item of the returned tuple.
+    pub fn into_remainders(
+        self,
+    ) -> Result<(QuantilesBackend, RemaindersBackend), RemaindersBackend::WriteError>
+    where
+        RemaindersBackend: WriteBackend<Word>,
+    {
+        // Flush remainders head.
+        while self.heads.remainders != State::zero() {
+            self.remainders.write(self.heads.remainders.as_())?;
+            self.heads.remainders = self.heads.remainders >> Word::BITS;
         }
 
-        Ok(Self(Coder { supply, waste }))
+        // Transfer quantiles head onto `remainders`.
+        self.remainders.write(self.heads.quantiles.get())?;
+
+        Ok((self.quantiles, self.remainders))
+    }
+
+    /// Checks that there's currently an integer amount of `Words` in `quantiles` (see
+    /// [`is_whole`]) and returns `(remainders, quantiles)`. You could concatenate these two
+    /// and call [`from_quantiles`] on the result, or you could call [`from_quantiles`] just
+    /// on the second item of the returned tuple.
+    pub fn into_quantiles(
+        self,
+    ) -> Result<
+        (RemaindersBackend, QuantilesBackend),
+        CoderError<Self, RemaindersBackend::WriteError>,
+    >
+    where
+        RemaindersBackend: WriteBackend<Word>,
+    {
+        if !self.is_whole() {
+            return Err(CoderError::FrontendError(self));
+        }
+
+        // Flush remainders head.
+        while self.heads.remainders != State::zero() {
+            self.remainders.write(self.heads.remainders.as_())?;
+            self.heads.remainders = self.heads.remainders >> Word::BITS;
+        }
+
+        Ok((self.remainders, self.quantiles))
+    }
+
+    /// Returns `true` iff there's currently an integer amount of `Words` on `quantiles`
+    #[inline(always)]
+    pub fn is_whole(self) -> bool {
+        self.heads.quantiles.get() == Word::one()
+    }
+
+    pub fn encode_symbols_reverse<S, D, I>(
+        &mut self,
+        symbols_and_models: I,
+    ) -> Result<(), EncoderError<WriteError>>
+    where
+        S: Borrow<D::Symbol>,
+        D: EncoderModel<PRECISION>,
+        D::Probability: Into<Word>,
+        Word: AsPrimitive<D::Probability>,
+        I: IntoIterator<Item = (S, D)>,
+        I::IntoIter: DoubleEndedIterator,
+    {
+        self.encode_symbols(symbols_and_models.into_iter().rev())
+    }
+
+    pub fn try_encode_symbols_reverse<S, D, E, I>(
+        &mut self,
+        symbols_and_models: I,
+    ) -> Result<(), TryCodingError<EncoderError<WriteError>, E>>
+    where
+        S: Borrow<D::Symbol>,
+        D: EncoderModel<PRECISION>,
+        D::Probability: Into<Word>,
+        Word: AsPrimitive<D::Probability>,
+        I: IntoIterator<Item = core::result::Result<(S, D), E>>,
+        I::IntoIter: DoubleEndedIterator,
+    {
+        self.try_encode_symbols(symbols_and_models.into_iter().rev())
+    }
+
+    pub fn encode_iid_symbols_reverse<S, D, I>(
+        &mut self,
+        symbols: I,
+        model: &D,
+    ) -> Result<(), EncoderError<WriteError>>
+    where
+        S: Borrow<D::Symbol>,
+        D: EncoderModel<PRECISION>,
+        D::Probability: Into<Word>,
+        Word: AsPrimitive<D::Probability>,
+        I: IntoIterator<Item = S>,
+        I::IntoIter: DoubleEndedIterator,
+    {
+        self.encode_iid_symbols(symbols.into_iter().rev(), model)
     }
 
     /// Converts the `stable::Decoder` into a new `stable::Decoder` that accepts entropy
@@ -136,443 +298,124 @@ where
     ///
     /// [`stable::Encoder`]: Encoder
     /// [`into_decoder`]: Encoder::into_decoder
-    pub fn change_precision<const NEW_PRECISION: usize>(
+    pub fn increase_precision<const NEW_PRECISION: usize>(
         self,
-    ) -> Result<Decoder<Word, State, NEW_PRECISION>, Decoder<Word, State, PRECISION>> {
-        match self.0.change_precision() {
-            Ok(coder) => Ok(Decoder(coder)),
-            Err(coder) => Err(Decoder(coder)),
-        }
-    }
-
-    /// Converts the `stable::Decoder` into a [`stable::Encoder`].
-    ///
-    /// This is a no-op since `stable::Decoder` and [`stable::Encoder`] use the same
-    /// internal representation with the same invariants. Therefore, we could in
-    /// principle have merged the two into a single type. However, keeping them as
-    /// separate types makes the API more clear and prevents misuse since the conversion
-    /// to and from a [`AnsCoder`] is different for `stable::Decoder` and
-    /// `stable::Encoder`.
-    ///
-    /// [`stable::Encoder`]: Encoder
-    pub fn into_encoder(self) -> Encoder<Word, State, PRECISION> {
-        Encoder(self.0)
-    }
-
-    pub fn finish(self) -> (Vec<Word>, AnsCoder<Word, State>) {
-        let (prefix, supply_state) = self.0.supply.into_raw_parts();
-        let suffix = unsafe {
-            // SAFETY: `stable::Decoder` always reserves enough `supply.state`.
-            AnsCoder::from_raw_parts(
-                self.0.waste.into_compressed().unwrap_infallible(),
-                supply_state,
-            )
-        };
-
-        (prefix, suffix)
-    }
-
-    pub fn finish_and_concatenate(self) -> AnsCoder<Word, State> {
-        unsafe {
-            // UNSAFE: `stable::Decoder` always reserves enough `supply.state`.
-            concatenate(self.finish())
-        }
-    }
-
-    pub fn supply(&self) -> &AnsCoder<Word, State> {
-        self.0.supply()
-    }
-
-    pub fn supply_mut(&mut self) -> &mut AnsCoder<Word, State> {
-        self.0.supply_mut()
-    }
-
-    pub fn waste_mut<'a>(
-        &'a mut self,
-    ) -> impl DerefMut<Target = AnsCoder<Word, State>> + Drop + 'a {
-        self.0.waste_mut()
-    }
-
-    pub fn into_supply_and_waste(self) -> (AnsCoder<Word, State>, AnsCoder<Word, State>) {
-        // `self.waste` satisfies slightly different invariants than a usual `AnsCoder`.
-        // We therefore first restore the usual `AnsCoder` invariant.
-        self.0.into_supply_and_waste()
-    }
-}
-
-impl<Word, State, const PRECISION: usize> TryFrom<AnsCoder<Word, State>>
-    for Decoder<Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    type Error = Option<AnsCoder<Word, State>>;
-
-    fn try_from(ans: AnsCoder<Word, State>) -> Result<Self, Option<AnsCoder<Word, State>>> {
-        Self::new(ans)
-    }
-}
-
-/// TODO: check if this can be made generic over the backend
-impl<Word, State, const PRECISION: usize> From<Decoder<Word, State, PRECISION>>
-    for AnsCoder<Word, State>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    fn from(decoder: Decoder<Word, State, PRECISION>) -> Self {
-        decoder.finish_and_concatenate()
-    }
-}
-
-impl<Word, State, const PRECISION: usize> Encoder<Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    fn new(ans: AnsCoder<Word, State>) -> Result<Self, AnsCoder<Word, State>> {
-        assert!(Word::BITS > 0);
-        assert!(State::BITS >= 2 * Word::BITS);
-        assert!(State::BITS % Word::BITS == 0);
-        assert!(PRECISION <= Word::BITS);
-        assert!(PRECISION > 0);
-
-        // The following also assures that `ans.buf()` is no-empty since
-        // `State::BITS / Word::BITS - 1 >= 1`.
-        if ans.bulk().len() < State::BITS / Word::BITS - 1 {
-            // Not enough data to initialize `supply` and `waste`.
-            return Err(ans);
-        }
-
-        if ans.bulk.last() == Some(&Word::zero()) {
-            // Invalid data that couldn't have been produced by `stable::Decoder::finish()`.
-            return Err(ans);
-        }
-
-        let (buf, supply_state) = ans.into_raw_parts();
-        let supply = AnsCoder::with_state_and_empty_bulk(supply_state);
-        let mut waste = AnsCoder::from_compressed(buf)
-            .expect("We verified above that `buf` doesn't end in zero word");
-        if waste.state() >= State::one() << (State::BITS - PRECISION) {
-            waste.flush_state();
-        }
-
-        Ok(Self(Coder { supply, waste }))
-    }
-
-    /// Stable variant of [`AnsCoder::encode_symbols_reverse`].
-    pub fn encode_symbols_reverse<S, D, I>(
-        &mut self,
-        symbols_and_models: I,
-    ) -> Result<(), EncoderError<WriteError>>
+    ) -> Result<
+        ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, NEW_PRECISION>,
+        RemaindersBackend::WriteError,
+    >
     where
-        S: Borrow<D::Symbol>,
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
-        I: IntoIterator<Item = (S, D)>,
-        I::IntoIter: DoubleEndedIterator,
+        RemaindersBackend: WriteBackend<Word>,
     {
-        self.encode_symbols(symbols_and_models.into_iter().rev())
-    }
-
-    /// Stable variant of [`AnsCoder::try_encode_symbols_reverse`].
-    pub fn try_encode_symbols_reverse<S, D, E, I>(
-        &mut self,
-        symbols_and_models: I,
-    ) -> Result<(), TryCodingError<EncoderError<WriteError>, E>>
-    where
-        S: Borrow<D::Symbol>,
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
-        I: IntoIterator<Item = core::result::Result<(S, D), E>>,
-        I::IntoIter: DoubleEndedIterator,
-    {
-        self.try_encode_symbols(symbols_and_models.into_iter().rev())
-    }
-
-    /// Stable variant of [`AnsCoder::encode_iid_symbols_reverse`].
-    pub fn encode_iid_symbols_reverse<S, D, I>(
-        &mut self,
-        symbols: I,
-        model: &D,
-    ) -> Result<(), EncoderError<WriteError>>
-    where
-        S: Borrow<D::Symbol>,
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
-        I: IntoIterator<Item = S>,
-        I::IntoIter: DoubleEndedIterator,
-    {
-        self.encode_iid_symbols(symbols.into_iter().rev(), model)
-    }
-
-    /// Converts the `stable::Encoder` into a new `stable::Encoder` that accepts entropy
-    /// models with a different fixed-point precision.
-    ///
-    /// # Failure Case
-    ///
-    /// The conversion can only fail if *both* of the following two conditions are true
-    ///
-    /// - `NEW_PRECISION < PRECISION`; and
-    /// - the `stable::Encoder` has been used incorrectly: it must have encoded too many
-    ///   symbols or used the wrong sequence of entropy models, causing it to use up
-    ///   just a few more bits of `waste` than available (but also not exceeding the
-    ///   capacity enough for this to be detected during encoding).
-    ///
-    /// # See Also
-    ///
-    /// This method is analogous to [`stable::Decoder::change_precision`]. See its
-    /// documentation for details and an example.
-    ///
-    /// [`stable::Decoder::change_precision`]: Decoder::change_precision
-    pub fn change_precision<const NEW_PRECISION: usize>(
-        self,
-    ) -> Result<Encoder<Word, State, NEW_PRECISION>, Encoder<Word, State, PRECISION>> {
-        match self.0.change_precision() {
-            Ok(coder) => Ok(Encoder(coder)),
-            Err(coder) => Err(Encoder(coder)),
-        }
-    }
-
-    /// Converts the `stable::Encoder` into a [`stable::Decoder`].
-    ///
-    /// This is a no-op since `stable::Encoder` and [`stable::Decoder`] use the same
-    /// internal representation with the same invariants. Therefore, we could in
-    /// principle have merged the two into a single type. However, keeping them as
-    /// separate types makes the API more clear and prevents misuse since the conversion
-    /// to and from a [`AnsCoder`] is different for `stable::Encoder` and
-    /// `stable::Decoder`.
-    ///
-    /// [`stable::Decoder`]: Decoder
-    pub fn into_decoder(self) -> Decoder<Word, State, PRECISION> {
-        Decoder(self.0)
-    }
-
-    pub fn finish(mut self) -> Result<(Vec<Word>, AnsCoder<Word, State>), Self> {
-        if PRECISION == Word::BITS {
-            if self.0.waste.state() >> (State::BITS - 2 * Word::BITS) != State::one()
-                || self.0.waste.refill_state_maybe_truncating().is_err()
-            {
-                // Waste's state (without leading 1 bit) doesn't fit into integer number of
-                // `Word`s, or there is not enough data on `waste`.
-                return Err(self);
-            }
-        } else {
-            if self.0.waste.state() >> (State::BITS - Word::BITS) != State::one() {
-                // Waste's state (without leading 1 bit) doesn't fit into integer number of
-                // `Word`s, or there is not enough data on `waste`.
-                return Err(self);
-            }
-        }
-
-        let (mut buf, state) = self.0.supply.into_raw_parts();
-        let (prefix, mut waste_state) = self.0.waste.into_raw_parts();
-
-        while waste_state != State::one() {
-            buf.push(waste_state.as_());
-            waste_state = waste_state >> Word::BITS;
-        }
-
-        let suffix = unsafe {
-            // SAFETY: `stable::Encoder` always reserves enough `supply.state`.
-            AnsCoder::from_raw_parts(buf, state)
-        };
-
-        Ok((prefix, suffix))
-    }
-
-    pub fn finish_and_concatenate(self) -> Result<AnsCoder<Word, State>, Self> {
-        unsafe {
-            // UNSAFE: `stable::Encoder` always reserves enough `supply.state`.
-            Ok(concatenate(self.finish()?))
-        }
-    }
-
-    pub fn supply(&self) -> &AnsCoder<Word, State> {
-        self.0.supply()
-    }
-
-    pub fn supply_mut(&mut self) -> &mut AnsCoder<Word, State> {
-        self.0.supply_mut()
-    }
-
-    pub fn waste_mut<'a>(
-        &'a mut self,
-    ) -> impl DerefMut<Target = AnsCoder<Word, State>> + Drop + 'a {
-        self.0.waste_mut()
-    }
-
-    pub fn into_supply_and_waste(self) -> (AnsCoder<Word, State>, AnsCoder<Word, State>) {
-        // `self.waste` satisfies slightly different invariants than a usual `AnsCoder`.
-        // We therefore first restore the usual `AnsCoder` invariant.
-        self.0.into_supply_and_waste()
-    }
-}
-
-impl<Word, State, const PRECISION: usize> TryFrom<AnsCoder<Word, State>>
-    for Encoder<Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    type Error = AnsCoder<Word, State>;
-
-    fn try_from(ans: AnsCoder<Word, State>) -> Result<Self, AnsCoder<Word, State>> {
-        Self::new(ans)
-    }
-}
-
-/// TODO: check if this can be made generic over the backend
-impl<Word, State, const PRECISION: usize> TryFrom<Encoder<Word, State, PRECISION>>
-    for AnsCoder<Word, State>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    type Error = Encoder<Word, State, PRECISION>;
-
-    fn try_from(
-        decoder: Encoder<Word, State, PRECISION>,
-    ) -> Result<Self, Encoder<Word, State, PRECISION>> {
-        decoder.finish_and_concatenate()
-    }
-}
-
-impl<Word, State, const PRECISION: usize> Coder<Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    pub fn change_precision<const NEW_PRECISION: usize>(
-        mut self,
-    ) -> Result<Coder<Word, State, NEW_PRECISION>, Coder<Word, State, PRECISION>> {
+        assert!(NEW_PRECISION >= PRECISION);
         assert!(NEW_PRECISION <= Word::BITS);
+        assert!(State::BITS >= Word::BITS + NEW_PRECISION);
 
-        if NEW_PRECISION > PRECISION {
-            if self.waste.state() >= State::one() << (State::BITS - NEW_PRECISION) {
-                if self.waste.flush_state().is_err() {
-                    return Err(self);
-                }
-            }
-        } else if NEW_PRECISION < PRECISION {
-            if self.waste.state() < State::one() << (State::BITS - NEW_PRECISION - Word::BITS) {
-                if self.waste.refill_state_maybe_truncating().is_err() {
-                    return Err(self);
-                }
-            }
+        if self.heads.remainders >= State::one() << (State::BITS - NEW_PRECISION) {
+            self.flush_remainders_head()?;
         }
 
-        Ok(Coder {
-            supply: self.supply,
-            waste: self.waste,
+        Ok(ChainCoder {
+            quantiles: self.quantiles,
+            remainders: self.remainders,
+            heads: ChainCoderHeads {
+                quantiles: self.heads.quantiles,
+                remainders: self.heads.remainders,
+            },
         })
     }
 
-    pub fn supply(&self) -> &AnsCoder<Word, State> {
-        &self.supply
+    pub fn decrease_precision<const NEW_PRECISION: usize>(
+        self,
+    ) -> Result<
+        ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, NEW_PRECISION>,
+        RemaindersBackend::ReadError,
+    >
+    where
+        RemaindersBackend: ReadBackend<Word, Stack>,
+    {
+        assert!(NEW_PRECISION <= PRECISION);
+        assert!(NEW_PRECISION > 0);
+
+        if self.heads.remainders < State::one() << (State::BITS - NEW_PRECISION - Word::BITS) {
+            unsafe {
+                // SAFETY: From the above check follows that we satisfy the contract
+                // `self.heads.remainders < 1 << (State::BITS - Word::BITS)`.
+                self.refill_remainders_head()?
+            }
+        }
+
+        Ok(ChainCoder {
+            quantiles: self.quantiles,
+            remainders: self.remainders,
+            heads: ChainCoderHeads {
+                quantiles: self.heads.quantiles,
+                remainders: self.heads.remainders,
+            },
+        })
     }
 
-    pub fn supply_mut(&mut self) -> &mut AnsCoder<Word, State> {
-        &mut self.supply
-    }
-
-    pub fn waste_mut<'a>(
-        &'a mut self,
-    ) -> impl DerefMut<Target = AnsCoder<Word, State>> + Drop + 'a {
-        WasteGuard::<'a, _, _, PRECISION>::new(&mut self.waste)
-    }
-
-    pub fn into_supply_and_waste(mut self) -> (AnsCoder<Word, State>, AnsCoder<Word, State>) {
-        // `self.waste` satisfies slightly different invariants than a usual `AnsCoder`.
-        // We therefore first restore the usual `AnsCoder` invariant.
-        let _ = self.waste.try_refill_state_if_necessary();
-
-        (self.supply, self.waste)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CoderState<State> {
-    /// Invariant: `supply >= State::one() << (State::BITS - Word::BITS)`
-    pub supply: State,
-
-    /// Invariants:
-    /// - `waste >= State::one() << (State::BITS - PRECISION - Word::BITS)`
-    /// - `waste < State::one() << (State::BITS - PRECISION)`
-    pub waste: State,
-}
-
-impl<Word, State, const PRECISION: usize> Code for Coder<Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    type Word = Word;
-    type State = CoderState<State>;
-
-    fn state(&self) -> Self::State {
-        CoderState {
-            supply: self.supply.state(),
-            waste: self.waste.state(),
+    #[inline(always)]
+    pub fn change_precision<const NEW_PRECISION: usize>(
+        self,
+    ) -> Result<
+        ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, NEW_PRECISION>,
+        RemaindersBackend::WriteError,
+    >
+    where
+        RemaindersBackend: WriteBackend<Word> + ReadBackend<Word, Stack>,
+    {
+        // TODO: encapsulate error type
+        if NEW_PRECISION > PRECISION {
+            self.increase_precision()
+        } else {
+            self.decrease_precision()
         }
     }
+
+    #[inline(always)]
+    fn flush_remainders_head<const NEW_PRECISION: usize>(
+        &mut self,
+    ) -> Result<(), RemaindersBackend::WriteError>
+    where
+        RemaindersBackend: WriteBackend<Word>,
+    {
+        self.remainders.write(self.heads.remainders.as_())?;
+        self.heads.remainders = self.heads.remainders >> Word::BITS;
+        Ok(())
+    }
+
+    /// This truncates if `self.heads.remainders >= 1 << (State::BITS - Word::BITS)`.
+    #[inline(always)]
+    fn refill_remainders_head(&mut self) -> Result<(), Option<RemaindersBackend::ReadError>>
+    where
+        RemaindersBackend: ReadBackend<Word, Stack>,
+    {
+        let word = self.remainders.read().map_err(Some)?.ok_or(None)?;
+        self.heads.remainders = (self.heads.remainders << Word::BITS) | word.into();
+        Ok(())
+    }
 }
 
-impl<Word, State, const PRECISION: usize> Code for Encoder<Word, State, PRECISION>
+impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Code
+    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
     type Word = Word;
-    type State = CoderState<State>;
+    type State = ChainCoderHeads<Word, State, PRECISION>;
 
     fn state(&self) -> Self::State {
-        self.0.state()
+        self.heads
     }
 }
 
-impl<Word, State, const PRECISION: usize> Code for Decoder<Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    type Word = Word;
-    type State = CoderState<State>;
-
-    fn state(&self) -> Self::State {
-        self.0.state()
-    }
-}
-
-/// Error type for a [`stable::Decoder`].
+/// Error type for misuse of a [`stable::Decoder`].
 ///
 /// [`stable::Decoder`]: Decoder
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum FrontendError {
-    /// Not enough binary data available to decode the symbol.
-    ///
-    /// Note that a [`stable::Decoder<State, Word, PRECISION>`]
-    /// - consumes `PRECISION` bits of compressed data for each decoded symbol, even for
-    ///   symbols with low information content under the used entropy model (the
-    ///   superfluous information content will be appended to the `stable::Decoder`'s
-    ///   [`waste`]); and it
-    /// - retains up to `2 * State::BITS - Word::BITS` bits of compressed data
-    ///   that it won't decode into any symbols (these bits are needed to initialize the
-    ///   `stable::Decoder`'s `waste`, and for proper "sealing" of the binary data in
-    ///   [`stable::Decoder::finish`]).
-    ///
-    /// Thus, when you want to decode `n` symbols with a [`stable::Decoder`], you should
-    /// construct it from a [`AnsCoder`] where [`num_valid_bits`] reports at least
-    /// `n * PRECISION + 2 * State::BITS - Word::BITS`.
-    ///
-    /// [`stable::Decoder<State, Word, PRECISION>`]: Decoder
-    /// [`stable::Decoder`]: Decoder
-    /// [`waste`]: Decoder::waste
-    /// [`stable::Decoder::finish`]: Decoder::finish
-    /// [`num_valid_bits`]: AnsCoder::num_valid_bits
     OutOfData,
 }
 
@@ -580,42 +423,61 @@ impl core::fmt::Display for FrontendError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::OutOfData => {
-                write!(f, "Out of binary data.")
+                write!(f, "Out of data.")
             }
         }
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for FrontendError {}
-
-#[derive(Debug)]
-pub enum WriteError {
-    CapacityExceeded,
+/// Error type for backend errors in a [`stable::Decoder`].
+///
+/// [`stable::Decoder`]: Decoder
+#[derive(Debug, PartialEq, Eq)]
+pub enum BackendError<QuantilesBackendError, RemaindersBackendError> {
+    Quantiles(QuantilesBackendError),
+    Remainders(RemaindersBackendError),
 }
 
-impl core::fmt::Display for WriteError {
+impl<QuantilesBackendError: Display, RemaindersBackendError: Display> core::fmt::Display
+    for BackendError<QuantilesBackendError, RemaindersBackendError>
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::CapacityExceeded => {
-                write!(f, "Capacity exceeded.")
+            Self::Quantiles(err) => {
+                write!(f, "Read/write error when accessing quantiles: {}", err)
+            }
+            Self::Remainders(err) => {
+                write!(f, "Read/write error when accessing remainders: {}", err)
             }
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for WriteError {}
+impl<
+        QuantilesBackendError: std::error::Error + 'static,
+        RemaindersBackendError: std::error::Error + 'static,
+    > std::error::Error for BackendError<QuantilesBackendError, RemaindersBackendError>
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Quantiles(err) => Some(err),
+            Self::Remainders(err) => Some(err),
+        }
+    }
+}
 
-impl<Word, State, const PRECISION: usize> Decode<PRECISION> for Decoder<Word, State, PRECISION>
+impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Decode<PRECISION>
+    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
+    QuantilesBackend: ReadBackend<Word, Stack>,
+    RemaindersBackend: WriteBackend<Word>,
 {
     type FrontendError = FrontendError;
 
-    /// TODO: this should be an enum that reports errors in either of the backends.
-    type BackendError = Infallible;
+    type BackendError = BackendError<QuantilesBackend::ReadError, RemaindersBackend::WriteError>;
 
     fn decode_symbol<D>(
         &mut self,
@@ -626,50 +488,86 @@ where
         D::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<D::Probability>,
     {
-        let quantile = self.0.supply.chop_quantile_off_state::<D, PRECISION>();
-        if self.0.supply.try_refill_state_if_necessary().is_err() {
-            // Restore original state and return an error.
-            self.0
-                .supply
-                .append_quantile_to_state::<D, PRECISION>(quantile);
-            return Err(CoderError::FrontendError(FrontendError::OutOfData));
-        }
+        assert!(PRECISION <= Word::BITS);
+        assert!(PRECISION != 0);
+        assert!(State::BITS >= Word::BITS + PRECISION);
+
+        let word = if PRECISION == Word::BITS
+            || self.heads.quantiles.get() < Word::one() << PRECISION
+        {
+            let word = self.quantiles.read()?.ok_or(FrontendError::OutOfData)?;
+            if PRECISION != Word::BITS {
+                self.heads.quantiles = unsafe {
+                    // SAFETY:
+                    // - `0 < PRECISION < Word::BITS` as per our assertion and the above check,
+                    //   therefore `Word::BITS - PRECISION > 0` and both the left-shift and
+                    //   the right-shift are valid;
+                    // - `heads.quantiles.get() != 0` sinze `heads.quantiles` is a `NonZero`.
+                    // - `heads.quantiles.get() < 1 << PRECISION`, so all its "one" bits are
+                    //   in the `PRECISION` lowest significant bits; since it we have
+                    //   `Word::BITS` bits available, shifting left by `Word::BITS - PRECISION`
+                    //   doesn't truncate, and thus the result is also nonzero.
+                    Word::NonZero::new_unchecked(
+                        self.heads.quantiles.get() << (Word::BITS - PRECISION) | word >> PRECISION,
+                    )
+                };
+            }
+            word
+        } else {
+            let quantile = self.heads.quantiles.get();
+            self.heads.quantiles = unsafe {
+                // SAFETY: `heads.quantiles.get() >= 1 << PRECISION`, so shifting right by
+                // `PRECISION` doesn't result in zero.
+                Word::NonZero::new_unchecked(self.heads.quantiles.get() >> PRECISION)
+            };
+            quantile
+        };
+
+        let quantile = if PRECISION == Word::BITS {
+            word
+        } else {
+            word % (Word::one() << PRECISION)
+        };
+        let quantile = quantile.as_();
 
         let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
         let remainder = quantile - left_sided_cumulative;
 
-        self.0
-            .waste
-            .encode_remainder_onto_state::<D, PRECISION>(remainder, probability);
-
-        if self.0.waste.state() >= State::one() << (State::BITS - PRECISION) {
-            // The invariant on `self.0.waste.state` (see its doc comment) is violated and must
-            // be restored:
-            self.0.waste.flush_state();
+        if self.heads.remainders >= State::one() << (State::BITS - PRECISION) {
+            // The invariant on `self.heads.remainders` (see its doc comment) is violated and must
+            // be restored.
+            unsafe {
+                // SAFETY: due to the above check, we satisfy the contract
+                // `self.heads.remainders >= 1 << Word::BITS`
+                // since, as by our assertion, `State::BITS - PRECISION >= Word::BITS`.
+                self.flush_remainders_head()?
+            }
         }
 
         Ok(symbol)
     }
 
     fn maybe_exhausted(&self) -> bool {
-        // `self.supply.state()` must always be above threshold if we still want to call
-        // `finish_decoding`, so we only check if `supply.bulk` is empty here.
-        self.supply().bulk().is_empty()
+        self.quantiles.maybe_exhausted() || self.remainders.maybe_full()
     }
 }
 
-impl<Word, State, const PRECISION: usize> Encode<PRECISION> for Encoder<Word, State, PRECISION>
+impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Encode<PRECISION>
+    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
+    QuantilesBackend: WriteBackend<Word>,
+    RemaindersBackend: ReadBackend<Word, Stack>,
 {
-    type BackendError = WriteError;
+    type BackendError = BackendError<QuantilesBackend::WriteError, RemaindersBackend::ReadError>;
 
+    // TODO: we should be allowed to return our own FrontendError here if we run out of remainders.
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncoderError<WriteError>>
+    ) -> Result<(), EncoderError<Option<Self::BackendError>>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::Word>,
@@ -679,117 +577,44 @@ where
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
-        if self.0.waste.state()
+        if self.heads.remainders
             < probability.get().into().into() << (State::BITS - Word::BITS - PRECISION)
         {
-            self.0
-                .waste
-                .refill_state_maybe_truncating()
-                .map_err(|_| EncoderError::BackendError(WriteError::CapacityExceeded))?;
-            // At this point, the invariant on `self.0.waste` (see its doc comment) is
+            self.refill_remainders_head()?;
+            // At this point, the invariant on `self.heads.remainders` (see its doc comment) is
             // temporarily violated (but it will be restored below). This is how
-            // `decode_symbol` can detect that it has to flush `waste.state`.
+            // `decode_symbol` can detect that it has to flush `remainders.state`.
         }
 
-        // TODO: not sure if we're returning the right error here. Why are there two places
-        // in this function that can return a `CapacityExceeded` error?
-        let remainder = self
-            .0
-            .waste
-            .decode_remainder_off_state::<D, PRECISION>(probability);
+        let remainder = (self.heads.remainders % probability.get().into().into())
+            .as_()
+            .as_();
+        let quantile = (left_sided_cumulative + remainder).into();
+        self.heads.remainders = self.heads.remainders / probability.get().into().into();
 
-        if (self.0.supply.state() >> (State::BITS - PRECISION)) != State::zero() {
-            self.0.supply.flush_state();
+        if PRECISION != Word::BITS
+            && self.heads.quantiles.get() < Word::one() << (Word::BITS - PRECISION)
+        {
+            self.heads.quantiles =
+                (self.heads.quantiles.get() << PRECISION | quantile).into_nonzero_unchecked();
+        } else {
+            let word = if PRECISION == Word::BITS {
+                quantile
+            } else {
+                let word = self.heads.quantiles.get() << PRECISION | quantile;
+                self.heads.quantiles =
+                    (self.heads.quantiles >> (Word::BITS - PRECISION)).into_nonzero_unchecked();
+                word
+            };
+            self.quantiles.write(word)?;
         }
-        self.0
-            .supply
-            .append_quantile_to_state::<D, PRECISION>(left_sided_cumulative + remainder);
 
         Ok(())
     }
 
     fn maybe_full(&self) -> bool {
-        self.supply().bulk.is_empty()
+        self.remainders.maybe_exhausted() || self.quantiles.maybe_full()
     }
-}
-
-struct WasteGuard<'a, Word, State, const PRECISION: usize>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    waste: &'a mut AnsCoder<Word, State>,
-}
-
-impl<'a, Word, State, const PRECISION: usize> WasteGuard<'a, Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    fn new(waste: &'a mut AnsCoder<Word, State>) -> Self {
-        // `stable::Coder::waste` satisfies slightly different invariants than a usual
-        // `AnsCoder`. We therefore restore the usual `AnsCoder` invariant here. This is reversed
-        // when the `WasteGuard` gets dropped.
-        let _ = waste.try_refill_state_if_necessary();
-
-        Self { waste }
-    }
-}
-
-impl<'a, Word, State, const PRECISION: usize> Deref for WasteGuard<'a, Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    type Target = AnsCoder<Word, State>;
-
-    fn deref(&self) -> &Self::Target {
-        self.waste
-    }
-}
-
-impl<'a, Word, State, const PRECISION: usize> DerefMut for WasteGuard<'a, Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.waste
-    }
-}
-
-impl<'a, Word, State, const PRECISION: usize> Drop for WasteGuard<'a, Word, State, PRECISION>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    fn drop(&mut self) {
-        // Reverse the mutation done in `CoderGuard::new` to restore `stable::Coder`'s
-        // special invariants for `waste`.
-        if self.waste.state() >= State::one() << (State::BITS - PRECISION) {
-            self.waste.flush_state();
-        }
-    }
-}
-
-unsafe fn concatenate<Word, State>(
-    (mut prefix, suffix): (Vec<Word>, AnsCoder<Word, State>),
-) -> AnsCoder<Word, State>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    let (suffix_buf, state) = suffix.into_raw_parts();
-
-    let buf = if prefix.is_empty() {
-        // Avoid copying in this not-so-unlikely special case.
-        suffix_buf
-    } else {
-        prefix.extend_from_slice(&suffix_buf);
-        prefix
-    };
-
-    AnsCoder::from_raw_parts(buf, state)
 }
 
 #[cfg(test)]

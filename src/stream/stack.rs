@@ -472,6 +472,7 @@ where
         })
     }
 
+    #[inline(always)]
     pub fn bulk(&self) -> &Backend {
         &self.bulk
     }
@@ -1010,6 +1011,7 @@ where
     type Word = Word;
     type State = State;
 
+    #[inline(always)]
     fn state(&self) -> Self::State {
         self.state
     }
@@ -1111,6 +1113,8 @@ where
     /// Returns `Ok(())` if a compressed word to refill the state was available, `Err(None)`
     /// if no compressed word was available, and `Err(e)` if reading from the backend
     /// returned error `e`.
+    ///
+    /// TODO: remove all these `pub(crate)` methods and inline them manually again.
     #[inline(always)]
     pub(crate) fn refill_state_maybe_truncating(
         &mut self,

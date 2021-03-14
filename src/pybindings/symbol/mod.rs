@@ -58,12 +58,14 @@ impl StackCoder {
         Ok(self.inner.decode_symbol(&codebook.inner)?)
     }
 
+    // TODO
     // pub fn get_decoder(&self) -> BitVecDecoder {
     //     BitVecDecoder {
     //         inner: self.inner.clone().into_iter(),
     //     }
     // }
 
+    // TODO
     // pub fn get_compressed<'p>(&self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
     //     (
     //         PyArray1::from_slice(py, &self.inner.buf()),
