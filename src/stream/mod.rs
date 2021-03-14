@@ -150,10 +150,10 @@
 //! [`Infallible`]: core::convert::Infallible
 //! [`seek`]: Seek::seek
 
+pub mod chain;
 pub mod models;
 pub mod queue;
 pub mod stack;
-pub mod chain;
 
 use core::{
     borrow::Borrow,
@@ -215,6 +215,8 @@ pub trait Encode<const PRECISION: usize>: Code {
     /// [`WriteBackend`], which is typically [`Infallible`] for automatically growing
     /// in-memory backends (such as `Vec`). But it may be an inhabitated error type if
     /// you're, e.g., encoding directly to a file or socket.
+    ///
+    /// TODO: add FrontendError
     type BackendError: Debug;
 
     fn encode_symbol<D>(

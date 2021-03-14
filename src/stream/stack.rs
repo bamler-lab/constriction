@@ -4,12 +4,7 @@
 
 use alloc::vec::Vec;
 use core::{
-    borrow::Borrow,
-    convert::{Infallible, TryInto},
-    fmt::Debug,
-    iter::Fuse,
-    marker::PhantomData,
-    ops::Deref,
+    borrow::Borrow, convert::Infallible, fmt::Debug, iter::Fuse, marker::PhantomData, ops::Deref,
 };
 use num::cast::AsPrimitive;
 
@@ -949,25 +944,6 @@ where
                 .extend(bit_array_to_chunks_truncated(truncated_state).rev())?;
             Ok(self.bulk)
         }
-    }
-}
-
-/// TODO: check if this can be made generic over the backend
-impl<Word, State> AnsCoder<Word, State, Vec<Word>>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-{
-    pub fn into_stable_decoder<const PRECISION: usize>(
-        self,
-    ) -> Result<zip_ans::Decoder<Word, State, PRECISION>, Option<Self>> {
-        self.try_into()
-    }
-
-    pub fn into_stable_encoder<const PRECISION: usize>(
-        self,
-    ) -> Result<zip_ans::Encoder<Word, State, PRECISION>, Self> {
-        self.try_into()
     }
 }
 

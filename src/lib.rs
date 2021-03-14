@@ -277,8 +277,25 @@ use num::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoderError<FrontendError, BackendError> {
+    /// TODO: rename to just `Frontend` and `Backend`
     FrontendError(FrontendError),
     BackendError(BackendError),
+}
+
+impl<FrontendError, BackendError> CoderError<FrontendError, BackendError> {
+    pub fn map_frontend<E>(self, f: impl Fn(FrontendError) -> E) -> CoderError<E, BackendError> {
+        match self {
+            Self::FrontendError(err) => CoderError::FrontendError(f(err)),
+            Self::BackendError(err) => CoderError::BackendError(err),
+        }
+    }
+
+    pub fn map_backend<E>(self, f: impl Fn(BackendError) -> E) -> CoderError<FrontendError, E> {
+        match self {
+            Self::BackendError(err) => CoderError::BackendError(f(err)),
+            Self::FrontendError(err) => CoderError::FrontendError(err),
+        }
+    }
 }
 
 impl<BackendError: Display, FrontendError: Display> Display
