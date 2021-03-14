@@ -402,6 +402,7 @@ pub unsafe trait BitArray:
     + UpperHex
     + Binary
     + Default
+    + Eq
     + 'static
 {
     /// The (fixed) length of the `BitArray` in bits.
@@ -435,7 +436,7 @@ fn wrapping_pow2<T: BitArray, const EXPONENT: usize>() -> T {
     }
 }
 
-pub unsafe trait NonZeroBitArray: Copy + Display + Debug {
+pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq {
     type Base: BitArray;
 
     fn new(n: Self::Base) -> Option<Self>;

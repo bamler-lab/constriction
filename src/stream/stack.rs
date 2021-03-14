@@ -882,7 +882,7 @@ where
     /// ```
     pub fn into_compressed(mut self) -> Result<Backend, Backend::WriteError> {
         self.bulk
-            .extend(bit_array_to_chunks_truncated(self.state).rev())?;
+            .extend_from_iter(bit_array_to_chunks_truncated(self.state).rev())?;
         Ok(self.bulk)
     }
 
@@ -941,7 +941,7 @@ where
         } else {
             let truncated_state = self.state ^ (State::one() << valid_bits);
             self.bulk
-                .extend(bit_array_to_chunks_truncated(truncated_state).rev())?;
+                .extend_from_iter(bit_array_to_chunks_truncated(truncated_state).rev())?;
             Ok(self.bulk)
         }
     }

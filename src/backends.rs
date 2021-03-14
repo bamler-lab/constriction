@@ -137,7 +137,10 @@ pub trait WriteBackend<Word> {
 
     fn write(&mut self, word: Word) -> Result<(), Self::WriteError>;
 
-    fn extend(&mut self, iter: impl Iterator<Item = Word>) -> Result<(), Self::WriteError> {
+    fn extend_from_iter(
+        &mut self,
+        iter: impl Iterator<Item = Word>,
+    ) -> Result<(), Self::WriteError> {
         for word in iter {
             self.write(word)?;
         }
@@ -233,8 +236,11 @@ impl<Word> WriteBackend<Word> for Vec<Word> {
         Ok(())
     }
 
-    fn extend(&mut self, iter: impl Iterator<Item = Word>) -> Result<(), Self::WriteError> {
-        core::iter::Extend::extend(self, iter);
+    fn extend_from_iter(
+        &mut self,
+        iter: impl Iterator<Item = Word>,
+    ) -> Result<(), Self::WriteError> {
+        self.extend(iter);
         Ok(())
     }
 
@@ -284,8 +290,11 @@ where
         Ok(())
     }
 
-    fn extend(&mut self, iter: impl Iterator<Item = Array::Item>) -> Result<(), Self::WriteError> {
-        core::iter::Extend::extend(self, iter);
+    fn extend_from_iter(
+        &mut self,
+        iter: impl Iterator<Item = Array::Item>,
+    ) -> Result<(), Self::WriteError> {
+        self.extend(iter);
         Ok(())
     }
 

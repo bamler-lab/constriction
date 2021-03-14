@@ -174,25 +174,23 @@ where
     }
 
     /// Checks that there's currently an integer amount of `Words` in `quantiles` (see
-    /// [`is_whole`]) and returns `(remainders, quantiles)`. You could concatenate these two
-    /// and call [`from_quantiles`] on the result, or you could call [`from_quantiles`] just
-    /// on the second item of the returned tuple.
+    /// [`is_whole`]), transfers the remainders head onto `quantiles` (to undo the process
+    /// in `from_quantiles` and returns `(remainders, quantiles)`. You could concatenate
+    /// these two and call [`from_quantiles`] on the result, or you could call
+    /// [`from_quantiles`] just on the second item of the returned tuple.
     pub fn into_quantiles(
         mut self,
-    ) -> Result<
-        (RemaindersBackend, QuantilesBackend),
-        CoderError<Self, RemaindersBackend::WriteError>,
-    >
+    ) -> Result<(RemaindersBackend, QuantilesBackend), CoderError<Self, QuantilesBackend::WriteError>>
     where
-        RemaindersBackend: WriteBackend<Word>,
+        QuantilesBackend: WriteBackend<Word>,
     {
         if !self.is_whole() {
             return Err(CoderError::FrontendError(self));
         }
 
-        // Flush remainders head.
+        // Transfer remainders head onto `quantiles`.
         while self.heads.remainders != State::zero() {
-            self.remainders.write(self.heads.remainders.as_())?;
+            self.quantiles.write(self.heads.remainders.as_())?;
             self.heads.remainders = self.heads.remainders >> Word::BITS;
         }
 
@@ -276,59 +274,6 @@ where
         self.encode_iid_symbols(symbols.into_iter().rev(), model)
     }
 
-    /// Converts the `stable::Decoder` into a new `stable::Decoder` that accepts entropy
-    /// models with a different fixed-point precision.
-    ///
-    /// Here, "precision" refers to the number of bits with which probabilities are
-    /// represented in entropy models passed to the `decode_XXX` methods.
-    ///
-    /// The generic argument `NEW_PRECISION` can usually be omitted because the compiler
-    /// can infer its value from the first time the new `stable::Decoder` is used for
-    /// decoding. The recommended usage pattern is to store the returned
-    /// `stable::Decoder` in a variable that shadows the old `stable::Decoder` (since
-    /// the old one gets consumed anyway), i.e.,
-    /// `let mut stable_decoder = stable_decoder.change_precision()`. See example below.
-    ///
-    /// # Failure Case
-    ///
-    /// The conversion can only fail if *all* of the following conditions are true
-    ///
-    /// - `NEW_PRECISION < PRECISION`; and
-    /// - the `stable::Decoder` originates from a [`stable::Encoder`] that was converted
-    ///   with [`into_decoder`]; and
-    /// - before calling `into_decoder`, the `stable::Encoder` was used incorrectly: it
-    ///   must have encoded too many symbols or used the wrong sequence of entropy
-    ///   models, causing it to use up just a few more bits of `waste` than available
-    ///   (but also not exceeding the capacity enough for this to be detected during
-    ///   encoding).
-    ///
-    /// In the event of this failure, `change_precision` returns `Err(self)`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::stream::{models::LeakyQuantizer, Decode, stack::DefaultAnsCoder};
-    ///
-    /// // Construct two entropy models with 24 bits and 20 bits of precision, respectively.
-    /// let continuous_distribution = statrs::distribution::Normal::new(0.0, 10.0).unwrap();
-    /// let quantizer24 = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-    /// let quantizer20 = LeakyQuantizer::<_, _, u32, 20>::new(-100..=100);
-    /// let distribution24 = quantizer24.quantize(continuous_distribution);
-    /// let distribution20 = quantizer20.quantize(continuous_distribution);
-    ///
-    /// // Construct a `stable::Decoder` and decode some data with the 24 bit precision entropy model.
-    /// let data = vec![0x0123_4567u32, 0x89ab_cdef];
-    /// let mut stable_decoder = DefaultAnsCoder::from_binary(data).unwrap().into_stable_decoder().unwrap();
-    /// let _symbol_a = stable_decoder.decode_symbol(distribution24);
-    ///
-    /// // Change the `Decoder`'s precision and decode data with the 20 bit precision entropy model.
-    /// // The compiler can infer the new precision based on how the `stable_decoder` will be used.
-    /// let mut stable_decoder = stable_decoder.change_precision().unwrap();
-    /// let _symbol_b = stable_decoder.decode_symbol(distribution20);
-    /// ```
-    ///
-    /// [`stable::Encoder`]: Encoder
-    /// [`into_decoder`]: Encoder::into_decoder
     pub fn increase_precision<const NEW_PRECISION: usize>(
         mut self,
     ) -> Result<
@@ -384,6 +329,59 @@ where
         })
     }
 
+    /// Converts the `stable::Decoder` into a new `stable::Decoder` that accepts entropy
+    /// models with a different fixed-point precision.
+    ///
+    /// Here, "precision" refers to the number of bits with which probabilities are
+    /// represented in entropy models passed to the `decode_XXX` methods.
+    ///
+    /// The generic argument `NEW_PRECISION` can usually be omitted because the compiler
+    /// can infer its value from the first time the new `stable::Decoder` is used for
+    /// decoding. The recommended usage pattern is to store the returned
+    /// `stable::Decoder` in a variable that shadows the old `stable::Decoder` (since
+    /// the old one gets consumed anyway), i.e.,
+    /// `let mut stable_decoder = stable_decoder.change_precision()`. See example below.
+    ///
+    /// # Failure Case
+    ///
+    /// The conversion can only fail if *all* of the following conditions are true
+    ///
+    /// - `NEW_PRECISION < PRECISION`; and
+    /// - the `stable::Decoder` originates from a [`stable::Encoder`] that was converted
+    ///   with [`into_decoder`]; and
+    /// - before calling `into_decoder`, the `stable::Encoder` was used incorrectly: it
+    ///   must have encoded too many symbols or used the wrong sequence of entropy
+    ///   models, causing it to use up just a few more bits of `waste` than available
+    ///   (but also not exceeding the capacity enough for this to be detected during
+    ///   encoding).
+    ///
+    /// In the event of this failure, `change_precision` returns `Err(self)`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::stream::{models::LeakyQuantizer, Decode, chain::DefaultChainCoder};
+    ///
+    /// // Construct two entropy models with 24 bits and 20 bits of precision, respectively.
+    /// let continuous_distribution = statrs::distribution::Normal::new(0.0, 10.0).unwrap();
+    /// let quantizer24 = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
+    /// let quantizer20 = LeakyQuantizer::<_, _, u32, 20>::new(-100..=100);
+    /// let distribution24 = quantizer24.quantize(continuous_distribution);
+    /// let distribution20 = quantizer20.quantize(continuous_distribution);
+    ///
+    /// // Construct a `ChainCoder` and decode some data with the 24 bit precision entropy model.
+    /// let data = vec![0x0123_4567u32, 0x89ab_cdef];
+    /// let mut coder = DefaultChainCoder::from_quantiles(data).unwrap();
+    /// let _symbol_a = coder.decode_symbol(distribution24);
+    ///
+    /// // Change `coder`'s precision and decode data with the 20 bit precision entropy model.
+    /// // The compiler can infer the new precision based on how `coder` will be used.
+    /// let mut coder = coder.change_precision().unwrap();
+    /// let _symbol_b = coder.decode_symbol(distribution20);
+    /// ```
+    ///
+    /// [`stable::Encoder`]: Encoder
+    /// [`into_decoder`]: Encoder::into_decoder
     #[inline(always)]
     pub fn change_precision<const NEW_PRECISION: usize>(
         self,
@@ -686,9 +684,9 @@ where
     }
 }
 
-#[cfg(testTODO)]
+#[cfg(test)]
 mod test {
-    use super::super::super::models::LeakyQuantizer;
+    use super::super::models::LeakyQuantizer;
     use super::*;
 
     use rand_xoshiro::{
@@ -696,6 +694,8 @@ mod test {
         Xoshiro256StarStar,
     };
     use statrs::distribution::Normal;
+
+    use alloc::vec;
 
     #[test]
     fn restore_none() {
@@ -801,7 +801,7 @@ mod test {
 
         let distributions = (0..amt_symbols)
             .map(|_| {
-                let mean = (100.0 / u32::MAX as f64) * rng.next_u32() as f64 - 100.0;
+                let mean = (200.0 / u32::MAX as f64) * rng.next_u32() as f64 - 100.0;
                 let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
                 Normal::new(mean, std_dev)
             })
@@ -809,10 +809,12 @@ mod test {
             .unwrap();
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-100..=100);
 
-        let ans = AnsCoder::from_compressed(compressed.clone()).unwrap();
-        let mut stable_decoder = ans.into_stable_decoder().unwrap();
+        let mut coder = ChainCoder::<Word, State, Vec<Word>, Vec<Word>, PRECISION>::from_quantiles(
+            compressed.clone(),
+        )
+        .unwrap();
 
-        let symbols = stable_decoder
+        let symbols = coder
             .decode_symbols(
                 distributions
                     .iter()
@@ -821,16 +823,20 @@ mod test {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert!(!stable_decoder.maybe_exhausted());
+        assert!(!coder.maybe_exhausted());
 
-        // Test two ways to construct a `stable::Encoder`: direct conversion from a
-        // `stable::Decoder`, and converting to a `AnsCoder` and then to a `stable::Encoder`.
-        let stable_encoder1 = stable_decoder.clone().into_encoder();
-        let ans = stable_decoder.finish_and_concatenate();
-        let stable_encoder2 = ans.into_stable_encoder().unwrap();
+        let (remainders_prefix, remainders_suffix) = coder.clone().into_remainders().unwrap();
+        let mut remainders = remainders_prefix.clone();
+        remainders.extend_from_slice(&remainders_suffix);
+        let coder2 = ChainCoder::from_remainders(remainders).unwrap();
+        let coder3 = ChainCoder::from_remainders(remainders_suffix).unwrap();
 
-        for mut stable_encoder in alloc::vec![stable_encoder1, stable_encoder2] {
-            stable_encoder
+        for (mut coder, prefix) in vec![
+            (coder, vec![]),
+            (coder2, vec![]),
+            (coder3, remainders_prefix),
+        ] {
+            coder
                 .encode_symbols_reverse(
                     symbols
                         .iter()
@@ -839,8 +845,13 @@ mod test {
                 )
                 .unwrap();
 
-            let ans = stable_encoder.finish_and_concatenate().unwrap();
-            assert_eq!(ans.into_compressed().unwrap_infallible(), compressed);
+            let (quantiles_prefix, quantiles_suffix) = coder.into_quantiles().unwrap();
+
+            let mut reconstructed = prefix;
+            reconstructed.extend(quantiles_prefix);
+            reconstructed.extend(quantiles_suffix);
+
+            assert_eq!(reconstructed, compressed);
         }
     }
 }
