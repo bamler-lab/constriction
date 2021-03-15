@@ -136,16 +136,16 @@ use crate::{
 /// ```
 ///
 /// In Step 3 of the compressor in the example above, calling `.into_remaining()` on a
-/// `ChainCoder` returns a tuple of a `remainders_prefix` and a `remainders_suffix`. The
-/// `remainders_prefix` contains superflous data that we didn't need when decoding the
-/// `symbols` (`remainders_prefix` is an unaltered prefix of the original `data`). We
-/// therefore don't need `remainders_prefix` for re-encoding the symbols, so we didn't pass
+/// `ChainCoder` returns a tuple of a `remaining_prefix` and a `remaining_suffix`. The
+/// `remaining_prefix` contains superflous data that we didn't need when decoding the
+/// `symbols` (`remaining_prefix` is an unaltered prefix of the original `data`). We
+/// therefore don't need `remaining_prefix` for re-encoding the symbols, so we didn't pass
 /// it to `ChainCoder::from_remaining` in Step 1 of the decompressor above.
 ///
-/// If we were to write out `remainders_prefix` and `remainders_suffix` to a file then it
+/// If we were to write out `remaining_prefix` and `remaining_suffix` to a file then it
 /// would be tedious to keep track of where the prefix ends and where the suffix begins.
-/// Luckly, we don't have to do this. We can just as well concatenate `remainders_prefix`
-/// and `remainders_suffix` right away. The only additional change this will cause is that
+/// Luckly, we don't have to do this. We can just as well concatenate `remaining_prefix`
+/// and `remaining_suffix` right away. The only additional change this will cause is that
 /// the call to `.into_binary()` in Step 3 of the decompressor will then return a non-empty
 /// `recovered_prefix` because the second `ChainCoder` will then also have some superflous
 /// data. So we'll have to again concatenate the two returned buffers. The following example
@@ -186,16 +186,16 @@ use crate::{
 /// [`.into_binary()`]: Self::into_binary
 /// [`.into_compressed()`]: Self::into_compressed
 #[derive(Debug, Clone)]
-pub struct ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize>
+pub struct ChainCoder<Word, State, CompressedBackend, RemainingBackend, const PRECISION: usize>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
-    /// The compressed bit string. Read from by encoder, written to by decoder.
-    quantiles: QuantilesBackend,
+    /// The compressed bit string. Written to by encoder, read from by decoder.
+    compressed: CompressedBackend,
 
-    /// Left-over information from decoding. Written to by encoder, read from by decoder.
-    remainders: RemaindersBackend,
+    /// Leftover information from decoding. Read from by encoder, written to by decoder.
+    remaining: RemainingBackend,
 
     heads: ChainCoderHeads<Word, State, PRECISION>,
 }
@@ -205,23 +205,23 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChainCoderHeads<Word: BitArray, State: BitArray, const PRECISION: usize> {
     /// All bits following the highest order bit (which is a given in a `NonZero`) are
-    /// leftover bits from previous reads from `quantiles` that still need to be consumed.
+    /// leftover bits from previous reads from `compressed` that still need to be consumed.
     /// Thus, there are at most `Word::BITS - 1` leftover bits at any time.
-    quantiles: Word::NonZero,
+    compressed: Word::NonZero,
 
     /// Satisfies invariants:
-    /// - `heads.remainders >= 1 << (State::BITS - Word::BITS - PRECISION)`; and
-    /// - `heads.remainders < 1 << (State::BITS - PRECISION)`
-    remainders: State,
+    /// - `heads.remaining >= 1 << (State::BITS - Word::BITS - PRECISION)`; and
+    /// - `heads.remaining < 1 << (State::BITS - PRECISION)`
+    remaining: State,
 }
 
 impl<Word: BitArray, State: BitArray, const PRECISION: usize>
     ChainCoderHeads<Word, State, PRECISION>
 {
-    /// Returns `true` iff there's currently an integer amount of `Words` on `quantiles`
+    /// Returns `true` iff there's currently an integer amount of `Words` on `compressed`
     #[inline(always)]
     pub fn is_whole(self) -> bool {
-        self.quantiles.get() == Word::one()
+        self.compressed.get() == Word::one()
     }
 
     /// Private on purpose.
@@ -237,7 +237,7 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
         assert!(PRECISION <= Word::BITS);
 
         let threshold = State::one() << (State::BITS - Word::BITS - PRECISION);
-        let mut remainders_head = if push_one {
+        let mut remaining_head = if push_one {
             State::one()
         } else {
             match source.read()? {
@@ -245,14 +245,14 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
                 _ => return Err(CoderError::FrontendError(())),
             }
         };
-        while remainders_head < threshold {
-            remainders_head = remainders_head << Word::BITS
+        while remaining_head < threshold {
+            remaining_head = remaining_head << Word::BITS
                 | source.read()?.ok_or(CoderError::FrontendError(()))?.into();
         }
 
         Ok(ChainCoderHeads {
-            quantiles: Word::one().into_nonzero().expect("1 != 0"),
-            remainders: remainders_head,
+            compressed: Word::one().into_nonzero().expect("1 != 0"),
+            remaining: remaining_head,
         })
     }
 }
@@ -260,8 +260,8 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
 pub type DefaultChainCoder = ChainCoder<u32, u64, Vec<u32>, Vec<u32>, 24>;
 pub type SmallChainCoder = ChainCoder<u16, u32, Vec<u16>, Vec<u16>, 12>;
 
-impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize>
-    ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+impl<Word, State, CompressedBackend, RemainingBackend, const PRECISION: usize>
+    ChainCoder<Word, State, CompressedBackend, RemainingBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -279,22 +279,22 @@ where
     /// [`AnsCoder`]: super::stack::AnsCoder
     /// [`from_compressed`]: Self::from_compressed
     pub fn from_binary(
-        mut data: QuantilesBackend,
-    ) -> Result<Self, CoderError<QuantilesBackend, QuantilesBackend::ReadError>>
+        mut data: CompressedBackend,
+    ) -> Result<Self, CoderError<CompressedBackend, CompressedBackend::ReadError>>
     where
-        QuantilesBackend: ReadWords<Word, Stack>,
-        RemaindersBackend: Default,
+        CompressedBackend: ReadWords<Word, Stack>,
+        RemainingBackend: Default,
     {
         let heads = match ChainCoderHeads::new(&mut data, true) {
             Ok(heads) => heads,
             Err(CoderError::FrontendError(())) => return Err(CoderError::FrontendError(data)),
             Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
         };
-        let remainders = RemaindersBackend::default();
+        let remaining = RemainingBackend::default();
 
         Ok(Self {
-            quantiles: data,
-            remainders,
+            compressed: data,
+            remaining,
             heads,
         })
     }
@@ -311,11 +311,11 @@ where
     /// [`AnsCoder`]: super::stack::AnsCoder
     /// [`AnsCoder::into_compressed`]: super::stack::AnsCoder::into_compressed
     pub fn from_compressed(
-        mut compressed: QuantilesBackend,
-    ) -> Result<Self, CoderError<QuantilesBackend, QuantilesBackend::ReadError>>
+        mut compressed: CompressedBackend,
+    ) -> Result<Self, CoderError<CompressedBackend, CompressedBackend::ReadError>>
     where
-        QuantilesBackend: ReadWords<Word, Stack>,
-        RemaindersBackend: Default,
+        CompressedBackend: ReadWords<Word, Stack>,
+        RemainingBackend: Default,
     {
         let heads = match ChainCoderHeads::new(&mut compressed, false) {
             Ok(heads) => heads,
@@ -324,11 +324,11 @@ where
             }
             Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
         };
-        let remainders = RemaindersBackend::default();
+        let remaining = RemainingBackend::default();
 
         Ok(Self {
-            quantiles: compressed,
-            remainders,
+            compressed: compressed,
+            remaining,
             heads,
         })
     }
@@ -362,20 +362,20 @@ where
     /// [`.into_compressed()`]: Self::into_compressed
     pub fn into_remaining(
         mut self,
-    ) -> Result<(QuantilesBackend, RemaindersBackend), RemaindersBackend::WriteError>
+    ) -> Result<(CompressedBackend, RemainingBackend), RemainingBackend::WriteError>
     where
-        RemaindersBackend: WriteWords<Word>,
+        RemainingBackend: WriteWords<Word>,
     {
-        // Flush remainders head.
-        while self.heads.remainders != State::zero() {
-            self.remainders.write(self.heads.remainders.as_())?;
-            self.heads.remainders = self.heads.remainders >> Word::BITS;
+        // Flush remaining head.
+        while self.heads.remaining != State::zero() {
+            self.remaining.write(self.heads.remaining.as_())?;
+            self.heads.remaining = self.heads.remaining >> Word::BITS;
         }
 
-        // Transfer quantiles head onto `remainders`.
-        self.remainders.write(self.heads.quantiles.get())?;
+        // Transfer compressed head onto `remaining`.
+        self.remaining.write(self.heads.compressed.get())?;
 
-        Ok((self.quantiles, self.remainders))
+        Ok((self.compressed, self.remaining))
     }
 
     /// Creates a new `ChainCoder` for encoding some symbols together with the data
@@ -385,13 +385,13 @@ where
     ///
     /// [`into_remaining`]: Self::into_remaining
     pub fn from_remaining(
-        mut remaining: RemaindersBackend,
-    ) -> Result<Self, CoderError<RemaindersBackend, RemaindersBackend::ReadError>>
+        mut remaining: RemainingBackend,
+    ) -> Result<Self, CoderError<RemainingBackend, RemainingBackend::ReadError>>
     where
-        RemaindersBackend: ReadWords<Word, Stack>,
-        QuantilesBackend: Default,
+        RemainingBackend: ReadWords<Word, Stack>,
+        CompressedBackend: Default,
     {
-        let quantiles_head = match remaining.read()?.and_then(Word::into_nonzero) {
+        let compressed_head = match remaining.read()?.and_then(Word::into_nonzero) {
             Some(word) => word,
             _ => return Err(CoderError::FrontendError(remaining)),
         };
@@ -400,13 +400,13 @@ where
             Err(CoderError::FrontendError(())) => return Err(CoderError::FrontendError(remaining)),
             Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
         };
-        heads.quantiles = quantiles_head;
+        heads.compressed = compressed_head;
 
-        let quantiles = QuantilesBackend::default();
+        let compressed = CompressedBackend::default();
 
         Ok(Self {
-            quantiles,
-            remainders: remaining,
+            compressed,
+            remaining: remaining,
             heads,
         })
     }
@@ -431,21 +431,24 @@ where
     /// [`into_remaining`]: Self::into_remaining
     pub fn into_compressed(
         mut self,
-    ) -> Result<(RemaindersBackend, QuantilesBackend), CoderError<Self, QuantilesBackend::WriteError>>
+    ) -> Result<
+        (RemainingBackend, CompressedBackend),
+        CoderError<Self, CompressedBackend::WriteError>,
+    >
     where
-        QuantilesBackend: WriteWords<Word>,
+        CompressedBackend: WriteWords<Word>,
     {
         if !self.is_whole() {
             return Err(CoderError::FrontendError(self));
         }
 
-        // Transfer remainders head onto `quantiles`.
-        while self.heads.remainders != State::zero() {
-            self.quantiles.write(self.heads.remainders.as_())?;
-            self.heads.remainders = self.heads.remainders >> Word::BITS;
+        // Transfer remaining head onto `compressed`.
+        while self.heads.remaining != State::zero() {
+            self.compressed.write(self.heads.remaining.as_())?;
+            self.heads.remaining = self.heads.remaining >> Word::BITS;
         }
 
-        Ok((self.remainders, self.quantiles))
+        Ok((self.remaining, self.compressed))
     }
 
     /// Terminates encoding if possible and returns the compressed data as a tuple `(prefix,
@@ -469,31 +472,34 @@ where
     /// [`into_remaining`]: Self::into_remaining
     pub fn into_binary(
         mut self,
-    ) -> Result<(RemaindersBackend, QuantilesBackend), CoderError<Self, QuantilesBackend::WriteError>>
+    ) -> Result<
+        (RemainingBackend, CompressedBackend),
+        CoderError<Self, CompressedBackend::WriteError>,
+    >
     where
-        QuantilesBackend: WriteWords<Word>,
+        CompressedBackend: WriteWords<Word>,
     {
         if !self.is_whole()
-            || (State::BITS - self.heads.remainders.leading_zeros() as usize - 1) % Word::BITS != 0
+            || (State::BITS - self.heads.remaining.leading_zeros() as usize - 1) % Word::BITS != 0
         {
             return Err(CoderError::FrontendError(self));
         }
 
-        // Transfer remainders head onto `quantiles`.
-        while self.heads.remainders > State::one() {
-            self.quantiles.write(self.heads.remainders.as_())?;
-            self.heads.remainders = self.heads.remainders >> Word::BITS;
+        // Transfer remaining head onto `compressed`.
+        while self.heads.remaining > State::one() {
+            self.compressed.write(self.heads.remaining.as_())?;
+            self.heads.remaining = self.heads.remaining >> Word::BITS;
         }
 
-        debug_assert!(self.heads.remainders == State::one());
+        debug_assert!(self.heads.remaining == State::one());
 
-        Ok((self.remainders, self.quantiles))
+        Ok((self.remaining, self.compressed))
     }
 
     /// Returns `true` iff there's currently an integer amount of `Words` in the compressed data
     #[inline(always)]
     pub fn is_whole(&self) -> bool {
-        self.heads.quantiles.get() == Word::one()
+        self.heads.compressed.get() == Word::one()
     }
 
     pub fn encode_symbols_reverse<S, D, I>(
@@ -502,7 +508,7 @@ where
     ) -> Result<
         (),
         EncoderError<
-            BackendError<QuantilesBackend::WriteError, Option<RemaindersBackend::ReadError>>,
+            BackendError<CompressedBackend::WriteError, Option<RemainingBackend::ReadError>>,
         >,
     >
     where
@@ -512,8 +518,8 @@ where
         Word: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = (S, D)>,
         I::IntoIter: DoubleEndedIterator,
-        QuantilesBackend: WriteWords<Word>,
-        RemaindersBackend: ReadWords<Word, Stack>,
+        CompressedBackend: WriteWords<Word>,
+        RemainingBackend: ReadWords<Word, Stack>,
     {
         self.encode_symbols(symbols_and_models.into_iter().rev())
     }
@@ -526,7 +532,7 @@ where
         (),
         TryCodingError<
             EncoderError<
-                BackendError<QuantilesBackend::WriteError, Option<RemaindersBackend::ReadError>>,
+                BackendError<CompressedBackend::WriteError, Option<RemainingBackend::ReadError>>,
             >,
             E,
         >,
@@ -538,8 +544,8 @@ where
         Word: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = core::result::Result<(S, D), E>>,
         I::IntoIter: DoubleEndedIterator,
-        QuantilesBackend: WriteWords<Word>,
-        RemaindersBackend: ReadWords<Word, Stack>,
+        CompressedBackend: WriteWords<Word>,
+        RemainingBackend: ReadWords<Word, Stack>,
     {
         self.try_encode_symbols(symbols_and_models.into_iter().rev())
     }
@@ -551,7 +557,7 @@ where
     ) -> Result<
         (),
         EncoderError<
-            BackendError<QuantilesBackend::WriteError, Option<RemaindersBackend::ReadError>>,
+            BackendError<CompressedBackend::WriteError, Option<RemainingBackend::ReadError>>,
         >,
     >
     where
@@ -561,8 +567,8 @@ where
         Word: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = S>,
         I::IntoIter: DoubleEndedIterator,
-        QuantilesBackend: WriteWords<Word>,
-        RemaindersBackend: ReadWords<Word, Stack>,
+        CompressedBackend: WriteWords<Word>,
+        RemainingBackend: ReadWords<Word, Stack>,
     {
         self.encode_iid_symbols(symbols.into_iter().rev(), model)
     }
@@ -570,26 +576,26 @@ where
     pub fn increase_precision<const NEW_PRECISION: usize>(
         mut self,
     ) -> Result<
-        ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, NEW_PRECISION>,
-        RemaindersBackend::WriteError,
+        ChainCoder<Word, State, CompressedBackend, RemainingBackend, NEW_PRECISION>,
+        RemainingBackend::WriteError,
     >
     where
-        RemaindersBackend: WriteWords<Word>,
+        RemainingBackend: WriteWords<Word>,
     {
         assert!(NEW_PRECISION >= PRECISION);
         assert!(NEW_PRECISION <= Word::BITS);
         assert!(State::BITS >= Word::BITS + NEW_PRECISION);
 
-        if self.heads.remainders >= State::one() << (State::BITS - NEW_PRECISION) {
-            self.flush_remainders_head()?;
+        if self.heads.remaining >= State::one() << (State::BITS - NEW_PRECISION) {
+            self.flush_remaining_head()?;
         }
 
         Ok(ChainCoder {
-            quantiles: self.quantiles,
-            remainders: self.remainders,
+            compressed: self.compressed,
+            remaining: self.remaining,
             heads: ChainCoderHeads {
-                quantiles: self.heads.quantiles,
-                remainders: self.heads.remainders,
+                compressed: self.heads.compressed,
+                remaining: self.heads.remaining,
             },
         })
     }
@@ -597,27 +603,27 @@ where
     pub fn decrease_precision<const NEW_PRECISION: usize>(
         mut self,
     ) -> Result<
-        ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, NEW_PRECISION>,
-        Option<RemaindersBackend::ReadError>,
+        ChainCoder<Word, State, CompressedBackend, RemainingBackend, NEW_PRECISION>,
+        Option<RemainingBackend::ReadError>,
     >
     where
-        RemaindersBackend: ReadWords<Word, Stack>,
+        RemainingBackend: ReadWords<Word, Stack>,
     {
         assert!(NEW_PRECISION <= PRECISION);
         assert!(NEW_PRECISION > 0);
 
-        if self.heads.remainders < State::one() << (State::BITS - NEW_PRECISION - Word::BITS) {
+        if self.heads.remaining < State::one() << (State::BITS - NEW_PRECISION - Word::BITS) {
             // Won't truncate since, from the above check it follows that we satisfy the contract
-            // `self.heads.remainders < 1 << (State::BITS - Word::BITS)`.
-            self.refill_remainders_head()?
+            // `self.heads.remaining < 1 << (State::BITS - Word::BITS)`.
+            self.refill_remaining_head()?
         }
 
         Ok(ChainCoder {
-            quantiles: self.quantiles,
-            remainders: self.remainders,
+            compressed: self.compressed,
+            remaining: self.remaining,
             heads: ChainCoderHeads {
-                quantiles: self.heads.quantiles,
-                remainders: self.heads.remainders,
+                compressed: self.heads.compressed,
+                remaining: self.heads.remaining,
             },
         })
     }
@@ -679,11 +685,11 @@ where
     pub fn change_precision<const NEW_PRECISION: usize>(
         self,
     ) -> Result<
-        ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, NEW_PRECISION>,
-        ChangePrecisionError<RemaindersBackend, Word>,
+        ChainCoder<Word, State, CompressedBackend, RemainingBackend, NEW_PRECISION>,
+        ChangePrecisionError<RemainingBackend, Word>,
     >
     where
-        RemaindersBackend: WriteWords<Word> + ReadWords<Word, Stack>,
+        RemainingBackend: WriteWords<Word> + ReadWords<Word, Stack>,
     {
         if NEW_PRECISION > PRECISION {
             self.increase_precision()
@@ -695,30 +701,30 @@ where
     }
 
     #[inline(always)]
-    /// This would flush meaningless zero bits if `self.heads.remainders < 1 << Word::BITS`.
-    fn flush_remainders_head(&mut self) -> Result<(), RemaindersBackend::WriteError>
+    /// This would flush meaningless zero bits if `self.heads.remaining < 1 << Word::BITS`.
+    fn flush_remaining_head(&mut self) -> Result<(), RemainingBackend::WriteError>
     where
-        RemaindersBackend: WriteWords<Word>,
+        RemainingBackend: WriteWords<Word>,
     {
-        self.remainders.write(self.heads.remainders.as_())?;
-        self.heads.remainders = self.heads.remainders >> Word::BITS;
+        self.remaining.write(self.heads.remaining.as_())?;
+        self.heads.remaining = self.heads.remaining >> Word::BITS;
         Ok(())
     }
 
-    /// This truncates if `self.heads.remainders >= 1 << (State::BITS - Word::BITS)`.
+    /// This truncates if `self.heads.remaining >= 1 << (State::BITS - Word::BITS)`.
     #[inline(always)]
-    fn refill_remainders_head(&mut self) -> Result<(), Option<RemaindersBackend::ReadError>>
+    fn refill_remaining_head(&mut self) -> Result<(), Option<RemainingBackend::ReadError>>
     where
-        RemaindersBackend: ReadWords<Word, Stack>,
+        RemainingBackend: ReadWords<Word, Stack>,
     {
-        let word = self.remainders.read().map_err(Some)?.ok_or(None)?;
-        self.heads.remainders = (self.heads.remainders << Word::BITS) | word.into();
+        let word = self.remaining.read().map_err(Some)?.ok_or(None)?;
+        self.heads.remaining = (self.heads.remaining << Word::BITS) | word.into();
         Ok(())
     }
 }
 
-impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Code
-    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+impl<Word, State, CompressedBackend, RemainingBackend, const PRECISION: usize> Code
+    for ChainCoder<Word, State, CompressedBackend, RemainingBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -753,21 +759,21 @@ impl core::fmt::Display for FrontendError {
 ///
 /// [`stable::Decoder`]: Decoder
 #[derive(Debug, PartialEq, Eq)]
-pub enum BackendError<QuantilesBackendError, RemaindersBackendError> {
-    Quantiles(QuantilesBackendError),
-    Remainders(RemaindersBackendError),
+pub enum BackendError<CompressedBackendError, RemainingBackendError> {
+    Compressed(CompressedBackendError),
+    Remaining(RemainingBackendError),
 }
 
-impl<QuantilesBackendError: Display, RemaindersBackendError: Display> core::fmt::Display
-    for BackendError<QuantilesBackendError, RemaindersBackendError>
+impl<CompressedBackendError: Display, RemainingBackendError: Display> core::fmt::Display
+    for BackendError<CompressedBackendError, RemainingBackendError>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Quantiles(err) => {
-                write!(f, "Read/write error when accessing quantiles: {}", err)
+            Self::Compressed(err) => {
+                write!(f, "Read/write error when accessing compressed: {}", err)
             }
-            Self::Remainders(err) => {
-                write!(f, "Read/write error when accessing remainders: {}", err)
+            Self::Remaining(err) => {
+                write!(f, "Read/write error when accessing remaining: {}", err)
             }
         }
     }
@@ -775,79 +781,79 @@ impl<QuantilesBackendError: Display, RemaindersBackendError: Display> core::fmt:
 
 #[cfg(feature = "std")]
 impl<
-        QuantilesBackendError: std::error::Error + 'static,
-        RemaindersBackendError: std::error::Error + 'static,
-    > std::error::Error for BackendError<QuantilesBackendError, RemaindersBackendError>
+        CompressedBackendError: std::error::Error + 'static,
+        RemainingBackendError: std::error::Error + 'static,
+    > std::error::Error for BackendError<CompressedBackendError, RemainingBackendError>
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Quantiles(err) => Some(err),
-            Self::Remainders(err) => Some(err),
+            Self::Compressed(err) => Some(err),
+            Self::Remaining(err) => Some(err),
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ChangePrecisionError<RemaindersBackend, Word>
+pub enum ChangePrecisionError<RemainingBackend, Word>
 where
-    RemaindersBackend: WriteWords<Word> + ReadWords<Word, Stack>,
+    RemainingBackend: WriteWords<Word> + ReadWords<Word, Stack>,
 {
-    Write(RemaindersBackend::WriteError),
+    Write(RemainingBackend::WriteError),
 
     /// `None` if out of data, `Some(err)` if reading lead to error.
-    Read(Option<RemaindersBackend::ReadError>),
+    Read(Option<RemainingBackend::ReadError>),
 }
 
-impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> PosSeek
-    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+impl<Word, State, CompressedBackend, RemainingBackend, const PRECISION: usize> PosSeek
+    for ChainCoder<Word, State, CompressedBackend, RemainingBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    QuantilesBackend: PosSeek,
-    RemaindersBackend: PosSeek,
+    CompressedBackend: PosSeek,
+    RemainingBackend: PosSeek,
 {
     type Position = (
-        BackendPosition<QuantilesBackend::Position, RemaindersBackend::Position>,
+        BackendPosition<CompressedBackend::Position, RemainingBackend::Position>,
         ChainCoderHeads<Word, State, PRECISION>,
     );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BackendPosition<QuantilesPosition, RemaindersPosition> {
-    pub quantiles: QuantilesPosition,
-    pub remainders: RemaindersPosition,
+pub struct BackendPosition<CompressedPosition, RemainingPosition> {
+    pub compressed: CompressedPosition,
+    pub remaining: RemainingPosition,
 }
 
-impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Pos
-    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+impl<Word, State, CompressedBackend, RemainingBackend, const PRECISION: usize> Pos
+    for ChainCoder<Word, State, CompressedBackend, RemainingBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    QuantilesBackend: Pos,
-    RemaindersBackend: Pos,
+    CompressedBackend: Pos,
+    RemainingBackend: Pos,
 {
     fn pos(&self) -> Self::Position {
         (
             BackendPosition {
-                quantiles: self.quantiles.pos(),
-                remainders: self.remainders.pos(),
+                compressed: self.compressed.pos(),
+                remaining: self.remaining.pos(),
             },
             self.state(),
         )
     }
 }
 
-impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Seek
-    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+impl<Word, State, CompressedBackend, RemainingBackend, const PRECISION: usize> Seek
+    for ChainCoder<Word, State, CompressedBackend, RemainingBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    QuantilesBackend: Seek,
-    RemaindersBackend: Seek,
+    CompressedBackend: Seek,
+    RemainingBackend: Seek,
 {
     fn seek(&mut self, (pos, state): Self::Position) -> Result<(), ()> {
-        self.quantiles.seek(pos.quantiles)?;
-        self.remainders.seek(pos.remainders)?;
+        self.compressed.seek(pos.compressed)?;
+        self.remaining.seek(pos.remaining)?;
 
         // `state` is valid since we don't provide a public API to modify fields of
         // `ChainCoderHeads` individually.
@@ -857,17 +863,17 @@ where
     }
 }
 
-impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Decode<PRECISION>
-    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+impl<Word, State, CompressedBackend, RemainingBackend, const PRECISION: usize> Decode<PRECISION>
+    for ChainCoder<Word, State, CompressedBackend, RemainingBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    QuantilesBackend: ReadWords<Word, Stack>,
-    RemaindersBackend: WriteWords<Word>,
+    CompressedBackend: ReadWords<Word, Stack>,
+    RemainingBackend: WriteWords<Word>,
 {
     type FrontendError = FrontendError;
 
-    type BackendError = BackendError<QuantilesBackend::ReadError, RemaindersBackend::WriteError>;
+    type BackendError = BackendError<CompressedBackend::ReadError, RemainingBackend::WriteError>;
 
     fn decode_symbol<D>(
         &mut self,
@@ -883,36 +889,36 @@ where
         assert!(State::BITS >= Word::BITS + PRECISION);
 
         let word = if PRECISION == Word::BITS
-            || self.heads.quantiles.get() < Word::one() << PRECISION
+            || self.heads.compressed.get() < Word::one() << PRECISION
         {
             let word = self
-                .quantiles
+                .compressed
                 .read()
-                .map_err(BackendError::Quantiles)?
+                .map_err(BackendError::Compressed)?
                 .ok_or(CoderError::FrontendError(FrontendError::OutOfData))?;
             if PRECISION != Word::BITS {
-                self.heads.quantiles = unsafe {
+                self.heads.compressed = unsafe {
                     // SAFETY:
                     // - `0 < PRECISION < Word::BITS` as per our assertion and the above check,
                     //   therefore `Word::BITS - PRECISION > 0` and both the left-shift and
                     //   the right-shift are valid;
-                    // - `heads.quantiles.get() != 0` sinze `heads.quantiles` is a `NonZero`.
-                    // - `heads.quantiles.get() < 1 << PRECISION`, so all its "one" bits are
+                    // - `heads.compressed.get() != 0` sinze `heads.compressed` is a `NonZero`.
+                    // - `heads.compressed.get() < 1 << PRECISION`, so all its "one" bits are
                     //   in the `PRECISION` lowest significant bits; since it we have
                     //   `Word::BITS` bits available, shifting left by `Word::BITS - PRECISION`
                     //   doesn't truncate, and thus the result is also nonzero.
                     Word::NonZero::new_unchecked(
-                        self.heads.quantiles.get() << (Word::BITS - PRECISION) | word >> PRECISION,
+                        self.heads.compressed.get() << (Word::BITS - PRECISION) | word >> PRECISION,
                     )
                 };
             }
             word
         } else {
-            let word = self.heads.quantiles.get();
-            self.heads.quantiles = unsafe {
-                // SAFETY: `heads.quantiles.get() >= 1 << PRECISION`, so shifting right by
+            let word = self.heads.compressed.get();
+            self.heads.compressed = unsafe {
+                // SAFETY: `heads.compressed.get() >= 1 << PRECISION`, so shifting right by
                 // `PRECISION` doesn't result in zero.
-                Word::NonZero::new_unchecked(self.heads.quantiles.get() >> PRECISION)
+                Word::NonZero::new_unchecked(self.heads.compressed.get() >> PRECISION)
             };
             word
         };
@@ -928,40 +934,40 @@ where
         let remainder = quantile - left_sided_cumulative;
 
         // This can't truncate because
-        // - we maintain the invariant `heads.remainders < 1 << (State::BITS - PRECISION)`; and
+        // - we maintain the invariant `heads.remaining < 1 << (State::BITS - PRECISION)`; and
         // - `probability <= 1 << PRECISION` and `remainder < probability`.
-        // Thus, `remainders * proability + remainder < (remainders + 1) * probability`
+        // Thus, `remaining * proability + remainder < (remaining + 1) * probability`
         // which is `<= (1 << (State::BITS - PRECISION)) << PRECISION = 1 << State::BITS`.
-        self.heads.remainders =
-            self.heads.remainders * probability.get().into().into() + remainder.into().into();
+        self.heads.remaining =
+            self.heads.remaining * probability.get().into().into() + remainder.into().into();
 
-        if self.heads.remainders >= State::one() << (State::BITS - PRECISION) {
-            // The invariant on `self.heads.remainders` (see its doc comment) is violated and must
+        if self.heads.remaining >= State::one() << (State::BITS - PRECISION) {
+            // The invariant on `self.heads.remaining` (see its doc comment) is violated and must
             // be restored.
-            self.flush_remainders_head()
-                .map_err(BackendError::Remainders)?
+            self.flush_remaining_head()
+                .map_err(BackendError::Remaining)?
         }
 
         Ok(symbol)
     }
 
     fn maybe_exhausted(&self) -> bool {
-        self.quantiles.maybe_exhausted() || self.remainders.maybe_full()
+        self.compressed.maybe_exhausted() || self.remaining.maybe_full()
     }
 }
 
-impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Encode<PRECISION>
-    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+impl<Word, State, CompressedBackend, RemainingBackend, const PRECISION: usize> Encode<PRECISION>
+    for ChainCoder<Word, State, CompressedBackend, RemainingBackend, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    QuantilesBackend: WriteWords<Word>,
-    RemaindersBackend: ReadWords<Word, Stack>,
+    CompressedBackend: WriteWords<Word>,
+    RemainingBackend: ReadWords<Word, Stack>,
 {
     type BackendError =
-        BackendError<QuantilesBackend::WriteError, Option<RemaindersBackend::ReadError>>;
+        BackendError<CompressedBackend::WriteError, Option<RemainingBackend::ReadError>>;
 
-    // TODO: we should be allowed to return our own FrontendError here if we run out of remainders.
+    // TODO: we should be allowed to return our own FrontendError here if we run out of remaining.
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
@@ -980,58 +986,59 @@ where
             .left_cumulative_and_probability(symbol)
             .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
-        if self.heads.remainders
+        if self.heads.remaining
             < probability.get().into().into() << (State::BITS - Word::BITS - PRECISION)
         {
-            self.refill_remainders_head()
-                .map_err(BackendError::Remainders)?;
-            // At this point, the invariant on `self.heads.remainders` (see its doc comment) is
+            self.refill_remaining_head()
+                .map_err(BackendError::Remaining)?;
+            // At this point, the invariant on `self.heads.remaining` (see its doc comment) is
             // temporarily violated (but it will be restored below). This is how
-            // `decode_symbol` can detect that it has to flush `remainders.state`.
+            // `decode_symbol` can detect that it has to flush `remaining.state`.
         }
 
-        let remainder = (self.heads.remainders % probability.get().into().into())
+        let remainder = (self.heads.remaining % probability.get().into().into())
             .as_()
             .as_();
         let quantile = (left_sided_cumulative + remainder).into();
-        self.heads.remainders = self.heads.remainders / probability.get().into().into();
+        self.heads.remaining = self.heads.remaining / probability.get().into().into();
 
         if PRECISION != Word::BITS
-            && self.heads.quantiles.get() < Word::one() << (Word::BITS - PRECISION)
+            && self.heads.compressed.get() < Word::one() << (Word::BITS - PRECISION)
         {
             unsafe {
                 // SAFETY:
-                // - `heads.quantiles` is nonzero because it is a `NonZero`
-                // - `heads.quantiles`, has `Word::BITS` bits and we checked above that all its one
+                // - `heads.compressed` is nonzero because it is a `NonZero`
+                // - `heads.compressed`, has `Word::BITS` bits and we checked above that all its one
                 //   bits are within theleast significant `Word::BITS - PRECISION` bits. Thus, the
                 //   most significant `PRECISION` bits are 0 and the left-shift doesn't truncate.
                 // Thus, the result of the left-shift is also noznero.
-                self.heads.quantiles =
-                    (self.heads.quantiles.get() << PRECISION | quantile).into_nonzero_unchecked();
+                self.heads.compressed =
+                    (self.heads.compressed.get() << PRECISION | quantile).into_nonzero_unchecked();
             }
         } else {
             let word = if PRECISION == Word::BITS {
                 quantile
             } else {
-                let word = self.heads.quantiles.get() << PRECISION | quantile;
+                let word = self.heads.compressed.get() << PRECISION | quantile;
                 unsafe {
-                    // SAFETY: if we're here then `heads.quantiles >= 1 << (Word::BITS - PRECISION).
+                    // SAFETY: if we're here then `heads.compressed >= 1 << (Word::BITS - PRECISION).
                     // Thus, shifting right by this amount of bits leaves at least one 1 bit.
-                    self.heads.quantiles = (self.heads.quantiles.get() >> (Word::BITS - PRECISION))
+                    self.heads.compressed = (self.heads.compressed.get()
+                        >> (Word::BITS - PRECISION))
                         .into_nonzero_unchecked();
                 }
                 word
             };
-            self.quantiles
+            self.compressed
                 .write(word)
-                .map_err(BackendError::Quantiles)?;
+                .map_err(BackendError::Compressed)?;
         }
 
         Ok(())
     }
 
     fn maybe_full(&self) -> bool {
-        self.remainders.maybe_exhausted() || self.quantiles.maybe_full()
+        self.remaining.maybe_exhausted() || self.compressed.maybe_full()
     }
 }
 
@@ -1177,16 +1184,16 @@ mod test {
 
         assert!(!coder.maybe_exhausted());
 
-        let (remainders_prefix, remainders_suffix) = coder.clone().into_remaining().unwrap();
-        let mut remainders = remainders_prefix.clone();
-        remainders.extend_from_slice(&remainders_suffix);
-        let coder2 = ChainCoder::from_remaining(remainders).unwrap();
-        let coder3 = ChainCoder::from_remaining(remainders_suffix).unwrap();
+        let (remaining_prefix, remaining_suffix) = coder.clone().into_remaining().unwrap();
+        let mut remaining = remaining_prefix.clone();
+        remaining.extend_from_slice(&remaining_suffix);
+        let coder2 = ChainCoder::from_remaining(remaining).unwrap();
+        let coder3 = ChainCoder::from_remaining(remaining_suffix).unwrap();
 
         for (mut coder, prefix) in vec![
             (coder, vec![]),
             (coder2, vec![]),
-            (coder3, remainders_prefix),
+            (coder3, remaining_prefix),
         ] {
             coder
                 .encode_symbols_reverse(
@@ -1197,11 +1204,11 @@ mod test {
                 )
                 .unwrap();
 
-            let (quantiles_prefix, quantiles_suffix) = coder.into_compressed().unwrap();
+            let (compressed_prefix, compressed_suffix) = coder.into_compressed().unwrap();
 
             let mut reconstructed = prefix;
-            reconstructed.extend(quantiles_prefix);
-            reconstructed.extend(quantiles_suffix);
+            reconstructed.extend(compressed_prefix);
+            reconstructed.extend(compressed_suffix);
 
             assert_eq!(reconstructed, compressed);
         }
