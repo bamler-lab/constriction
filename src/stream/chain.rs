@@ -68,6 +68,123 @@ use crate::{
     BitArray, CoderError, EncoderFrontendError, NonZeroBitArray,
 };
 
+/// # Intended Usage
+///
+/// A typical usage cycle goes along the following steps:
+///
+/// ## When compressing data using the bits-back trick
+///
+/// 0. Start with some stack of (typically already compressed) binary data, which you want
+///    to piggy-back into the choice of certain latent variables.
+/// 1. Create a `ChainCoder` by calling [`ChainCoder::from_binary`] or
+///    [`ChainCoder::from_compressed`] (depending on whether you can guarantee that the
+///    stack of binary data has a nonzero word on top).
+/// 2. Use the `ChainCoder` and a sequence of entropy models to decode some symbols.
+/// 3. Export the remaining data on the `ChainCoder` by calling [`.into_remaining()`].
+///
+/// ## When decompressing the data
+///
+/// 1. Create a `ChainCoder` by calling [`ChainCoder::from_remaining`].
+/// 2. Encode the symbols you obtained in Step 2 above back onto the new chain coder (in
+///    reverse order) using the same entropy models.
+/// 3. Recover the original binary data from Step 0 above by calling [`.into_binary()`] or
+///    [`.into_compressed()`] (using the analogous choice as in Step 1 above).
+///
+/// # Examples
+///
+/// The following two examples show two variants of the above typical usage cycle.
+///
+/// ```
+/// use constriction::stream::{models::DefaultLeakyQuantizer, Decode, chain::DefaultChainCoder};
+/// use statrs::distribution::Normal;
+///
+/// // Step 0 of the compressor: Generate some sample binary data for demonstration purpose.
+/// let original_data = (0..100u32).map(
+///     |i| i.wrapping_mul(0xad5f_b2ed).wrapping_add(0xed55_4892)
+/// ).collect::<Vec<_>>();
+///
+/// // Step 1 of the compressor: obtain a `ChainCoder` from the original binary data.
+/// let mut coder = DefaultChainCoder::from_binary(original_data.clone()).unwrap();
+///
+/// // Step 2 of the compressor: decode data into symbols using some entropy models.
+/// let quantizer = DefaultLeakyQuantizer::new(-100..=100);
+/// let models = (0..50u32).map(|i| quantizer.quantize(Normal::new(i as f64, 10.0).unwrap()));
+/// let symbols = coder.decode_symbols(models.clone()).collect::<Result<Vec<_>, _>>().unwrap();
+///
+/// // Step 3 of the compressor: export the remaining data.
+/// let (remaining_prefix, remaining_suffix) = coder.into_remaining().unwrap();
+/// // (verify that we've indeed reduced the amount of data:)
+/// assert!(remaining_prefix.len() + remaining_suffix.len() < original_data.len());
+///
+/// // ... do something with the `symbols`, then recover them later ...
+///
+/// // Step 1 of the decompressor: create a `ChainCoder` from the remaining data. We only really
+/// // need the `remaining_suffix` here, but it would also be legal to use the concatenation of
+/// // `remaining_prefix` with `remaining_suffix` here (see other example below).
+/// let mut coder = DefaultChainCoder::from_remaining(remaining_suffix).unwrap();
+///
+/// // Step 2 of the decompressor: re-encode the symbols in reverse order.
+/// coder.encode_symbols_reverse(symbols.into_iter().zip(models));
+///
+/// // Step 3 of the decompressor: recover the original data.
+/// let (recovered_prefix, recovered_suffix) = coder.into_binary().unwrap();
+/// assert!(recovered_prefix.is_empty());  // Empty because we discarded `remaining_prefix` above.
+/// let mut recovered = remaining_prefix;  // But we have to prepend it to the recovered data now.
+/// recovered.extend_from_slice(&recovered_suffix);
+///
+/// assert_eq!(recovered, original_data);
+/// ```
+///
+/// In Step 3 of the compressor in the example above, calling `.into_remaining()` on a
+/// `ChainCoder` returns a tuple of a `remainders_prefix` and a `remainders_suffix`. The
+/// `remainders_prefix` contains superflous data that we didn't need when decoding the
+/// `symbols` (`remainders_prefix` is an unaltered prefix of the original `data`). We
+/// therefore don't need `remainders_prefix` for re-encoding the symbols, so we didn't pass
+/// it to `ChainCoder::from_remaining` in Step 1 of the decompressor above.
+///
+/// If we were to write out `remainders_prefix` and `remainders_suffix` to a file then it
+/// would be tedious to keep track of where the prefix ends and where the suffix begins.
+/// Luckly, we don't have to do this. We can just as well concatenate `remainders_prefix`
+/// and `remainders_suffix` right away. The only additional change this will cause is that
+/// the call to `.into_binary()` in Step 3 of the decompressor will then return a non-empty
+/// `recovered_prefix` because the second `ChainCoder` will then also have some superflous
+/// data. So we'll have to again concatenate the two returned buffers. The following example
+/// shows how this works:
+///
+/// ```
+/// # use constriction::stream::{models::DefaultLeakyQuantizer, Decode, chain::DefaultChainCoder};
+/// # use statrs::distribution::Normal;
+/// # let original_data = (0..100u32).map(
+/// #     |i| i.wrapping_mul(0xad5f_b2ed).wrapping_add(0xed55_4892)
+/// # ).collect::<Vec<_>>();
+/// # let mut coder = DefaultChainCoder::from_binary(original_data.clone()).unwrap();
+/// # let quantizer = DefaultLeakyQuantizer::new(-100..=100);
+/// # let models = (0..50u32).map(|i| quantizer.quantize(Normal::new(i as f64, 10.0).unwrap()));
+/// # let symbols = coder.decode_symbols(models.clone()).collect::<Result<Vec<_>, _>>().unwrap();
+/// # let (remaining_prefix, remaining_suffix) = coder.into_remaining().unwrap();
+/// // ... compressor same as in the previous example above ...
+///
+/// // Alternative Step 1 of the decompressor: concatenate `remaining_prefix` with
+/// // `remaining_suffix` before creating a `ChainCoder` from them.
+/// let mut remaining = remaining_prefix;
+/// remaining.extend_from_slice(&remaining_suffix);
+/// let mut coder = DefaultChainCoder::from_remaining(remaining).unwrap();
+///
+/// // Step 2 of the decompressor: re-encode symbols in reverse order (same as in previous example).
+/// coder.encode_symbols_reverse(symbols.into_iter().zip(models));
+///
+/// // Alternative Step 3 of the decompressor: recover the original data by another concatenation.
+/// let (recovered_prefix, recovered_suffix) = coder.into_binary().unwrap();
+/// assert!(!recovered_prefix.is_empty());  // No longer empty because there was superflous data.
+/// let mut recovered = recovered_prefix;   // So we have to concatenate `recovered_{pre,suf}fix`.
+/// recovered.extend_from_slice(&recovered_suffix);
+///
+/// assert_eq!(recovered, original_data);
+/// ```
+///
+/// [`.into_remaining()`]: Self::into_remaining
+/// [`.into_binary()`]: Self::into_binary
+/// [`.into_compressed()`]: Self::into_compressed
 #[derive(Debug, Clone)]
 pub struct ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize>
 where
@@ -149,36 +266,18 @@ where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
-    /// Creates a new `ChainCoder` ready for decoding from the provided `quantiles`, which
-    /// must have enough words to initialize the chain heads and must not have a zero word
-    /// at the current read position.
+    /// Creates a new `ChainCoder` for decoding from the provided `data`.
     ///
-    /// Retuns an error if `quantiles` does not have enough words, if reading from
-    /// `quantiles` lead to an error, or if the first word read from `quantiles` is zero.
+    /// The reader `data` must have enough words to initialize the chain heads but can
+    /// otherwise be arbitrary. In particualar, `data` doesn't necessary have to come from
+    /// an [`AnsCoder`]. If you know that `data` comes from an `AnsCoder` then it's slightly
+    /// better to call [`from_compressed`] instead.
     ///
-    /// TODO: rename to `from_compressed` since it has similar constraints as
-    /// `AnsCoder::from_compressed`
-    pub fn from_quantiles(
-        mut quantiles: QuantilesBackend,
-    ) -> Result<Self, CoderError<QuantilesBackend, QuantilesBackend::ReadError>>
-    where
-        QuantilesBackend: ReadBackend<Word, Stack>,
-        RemaindersBackend: Default,
-    {
-        let heads = match ChainCoderHeads::new(&mut quantiles, false) {
-            Ok(heads) => heads,
-            Err(CoderError::FrontendError(())) => return Err(CoderError::FrontendError(quantiles)),
-            Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
-        };
-        let remainders = RemaindersBackend::default();
-
-        Ok(Self {
-            quantiles,
-            remainders,
-            heads,
-        })
-    }
-
+    /// Retuns an error if `data` does not have enough words to initialize the chain heads
+    /// or if reading from `data` lead to an error.
+    ///
+    /// [`AnsCoder`]: super::stack::AnsCoder
+    /// [`from_compressed`]: Self::from_compressed
     pub fn from_binary(
         mut data: QuantilesBackend,
     ) -> Result<Self, CoderError<QuantilesBackend, QuantilesBackend::ReadError>>
@@ -200,46 +299,68 @@ where
         })
     }
 
-    /// Creates a new `ChainCoder` ready for encoding some symbols together with the
-    /// provided `remainders`, which must have enough words to initialize the chain heads
-    /// and must start with at least two nonzero words.
+    /// Creates a new `ChainCoder` for decoding from the compressed data of an [`AnsCoder`]
     ///
-    /// Retuns an error if `quantiles` does not have enough words, if reading from
-    /// `quantiles` lead to an error, or if the first word read from `quantiles` is zero.
-    pub fn from_remainders(
-        mut remainders: RemaindersBackend,
-    ) -> Result<Self, CoderError<RemaindersBackend, RemaindersBackend::ReadError>>
+    /// The provided read backend `compressed`, must have enough words to initialize the
+    /// chain heads and must not have a zero word at the current read position. The latter
+    /// is always satisfied for (nonempty) data returned from [`AnsCoder::into_compressed`].
+    ///
+    /// Retuns an error if `compressed` does not have enough words, if reading from
+    /// `compressed` lead to an error, or if the first word read from `compressed` is zero.
+    ///
+    /// [`AnsCoder`]: super::stack::AnsCoder
+    /// [`AnsCoder::into_compressed`]: super::stack::AnsCoder::into_compressed
+    pub fn from_compressed(
+        mut compressed: QuantilesBackend,
+    ) -> Result<Self, CoderError<QuantilesBackend, QuantilesBackend::ReadError>>
     where
-        RemaindersBackend: ReadBackend<Word, Stack>,
-        QuantilesBackend: Default,
+        QuantilesBackend: ReadBackend<Word, Stack>,
+        RemaindersBackend: Default,
     {
-        let quantiles_head = match remainders.read()?.and_then(Word::into_nonzero) {
-            Some(word) => word,
-            _ => return Err(CoderError::FrontendError(remainders)),
-        };
-        let mut heads = match ChainCoderHeads::new(&mut remainders, false) {
+        let heads = match ChainCoderHeads::new(&mut compressed, false) {
             Ok(heads) => heads,
             Err(CoderError::FrontendError(())) => {
-                return Err(CoderError::FrontendError(remainders))
+                return Err(CoderError::FrontendError(compressed))
             }
             Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
         };
-        heads.quantiles = quantiles_head;
-
-        let quantiles = QuantilesBackend::default();
+        let remainders = RemaindersBackend::default();
 
         Ok(Self {
-            quantiles,
+            quantiles: compressed,
             remainders,
             heads,
         })
     }
 
-    /// Transfers any fractional `Word` left on `quantiles` to `remainders` and returns
-    /// (quantiles, remainders). You could contatenate these two and call
-    /// [`from_remainders`] on them, or you could call [`from_remainders`] just on the
-    /// second item of the returned tuple.
-    pub fn into_remainders(
+    /// Terminates decoding and returns the remaining bit string as a tuple `(prefix,
+    /// suffix)`.
+    ///
+    /// - The `prefix` is a shortened but otherwise unaltered variant of the data from which
+    ///   you created this `ChainCoder` when you called [`ChainCoder::from_binary`] or
+    ///   [`ChainCoder::from_compressed`].
+    /// - The `suffix` is a stack with at least two nonzero words on top.
+    ///
+    /// You can use the returned tuple `(prefix, suffix)` in either of the following two
+    /// ways (see examples in the [struct level documentation](ChainCoder)):
+    /// - Either put `prefix` away and continue only with `suffix` as follows:
+    ///   1. obtain a new `ChainCoder` by calling [`ChainCoder::from_remaining(suffix)`];
+    ///   2. encode the same symbols that you decoded from the original `ChainCoder` back
+    ///      onto the new `ChainCoder` (in reverse order);
+    ///   3. call [`.into_binary()`] or [`.into_compressed()`] on the new `ChainCoder` to
+    ///      obatain another tuple `(prefix2, suffix2)`.
+    ///   4. concatenate `prefix`, `prefix2`, and `suffix2` to recover the data from which
+    ///      you created the original `ChainCoder` when you constructed it with
+    ///      [`ChainCoder::from_binary`] or [`ChainCoder::from_compressed`], respectively.
+    /// - Or you can concatenate `prefix` with `suffix`, create a new `ChainCoder` from the
+    ///   concatenation by calling `ChainCoder::from_remaining(concatenation)`, continue
+    ///   with steps 2 and 3 above, and then just concatenate `prefix2` with `suffix2` to
+    ///   recover the original data.
+    ///
+    /// [`ChainCoder::from_remaining(suffix)`]: Self::from_remaining
+    /// [`.into_binary()`]: Self::into_binary
+    /// [`.into_compressed()`]: Self::into_compressed
+    pub fn into_remaining(
         mut self,
     ) -> Result<(QuantilesBackend, RemaindersBackend), RemaindersBackend::WriteError>
     where
@@ -257,14 +378,58 @@ where
         Ok((self.quantiles, self.remainders))
     }
 
-    /// Checks that there's currently an integer amount of `Words` in `quantiles` (see
-    /// [`is_whole`]), transfers the remainders head onto `quantiles` (to undo the process
-    /// in `from_quantiles` and returns `(remainders, quantiles)`. You could concatenate
-    /// these two and call [`from_quantiles`] on the result, or you could call
-    /// [`from_quantiles`] just on the second item of the returned tuple.
+    /// Creates a new `ChainCoder` for encoding some symbols together with the data
+    /// previously obtained from [`into_remaining`].
     ///
-    /// TODO: rename to `into_compressed`
-    pub fn into_quantiles(
+    /// See [`into_remaining`] for detailed explanation.
+    ///
+    /// [`into_remaining`]: Self::into_remaining
+    pub fn from_remaining(
+        mut remaining: RemaindersBackend,
+    ) -> Result<Self, CoderError<RemaindersBackend, RemaindersBackend::ReadError>>
+    where
+        RemaindersBackend: ReadBackend<Word, Stack>,
+        QuantilesBackend: Default,
+    {
+        let quantiles_head = match remaining.read()?.and_then(Word::into_nonzero) {
+            Some(word) => word,
+            _ => return Err(CoderError::FrontendError(remaining)),
+        };
+        let mut heads = match ChainCoderHeads::new(&mut remaining, false) {
+            Ok(heads) => heads,
+            Err(CoderError::FrontendError(())) => return Err(CoderError::FrontendError(remaining)),
+            Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
+        };
+        heads.quantiles = quantiles_head;
+
+        let quantiles = QuantilesBackend::default();
+
+        Ok(Self {
+            quantiles,
+            remainders: remaining,
+            heads,
+        })
+    }
+
+    /// Terminates encoding if possible and returns the compressed data as a tuple `(prefix,
+    /// suffix)`
+    ///
+    /// Call this method only if the original `ChainCoder` used for decoding was constructed
+    /// with [`ChainCoder::from_compressed`] (typically if the original data came from an
+    /// [`AnsCoder`]). If the original `ChainCoder` was instead constructed with
+    /// [`ChainCoder::from_binary`] then call [`.into_binary()`] instead.
+    ///
+    /// Returns an error unless there's currently an integer amount of `Words` in the
+    /// compressed data (which will be the case if you've used the `ChainCoder` correctly,
+    /// see also [`is_whole`]).
+    ///
+    /// See [`into_remaining`] for usage instructions.
+    ///
+    /// [`is_whole`]: Self::is_whole
+    /// [`AnsCoder`]: super::stack::AnsCoder
+    /// [`.into_binary()`]: Self::into_binary
+    /// [`into_remaining`]: Self::into_remaining
+    pub fn into_compressed(
         mut self,
     ) -> Result<(RemaindersBackend, QuantilesBackend), CoderError<Self, QuantilesBackend::WriteError>>
     where
@@ -283,6 +448,25 @@ where
         Ok((self.remainders, self.quantiles))
     }
 
+    /// Terminates encoding if possible and returns the compressed data as a tuple `(prefix,
+    /// suffix)`
+    ///
+    /// Call this method only if the original `ChainCoder` used for decoding was constructed
+    /// with [`ChainCoder::from_binary`]. If the original `ChainCoder` was instead
+    /// constructed with [`ChainCoder::from_compressed`] then call [`.into_compressed()`]
+    /// instead.
+    ///
+    /// Returns an error unless there's currently an integer amount of `Words` in the both
+    /// the compressed data and the remaining data (which will be the case if you've used
+    /// the `ChainCoder` correctly and if the original chain coder was constructed with
+    /// `from_binary` rather than `from_compressed`).
+    ///
+    /// See [`into_remaining`] for usage instructions.
+    ///
+    /// [`is_whole`]: Self::is_whole
+    /// [`AnsCoder`]: super::stack::AnsCoder
+    /// [`.into_compressed()`]: Self::into_compressed
+    /// [`into_remaining`]: Self::into_remaining
     pub fn into_binary(
         mut self,
     ) -> Result<(RemaindersBackend, QuantilesBackend), CoderError<Self, QuantilesBackend::WriteError>>
@@ -306,7 +490,7 @@ where
         Ok((self.remainders, self.quantiles))
     }
 
-    /// Returns `true` iff there's currently an integer amount of `Words` on `quantiles`
+    /// Returns `true` iff there's currently an integer amount of `Words` in the compressed data
     #[inline(always)]
     pub fn is_whole(&self) -> bool {
         self.heads.quantiles.get() == Word::one()
@@ -480,7 +664,7 @@ where
     ///
     /// // Construct a `ChainCoder` and decode some data with the 24 bit precision entropy model.
     /// let data = vec![0x0123_4567u32, 0x89ab_cdef];
-    /// let mut coder = DefaultChainCoder::from_quantiles(data).unwrap();
+    /// let mut coder = DefaultChainCoder::from_binary(data).unwrap();
     /// let _symbol_a = coder.decode_symbol(distribution24);
     ///
     /// // Change `coder`'s precision and decode data with the 20 bit precision entropy model.
@@ -917,10 +1101,11 @@ mod test {
             .unwrap();
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-100..=100);
 
-        let mut coder = ChainCoder::<Word, State, Vec<Word>, Vec<Word>, PRECISION>::from_quantiles(
-            compressed.clone(),
-        )
-        .unwrap();
+        let mut coder =
+            ChainCoder::<Word, State, Vec<Word>, Vec<Word>, PRECISION>::from_compressed(
+                compressed.clone(),
+            )
+            .unwrap();
 
         let symbols = coder
             .decode_symbols(
@@ -933,11 +1118,11 @@ mod test {
 
         assert!(!coder.maybe_exhausted());
 
-        let (remainders_prefix, remainders_suffix) = coder.clone().into_remainders().unwrap();
+        let (remainders_prefix, remainders_suffix) = coder.clone().into_remaining().unwrap();
         let mut remainders = remainders_prefix.clone();
         remainders.extend_from_slice(&remainders_suffix);
-        let coder2 = ChainCoder::from_remainders(remainders).unwrap();
-        let coder3 = ChainCoder::from_remainders(remainders_suffix).unwrap();
+        let coder2 = ChainCoder::from_remaining(remainders).unwrap();
+        let coder3 = ChainCoder::from_remaining(remainders_suffix).unwrap();
 
         for (mut coder, prefix) in vec![
             (coder, vec![]),
@@ -953,7 +1138,7 @@ mod test {
                 )
                 .unwrap();
 
-            let (quantiles_prefix, quantiles_suffix) = coder.into_quantiles().unwrap();
+            let (quantiles_prefix, quantiles_suffix) = coder.into_compressed().unwrap();
 
             let mut reconstructed = prefix;
             reconstructed.extend(quantiles_prefix);
