@@ -371,6 +371,174 @@ impl EncoderFrontendError {
     }
 }
 
+/// Trait for coders or backends that *might* implement [`Pos`] and/or [`Seek`]
+///
+/// If a type implements `PosSeek` then that doesn't necessarily mean that it also
+/// implements [`Pos`] or [`Seek`]. Implementing `PosSeek` only fixes the common `Position`
+/// type that is used *if* the type implements `Pos` and/or `Seek`.
+pub trait PosSeek {
+    type Position: Clone;
+}
+
+/// A trait for entropy coders that keep track of their current position within the
+/// compressed data.
+///
+/// This is the counterpart of [`Seek`]. Call [`Pos::pos`] to record
+/// "snapshots" of an entropy coder, and then call [`Seek::seek`] at a later time
+/// to jump back to these snapshots. See examples in the documentations of [`Seek`]
+/// and [`Seek::seek`].
+pub trait Pos: PosSeek {
+    /// Returns the position in the compressed data, in units of `Word`s.
+    ///
+    /// It is up to the entropy coder to define what constitutes the beginning and end
+    /// positions within the compressed data (for example, a [`AnsCoder`] begins encoding
+    /// at position zero but it begins decoding at position `ans.buf().len()`).
+    ///
+    /// [`AnsCoder`]: stack::AnsCoder
+    fn pos(&self) -> Self::Position;
+}
+
+/// A trait for entropy coders that support random access.
+///
+/// This is the counterpart of [`Pos`]. While [`Pos::pos`] can be used to
+/// record "snapshots" of an entropy coder, [`Seek::seek`] can be used to jump to these
+/// recorded snapshots.
+///
+/// Not all entropy coders that implement `Pos` also implement `Seek`. For example,
+/// [`DefaultAnsCoder`] implements `Pos` but it doesn't implement `Seek` because it
+/// supports both encoding and decoding and therefore always operates at the head. In
+/// such a case one can usually obtain a seekable entropy coder in return for
+/// surrendering some other property. For example, `DefaultAnsCoder` provides the methods
+/// [`seekable_decoder`] and [`into_seekable_decoder`] that return a decoder which
+/// implements `Seek` but which can no longer be used for encoding (i.e., it doesn't
+/// implement [`Encode`]).
+///
+/// # Example
+///
+/// ```
+/// use constriction::{stream::{models::Categorical, stack::DefaultAnsCoder, Decode}, Pos, Seek};
+///
+/// // Create a `AnsCoder` encoder and an entropy model:
+/// let mut ans = DefaultAnsCoder::new();
+/// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
+/// let entropy_model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
+///     .unwrap();
+///
+/// // Encode some symbols in two chunks and take a snapshot after each chunk.
+/// let symbols1 = vec![8, 2, 0, 7];
+/// ans.encode_iid_symbols_reverse(&symbols1, &entropy_model).unwrap();
+/// let snapshot1 = ans.pos();
+///
+/// let symbols2 = vec![3, 1, 5];
+/// ans.encode_iid_symbols_reverse(&symbols2, &entropy_model).unwrap();
+/// let snapshot2 = ans.pos();
+///
+/// // As discussed above, `DefaultAnsCoder` doesn't impl `Seek` but we can get a decoder that does:
+/// let mut seekable_decoder = ans.seekable_decoder();
+///
+/// // `seekable_decoder` is still a `AnsCoder`, so decoding would start with the items we encoded
+/// // last. But since it implements `Seek` we can jump ahead to our first snapshot:
+/// seekable_decoder.seek(snapshot1);
+/// let decoded1 = seekable_decoder
+///     .decode_iid_symbols(4, &entropy_model)
+///     .collect::<Result<Vec<_>, _>>()
+///     .unwrap();
+/// assert_eq!(decoded1, symbols1);
+///
+/// // We've reached the end of the compressed data ...
+/// assert!(seekable_decoder.is_empty());
+///
+/// // ... but we can still jump to somewhere else and continue decoding from there:
+/// seekable_decoder.seek(snapshot2);
+///
+/// // Creating snapshots didn't mutate the coder, so we can just decode through `snapshot1`:
+/// let decoded_both = seekable_decoder.decode_iid_symbols(7, &entropy_model).map(Result::unwrap);
+/// assert!(decoded_both.eq(symbols2.into_iter().chain(symbols1)));
+/// assert!(seekable_decoder.is_empty()); // <-- We've reached the end again.
+/// ```
+///
+/// [`DefaultAnsCoder`]: stack::DefaultAnsCoder
+/// [`seekable_decoder`]: stack::AnsCoder::seekable_decoder
+/// [`into_seekable_decoder`]: stack::AnsCoder::into_seekable_decoder
+pub trait Seek: PosSeek {
+    /// Jumps to a given position in the compressed data.
+    ///
+    /// The argument `pos` is the same pair of values returned by
+    /// [`Pos::pos`], i.e., it is a tuple of the position in the compressed
+    /// data and the `State` to which the entropy coder should be restored. Both values
+    /// are absolute (i.e., seeking happens independently of the current state or
+    /// position of the entropy coder). The position is measured in units of
+    /// `Word`s (see second example below where we manipulate a position
+    /// obtained from `Pos::pos` in order to reflect a manual reordering of
+    /// the `Word`s in the compressed data).
+    ///
+    /// # Examples
+    ///
+    /// The method takes the position and state as a tuple rather than as independent
+    /// method arguments so that one can simply pass in the tuple obtained from
+    /// [`Pos::pos`] as sketched below:
+    ///
+    /// ```
+    /// // Step 1: Obtain an encoder and encode some data (omitted for brevity) ...
+    /// # use constriction::{stream::stack::DefaultAnsCoder, Pos, Seek};
+    /// # let encoder = DefaultAnsCoder::new();
+    ///
+    /// // Step 2: Take a snapshot by calling `Pos::pos`:
+    /// let snapshot = encoder.pos(); // <-- Returns a tuple `(pos, state)`.
+    ///
+    /// // Step 3: Encode some more data and then obtain a decoder (omitted for brevity) ...
+    /// # let mut decoder = encoder.seekable_decoder();
+    ///
+    /// // Step 4: Jump to snapshot by calling `Seek::seek`:
+    /// decoder.seek(snapshot); // <-- No need to deconstruct `snapshot` into `(pos, state)`.
+    /// ```
+    ///
+    /// For more fine-grained control, one may want to assemble the tuple
+    /// `pos` manually. For example, a [`DefaultAnsCoder`] encodes data from
+    /// front to back and then decodes the data in the reverse direction from back to
+    /// front. Decoding from back to front may be inconvenient in some use cases, so one
+    /// might prefer to instead reverse the order of the `Word`s once encoding
+    /// is finished, and then decode them in the more natural direction from front to
+    /// back. Reversing the compressed data changes the position of each
+    /// `Word`, and so any positions obtained from `Pos` need to be adjusted
+    /// accordingly before they may be passed to `seek`, as in the following example:
+    ///
+    /// ```
+    /// use constriction::{
+    ///     stream::{models::LeakyQuantizer, stack::{DefaultAnsCoder, AnsCoder}, Decode},
+    ///     Pos, Seek
+    /// };
+    ///
+    /// // Construct a `DefaultAnsCoder` for encoding and an entropy model:
+    /// let mut encoder = DefaultAnsCoder::new();
+    /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
+    /// let entropy_model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
+    ///
+    /// // Encode two chunks of symbols and take a snapshot in-between:
+    /// encoder.encode_iid_symbols_reverse(-100..40, &entropy_model).unwrap();
+    /// let (mut snapshot_pos, snapshot_state) = encoder.pos();
+    /// encoder.encode_iid_symbols_reverse(50..101, &entropy_model).unwrap();
+    ///
+    /// // Obtain compressed data, reverse it, and create a decoder that reads it from front to back:
+    /// let mut compressed = encoder.into_compressed().unwrap();
+    /// compressed.reverse();
+    /// snapshot_pos = compressed.len() - snapshot_pos; // <-- Adjusts the snapshot position.
+    /// let mut decoder = AnsCoder::from_reversed_compressed(compressed).unwrap();
+    ///
+    /// // Since we chose to encode onto a stack, decoding yields the last encoded chunk first:
+    /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 50);
+    /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 51);
+    ///
+    /// // To jump to our snapshot, we have to use the adjusted `snapshot_pos`:
+    /// decoder.seek((snapshot_pos, snapshot_state));
+    /// assert!(decoder.decode_iid_symbols(140, &entropy_model).map(Result::unwrap).eq(-100..40));
+    /// assert!(decoder.is_empty()); // <-- We've reached the end of the compressed data.
+    /// ```
+    ///
+    /// [`DefaultAnsCoder`]: stack::DefaultAnsCoder
+    fn seek(&mut self, pos: Self::Position) -> Result<(), ()>;
+}
+
 /// A trait for bit strings of fixed (and usually small) length.
 ///
 /// Short fixed-length bit strings are fundamental building blocks of efficient

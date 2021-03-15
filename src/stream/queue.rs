@@ -13,14 +13,14 @@ use num::cast::AsPrimitive;
 
 use super::{
     models::{DecoderModel, EncoderModel},
-    Code, Decode, Encode, IntoDecoder, Pos, Seek,
+    Code, Decode, Encode, IntoDecoder,
 };
 use crate::{
     backends::{
-        AsReadWords, BoundedReadWords, Cursor, IntoReadWords, PosBackend, Queue, ReadWords,
-        SeekBackend, WriteWords,
+        AsReadWords, BoundedReadWords, Cursor, IntoReadWords, Queue, ReadWords, WriteWords,
     },
-    BitArray, CoderError, EncoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible,
+    BitArray, CoderError, EncoderError, EncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek,
+    UnwrapInfallible,
 };
 
 /// Type of the internal state used by [`RangeEncoder<Word, State>`] and
@@ -123,19 +123,29 @@ where
     }
 }
 
+impl<Word, State, Backend> PosSeek for RangeEncoder<Word, State, Backend>
+where
+    Word: BitArray,
+    State: BitArray,
+    Backend: WriteWords<Word> + PosSeek,
+    Self: Code,
+{
+    type Position = (Backend::Position, <Self as Code>::State);
+}
+
 impl<Word, State, Backend> Pos for RangeEncoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteWords<Word> + PosBackend<Word>,
+    Backend: WriteWords<Word> + Pos<Position = usize>,
 {
-    fn pos(&self) -> usize {
+    fn pos(&self) -> Self::Position {
         let num_inverted = if let EncoderSituation::Inverted(num_inverted, _) = self.situation {
             num_inverted.get()
         } else {
             0
         };
-        self.bulk.pos() + num_inverted
+        (self.bulk.pos() + num_inverted, self.state())
     }
 }
 
@@ -428,7 +438,7 @@ where
     /// different backend than a `Vec`, consider calling [`into_decoder`] instead.
     pub fn decoder<'a>(
         &'a mut self,
-    ) -> RangeDecoder<Word, State, Cursor<EncoderGuard<'a, Word, State>>> {
+    ) -> RangeDecoder<Word, State, Cursor<Word, EncoderGuard<'a, Word, State>>> {
         RangeDecoder::from_compressed(self.get_compressed()).unwrap_infallible()
     }
 
@@ -718,13 +728,24 @@ where
     }
 }
 
+impl<Word, State, Backend> PosSeek for RangeDecoder<Word, State, Backend>
+where
+    Word: BitArray,
+    State: BitArray,
+    Backend: ReadWords<Word, Queue>,
+    Backend: PosSeek,
+    Self: Code,
+{
+    type Position = (Backend::Position, <Self as Code>::State);
+}
+
 impl<Word, State, Backend> Seek for RangeDecoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: ReadWords<Word, Queue> + SeekBackend<Word>,
+    Backend: ReadWords<Word, Queue> + Seek,
 {
-    fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()> {
+    fn seek(&mut self, pos_and_state: Self::Position) -> Result<(), ()> {
         let (pos, state) = pos_and_state;
 
         self.bulk.seek(pos)?;
@@ -1169,14 +1190,14 @@ mod tests {
         let mut jump_table = Vec::with_capacity(NUM_CHUNKS);
 
         for _ in 0..NUM_CHUNKS {
-            jump_table.push(encoder.pos_and_state());
+            jump_table.push(encoder.pos());
             let chunk = (0..SYMBOLS_PER_CHUNK)
                 .map(|_| model.quantile_function(rng.next_u32() % (1 << 24)).0)
                 .collect::<Vec<_>>();
             encoder.encode_iid_symbols(&chunk, &model).unwrap();
             symbols.push(chunk);
         }
-        let final_pos_and_state = encoder.pos_and_state();
+        let final_pos_and_state = encoder.pos();
 
         let mut decoder = encoder.decoder();
 

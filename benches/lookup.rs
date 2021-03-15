@@ -3,9 +3,9 @@ use std::any::type_name;
 use constriction::{
     stream::{
         models::lookup::EncoderHashLookupTable, queue::RangeEncoder, stack::AnsCoder, Code, Decode,
-        Encode, Pos, Seek,
+        Encode,
     },
-    BitArray,
+    BitArray, Pos, Seek,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use num::cast::AsPrimitive;
@@ -97,7 +97,7 @@ where
     let decoder_model = encoder_model.to_decoder_model();
 
     let mut backward_decoder = encoder.into_seekable_decoder();
-    let reset_snapshot = backward_decoder.pos_and_state();
+    let reset_snapshot = backward_decoder.pos();
 
     c.bench_function(&format!("ans_backward_decoding_{}", label_suffix), |b| {
         b.iter(|| {
@@ -120,7 +120,7 @@ where
 
     backward_decoder.seek(reset_snapshot).unwrap();
     let mut forward_decoder = backward_decoder.into_reversed();
-    let reset_snapshot = forward_decoder.pos_and_state();
+    let reset_snapshot = forward_decoder.pos();
 
     c.bench_function(&format!("ans_forward_decoding_{}", label_suffix), |b| {
         b.iter(|| {
@@ -160,7 +160,7 @@ where
 
     let data = make_data(&symbols, 10_000);
     let mut encoder = RangeEncoder::<Word, State>::new();
-    let reset_snapshot = encoder.pos_and_state();
+    let reset_snapshot = encoder.pos();
 
     let label_suffix = format!(
         "{}_{}_{}_{}",

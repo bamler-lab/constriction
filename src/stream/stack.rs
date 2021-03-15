@@ -10,15 +10,15 @@ use num::cast::AsPrimitive;
 
 use super::{
     models::{DecoderModel, EncoderModel, EntropyModel},
-    AsDecoder, Code, Decode, Encode, IntoDecoder, Pos, Seek, TryCodingError,
+    AsDecoder, Code, Decode, Encode, IntoDecoder, TryCodingError,
 };
 use crate::{
     backends::{
-        self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, IntoReadWords,
-        IntoSeekReadWords, FallibleIteratorReadWords, ReadWords, ReverseReads, Stack, WriteWords,
+        self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, FallibleIteratorReadWords,
+        IntoReadWords, IntoSeekReadWords, ReadWords, ReverseReads, Stack, WriteWords,
     },
     bit_array_to_chunks_truncated, BitArray, CoderError, EncoderError, EncoderFrontendError,
-    NonZeroBitArray, UnwrapInfallible,
+    NonZeroBitArray, Pos, PosSeek, Seek, UnwrapInfallible,
 };
 
 /// Entropy coder for both encoding and decoding on a stack
@@ -736,7 +736,7 @@ where
     }
 }
 
-impl<'bulk, Word, State> AnsCoder<Word, State, Cursor<&'bulk [Word]>>
+impl<'bulk, Word, State> AnsCoder<Word, State, Cursor<Word, &'bulk [Word]>>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -750,7 +750,7 @@ where
     }
 }
 
-impl<Word, State, Buf> AnsCoder<Word, State, ReverseReads<Cursor<Buf>>>
+impl<Word, State, Buf> AnsCoder<Word, State, ReverseReads<Cursor<Word, Buf>>>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -947,13 +947,13 @@ where
     }
 }
 
-impl<Word, State, Buf> AnsCoder<Word, State, Cursor<Buf>>
+impl<Word, State, Buf> AnsCoder<Word, State, Cursor<Word, Buf>>
 where
     Word: BitArray,
     State: BitArray + AsPrimitive<Word> + From<Word>,
     Buf: AsRef<[Word]> + AsMut<[Word]>,
 {
-    pub fn into_reversed(self) -> AnsCoder<Word, State, ReverseReads<Cursor<Buf>>> {
+    pub fn into_reversed(self) -> AnsCoder<Word, State, ReverseReads<Cursor<Word, Buf>>> {
         let (bulk, state) = self.into_raw_parts();
         AnsCoder {
             bulk: bulk.into_reversed(),
@@ -963,13 +963,13 @@ where
     }
 }
 
-impl<Word, State, Buf> AnsCoder<Word, State, ReverseReads<Cursor<Buf>>>
+impl<Word, State, Buf> AnsCoder<Word, State, ReverseReads<Cursor<Word, Buf>>>
 where
     Word: BitArray,
     State: BitArray + AsPrimitive<Word> + From<Word>,
     Buf: AsRef<[Word]> + AsMut<[Word]>,
 {
-    pub fn into_reversed(self) -> AnsCoder<Word, State, Cursor<Buf>> {
+    pub fn into_reversed(self) -> AnsCoder<Word, State, Cursor<Word, Buf>> {
         let (bulk, state) = self.into_raw_parts();
         AnsCoder {
             bulk: bulk.into_reversed(),
@@ -1153,13 +1153,23 @@ where
     }
 }
 
+impl<Word, State, Backend> PosSeek for AnsCoder<Word, State, Backend>
+where
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
+    Backend: PosSeek,
+    Self: Code,
+{
+    type Position = (Backend::Position, <Self as Code>::State);
+}
+
 impl<Word, State, Backend> Seek for AnsCoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: backends::SeekBackend<Word>,
+    Backend: Seek,
 {
-    fn seek(&mut self, (pos, state): (usize, Self::State)) -> Result<(), ()> {
+    fn seek(&mut self, (pos, state): Self::Position) -> Result<(), ()> {
         self.bulk.seek(pos)?;
         self.state = state;
         Ok(())
@@ -1170,10 +1180,10 @@ impl<Word, State, Backend> Pos for AnsCoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: backends::PosBackend<Word>,
+    Backend: Pos,
 {
-    fn pos(&self) -> usize {
-        self.bulk.pos()
+    fn pos(&self) -> Self::Position {
+        (self.bulk.pos(), self.state())
     }
 }
 
@@ -1490,7 +1500,7 @@ mod tests {
         let mut rng = Xoshiro256StarStar::seed_from_u64(123);
         let mut symbols = Vec::with_capacity(NUM_CHUNKS);
         let mut jump_table = Vec::with_capacity(NUM_CHUNKS);
-        let (initial_pos, initial_state) = encoder.pos_and_state();
+        let (initial_pos, initial_state) = encoder.pos();
 
         for _ in 0..NUM_CHUNKS {
             let chunk = (0..SYMBOLS_PER_CHUNK)
@@ -1498,7 +1508,7 @@ mod tests {
                 .collect::<Vec<_>>();
             encoder.encode_iid_symbols_reverse(&chunk, &model).unwrap();
             symbols.push(chunk);
-            jump_table.push(encoder.pos_and_state());
+            jump_table.push(encoder.pos());
         }
 
         // Test decoding from back to front.
@@ -1507,7 +1517,7 @@ mod tests {
 
             // Verify that decoding leads to the same positions and states.
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
-                assert_eq!(seekable_decoder.pos_and_state(), (pos, state));
+                assert_eq!(seekable_decoder.pos(), (pos, state));
                 let decoded = seekable_decoder
                     .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
                     .collect::<Result<Vec<_>, _>>()
@@ -1515,7 +1525,7 @@ mod tests {
                 assert_eq!(&decoded, chunk)
             }
             assert_eq!(
-                seekable_decoder.pos_and_state(),
+                seekable_decoder.pos(),
                 (initial_pos, initial_state)
             );
             assert!(seekable_decoder.is_empty());
@@ -1547,7 +1557,7 @@ mod tests {
 
             // Verify that decoding leads to the expected positions and states.
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
-                assert_eq!(seekable_decoder.pos_and_state(), (pos, state));
+                assert_eq!(seekable_decoder.pos(), (pos, state));
                 let decoded = seekable_decoder
                     .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
                     .collect::<Result<Vec<_>, _>>()
@@ -1555,7 +1565,7 @@ mod tests {
                 assert_eq!(&decoded, chunk)
             }
             assert_eq!(
-                seekable_decoder.pos_and_state(),
+                seekable_decoder.pos(),
                 (initial_pos, initial_state)
             );
             assert!(seekable_decoder.is_empty());

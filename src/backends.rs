@@ -101,8 +101,11 @@ use alloc::vec::Vec;
 use core::{
     convert::Infallible,
     fmt::{Debug, Display},
+    marker::PhantomData,
 };
 use smallvec::SmallVec;
+
+use crate::{Pos, PosSeek, Seek};
 
 // READ WRITE LOGICS ==========================================================
 
@@ -177,16 +180,6 @@ pub trait BoundedWriteWords<Word>: WriteWords<Word> {
     }
 }
 
-// A trait for backends that keep track of their current position in the compressed data.
-pub trait PosBackend<Word> {
-    fn pos(&self) -> usize;
-}
-
-// A trait for backends that allow random access.
-pub trait SeekBackend<Word> {
-    fn seek(&mut self, pos: usize) -> Result<(), ()>;
-}
-
 // TRAITS FOR CONVERSIONS BETWEEN BACKENDS WITH DIFFERENT CAPABILITIES ========
 
 pub trait IntoReadWords<Word, S: Semantics> {
@@ -200,12 +193,12 @@ pub trait AsReadWords<'a, Word, S: Semantics>: 'a {
 }
 
 pub trait IntoSeekReadWords<Word, S: Semantics> {
-    type IntoSeekReadWords: SeekBackend<Word> + ReadWords<Word, S>;
+    type IntoSeekReadWords: Seek + ReadWords<Word, S>;
     fn into_seek_read_backend(self) -> Self::IntoSeekReadWords;
 }
 
 pub trait AsSeekReadWords<'a, Word, S: Semantics>: 'a {
-    type AsSeekReadWords: SeekBackend<Word> + ReadWords<Word, S>;
+    type AsSeekReadWords: Seek + ReadWords<Word, S>;
     fn as_seek_read_backend(&'a self) -> Self::AsSeekReadWords;
 }
 
@@ -213,7 +206,7 @@ pub trait AsSeekReadWords<'a, Word, S: Semantics>: 'a {
 // we do need a `ReadWriteLogic` type parameter here because we need to initialize the
 // resulting backend correctly.
 pub trait IntoSeekWriteWords<Word, S: Semantics> {
-    type IntoSeekWriteWords: SeekBackend<Word> + WriteWords<Word>;
+    type IntoSeekWriteWords: Seek + WriteWords<Word>;
     fn into_seek_write_backend(self) -> Self::IntoSeekWriteWords;
 }
 
@@ -221,7 +214,7 @@ pub trait IntoSeekWriteWords<Word, S: Semantics> {
 // we do need a `ReadWriteLogic` type parameter here because we need to initialize the
 // resulting backend correctly.
 pub trait AsSeekWriteWords<'a, Word, S: Semantics>: 'a {
-    type AsSeekWriteWords: SeekBackend<Word> + WriteWords<Word>;
+    type AsSeekWriteWords: Seek + WriteWords<Word>;
     fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteWords;
 }
 
@@ -270,7 +263,11 @@ impl<Word> BoundedReadWords<Word, Stack> for Vec<Word> {
     }
 }
 
-impl<Word> PosBackend<Word> for Vec<Word> {
+impl<Word> PosSeek for Vec<Word> {
+    type Position = usize;
+}
+
+impl<Word> Pos for Vec<Word> {
     fn pos(&self) -> usize {
         self.len()
     }
@@ -330,7 +327,14 @@ where
     }
 }
 
-impl<Array> PosBackend<Array::Item> for SmallVec<Array>
+impl<Array> PosSeek for SmallVec<Array>
+where
+    Array: smallvec::Array,
+{
+    type Position = usize;
+}
+
+impl<Array> Pos for SmallVec<Array>
 where
     Array: smallvec::Array,
 {
@@ -405,15 +409,19 @@ impl<Word, B: BoundedReadWords<Word, Queue>> BoundedReadWords<Word, Stack> for R
     }
 }
 
-impl<Word, B: PosBackend<Word>> PosBackend<Word> for ReverseReads<B> {
+impl<B: PosSeek> PosSeek for ReverseReads<B> {
+    type Position = B::Position;
+}
+
+impl<B: Pos> Pos for ReverseReads<B> {
     #[inline(always)]
-    fn pos(&self) -> usize {
+    fn pos(&self) -> B::Position {
         self.0.pos()
     }
 }
 
-impl<Word, B: SeekBackend<Word>> SeekBackend<Word> for ReverseReads<B> {
-    fn seek(&mut self, pos: usize) -> Result<(), ()> {
+impl<B: Seek> Seek for ReverseReads<B> {
+    fn seek(&mut self, pos: B::Position) -> Result<(), ()> {
         self.0.seek(pos)
     }
 }
@@ -421,7 +429,7 @@ impl<Word, B: SeekBackend<Word>> SeekBackend<Word> for ReverseReads<B> {
 // ADAPTER FOR IN-MEMORY BUFFERS ==============================================
 
 #[derive(Clone, Debug)]
-pub struct Cursor<Buf> {
+pub struct Cursor<Word, Buf> {
     buf: Buf,
 
     /// The index of the next word to be read with a `ReadWords<Word, Queue>` or written
@@ -430,83 +438,109 @@ pub struct Cursor<Buf> {
     ///
     /// Satisfies the invariant `pos <= buf.as_ref().len()` if `Buf: AsRef<[Word]>`.
     pos: usize,
+
+    phantom: PhantomData<Word>,
 }
 
-impl<Buf> Cursor<Buf> {
+impl<Word, Buf> Cursor<Word, Buf> {
     #[inline(always)]
     pub fn new_at_write_beginning(buf: Buf) -> Self {
-        Self { buf, pos: 0 }
+        Self {
+            buf,
+            pos: 0,
+            phantom: PhantomData,
+        }
     }
 
     #[inline(always)]
-    pub fn new_at_write_end<Word>(buf: Buf) -> Self
+    pub fn new_at_write_end(buf: Buf) -> Self
     where
         Buf: AsRef<[Word]>,
     {
         let pos = buf.as_ref().len();
-        Self { buf, pos }
+        Self {
+            buf,
+            pos,
+            phantom: PhantomData,
+        }
     }
 
     #[inline(always)]
-    pub fn new_at_write_end_mut<Word>(mut buf: Buf) -> Self
+    pub fn new_at_write_end_mut(mut buf: Buf) -> Self
     where
         Buf: AsMut<[Word]>,
     {
         let pos = buf.as_mut().len();
-        Self { buf, pos }
+        Self {
+            buf,
+            pos,
+            phantom: PhantomData,
+        }
     }
 
-    pub fn with_buf_and_pos<Word>(buf: Buf, pos: usize) -> Result<Self, ()>
+    pub fn with_buf_and_pos(buf: Buf, pos: usize) -> Result<Self, ()>
     where
         Buf: AsRef<[Word]>,
     {
         if pos > buf.as_ref().len() {
             Err(())
         } else {
-            Ok(Self { buf, pos })
+            Ok(Self {
+                buf,
+                pos,
+                phantom: PhantomData,
+            })
         }
     }
 
     /// Same as `with_buf_and_pos` except for trait bound. For `Buf`s that implement `AsMut`
     /// but not `AsRef`.
-    pub fn with_buf_and_pos_mut<Word>(mut buf: Buf, pos: usize) -> Result<Self, ()>
+    pub fn with_buf_and_pos_mut(mut buf: Buf, pos: usize) -> Result<Self, ()>
     where
         Buf: AsMut<[Word]>,
     {
         if pos > buf.as_mut().len() {
             Err(())
         } else {
-            Ok(Self { buf, pos })
+            Ok(Self {
+                buf,
+                pos,
+                phantom: PhantomData,
+            })
         }
     }
 
-    pub fn as_view<Word>(&self) -> Cursor<&[Word]>
+    pub fn as_view(&self) -> Cursor<Word, &[Word]>
     where
         Buf: AsRef<[Word]>,
     {
         Cursor {
             buf: self.buf.as_ref(),
             pos: self.pos,
+            phantom: PhantomData,
         }
     }
 
-    pub fn as_mut_view<Word>(&mut self) -> Cursor<&mut [Word]>
+    pub fn as_mut_view(&mut self) -> Cursor<Word, &mut [Word]>
     where
         Buf: AsMut<[Word]>,
     {
         Cursor {
             buf: self.buf.as_mut(),
             pos: self.pos,
+            phantom: PhantomData,
         }
     }
 
-    pub fn cloned<Word: Clone>(&self) -> Cursor<Vec<Word>>
+    pub fn cloned(&self) -> Cursor<Word, Vec<Word>>
     where
+        Word: Clone,
         Buf: AsRef<[Word]>,
     {
         Cursor {
             buf: self.buf.as_ref().to_vec(),
             pos: self.pos,
+            phantom: PhantomData,
         }
     }
 
@@ -526,7 +560,7 @@ impl<Buf> Cursor<Buf> {
     /// returned `ReadCursor` will yield the same `Word`s as continued reading from the
     /// original one would, but the changed direction will be observable via different
     /// behavior of [`Pos::pos`], [`Seek::seek`], and [`Self::buf`].
-    pub fn into_reversed<Word>(mut self) -> ReverseReads<Self>
+    pub fn into_reversed(mut self) -> ReverseReads<Self>
     where
         Buf: AsMut<[Word]>,
     {
@@ -536,8 +570,8 @@ impl<Buf> Cursor<Buf> {
     }
 }
 
-impl<Buf> ReverseReads<Cursor<Buf>> {
-    pub fn into_reversed<Word>(self) -> Cursor<Buf>
+impl<Word, Buf> ReverseReads<Cursor<Word, Buf>> {
+    pub fn into_reversed(self) -> Cursor<Word, Buf>
     where
         Buf: AsMut<[Word]>,
     {
@@ -546,7 +580,7 @@ impl<Buf> ReverseReads<Cursor<Buf>> {
     }
 }
 
-impl<Word, Buf: AsMut<[Word]>> WriteWords<Word> for Cursor<Buf> {
+impl<Word, Buf: AsMut<[Word]>> WriteWords<Word> for Cursor<Word, Buf> {
     type WriteError = BoundedWriteError;
 
     #[inline(always)]
@@ -561,7 +595,7 @@ impl<Word, Buf: AsMut<[Word]>> WriteWords<Word> for Cursor<Buf> {
     }
 }
 
-impl<Word, Buf: AsMut<[Word]> + AsRef<[Word]>> BoundedWriteWords<Word> for Cursor<Buf> {
+impl<Word, Buf: AsMut<[Word]> + AsRef<[Word]>> BoundedWriteWords<Word> for Cursor<Word, Buf> {
     #[inline(always)]
     fn space(&self) -> usize {
         self.buf.as_ref().len() - self.pos
@@ -583,7 +617,7 @@ impl Display for BoundedWriteError {
 #[cfg(feature = "std")]
 impl std::error::Error for BoundedWriteError {}
 
-impl<Word: Clone, Buf: AsRef<[Word]>> ReadWords<Word, Stack> for Cursor<Buf> {
+impl<Word: Clone, Buf: AsRef<[Word]>> ReadWords<Word, Stack> for Cursor<Word, Buf> {
     type ReadError = Infallible;
 
     #[inline(always)]
@@ -607,7 +641,7 @@ impl<Word: Clone, Buf: AsRef<[Word]>> ReadWords<Word, Stack> for Cursor<Buf> {
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]>> ReadWords<Word, Queue> for Cursor<Buf> {
+impl<Word: Clone, Buf: AsRef<[Word]>> ReadWords<Word, Queue> for Cursor<Word, Buf> {
     type ReadError = Infallible;
 
     #[inline(always)]
@@ -625,28 +659,32 @@ impl<Word: Clone, Buf: AsRef<[Word]>> ReadWords<Word, Queue> for Cursor<Buf> {
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]>> BoundedReadWords<Word, Stack> for Cursor<Buf> {
+impl<Word: Clone, Buf: AsRef<[Word]>> BoundedReadWords<Word, Stack> for Cursor<Word, Buf> {
     #[inline(always)]
     fn remaining(&self) -> usize {
         self.pos
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]>> BoundedReadWords<Word, Queue> for Cursor<Buf> {
+impl<Word: Clone, Buf: AsRef<[Word]>> BoundedReadWords<Word, Queue> for Cursor<Word, Buf> {
     #[inline(always)]
     fn remaining(&self) -> usize {
         self.buf.as_ref().len() - self.pos
     }
 }
 
-impl<Word, Buf: AsRef<[Word]>> PosBackend<Word> for Cursor<Buf> {
+impl<Word, Buf> PosSeek for Cursor<Word, Buf> {
+    type Position = usize;
+}
+
+impl<Word, Buf: AsRef<[Word]>> Pos for Cursor<Word, Buf> {
     #[inline(always)]
     fn pos(&self) -> usize {
         self.pos
     }
 }
 
-impl<Word, Buf: AsRef<[Word]>> SeekBackend<Word> for Cursor<Buf> {
+impl<Word, Buf: AsRef<[Word]>> Seek for Cursor<Word, Buf> {
     #[inline(always)]
     fn seek(&mut self, pos: usize) -> Result<(), ()> {
         if pos > self.buf.as_ref().len() {
@@ -661,7 +699,7 @@ impl<Word, Buf: AsRef<[Word]>> SeekBackend<Word> for Cursor<Buf> {
 }
 
 impl<Word: Clone, Buf: AsRef<[Word]>> IntoReadWords<Word, Stack> for Buf {
-    type IntoReadWords = Cursor<Buf>;
+    type IntoReadWords = Cursor<Word, Buf>;
 
     fn into_read_backend(self) -> Self::IntoReadWords {
         Cursor::new_at_write_end(self)
@@ -669,7 +707,7 @@ impl<Word: Clone, Buf: AsRef<[Word]>> IntoReadWords<Word, Stack> for Buf {
 }
 
 impl<Word: Clone, Buf: AsRef<[Word]>> IntoReadWords<Word, Queue> for Buf {
-    type IntoReadWords = Cursor<Buf>;
+    type IntoReadWords = Cursor<Word, Buf>;
 
     fn into_read_backend(self) -> Self::IntoReadWords {
         Cursor::new_at_write_beginning(self)
@@ -677,7 +715,7 @@ impl<Word: Clone, Buf: AsRef<[Word]>> IntoReadWords<Word, Queue> for Buf {
 }
 
 impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a> AsReadWords<'a, Word, Stack> for Buf {
-    type AsReadWords = Cursor<&'a [Word]>;
+    type AsReadWords = Cursor<Word, &'a [Word]>;
 
     fn as_read_backend(&'a self) -> Self::AsReadWords {
         Cursor::new_at_write_end(self.as_ref())
@@ -685,7 +723,7 @@ impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a> AsReadWords<'a, Word, Stack>
 }
 
 impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a> AsReadWords<'a, Word, Queue> for Buf {
-    type AsReadWords = Cursor<&'a [Word]>;
+    type AsReadWords = Cursor<Word, &'a [Word]>;
 
     fn as_read_backend(&'a self) -> Self::AsReadWords {
         Cursor::new_at_write_beginning(self.as_ref())
@@ -694,10 +732,10 @@ impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a> AsReadWords<'a, Word, Queue>
 
 impl<Word, Buf, S: Semantics> IntoSeekReadWords<Word, S> for Buf
 where
-    Buf: AsRef<[Word]> + IntoReadWords<Word, S, IntoReadWords = Cursor<Buf>>,
-    Cursor<Buf>: ReadWords<Word, S>,
+    Buf: AsRef<[Word]> + IntoReadWords<Word, S, IntoReadWords = Cursor<Word, Buf>>,
+    Cursor<Word, Buf>: ReadWords<Word, S>,
 {
-    type IntoSeekReadWords = Cursor<Buf>;
+    type IntoSeekReadWords = Cursor<Word, Buf>;
 
     fn into_seek_read_backend(self) -> Self::IntoSeekReadWords {
         self.into_read_backend()
@@ -706,10 +744,10 @@ where
 
 impl<'a, Word: 'a, Buf, S: Semantics> AsSeekReadWords<'a, Word, S> for Buf
 where
-    Buf: AsReadWords<'a, Word, S, AsReadWords = Cursor<&'a [Word]>>,
-    Cursor<&'a [Word]>: ReadWords<Word, S>,
+    Buf: AsReadWords<'a, Word, S, AsReadWords = Cursor<Word, &'a [Word]>>,
+    Cursor<Word, &'a [Word]>: ReadWords<Word, S>,
 {
-    type AsSeekReadWords = Cursor<&'a [Word]>;
+    type AsSeekReadWords = Cursor<Word, &'a [Word]>;
 
     fn as_seek_read_backend(&'a self) -> Self::AsSeekReadWords {
         self.as_read_backend()
@@ -717,7 +755,7 @@ where
 }
 
 impl<Word: Clone, Buf: AsRef<[Word]> + AsMut<[Word]>> IntoSeekWriteWords<Word, Stack> for Buf {
-    type IntoSeekWriteWords = Cursor<Buf>;
+    type IntoSeekWriteWords = Cursor<Word, Buf>;
 
     fn into_seek_write_backend(self) -> Self::IntoSeekWriteWords {
         Cursor::new_at_write_end_mut(self)
@@ -725,7 +763,7 @@ impl<Word: Clone, Buf: AsRef<[Word]> + AsMut<[Word]>> IntoSeekWriteWords<Word, S
 }
 
 impl<Word: Clone, Buf: AsRef<[Word]> + AsMut<[Word]>> IntoSeekWriteWords<Word, Queue> for Buf {
-    type IntoSeekWriteWords = Cursor<Buf>;
+    type IntoSeekWriteWords = Cursor<Word, Buf>;
 
     fn into_seek_write_backend(self) -> Self::IntoSeekWriteWords {
         Cursor::new_at_write_beginning(self)
@@ -733,7 +771,7 @@ impl<Word: Clone, Buf: AsRef<[Word]> + AsMut<[Word]>> IntoSeekWriteWords<Word, Q
 }
 
 impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteWords<'a, Word, Stack> for Buf {
-    type AsSeekWriteWords = Cursor<&'a mut [Word]>;
+    type AsSeekWriteWords = Cursor<Word, &'a mut [Word]>;
 
     fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteWords {
         Cursor::new_at_write_end_mut(self.as_mut())
@@ -741,7 +779,7 @@ impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteWords<'a, Word, S
 }
 
 impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteWords<'a, Word, Queue> for Buf {
-    type AsSeekWriteWords = Cursor<&'a mut [Word]>;
+    type AsSeekWriteWords = Cursor<Word, &'a mut [Word]>;
 
     fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteWords {
         Cursor::new_at_write_beginning(self.as_mut())
