@@ -64,7 +64,7 @@ use super::{
     Code, Decode, Encode, EncoderError, TryCodingError,
 };
 use crate::{
-    backends::{ReadBackend, Stack, WriteBackend},
+    backends::{ReadWords, Stack, WriteWords},
     BitArray, CoderError, EncoderFrontendError, NonZeroBitArray,
 };
 
@@ -225,7 +225,7 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
     }
 
     /// Private on purpose.
-    fn new<B: ReadBackend<Word, Stack>>(
+    fn new<B: ReadWords<Word, Stack>>(
         source: &mut B,
         push_one: bool,
     ) -> Result<ChainCoderHeads<Word, State, PRECISION>, CoderError<(), B::ReadError>>
@@ -282,7 +282,7 @@ where
         mut data: QuantilesBackend,
     ) -> Result<Self, CoderError<QuantilesBackend, QuantilesBackend::ReadError>>
     where
-        QuantilesBackend: ReadBackend<Word, Stack>,
+        QuantilesBackend: ReadWords<Word, Stack>,
         RemaindersBackend: Default,
     {
         let heads = match ChainCoderHeads::new(&mut data, true) {
@@ -314,7 +314,7 @@ where
         mut compressed: QuantilesBackend,
     ) -> Result<Self, CoderError<QuantilesBackend, QuantilesBackend::ReadError>>
     where
-        QuantilesBackend: ReadBackend<Word, Stack>,
+        QuantilesBackend: ReadWords<Word, Stack>,
         RemaindersBackend: Default,
     {
         let heads = match ChainCoderHeads::new(&mut compressed, false) {
@@ -364,7 +364,7 @@ where
         mut self,
     ) -> Result<(QuantilesBackend, RemaindersBackend), RemaindersBackend::WriteError>
     where
-        RemaindersBackend: WriteBackend<Word>,
+        RemaindersBackend: WriteWords<Word>,
     {
         // Flush remainders head.
         while self.heads.remainders != State::zero() {
@@ -388,7 +388,7 @@ where
         mut remaining: RemaindersBackend,
     ) -> Result<Self, CoderError<RemaindersBackend, RemaindersBackend::ReadError>>
     where
-        RemaindersBackend: ReadBackend<Word, Stack>,
+        RemaindersBackend: ReadWords<Word, Stack>,
         QuantilesBackend: Default,
     {
         let quantiles_head = match remaining.read()?.and_then(Word::into_nonzero) {
@@ -433,7 +433,7 @@ where
         mut self,
     ) -> Result<(RemaindersBackend, QuantilesBackend), CoderError<Self, QuantilesBackend::WriteError>>
     where
-        QuantilesBackend: WriteBackend<Word>,
+        QuantilesBackend: WriteWords<Word>,
     {
         if !self.is_whole() {
             return Err(CoderError::FrontendError(self));
@@ -471,7 +471,7 @@ where
         mut self,
     ) -> Result<(RemaindersBackend, QuantilesBackend), CoderError<Self, QuantilesBackend::WriteError>>
     where
-        QuantilesBackend: WriteBackend<Word>,
+        QuantilesBackend: WriteWords<Word>,
     {
         if !self.is_whole()
             || (State::BITS - self.heads.remainders.leading_zeros() as usize - 1) % Word::BITS != 0
@@ -512,8 +512,8 @@ where
         Word: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = (S, D)>,
         I::IntoIter: DoubleEndedIterator,
-        QuantilesBackend: WriteBackend<Word>,
-        RemaindersBackend: ReadBackend<Word, Stack>,
+        QuantilesBackend: WriteWords<Word>,
+        RemaindersBackend: ReadWords<Word, Stack>,
     {
         self.encode_symbols(symbols_and_models.into_iter().rev())
     }
@@ -538,8 +538,8 @@ where
         Word: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = core::result::Result<(S, D), E>>,
         I::IntoIter: DoubleEndedIterator,
-        QuantilesBackend: WriteBackend<Word>,
-        RemaindersBackend: ReadBackend<Word, Stack>,
+        QuantilesBackend: WriteWords<Word>,
+        RemaindersBackend: ReadWords<Word, Stack>,
     {
         self.try_encode_symbols(symbols_and_models.into_iter().rev())
     }
@@ -561,8 +561,8 @@ where
         Word: AsPrimitive<D::Probability>,
         I: IntoIterator<Item = S>,
         I::IntoIter: DoubleEndedIterator,
-        QuantilesBackend: WriteBackend<Word>,
-        RemaindersBackend: ReadBackend<Word, Stack>,
+        QuantilesBackend: WriteWords<Word>,
+        RemaindersBackend: ReadWords<Word, Stack>,
     {
         self.encode_iid_symbols(symbols.into_iter().rev(), model)
     }
@@ -574,7 +574,7 @@ where
         RemaindersBackend::WriteError,
     >
     where
-        RemaindersBackend: WriteBackend<Word>,
+        RemaindersBackend: WriteWords<Word>,
     {
         assert!(NEW_PRECISION >= PRECISION);
         assert!(NEW_PRECISION <= Word::BITS);
@@ -601,7 +601,7 @@ where
         Option<RemaindersBackend::ReadError>,
     >
     where
-        RemaindersBackend: ReadBackend<Word, Stack>,
+        RemaindersBackend: ReadWords<Word, Stack>,
     {
         assert!(NEW_PRECISION <= PRECISION);
         assert!(NEW_PRECISION > 0);
@@ -683,7 +683,7 @@ where
         ChangePrecisionError<RemaindersBackend, Word>,
     >
     where
-        RemaindersBackend: WriteBackend<Word> + ReadBackend<Word, Stack>,
+        RemaindersBackend: WriteWords<Word> + ReadWords<Word, Stack>,
     {
         if NEW_PRECISION > PRECISION {
             self.increase_precision()
@@ -698,7 +698,7 @@ where
     /// This would flush meaningless zero bits if `self.heads.remainders < 1 << Word::BITS`.
     fn flush_remainders_head(&mut self) -> Result<(), RemaindersBackend::WriteError>
     where
-        RemaindersBackend: WriteBackend<Word>,
+        RemaindersBackend: WriteWords<Word>,
     {
         self.remainders.write(self.heads.remainders.as_())?;
         self.heads.remainders = self.heads.remainders >> Word::BITS;
@@ -709,7 +709,7 @@ where
     #[inline(always)]
     fn refill_remainders_head(&mut self) -> Result<(), Option<RemaindersBackend::ReadError>>
     where
-        RemaindersBackend: ReadBackend<Word, Stack>,
+        RemaindersBackend: ReadWords<Word, Stack>,
     {
         let word = self.remainders.read().map_err(Some)?.ok_or(None)?;
         self.heads.remainders = (self.heads.remainders << Word::BITS) | word.into();
@@ -790,7 +790,7 @@ impl<
 #[derive(Debug, PartialEq, Eq)]
 pub enum ChangePrecisionError<RemaindersBackend, Word>
 where
-    RemaindersBackend: WriteBackend<Word> + ReadBackend<Word, Stack>,
+    RemaindersBackend: WriteWords<Word> + ReadWords<Word, Stack>,
 {
     Write(RemaindersBackend::WriteError),
 
@@ -803,8 +803,8 @@ impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> D
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    QuantilesBackend: ReadBackend<Word, Stack>,
-    RemaindersBackend: WriteBackend<Word>,
+    QuantilesBackend: ReadWords<Word, Stack>,
+    RemaindersBackend: WriteWords<Word>,
 {
     type FrontendError = FrontendError;
 
@@ -896,8 +896,8 @@ impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> E
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    QuantilesBackend: WriteBackend<Word>,
-    RemaindersBackend: ReadBackend<Word, Stack>,
+    QuantilesBackend: WriteWords<Word>,
+    RemaindersBackend: ReadWords<Word, Stack>,
 {
     type BackendError =
         BackendError<QuantilesBackend::WriteError, Option<RemaindersBackend::ReadError>>;

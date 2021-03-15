@@ -13,7 +13,7 @@
 //!
 //! ```
 //! use constriction::{
-//!     backends::{FallibleCallbackWriteBackend, IteratorBackend},
+//!     backends::{FallibleCallbackWriteWords, IteratorReadWords},
 //!     stream::{
 //!         models::DefaultLeakyQuantizer,
 //!         queue::{DefaultRangeDecoder, DefaultRangeEncoder},
@@ -40,7 +40,7 @@
 //!     // it's just good practice when writing to a file.)
 //!     let mut file = BufWriter::new(File::create("backend_queue_example.tmp").unwrap());
 //!     let write_backend =
-//!         FallibleCallbackWriteBackend::new(move |word| file.write_u32::<LittleEndian>(word));
+//!         FallibleCallbackWriteWords::new(move |word| file.write_u32::<LittleEndian>(word));
 //!
 //!     // Encapsulate the backend in a `RangeEncoder` and encode (i.e., compress) the symbols.
 //!     let mut encoder = DefaultRangeEncoder::with_backend(write_backend);
@@ -74,7 +74,7 @@
 //!
 //!     // Create a decoder that decodes on the fly from our iterator.
 //!     let mut decoder =
-//!         DefaultRangeDecoder::with_backend(IteratorBackend::new(word_iterator)).unwrap();
+//!         DefaultRangeDecoder::with_backend(IteratorReadWords::new(word_iterator)).unwrap();
 //!
 //!     // Decode the symbols and verify their correctness.
 //!     for (i, symbol) in decoder.decode_iid_symbols(amt as usize, &model).enumerate() {
@@ -121,7 +121,7 @@ impl Semantics for Queue {}
 /// A trait for backends that read compressed words (used by decoders)
 ///
 /// TODO: rename to `ReadWords`, analogous for all other traits in this module.
-pub trait ReadBackend<Word, S: Semantics> {
+pub trait ReadWords<Word, S: Semantics> {
     type ReadError: Debug;
 
     fn read(&mut self) -> Result<Option<Word>, Self::ReadError>;
@@ -132,7 +132,7 @@ pub trait ReadBackend<Word, S: Semantics> {
 }
 
 /// A trait for backends that write compressed words (used by encoders)
-pub trait WriteBackend<Word> {
+pub trait WriteWords<Word> {
     type WriteError: Debug;
 
     fn write(&mut self, word: Word) -> Result<(), Self::WriteError>;
@@ -153,24 +153,24 @@ pub trait WriteBackend<Word> {
 }
 
 // A trait for read backends that know how much data is left.
-pub trait BoundedReadBackend<Word, S: Semantics>: ReadBackend<Word, S> {
+pub trait BoundedReadWords<Word, S: Semantics>: ReadWords<Word, S> {
     // Returns the amount of data that's left for reading.
     fn remaining(&self) -> usize;
 
     /// TODO: don't forget to overwrite the default implementation of
-    /// `ReadBackend::maybe_empty`.
+    /// `ReadWords::maybe_empty`.
     #[inline(always)]
     fn is_exhausted(&self) -> bool {
         self.remaining() == 0
     }
 }
 // A trait for write backends that know how much more data they're allowed to write.
-pub trait BoundedWriteBackend<Word>: WriteBackend<Word> {
+pub trait BoundedWriteWords<Word>: WriteWords<Word> {
     // Returns the amount of `Word`s that may still be written.
     fn space(&self) -> usize;
 
     /// TODO: don't forget to overwrite the default implementation of
-    /// `WriteBackend::maybe_full`.
+    /// `WriteWords::maybe_full`.
     #[inline(always)]
     fn is_full(&self) -> bool {
         self.space() == 0
@@ -189,45 +189,45 @@ pub trait SeekBackend<Word> {
 
 // TRAITS FOR CONVERSIONS BETWEEN BACKENDS WITH DIFFERENT CAPABILITIES ========
 
-pub trait IntoReadBackend<Word, S: Semantics> {
-    type IntoReadBackend: ReadBackend<Word, S>;
-    fn into_read_backend(self) -> Self::IntoReadBackend;
+pub trait IntoReadWords<Word, S: Semantics> {
+    type IntoReadWords: ReadWords<Word, S>;
+    fn into_read_backend(self) -> Self::IntoReadWords;
 }
 
-pub trait AsReadBackend<'a, Word, S: Semantics>: 'a {
-    type AsReadBackend: ReadBackend<Word, S>;
-    fn as_read_backend(&'a self) -> Self::AsReadBackend;
+pub trait AsReadWords<'a, Word, S: Semantics>: 'a {
+    type AsReadWords: ReadWords<Word, S>;
+    fn as_read_backend(&'a self) -> Self::AsReadWords;
 }
 
-pub trait IntoSeekReadBackend<Word, S: Semantics> {
-    type IntoSeekReadBackend: SeekBackend<Word> + ReadBackend<Word, S>;
-    fn into_seek_read_backend(self) -> Self::IntoSeekReadBackend;
+pub trait IntoSeekReadWords<Word, S: Semantics> {
+    type IntoSeekReadWords: SeekBackend<Word> + ReadWords<Word, S>;
+    fn into_seek_read_backend(self) -> Self::IntoSeekReadWords;
 }
 
-pub trait AsSeekReadBackend<'a, Word, S: Semantics>: 'a {
-    type AsSeekReadBackend: SeekBackend<Word> + ReadBackend<Word, S>;
-    fn as_seek_read_backend(&'a self) -> Self::AsSeekReadBackend;
+pub trait AsSeekReadWords<'a, Word, S: Semantics>: 'a {
+    type AsSeekReadWords: SeekBackend<Word> + ReadWords<Word, S>;
+    fn as_seek_read_backend(&'a self) -> Self::AsSeekReadWords;
 }
 
-// While neither `SeekBackend` nor `WriteBackend` are parameterized by a `ReadWriteLogic`,
+// While neither `SeekBackend` nor `WriteWords` are parameterized by a `ReadWriteLogic`,
 // we do need a `ReadWriteLogic` type parameter here because we need to initialize the
 // resulting backend correctly.
-pub trait IntoSeekWriteBackend<Word, S: Semantics> {
-    type IntoSeekWriteBackend: SeekBackend<Word> + WriteBackend<Word>;
-    fn into_seek_write_backend(self) -> Self::IntoSeekWriteBackend;
+pub trait IntoSeekWriteWords<Word, S: Semantics> {
+    type IntoSeekWriteWords: SeekBackend<Word> + WriteWords<Word>;
+    fn into_seek_write_backend(self) -> Self::IntoSeekWriteWords;
 }
 
-// While neither `SeekBackend` nor `WriteBackend` are parameterized by a `ReadWriteLogic`,
+// While neither `SeekBackend` nor `WriteWords` are parameterized by a `ReadWriteLogic`,
 // we do need a `ReadWriteLogic` type parameter here because we need to initialize the
 // resulting backend correctly.
-pub trait AsSeekWriteBackend<'a, Word, S: Semantics>: 'a {
-    type AsSeekWriteBackend: SeekBackend<Word> + WriteBackend<Word>;
-    fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteBackend;
+pub trait AsSeekWriteWords<'a, Word, S: Semantics>: 'a {
+    type AsSeekWriteWords: SeekBackend<Word> + WriteWords<Word>;
+    fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteWords;
 }
 
 // IMPLEMENTATIONS FOR `Vec<Word>` ============================================
 
-impl<Word> WriteBackend<Word> for Vec<Word> {
+impl<Word> WriteWords<Word> for Vec<Word> {
     type WriteError = Infallible;
 
     #[inline(always)]
@@ -249,7 +249,7 @@ impl<Word> WriteBackend<Word> for Vec<Word> {
     }
 }
 
-impl<Word> ReadBackend<Word, Stack> for Vec<Word> {
+impl<Word> ReadWords<Word, Stack> for Vec<Word> {
     type ReadError = Infallible;
 
     #[inline(always)]
@@ -263,7 +263,7 @@ impl<Word> ReadBackend<Word, Stack> for Vec<Word> {
     }
 }
 
-impl<Word> BoundedReadBackend<Word, Stack> for Vec<Word> {
+impl<Word> BoundedReadWords<Word, Stack> for Vec<Word> {
     #[inline(always)]
     fn remaining(&self) -> usize {
         self.len()
@@ -278,7 +278,7 @@ impl<Word> PosBackend<Word> for Vec<Word> {
 
 // IMPLEMENTATIONS FOR `SmallVec<Word>` =======================================
 
-impl<Array> WriteBackend<Array::Item> for SmallVec<Array>
+impl<Array> WriteWords<Array::Item> for SmallVec<Array>
 where
     Array: smallvec::Array,
 {
@@ -303,7 +303,7 @@ where
     }
 }
 
-impl<Array> ReadBackend<Array::Item, Stack> for SmallVec<Array>
+impl<Array> ReadWords<Array::Item, Stack> for SmallVec<Array>
 where
     Array: smallvec::Array,
 {
@@ -320,7 +320,7 @@ where
     }
 }
 
-impl<Array> BoundedReadBackend<Array::Item, Stack> for SmallVec<Array>
+impl<Array> BoundedReadWords<Array::Item, Stack> for SmallVec<Array>
 where
     Array: smallvec::Array,
 {
@@ -344,7 +344,7 @@ where
 #[derive(Debug)]
 pub struct ReverseReads<Backend>(pub Backend);
 
-impl<Word, B: WriteBackend<Word>> WriteBackend<Word> for ReverseReads<B> {
+impl<Word, B: WriteWords<Word>> WriteWords<Word> for ReverseReads<B> {
     type WriteError = B::WriteError;
 
     #[inline(always)]
@@ -353,7 +353,7 @@ impl<Word, B: WriteBackend<Word>> WriteBackend<Word> for ReverseReads<B> {
     }
 }
 
-impl<Word, B: ReadBackend<Word, Stack>> ReadBackend<Word, Queue> for ReverseReads<B> {
+impl<Word, B: ReadWords<Word, Stack>> ReadWords<Word, Queue> for ReverseReads<B> {
     type ReadError = B::ReadError;
 
     #[inline(always)]
@@ -367,7 +367,7 @@ impl<Word, B: ReadBackend<Word, Stack>> ReadBackend<Word, Queue> for ReverseRead
     }
 }
 
-impl<Word, B: ReadBackend<Word, Queue>> ReadBackend<Word, Stack> for ReverseReads<B> {
+impl<Word, B: ReadWords<Word, Queue>> ReadWords<Word, Stack> for ReverseReads<B> {
     type ReadError = B::ReadError;
 
     #[inline(always)]
@@ -381,7 +381,7 @@ impl<Word, B: ReadBackend<Word, Queue>> ReadBackend<Word, Stack> for ReverseRead
     }
 }
 
-impl<Word, B: BoundedReadBackend<Word, Stack>> BoundedReadBackend<Word, Queue> for ReverseReads<B> {
+impl<Word, B: BoundedReadWords<Word, Stack>> BoundedReadWords<Word, Queue> for ReverseReads<B> {
     #[inline(always)]
     fn remaining(&self) -> usize {
         self.0.remaining()
@@ -393,7 +393,7 @@ impl<Word, B: BoundedReadBackend<Word, Stack>> BoundedReadBackend<Word, Queue> f
     }
 }
 
-impl<Word, B: BoundedReadBackend<Word, Queue>> BoundedReadBackend<Word, Stack> for ReverseReads<B> {
+impl<Word, B: BoundedReadWords<Word, Queue>> BoundedReadWords<Word, Stack> for ReverseReads<B> {
     #[inline(always)]
     fn remaining(&self) -> usize {
         self.0.remaining()
@@ -424,9 +424,9 @@ impl<Word, B: SeekBackend<Word>> SeekBackend<Word> for ReverseReads<B> {
 pub struct Cursor<Buf> {
     buf: Buf,
 
-    /// The index of the next word to be read with a `ReadBackend<Word, Queue>` or written
-    /// with a `WriteBackend<Word>, and one plus the index of the next word to read with
-    /// `ReadBackend<Word, Stack>.
+    /// The index of the next word to be read with a `ReadWords<Word, Queue>` or written
+    /// with a `WriteWords<Word>, and one plus the index of the next word to read with
+    /// `ReadWords<Word, Stack>.
     ///
     /// Satisfies the invariant `pos <= buf.as_ref().len()` if `Buf: AsRef<[Word]>`.
     pos: usize,
@@ -546,7 +546,7 @@ impl<Buf> ReverseReads<Cursor<Buf>> {
     }
 }
 
-impl<Word, Buf: AsMut<[Word]>> WriteBackend<Word> for Cursor<Buf> {
+impl<Word, Buf: AsMut<[Word]>> WriteWords<Word> for Cursor<Buf> {
     type WriteError = BoundedWriteError;
 
     #[inline(always)]
@@ -561,7 +561,7 @@ impl<Word, Buf: AsMut<[Word]>> WriteBackend<Word> for Cursor<Buf> {
     }
 }
 
-impl<Word, Buf: AsMut<[Word]> + AsRef<[Word]>> BoundedWriteBackend<Word> for Cursor<Buf> {
+impl<Word, Buf: AsMut<[Word]> + AsRef<[Word]>> BoundedWriteWords<Word> for Cursor<Buf> {
     #[inline(always)]
     fn space(&self) -> usize {
         self.buf.as_ref().len() - self.pos
@@ -583,7 +583,7 @@ impl Display for BoundedWriteError {
 #[cfg(feature = "std")]
 impl std::error::Error for BoundedWriteError {}
 
-impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Stack> for Cursor<Buf> {
+impl<Word: Clone, Buf: AsRef<[Word]>> ReadWords<Word, Stack> for Cursor<Buf> {
     type ReadError = Infallible;
 
     #[inline(always)]
@@ -603,11 +603,11 @@ impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Stack> for Cursor<Buf> {
 
     #[inline(always)]
     fn maybe_exhausted(&self) -> bool {
-        BoundedReadBackend::<Word, Stack>::is_exhausted(self)
+        BoundedReadWords::<Word, Stack>::is_exhausted(self)
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Queue> for Cursor<Buf> {
+impl<Word: Clone, Buf: AsRef<[Word]>> ReadWords<Word, Queue> for Cursor<Buf> {
     type ReadError = Infallible;
 
     #[inline(always)]
@@ -621,18 +621,18 @@ impl<Word: Clone, Buf: AsRef<[Word]>> ReadBackend<Word, Queue> for Cursor<Buf> {
 
     #[inline(always)]
     fn maybe_exhausted(&self) -> bool {
-        BoundedReadBackend::<Word, Queue>::is_exhausted(self)
+        BoundedReadWords::<Word, Queue>::is_exhausted(self)
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]>> BoundedReadBackend<Word, Stack> for Cursor<Buf> {
+impl<Word: Clone, Buf: AsRef<[Word]>> BoundedReadWords<Word, Stack> for Cursor<Buf> {
     #[inline(always)]
     fn remaining(&self) -> usize {
         self.pos
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]>> BoundedReadBackend<Word, Queue> for Cursor<Buf> {
+impl<Word: Clone, Buf: AsRef<[Word]>> BoundedReadWords<Word, Queue> for Cursor<Buf> {
     #[inline(always)]
     fn remaining(&self) -> usize {
         self.buf.as_ref().len() - self.pos
@@ -660,90 +660,90 @@ impl<Word, Buf: AsRef<[Word]>> SeekBackend<Word> for Cursor<Buf> {
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]>> IntoReadBackend<Word, Stack> for Buf {
-    type IntoReadBackend = Cursor<Buf>;
+impl<Word: Clone, Buf: AsRef<[Word]>> IntoReadWords<Word, Stack> for Buf {
+    type IntoReadWords = Cursor<Buf>;
 
-    fn into_read_backend(self) -> Self::IntoReadBackend {
+    fn into_read_backend(self) -> Self::IntoReadWords {
         Cursor::new_at_write_end(self)
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]>> IntoReadBackend<Word, Queue> for Buf {
-    type IntoReadBackend = Cursor<Buf>;
+impl<Word: Clone, Buf: AsRef<[Word]>> IntoReadWords<Word, Queue> for Buf {
+    type IntoReadWords = Cursor<Buf>;
 
-    fn into_read_backend(self) -> Self::IntoReadBackend {
+    fn into_read_backend(self) -> Self::IntoReadWords {
         Cursor::new_at_write_beginning(self)
     }
 }
 
-impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a> AsReadBackend<'a, Word, Stack> for Buf {
-    type AsReadBackend = Cursor<&'a [Word]>;
+impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a> AsReadWords<'a, Word, Stack> for Buf {
+    type AsReadWords = Cursor<&'a [Word]>;
 
-    fn as_read_backend(&'a self) -> Self::AsReadBackend {
+    fn as_read_backend(&'a self) -> Self::AsReadWords {
         Cursor::new_at_write_end(self.as_ref())
     }
 }
 
-impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a> AsReadBackend<'a, Word, Queue> for Buf {
-    type AsReadBackend = Cursor<&'a [Word]>;
+impl<'a, Word: Clone + 'a, Buf: AsRef<[Word]> + 'a> AsReadWords<'a, Word, Queue> for Buf {
+    type AsReadWords = Cursor<&'a [Word]>;
 
-    fn as_read_backend(&'a self) -> Self::AsReadBackend {
+    fn as_read_backend(&'a self) -> Self::AsReadWords {
         Cursor::new_at_write_beginning(self.as_ref())
     }
 }
 
-impl<Word, Buf, S: Semantics> IntoSeekReadBackend<Word, S> for Buf
+impl<Word, Buf, S: Semantics> IntoSeekReadWords<Word, S> for Buf
 where
-    Buf: AsRef<[Word]> + IntoReadBackend<Word, S, IntoReadBackend = Cursor<Buf>>,
-    Cursor<Buf>: ReadBackend<Word, S>,
+    Buf: AsRef<[Word]> + IntoReadWords<Word, S, IntoReadWords = Cursor<Buf>>,
+    Cursor<Buf>: ReadWords<Word, S>,
 {
-    type IntoSeekReadBackend = Cursor<Buf>;
+    type IntoSeekReadWords = Cursor<Buf>;
 
-    fn into_seek_read_backend(self) -> Self::IntoSeekReadBackend {
+    fn into_seek_read_backend(self) -> Self::IntoSeekReadWords {
         self.into_read_backend()
     }
 }
 
-impl<'a, Word: 'a, Buf, S: Semantics> AsSeekReadBackend<'a, Word, S> for Buf
+impl<'a, Word: 'a, Buf, S: Semantics> AsSeekReadWords<'a, Word, S> for Buf
 where
-    Buf: AsReadBackend<'a, Word, S, AsReadBackend = Cursor<&'a [Word]>>,
-    Cursor<&'a [Word]>: ReadBackend<Word, S>,
+    Buf: AsReadWords<'a, Word, S, AsReadWords = Cursor<&'a [Word]>>,
+    Cursor<&'a [Word]>: ReadWords<Word, S>,
 {
-    type AsSeekReadBackend = Cursor<&'a [Word]>;
+    type AsSeekReadWords = Cursor<&'a [Word]>;
 
-    fn as_seek_read_backend(&'a self) -> Self::AsSeekReadBackend {
+    fn as_seek_read_backend(&'a self) -> Self::AsSeekReadWords {
         self.as_read_backend()
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]> + AsMut<[Word]>> IntoSeekWriteBackend<Word, Stack> for Buf {
-    type IntoSeekWriteBackend = Cursor<Buf>;
+impl<Word: Clone, Buf: AsRef<[Word]> + AsMut<[Word]>> IntoSeekWriteWords<Word, Stack> for Buf {
+    type IntoSeekWriteWords = Cursor<Buf>;
 
-    fn into_seek_write_backend(self) -> Self::IntoSeekWriteBackend {
+    fn into_seek_write_backend(self) -> Self::IntoSeekWriteWords {
         Cursor::new_at_write_end_mut(self)
     }
 }
 
-impl<Word: Clone, Buf: AsRef<[Word]> + AsMut<[Word]>> IntoSeekWriteBackend<Word, Queue> for Buf {
-    type IntoSeekWriteBackend = Cursor<Buf>;
+impl<Word: Clone, Buf: AsRef<[Word]> + AsMut<[Word]>> IntoSeekWriteWords<Word, Queue> for Buf {
+    type IntoSeekWriteWords = Cursor<Buf>;
 
-    fn into_seek_write_backend(self) -> Self::IntoSeekWriteBackend {
+    fn into_seek_write_backend(self) -> Self::IntoSeekWriteWords {
         Cursor::new_at_write_beginning(self)
     }
 }
 
-impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteBackend<'a, Word, Stack> for Buf {
-    type AsSeekWriteBackend = Cursor<&'a mut [Word]>;
+impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteWords<'a, Word, Stack> for Buf {
+    type AsSeekWriteWords = Cursor<&'a mut [Word]>;
 
-    fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteBackend {
+    fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteWords {
         Cursor::new_at_write_end_mut(self.as_mut())
     }
 }
 
-impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteBackend<'a, Word, Queue> for Buf {
-    type AsSeekWriteBackend = Cursor<&'a mut [Word]>;
+impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteWords<'a, Word, Queue> for Buf {
+    type AsSeekWriteWords = Cursor<&'a mut [Word]>;
 
-    fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteBackend {
+    fn as_seek_write_backend(&'a mut self) -> Self::AsSeekWriteWords {
         Cursor::new_at_write_beginning(self.as_mut())
     }
 }
@@ -751,17 +751,17 @@ impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteBackend<'a, Word,
 // READ ADAPTER FOR ITERATORS =================================================
 
 #[derive(Clone, Debug)]
-pub struct IteratorBackend<Iter: Iterator> {
+pub struct IteratorReadWords<Iter: Iterator> {
     inner: core::iter::Fuse<Iter>,
 }
 
-impl<Iter: Iterator> IteratorBackend<Iter> {
+impl<Iter: Iterator> IteratorReadWords<Iter> {
     pub fn new(iter: Iter) -> Self {
         Self { inner: iter.fuse() }
     }
 }
 
-impl<Iter: Iterator> IntoIterator for IteratorBackend<Iter> {
+impl<Iter: Iterator> IntoIterator for IteratorReadWords<Iter> {
     type Item = Iter::Item;
     type IntoIter = core::iter::Fuse<Iter>;
 
@@ -770,9 +770,9 @@ impl<Iter: Iterator> IntoIterator for IteratorBackend<Iter> {
     }
 }
 
-/// Since `IteratorBackend` doesn't implement `WriteBackend`, it is allowed to implement
-/// `ReadBackend` for all `ReadWriteLogic`s
-impl<Iter, S, Word, ReadError> ReadBackend<Word, S> for IteratorBackend<Iter>
+/// Since `IteratorReadWords` doesn't implement `WriteWords`, it is allowed to implement
+/// `ReadWords` for all `ReadWriteLogic`s
+impl<Iter, S, Word, ReadError> ReadWords<Word, S> for IteratorReadWords<Iter>
 where
     Iter: Iterator<Item = Result<Word, ReadError>>,
     S: Semantics,
@@ -786,7 +786,7 @@ where
     }
 }
 
-impl<Iter, S, Word, ReadError> BoundedReadBackend<Word, S> for IteratorBackend<Iter>
+impl<Iter, S, Word, ReadError> BoundedReadWords<Word, S> for IteratorReadWords<Iter>
 where
     Iter: ExactSizeIterator<Item = Result<Word, ReadError>>,
     S: Semantics,
@@ -801,11 +801,11 @@ where
 // WRITE ADAPTER FOR CALLBACKS ================================================
 
 #[derive(Clone, Debug)]
-pub struct FallibleCallbackWriteBackend<Callback> {
+pub struct FallibleCallbackWriteWords<Callback> {
     write_callback: Callback,
 }
 
-impl<Callback> FallibleCallbackWriteBackend<Callback> {
+impl<Callback> FallibleCallbackWriteWords<Callback> {
     pub fn new(write_callback: Callback) -> Self {
         Self { write_callback }
     }
@@ -815,7 +815,7 @@ impl<Callback> FallibleCallbackWriteBackend<Callback> {
     }
 }
 
-impl<Word, WriteError, Callback> WriteBackend<Word> for FallibleCallbackWriteBackend<Callback>
+impl<Word, WriteError, Callback> WriteWords<Word> for FallibleCallbackWriteWords<Callback>
 where
     Callback: FnMut(Word) -> Result<(), WriteError>,
     WriteError: Debug,
@@ -828,11 +828,11 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub struct InfallibleCallbackWriteBackend<Callback> {
+pub struct InfallibleCallbackWriteWords<Callback> {
     write_callback: Callback,
 }
 
-impl<Callback> InfallibleCallbackWriteBackend<Callback> {
+impl<Callback> InfallibleCallbackWriteWords<Callback> {
     pub fn new(write_callback: Callback) -> Self {
         Self { write_callback }
     }
@@ -842,7 +842,7 @@ impl<Callback> InfallibleCallbackWriteBackend<Callback> {
     }
 }
 
-impl<Word, Callback> WriteBackend<Word> for InfallibleCallbackWriteBackend<Callback>
+impl<Word, Callback> WriteWords<Word> for InfallibleCallbackWriteWords<Callback>
 where
     Callback: FnMut(Word),
 {

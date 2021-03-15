@@ -17,15 +17,15 @@ use super::{
 };
 use crate::{
     backends::{
-        AsReadBackend, BoundedReadBackend, Cursor, IntoReadBackend, PosBackend, Queue, ReadBackend,
-        SeekBackend, WriteBackend,
+        AsReadWords, BoundedReadWords, Cursor, IntoReadWords, PosBackend, Queue, ReadWords,
+        SeekBackend, WriteWords,
     },
     BitArray, CoderError, EncoderError, EncoderFrontendError, NonZeroBitArray, UnwrapInfallible,
 };
 
 /// Type of the internal state used by [`RangeEncoder<Word, State>`] and
 /// [`RangeDecoder<Word, State>`]. Relevant for [`Seek`]ing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq,Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RangeCoderState<Word, State: BitArray> {
     lower: State,
 
@@ -66,7 +66,7 @@ pub struct RangeEncoder<Word, State, Backend = Vec<Word>>
 where
     Word: BitArray,
     State: BitArray,
-    Backend: WriteBackend<Word>,
+    Backend: WriteWords<Word>,
 {
     bulk: Backend,
     state: RangeCoderState<Word, State>,
@@ -113,7 +113,7 @@ impl<Word, State, Backend> Code for RangeEncoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word>,
+    Backend: WriteWords<Word>,
 {
     type State = RangeCoderState<Word, State>;
     type Word = Word;
@@ -127,7 +127,7 @@ impl<Word, State, Backend> Pos for RangeEncoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + PosBackend<Word>,
+    Backend: WriteWords<Word> + PosBackend<Word>,
 {
     fn pos(&self) -> usize {
         let num_inverted = if let EncoderSituation::Inverted(num_inverted, _) = self.situation {
@@ -143,7 +143,7 @@ impl<Word, State, Backend> Default for RangeEncoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + Default,
+    Backend: WriteWords<Word> + Default,
 {
     /// This is essentially the same as `#[derive(Default)]`, except for the assertions on
     /// `State::BITS` and `Word::BITS`.
@@ -174,7 +174,7 @@ impl<Word, State, Backend> RangeEncoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word>,
+    Backend: WriteWords<Word>,
 {
     /// Assumes that the `backend` is in a state where the encoder can start writing as if
     /// it was an empty backend. If there's already some compressed data on `backend`, then
@@ -204,8 +204,8 @@ where
     /// Check if no data has been encoded yet.
     pub fn is_empty<'a>(&'a self) -> bool
     where
-        Backend: AsReadBackend<'a, Word, Queue>,
-        Backend::AsReadBackend: BoundedReadBackend<Word, Queue>,
+        Backend: AsReadWords<'a, Word, Queue>,
+        Backend::AsReadWords: BoundedReadWords<Word, Queue>,
     {
         self.state.range.get() == State::max_value() && self.bulk.as_read_backend().is_exhausted()
     }
@@ -220,9 +220,9 @@ where
     /// and therefore doesn't require type arguments on the caller side.
     ///
     /// TODO: there should also be a `decoder()` method that takes `&mut self`
-    pub fn into_decoder(self) -> Result<RangeDecoder<Word, State, Backend::IntoReadBackend>, ()>
+    pub fn into_decoder(self) -> Result<RangeDecoder<Word, State, Backend::IntoReadWords>, ()>
     where
-        Backend: IntoReadBackend<Word, Queue>,
+        Backend: IntoReadWords<Word, Queue>,
     {
         // TODO: return proper error (or just box it up).
         RangeDecoder::from_compressed(self.into_compressed().map_err(|_| ())?).map_err(|_| ())
@@ -321,8 +321,8 @@ where
     /// [`num_bits`]: #method.num_bits
     pub fn num_words<'a>(&'a self) -> usize
     where
-        Backend: AsReadBackend<'a, Word, Queue>,
-        Backend::AsReadBackend: BoundedReadBackend<Word, Queue>,
+        Backend: AsReadWords<'a, Word, Queue>,
+        Backend::AsReadWords: BoundedReadWords<Word, Queue>,
     {
         self.bulk.as_read_backend().remaining() + self.num_seal_words()
     }
@@ -336,8 +336,8 @@ where
     /// type `Word`.
     pub fn num_bits<'a>(&'a self) -> usize
     where
-        Backend: AsReadBackend<'a, Word, Queue>,
-        Backend::AsReadBackend: BoundedReadBackend<Word, Queue>,
+        Backend: AsReadWords<'a, Word, Queue>,
+        Backend::AsReadWords: BoundedReadWords<Word, Queue>,
     {
         Word::BITS * self.num_words()
     }
@@ -445,9 +445,9 @@ impl<Word, State, Backend, const PRECISION: usize> IntoDecoder<PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + IntoReadBackend<Word, Queue>,
+    Backend: WriteWords<Word> + IntoReadWords<Word, Queue>,
 {
-    type IntoDecoder = RangeDecoder<Word, State, Backend::IntoReadBackend>;
+    type IntoDecoder = RangeDecoder<Word, State, Backend::IntoReadWords>;
 
     fn into_decoder(self) -> Self::IntoDecoder {
         self.into()
@@ -459,7 +459,7 @@ impl<Word, State, Backend, const PRECISION: usize> Encode<PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word>,
+    Backend: WriteWords<Word>,
 {
     type BackendError = Backend::WriteError;
 
@@ -564,7 +564,7 @@ pub struct RangeDecoder<Word, State, Backend>
 where
     Word: BitArray,
     State: BitArray,
-    Backend: ReadBackend<Word, Queue>,
+    Backend: ReadWords<Word, Queue>,
 {
     bulk: Backend,
 
@@ -602,11 +602,11 @@ impl<Word, State, Backend> RangeDecoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: ReadBackend<Word, Queue>,
+    Backend: ReadWords<Word, Queue>,
 {
     pub fn from_compressed<Buf>(compressed: Buf) -> Result<Self, Backend::ReadError>
     where
-        Buf: IntoReadBackend<Word, Queue, IntoReadBackend = Backend>,
+        Buf: IntoReadWords<Word, Queue, IntoReadWords = Backend>,
     {
         assert!(State::BITS >= 2 * Word::BITS);
         assert_eq!(State::BITS % Word::BITS, 0);
@@ -637,7 +637,7 @@ where
 
     pub fn for_compressed<'a, Buf>(compressed: &'a Buf) -> Result<Self, Backend::ReadError>
     where
-        Buf: AsReadBackend<'a, Word, Queue, AsReadBackend = Backend>,
+        Buf: AsReadWords<'a, Word, Queue, AsReadWords = Backend>,
     {
         assert!(State::BITS >= 2 * Word::BITS);
         assert_eq!(State::BITS % Word::BITS, 0);
@@ -666,7 +666,7 @@ where
         (self.bulk, self.state)
     }
 
-    fn read_point<B: ReadBackend<Word, Queue>>(bulk: &mut B) -> Result<State, B::ReadError> {
+    fn read_point<B: ReadWords<Word, Queue>>(bulk: &mut B) -> Result<State, B::ReadError> {
         let mut num_read = 0;
         let mut point = State::zero();
         while let Some(word) = bulk.read()? {
@@ -708,7 +708,7 @@ impl<Word, State, Backend> Code for RangeDecoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: ReadBackend<Word, Queue>,
+    Backend: ReadWords<Word, Queue>,
 {
     type State = RangeCoderState<Word, State>;
     type Word = Word;
@@ -722,7 +722,7 @@ impl<Word, State, Backend> Seek for RangeDecoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: ReadBackend<Word, Queue> + SeekBackend<Word>,
+    Backend: ReadWords<Word, Queue> + SeekBackend<Word>,
 {
     fn seek(&mut self, pos_and_state: (usize, Self::State)) -> Result<(), ()> {
         let (pos, state) = pos_and_state;
@@ -738,11 +738,11 @@ where
 }
 
 impl<Word, State, Backend> From<RangeEncoder<Word, State, Backend>>
-    for RangeDecoder<Word, State, Backend::IntoReadBackend>
+    for RangeDecoder<Word, State, Backend::IntoReadWords>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + IntoReadBackend<Word, Queue>,
+    Backend: WriteWords<Word> + IntoReadWords<Word, Queue>,
 {
     fn from(encoder: RangeEncoder<Word, State, Backend>) -> Self {
         // TODO: implement a `try_into_decoder` or something instead. Or specialize this
@@ -754,11 +754,11 @@ where
 
 // TODO
 // impl<'a, Word, State, Backend> From<&'a RangeEncoder<Word, State, Backend>>
-//     for RangeDecoder<Word, State, Backend::AsReadBackend>
+//     for RangeDecoder<Word, State, Backend::AsReadWords>
 // where
 //     Word: BitArray + Into<State>,
 //     State: BitArray + AsPrimitive<Word>,
-//     Backend: WriteBackend<Word> + AsReadBackend<'a, Word, Queue>,
+//     Backend: WriteWords<Word> + AsReadWords<'a, Word, Queue>,
 // {
 //     fn from(encoder: &'a RangeEncoder<Word, State, Backend>) -> Self {
 //         encoder.as_decoder()
@@ -770,7 +770,7 @@ impl<Word, State, Backend, const PRECISION: usize> Decode<PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: ReadBackend<Word, Queue>,
+    Backend: ReadWords<Word, Queue>,
 {
     type FrontendError = FrontendError;
 

@@ -14,8 +14,8 @@ use super::{
 };
 use crate::{
     backends::{
-        self, AsReadBackend, AsSeekReadBackend, BoundedReadBackend, Cursor, IntoReadBackend,
-        IntoSeekReadBackend, IteratorBackend, ReadBackend, ReverseReads, Stack, WriteBackend,
+        self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, IntoReadWords,
+        IntoSeekReadWords, IteratorReadWords, ReadWords, ReverseReads, Stack, WriteWords,
     },
     bit_array_to_chunks_truncated, BitArray, CoderError, EncoderError, EncoderFrontendError,
     NonZeroBitArray, UnwrapInfallible,
@@ -254,9 +254,9 @@ impl<Word, State, Backend, const PRECISION: usize> IntoDecoder<PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + IntoReadBackend<Word, Stack>,
+    Backend: WriteWords<Word> + IntoReadWords<Word, Stack>,
 {
-    type IntoDecoder = AnsCoder<Word, State, Backend::IntoReadBackend>;
+    type IntoDecoder = AnsCoder<Word, State, Backend::IntoReadWords>;
 
     fn into_decoder(self) -> Self::IntoDecoder {
         AnsCoder {
@@ -268,11 +268,11 @@ where
 }
 
 impl<'a, Word, State, Backend> From<&'a AnsCoder<Word, State, Backend>>
-    for AnsCoder<Word, State, <Backend as AsReadBackend<'a, Word, Stack>>::AsReadBackend>
+    for AnsCoder<Word, State, <Backend as AsReadWords<'a, Word, Stack>>::AsReadWords>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: AsReadBackend<'a, Word, Stack>,
+    Backend: AsReadWords<'a, Word, Stack>,
 {
     fn from(ans: &'a AnsCoder<Word, State, Backend>) -> Self {
         AnsCoder {
@@ -288,9 +288,9 @@ impl<'a, Word, State, Backend, const PRECISION: usize> AsDecoder<'a, PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + AsReadBackend<'a, Word, Stack>,
+    Backend: WriteWords<Word> + AsReadWords<'a, Word, Stack>,
 {
-    type AsDecoder = AnsCoder<Word, State, Backend::AsReadBackend>;
+    type AsDecoder = AnsCoder<Word, State, Backend::AsReadWords>;
 
     fn as_decoder(&'a self) -> Self::AsDecoder {
         self.into()
@@ -385,7 +385,7 @@ where
     /// [`from_binary`]: #method.from_binary
     pub fn from_compressed(mut compressed: Backend) -> Result<Self, Backend>
     where
-        Backend: ReadBackend<Word, Stack>,
+        Backend: ReadWords<Word, Stack>,
     {
         assert!(State::BITS >= 2 * Word::BITS);
 
@@ -405,7 +405,7 @@ where
         mut read_word: impl FnMut() -> Result<Option<Word>, Error>,
     ) -> Result<State, ()>
     where
-        Backend: ReadBackend<Word, Stack>,
+        Backend: ReadWords<Word, Stack>,
     {
         if let Some(first_word) = read_word().map_err(|_| ())? {
             if first_word == Word::zero() {
@@ -448,7 +448,7 @@ where
     /// [`from_compressed`]: #method.from_compressed
     pub fn from_binary(mut data: Backend) -> Result<Self, Backend::ReadError>
     where
-        Backend: ReadBackend<Word, Stack>,
+        Backend: ReadWords<Word, Stack>,
     {
         let mut state = State::one();
 
@@ -569,7 +569,7 @@ where
         &'a mut self,
     ) -> Result<impl Deref<Target = Backend> + Debug + Drop + 'a, Backend::WriteError>
     where
-        Backend: ReadBackend<Word, Stack> + WriteBackend<Word> + Debug,
+        Backend: ReadWords<Word, Stack> + WriteWords<Word> + Debug,
     {
         CoderGuard::new(self)
     }
@@ -627,21 +627,21 @@ where
     /// [`num_bits`]: #method.num_bits
     pub fn num_words(&self) -> usize
     where
-        Backend: BoundedReadBackend<Word, Stack>,
+        Backend: BoundedReadWords<Word, Stack>,
     {
         self.bulk.remaining() + bit_array_to_chunks_truncated::<_, Word>(self.state).len()
     }
 
     pub fn num_bits(&self) -> usize
     where
-        Backend: BoundedReadBackend<Word, Stack>,
+        Backend: BoundedReadWords<Word, Stack>,
     {
         Word::BITS * self.num_words()
     }
 
     pub fn num_valid_bits(&self) -> usize
     where
-        Backend: BoundedReadBackend<Word, Stack>,
+        Backend: BoundedReadWords<Word, Stack>,
     {
         Word::BITS * self.bulk.remaining()
             + core::cmp::max(State::BITS - self.state.leading_zeros() as usize, 1)
@@ -670,9 +670,9 @@ where
     /// backing data store `Backend = Vec<Word>`.
     ///
     /// [`into_seekable_decoder`]: Self::into_seekable_decoder
-    pub fn seekable_decoder<'a>(&'a self) -> AnsCoder<Word, State, Backend::AsSeekReadBackend>
+    pub fn seekable_decoder<'a>(&'a self) -> AnsCoder<Word, State, Backend::AsSeekReadWords>
     where
-        Backend: AsSeekReadBackend<'a, Word, Stack>,
+        Backend: AsSeekReadWords<'a, Word, Stack>,
     {
         AnsCoder {
             bulk: self.bulk.as_seek_read_backend(),
@@ -688,9 +688,9 @@ where
     /// from the calling function or put on the heap.
     ///
     /// [`seekable_decoder`]: Self::seekable_decoder
-    pub fn into_seekable_decoder(self) -> AnsCoder<Word, State, Backend::IntoSeekReadBackend>
+    pub fn into_seekable_decoder(self) -> AnsCoder<Word, State, Backend::IntoSeekReadWords>
     where
-        Backend: IntoSeekReadBackend<Word, Stack>,
+        Backend: IntoSeekReadWords<Word, Stack>,
     {
         AnsCoder {
             bulk: self.bulk.into_seek_read_backend(),
@@ -766,20 +766,20 @@ where
     }
 }
 
-impl<Word, State, Iter, ReadError> AnsCoder<Word, State, IteratorBackend<Iter>>
+impl<Word, State, Iter, ReadError> AnsCoder<Word, State, IteratorReadWords<Iter>>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
     Iter: Iterator<Item = Result<Word, ReadError>>,
-    IteratorBackend<Iter>: ReadBackend<Word, Stack, ReadError = ReadError>,
+    IteratorReadWords<Iter>: ReadWords<Word, Stack, ReadError = ReadError>,
 {
     pub fn from_reversed_compressed_iter(compressed: Iter) -> Result<Self, Fuse<Iter>> {
-        Self::from_compressed(IteratorBackend::new(compressed))
+        Self::from_compressed(IteratorReadWords::new(compressed))
             .map_err(|iterator_backend| iterator_backend.into_iter())
     }
 
     pub fn from_reversed_binary_iter(data: Iter) -> Result<Self, ReadError> {
-        Self::from_binary(IteratorBackend::new(data))
+        Self::from_binary(IteratorReadWords::new(data))
     }
 }
 
@@ -787,7 +787,7 @@ impl<Word, State, Backend> AnsCoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word>,
+    Backend: WriteWords<Word>,
 {
     #[inline(always)]
     pub(crate) fn flush_state(&mut self) -> Result<(), Backend::WriteError> {
@@ -998,7 +998,7 @@ impl<Word, State, Backend, const PRECISION: usize> Encode<PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word>,
+    Backend: WriteWords<Word>,
 {
     type BackendError = Backend::WriteError;
 
@@ -1058,7 +1058,7 @@ impl<Word, State, Backend> AnsCoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: ReadBackend<Word, Stack>,
+    Backend: ReadWords<Word, Stack>,
 {
     /// Checks the invariant on `self.state` and restores it if necessary and possible.
     ///
@@ -1106,7 +1106,7 @@ impl<Word, State, Backend, const PRECISION: usize> Decode<PRECISION>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: ReadBackend<Word, Stack>,
+    Backend: ReadWords<Word, Stack>,
 {
     /// ANS coding is surjective, and we (deliberately) allow decoding past EOF (in a
     /// deterministic way) for consistency. Therefore, decoding cannot fail.    
@@ -1188,7 +1188,7 @@ struct CoderGuard<'a, Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + ReadBackend<Word, Stack>,
+    Backend: WriteWords<Word> + ReadWords<Word, Stack>,
 {
     inner: &'a mut AnsCoder<Word, State, Backend>,
 }
@@ -1197,7 +1197,7 @@ impl<'a, Word, State, Backend> CoderGuard<'a, Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + ReadBackend<Word, Stack>,
+    Backend: WriteWords<Word> + ReadWords<Word, Stack>,
 {
     fn new(ans: &'a mut AnsCoder<Word, State, Backend>) -> Result<Self, Backend::WriteError> {
         // Append state. Will be undone in `<Self as Drop>::drop`.
@@ -1213,7 +1213,7 @@ impl<'a, Word, State, Backend> Drop for CoderGuard<'a, Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + ReadBackend<Word, Stack>,
+    Backend: WriteWords<Word> + ReadWords<Word, Stack>,
 {
     fn drop(&mut self) {
         // Revert what we did in `Self::new`.
@@ -1227,7 +1227,7 @@ impl<'a, Word, State, Backend> Deref for CoderGuard<'a, Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + ReadBackend<Word, Stack>,
+    Backend: WriteWords<Word> + ReadWords<Word, Stack>,
 {
     type Target = Backend;
 
@@ -1240,7 +1240,7 @@ impl<Word, State, Backend> Debug for CoderGuard<'_, Word, State, Backend>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
-    Backend: WriteBackend<Word> + ReadBackend<Word, Stack> + Debug,
+    Backend: WriteWords<Word> + ReadWords<Word, Stack> + Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Debug::fmt(&**self, f)

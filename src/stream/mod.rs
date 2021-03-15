@@ -212,7 +212,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     /// The error type for writing out encoded data.
     ///
     /// This will typically be the [`WriteError`] type of the of an underlying
-    /// [`WriteBackend`], which is typically [`Infallible`] for automatically growing
+    /// [`WriteWords`], which is typically [`Infallible`] for automatically growing
     /// in-memory backends (such as `Vec`). But it may be an inhabitated error type if
     /// you're, e.g., encoding directly to a file or socket.
     ///

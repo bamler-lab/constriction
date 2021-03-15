@@ -15,8 +15,7 @@ use core::{
 
 use crate::{
     backends::{
-        self, AsReadBackend, BoundedReadBackend, IntoReadBackend, Queue, ReadBackend, Stack,
-        WriteBackend,
+        self, AsReadWords, BoundedReadWords, IntoReadWords, Queue, ReadWords, Stack, WriteWords,
     },
     BitArray, CoderError, EncoderError,
 };
@@ -202,7 +201,7 @@ impl<Word: BitArray, S: backends::Semantics, B> SymbolCoder<Word, S, B> {
     /// or `S = Stack`.
     pub fn len(&self) -> usize
     where
-        B: BoundedReadBackend<Word, Stack>,
+        B: BoundedReadWords<Word, Stack>,
     {
         self.backend
             .remaining()
@@ -219,7 +218,7 @@ impl<Word: BitArray, S: backends::Semantics, B> SymbolCoder<Word, S, B> {
     /// See comment for [`len`].
     pub fn is_empty(&self) -> bool
     where
-        B: BoundedReadBackend<Word, Stack>,
+        B: BoundedReadWords<Word, Stack>,
     {
         self.mask_last_written == Word::zero() && self.backend.is_exhausted()
     }
@@ -259,9 +258,9 @@ impl<Word: BitArray, B> QueueEncoder<Word, B> {
         }
     }
 
-    pub fn into_decoder(self) -> Result<QueueDecoder<Word, B::IntoReadBackend>, B::WriteError>
+    pub fn into_decoder(self) -> Result<QueueDecoder<Word, B::IntoReadWords>, B::WriteError>
     where
-        B: WriteBackend<Word> + IntoReadBackend<Word, Queue>,
+        B: WriteWords<Word> + IntoReadWords<Word, Queue>,
     {
         Ok(QueueDecoder::from_compressed(
             self.into_compressed()?.into_read_backend(),
@@ -270,7 +269,7 @@ impl<Word: BitArray, B> QueueEncoder<Word, B> {
 
     pub fn into_compressed(mut self) -> Result<B, B::WriteError>
     where
-        B: WriteBackend<Word>,
+        B: WriteWords<Word>,
     {
         // Queues don't need to be sealed, so just flush the remaining word if any.
         if self.mask_last_written != Word::zero() {
@@ -282,19 +281,19 @@ impl<Word: BitArray, B> QueueEncoder<Word, B> {
     pub fn into_overshooting_iter(
         self,
     ) -> Result<
-        impl Iterator<Item = Result<bool, <B::IntoReadBackend as ReadBackend<Word, Queue>>::ReadError>>,
+        impl Iterator<Item = Result<bool, <B::IntoReadWords as ReadWords<Word, Queue>>::ReadError>>,
         B::WriteError,
     >
     where
-        B: WriteBackend<Word> + IntoReadBackend<Word, Queue>,
+        B: WriteWords<Word> + IntoReadWords<Word, Queue>,
     {
-        // TODO: return `impl ExactSizeIterator` for `B: BoundedReadBackend` once
+        // TODO: return `impl ExactSizeIterator` for `B: BoundedReadWords` once
         // specialization is stable
         self.into_decoder()
     }
 }
 
-impl<Word: BitArray, B: WriteBackend<Word>> WriteBitStream<Queue> for QueueEncoder<Word, B> {
+impl<Word: BitArray, B: WriteWords<Word>> WriteBitStream<Queue> for QueueEncoder<Word, B> {
     type WriteError = B::WriteError;
 
     fn write_bit(&mut self, bit: bool) -> Result<(), Self::WriteError> {
@@ -341,14 +340,14 @@ impl<Word: BitArray, B> QueueDecoder<Word, B> {
     /// certainty if we can detect that there's something left.
     pub fn maybe_exhausted(&self) -> bool
     where
-        B: BoundedReadBackend<Word, Queue>,
+        B: BoundedReadWords<Word, Queue>,
     {
         let mask_remaining_bits = !self.mask_next_to_read.wrapping_sub(&Word::one());
         self.current_word & mask_remaining_bits == Word::zero() && self.backend.is_exhausted()
     }
 }
 
-impl<Word: BitArray, B: ReadBackend<Word, Queue>> ReadBitStream<Queue> for QueueDecoder<Word, B> {
+impl<Word: BitArray, B: ReadWords<Word, Queue>> ReadBitStream<Queue> for QueueDecoder<Word, B> {
     type ReadError = B::ReadError;
 
     #[inline(always)]
@@ -378,7 +377,7 @@ impl<Word: BitArray, B: ReadBackend<Word, Queue>> ReadBitStream<Queue> for Queue
     }
 }
 
-impl<Word: BitArray, B: ReadBackend<Word, Queue>> Iterator for QueueDecoder<Word, B> {
+impl<Word: BitArray, B: ReadWords<Word, Queue>> Iterator for QueueDecoder<Word, B> {
     type Item = Result<bool, B::ReadError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -388,7 +387,7 @@ impl<Word: BitArray, B: ReadBackend<Word, Queue>> Iterator for QueueDecoder<Word
 
 // IMPLEMENTATIONS FOR A STACK ================================================
 
-impl<Word: BitArray, B: WriteBackend<Word>> StackCoder<Word, B> {
+impl<Word: BitArray, B: WriteWords<Word>> StackCoder<Word, B> {
     /// # Errors
     ///
     /// - Returns `Err(CoderError::FrontendError(compressed))` if `compressed` ends in a
@@ -401,7 +400,7 @@ impl<Word: BitArray, B: WriteBackend<Word>> StackCoder<Word, B> {
     ///   is empty.
     pub fn from_compressed(mut compressed: B) -> Result<Self, CoderError<B, B::ReadError>>
     where
-        B: ReadBackend<Word, Stack>,
+        B: ReadWords<Word, Stack>,
     {
         let (current_word, mask_last_written) = if let Some(last_word) = compressed.read()? {
             if last_word == Word::zero() {
@@ -460,9 +459,9 @@ impl<Word: BitArray, B: WriteBackend<Word>> StackCoder<Word, B> {
         self.encode_iid_symbols(symbols.into_iter().rev(), codebook)
     }
 
-    pub fn into_decoder(self) -> SymbolCoder<Word, Stack, B::IntoReadBackend>
+    pub fn into_decoder(self) -> SymbolCoder<Word, Stack, B::IntoReadWords>
     where
-        B: IntoReadBackend<Word, Stack>,
+        B: IntoReadWords<Word, Stack>,
     {
         SymbolCoder {
             backend: self.backend.into_read_backend(),
@@ -472,9 +471,9 @@ impl<Word: BitArray, B: WriteBackend<Word>> StackCoder<Word, B> {
         }
     }
 
-    pub fn as_decoder<'a>(&'a self) -> SymbolCoder<Word, Stack, B::AsReadBackend>
+    pub fn as_decoder<'a>(&'a self) -> SymbolCoder<Word, Stack, B::AsReadWords>
     where
-        B: AsReadBackend<'a, Word, Stack>,
+        B: AsReadWords<'a, Word, Stack>,
     {
         SymbolCoder {
             backend: self.backend.as_read_backend(),
@@ -487,13 +486,13 @@ impl<Word: BitArray, B: WriteBackend<Word>> StackCoder<Word, B> {
     /// Consumes the coder and returns an iterator over bits (in reverse direction)
     ///
     /// You often don't need to call this method since a `StackCoder` is already an iterator
-    /// if the backend implements `ReadBackend<Word, Stack>` (as the default backend
+    /// if the backend implements `ReadWords<Word, Stack>` (as the default backend
     /// `Vec<Word>` does).
     pub fn into_iter(
         self,
-    ) -> impl Iterator<Item = Result<bool, <B::IntoReadBackend as ReadBackend<Word, Stack>>::ReadError>>
+    ) -> impl Iterator<Item = Result<bool, <B::IntoReadWords as ReadWords<Word, Stack>>::ReadError>>
     where
-        B: IntoReadBackend<Word, Stack>,
+        B: IntoReadWords<Word, Stack>,
     {
         self.into_decoder()
     }
@@ -501,19 +500,24 @@ impl<Word: BitArray, B: WriteBackend<Word>> StackCoder<Word, B> {
     /// Returns an iterator over bits (in reverse direction) that leaves the current coder untouched.
     ///
     /// You often don't need to call this method since a `StackCoder` is already an iterator
-    /// if the backend implements `ReadBackend<Word, Stack>` (as the default backend
+    /// if the backend implements `ReadWords<Word, Stack>` (as the default backend
     /// `Vec<Word>` does).
     pub fn iter<'a>(
         &'a self,
-    ) -> impl Iterator<Item = Result<bool, <<B as AsReadBackend<'a,Word,Stack>>::AsReadBackend as ReadBackend<Word, Stack>>::ReadError>> + 'a
+    ) -> impl Iterator<
+        Item = Result<
+            bool,
+            <<B as AsReadWords<'a, Word, Stack>>::AsReadWords as ReadWords<Word, Stack>>::ReadError,
+        >,
+    > + 'a
     where
-        B: AsReadBackend<'a, Word, Stack>,
+        B: AsReadWords<'a, Word, Stack>,
     {
         self.as_decoder()
     }
 }
 
-impl<Word: BitArray, B: WriteBackend<Word>> WriteBitStream<Stack> for StackCoder<Word, B> {
+impl<Word: BitArray, B: WriteWords<Word>> WriteBitStream<Stack> for StackCoder<Word, B> {
     type WriteError = B::WriteError;
 
     fn write_bit(&mut self, bit: bool) -> Result<(), Self::WriteError> {
@@ -547,7 +551,7 @@ impl<Word: BitArray, B: WriteBackend<Word>> WriteBitStream<Stack> for StackCoder
     }
 }
 
-impl<Word: BitArray, B: ReadBackend<Word, Stack>> ReadBitStream<Stack> for StackCoder<Word, B> {
+impl<Word: BitArray, B: ReadWords<Word, Stack>> ReadBitStream<Stack> for StackCoder<Word, B> {
     type ReadError = B::ReadError;
 
     #[inline(always)]
@@ -576,17 +580,17 @@ impl<Word: BitArray, B: ReadBackend<Word, Stack>> ReadBitStream<Stack> for Stack
     }
 }
 
-impl<Word: BitArray, B: ReadBackend<Word, Stack>> Iterator for StackCoder<Word, B> {
+impl<Word: BitArray, B: ReadWords<Word, Stack>> Iterator for StackCoder<Word, B> {
     type Item = Result<bool, B::ReadError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.read_bit().transpose()
     }
 
-    // TODO: override `size_hint` for `B: BoundedReadBackend` when specialization is stable.
+    // TODO: override `size_hint` for `B: BoundedReadWords` when specialization is stable.
 }
 
-impl<Word: BitArray, B: BoundedReadBackend<Word, Stack>> ExactSizeIterator for StackCoder<Word, B> {
+impl<Word: BitArray, B: BoundedReadWords<Word, Stack>> ExactSizeIterator for StackCoder<Word, B> {
     fn len(&self) -> usize {
         StackCoder::len(self)
     }
