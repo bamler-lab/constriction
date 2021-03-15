@@ -13,7 +13,7 @@
 //!
 //! ```
 //! use constriction::{
-//!     backends::{FallibleCallbackWriteWords, IteratorReadWords},
+//!     backends::{FallibleCallbackWriteWords, FallibleIteratorReadWords},
 //!     stream::{
 //!         models::DefaultLeakyQuantizer,
 //!         queue::{DefaultRangeDecoder, DefaultRangeEncoder},
@@ -39,11 +39,11 @@
 //!     // (Wrapping the `File` it in a `BufWriter` isn't strictly necessary here,
 //!     // it's just good practice when writing to a file.)
 //!     let mut file = BufWriter::new(File::create("backend_queue_example.tmp").unwrap());
-//!     let write_backend =
+//!     let backend =
 //!         FallibleCallbackWriteWords::new(move |word| file.write_u32::<LittleEndian>(word));
 //!
 //!     // Encapsulate the backend in a `RangeEncoder` and encode (i.e., compress) the symbols.
-//!     let mut encoder = DefaultRangeEncoder::with_backend(write_backend);
+//!     let mut encoder = DefaultRangeEncoder::with_backend(backend);
 //!     encoder.encode_iid_symbols(symbols, &model).unwrap();
 //!
 //!     // Dropping the encoder doesn't automatically seal the compressed bit string because that
@@ -73,8 +73,8 @@
 //!     });
 //!
 //!     // Create a decoder that decodes on the fly from our iterator.
-//!     let mut decoder =
-//!         DefaultRangeDecoder::with_backend(IteratorReadWords::new(word_iterator)).unwrap();
+//!     let backend = FallibleIteratorReadWords::new(word_iterator);
+//!     let mut decoder = DefaultRangeDecoder::with_backend(backend).unwrap();
 //!
 //!     // Decode the symbols and verify their correctness.
 //!     for (i, symbol) in decoder.decode_iid_symbols(amt as usize, &model).enumerate() {
@@ -751,17 +751,23 @@ impl<'a, Word: Clone + 'a, Buf: AsMut<[Word]> + 'a> AsSeekWriteWords<'a, Word, Q
 // READ ADAPTER FOR ITERATORS =================================================
 
 #[derive(Clone, Debug)]
-pub struct IteratorReadWords<Iter: Iterator> {
+pub struct FallibleIteratorReadWords<Iter: Iterator> {
     inner: core::iter::Fuse<Iter>,
 }
 
-impl<Iter: Iterator> IteratorReadWords<Iter> {
-    pub fn new(iter: Iter) -> Self {
-        Self { inner: iter.fuse() }
+impl<Iter: Iterator> FallibleIteratorReadWords<Iter> {
+    pub fn new<I, Word, ReadError>(iter: I) -> Self
+    where
+        I: IntoIterator<IntoIter = Iter>,
+        Iter: Iterator<Item = Result<Word, ReadError>>,
+    {
+        Self {
+            inner: iter.into_iter().fuse(),
+        }
     }
 }
 
-impl<Iter: Iterator> IntoIterator for IteratorReadWords<Iter> {
+impl<Iter: Iterator> IntoIterator for FallibleIteratorReadWords<Iter> {
     type Item = Iter::Item;
     type IntoIter = core::iter::Fuse<Iter>;
 
@@ -770,9 +776,9 @@ impl<Iter: Iterator> IntoIterator for IteratorReadWords<Iter> {
     }
 }
 
-/// Since `IteratorReadWords` doesn't implement `WriteWords`, it is allowed to implement
-/// `ReadWords` for all `ReadWriteLogic`s
-impl<Iter, S, Word, ReadError> ReadWords<Word, S> for IteratorReadWords<Iter>
+/// Since `FallibleIteratorReadWords` doesn't implement `WriteWords`, it is allowed to
+/// implement `ReadWords` for all `ReadWriteLogic`s
+impl<Iter, S, Word, ReadError> ReadWords<Word, S> for FallibleIteratorReadWords<Iter>
 where
     Iter: Iterator<Item = Result<Word, ReadError>>,
     S: Semantics,
@@ -786,11 +792,64 @@ where
     }
 }
 
-impl<Iter, S, Word, ReadError> BoundedReadWords<Word, S> for IteratorReadWords<Iter>
+impl<Iter, S, Word> BoundedReadWords<Word, S> for FallibleIteratorReadWords<Iter>
 where
-    Iter: ExactSizeIterator<Item = Result<Word, ReadError>>,
+    Self: ReadWords<Word, S>,
+    Iter: ExactSizeIterator,
     S: Semantics,
-    ReadError: Debug,
+{
+    #[inline(always)]
+    fn remaining(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct InfallibleIteratorReadWords<Iter: Iterator> {
+    inner: core::iter::Fuse<Iter>,
+}
+
+impl<Iter: Iterator> InfallibleIteratorReadWords<Iter> {
+    pub fn new<I, Word, ReadError>(iter: I) -> Self
+    where
+        I: IntoIterator<IntoIter = Iter>,
+        Iter: Iterator<Item = Result<Word, ReadError>>,
+    {
+        Self {
+            inner: iter.into_iter().fuse(),
+        }
+    }
+}
+
+impl<Iter: Iterator> IntoIterator for InfallibleIteratorReadWords<Iter> {
+    type Item = Iter::Item;
+    type IntoIter = core::iter::Fuse<Iter>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner
+    }
+}
+
+/// Since `InfallibleIteratorReadWords` doesn't implement `WriteWords`, it is allowed to
+/// implement `ReadWords` for all `ReadWriteLogic`s
+impl<Iter, S, Word> ReadWords<Word, S> for InfallibleIteratorReadWords<Iter>
+where
+    Iter: Iterator<Item = Word>,
+    S: Semantics,
+{
+    type ReadError = Infallible;
+
+    #[inline(always)]
+    fn read(&mut self) -> Result<Option<Word>, Infallible> {
+        Ok(self.inner.next())
+    }
+}
+
+impl<Iter, S, Word> BoundedReadWords<Word, S> for InfallibleIteratorReadWords<Iter>
+where
+    Self: ReadWords<Word, S>,
+    Iter: ExactSizeIterator,
+    S: Semantics,
 {
     #[inline(always)]
     fn remaining(&self) -> usize {

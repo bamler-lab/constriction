@@ -15,7 +15,7 @@ use super::{
 use crate::{
     backends::{
         self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, IntoReadWords,
-        IntoSeekReadWords, IteratorReadWords, ReadWords, ReverseReads, Stack, WriteWords,
+        IntoSeekReadWords, FallibleIteratorReadWords, ReadWords, ReverseReads, Stack, WriteWords,
     },
     bit_array_to_chunks_truncated, BitArray, CoderError, EncoderError, EncoderFrontendError,
     NonZeroBitArray, UnwrapInfallible,
@@ -766,20 +766,20 @@ where
     }
 }
 
-impl<Word, State, Iter, ReadError> AnsCoder<Word, State, IteratorReadWords<Iter>>
+impl<Word, State, Iter, ReadError> AnsCoder<Word, State, FallibleIteratorReadWords<Iter>>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
     Iter: Iterator<Item = Result<Word, ReadError>>,
-    IteratorReadWords<Iter>: ReadWords<Word, Stack, ReadError = ReadError>,
+    FallibleIteratorReadWords<Iter>: ReadWords<Word, Stack, ReadError = ReadError>,
 {
     pub fn from_reversed_compressed_iter(compressed: Iter) -> Result<Self, Fuse<Iter>> {
-        Self::from_compressed(IteratorReadWords::new(compressed))
+        Self::from_compressed(FallibleIteratorReadWords::new(compressed))
             .map_err(|iterator_backend| iterator_backend.into_iter())
     }
 
     pub fn from_reversed_binary_iter(data: Iter) -> Result<Self, ReadError> {
-        Self::from_binary(IteratorReadWords::new(data))
+        Self::from_binary(FallibleIteratorReadWords::new(data))
     }
 }
 
