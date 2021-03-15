@@ -36,7 +36,7 @@
 //!     });
 //!
 //!     // Open a file and build a backend that writes to this file one word at a time.
-//!     // (Wrapping the `File` it in a `BufWriter` isn't strictly necessary here,
+//!     // (Wrapping the `File` in a `BufWriter` isn't strictly necessary here,
 //!     // it's just good practice when writing to a file.)
 //!     let mut file = BufWriter::new(File::create("backend_queue_example.tmp").unwrap());
 //!     let backend =
@@ -268,8 +268,34 @@ impl<Word> PosSeek for Vec<Word> {
 }
 
 impl<Word> Pos for Vec<Word> {
+    /// Returns the length of the vector since that's the current read and write position
+    /// (vectors have [`Stack`] semantics).
+    ///
+    /// If your intention is to read to or write from some memory buffer at arbitrary
+    /// positions rather than just at the end then you probably want to use a [`Cursor`]
+    /// instead of a vector.
     fn pos(&self) -> usize {
         self.len()
+    }
+}
+
+impl<Word> Seek for Vec<Word> {
+    /// Seeking in a `Vec<Word>` only succeeds if the provided position `pos` is smaller
+    /// than or equal to the vector's current length. In this case, seeking will truncate
+    /// the vector to length `pos`. This is because vectors have [`Stack`] semantics, and
+    /// the current read/write position (i.e., the head of the stack) is always at the end
+    /// of the vector.
+    ///
+    /// If you're instead looking for a fixed-size memory buffer that supports random access
+    /// without truncating the buffer then you probably want to use a [`Cursor`] instead of
+    /// a vector.
+    fn seek(&mut self, pos: usize) -> Result<(), ()> {
+        if pos <= self.len() {
+            self.truncate(pos);
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 }
 
@@ -338,8 +364,37 @@ impl<Array> Pos for SmallVec<Array>
 where
     Array: smallvec::Array,
 {
+    /// Returns the length of the `SmallVec` since that's the current read and write position
+    /// (`SmallVec`s, like `Vec`s, have [`Stack`] semantics).
+    ///
+    /// If your intention is to read to or write from some memory buffer at arbitrary
+    /// positions rather than just at the end then you probably want to use a [`Cursor`]
+    /// instead of a `Vec` or `SmallVec`.
     fn pos(&self) -> usize {
         self.len()
+    }
+}
+
+impl<Array> Seek for SmallVec<Array>
+where
+    Array: smallvec::Array,
+{
+    /// Seeking in a `SmallVec` only succeeds if the provided position `pos` is smaller than
+    /// or equal to the `SmallVec`'s current length. In this case, seeking will truncate the
+    /// `SmallVec` to length `pos`. This is because `SmallVec`s, like `Vec`s, have [`Stack`]
+    /// semantics, and the current read/write position (i.e., the head of the stack) is
+    /// always at the end of the `SmallVec`.
+    ///
+    /// If you're instead looking for a fixed-size memory buffer that supports random access
+    /// without truncating the buffer then you probably want to use a [`Cursor`] instead of
+    /// a `Vec` or `SmallVec`.
+    fn seek(&mut self, pos: usize) -> Result<(), ()> {
+        if pos <= self.len() {
+            self.truncate(pos);
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 }
 

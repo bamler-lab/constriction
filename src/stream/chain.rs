@@ -65,7 +65,7 @@ use super::{
 };
 use crate::{
     backends::{ReadWords, Stack, WriteWords},
-    BitArray, CoderError, EncoderFrontendError, NonZeroBitArray,
+    BitArray, CoderError, EncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek,
 };
 
 /// # Intended Usage
@@ -796,6 +796,65 @@ where
 
     /// `None` if out of data, `Some(err)` if reading lead to error.
     Read(Option<RemaindersBackend::ReadError>),
+}
+
+impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> PosSeek
+    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+where
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
+    QuantilesBackend: PosSeek,
+    RemaindersBackend: PosSeek,
+{
+    type Position = (
+        BackendPosition<QuantilesBackend::Position, RemaindersBackend::Position>,
+        ChainCoderHeads<Word, State, PRECISION>,
+    );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BackendPosition<QuantilesPosition, RemaindersPosition> {
+    pub quantiles: QuantilesPosition,
+    pub remainders: RemaindersPosition,
+}
+
+impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Pos
+    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+where
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
+    QuantilesBackend: Pos,
+    RemaindersBackend: Pos,
+{
+    fn pos(&self) -> Self::Position {
+        (
+            BackendPosition {
+                quantiles: self.quantiles.pos(),
+                remainders: self.remainders.pos(),
+            },
+            self.state(),
+        )
+    }
+}
+
+impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Seek
+    for ChainCoder<Word, State, QuantilesBackend, RemaindersBackend, PRECISION>
+where
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
+    QuantilesBackend: Seek,
+    RemaindersBackend: Seek,
+{
+    fn seek(&mut self, (pos, state): Self::Position) -> Result<(), ()> {
+        self.quantiles.seek(pos.quantiles)?;
+        self.remainders.seek(pos.remainders)?;
+
+        // `state` is valid since we don't provide a public API to modify fields of
+        // `ChainCoderHeads` individually.
+        self.heads = state;
+
+        Ok(())
+    }
 }
 
 impl<Word, State, QuantilesBackend, RemaindersBackend, const PRECISION: usize> Decode<PRECISION>
