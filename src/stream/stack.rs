@@ -9,7 +9,7 @@ use core::{
 use num::cast::AsPrimitive;
 
 use super::{
-    models::{DecoderModel, EncoderModel, EntropyModel},
+    models::{DecoderModel, EncoderModel},
     AsDecoder, Code, Decode, Encode, IntoDecoder, TryCodingError,
 };
 use crate::{
@@ -476,32 +476,6 @@ where
         (self.bulk, self.state)
     }
 
-    #[inline(always)]
-    pub(crate) fn decode_remainder_off_state<D, const PRECISION: usize>(
-        &mut self,
-        probability: <D::Probability as BitArray>::NonZero,
-    ) -> D::Probability
-    where
-        D: EntropyModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
-    {
-        let remainder = (self.state % probability.get().into().into()).as_().as_();
-        self.state = self.state / probability.get().into().into();
-        remainder
-    }
-
-    #[inline(always)]
-    pub(crate) fn append_quantile_to_state<D, const PRECISION: usize>(
-        &mut self,
-        quantile: D::Probability,
-    ) where
-        D: EntropyModel<PRECISION>,
-        D::Probability: Into<Word>,
-    {
-        self.state = (self.state << PRECISION) | quantile.into().into();
-    }
-
     /// Check if no data for decoding is left.
     ///
     /// Same as [`Code::maybe_empty`], just with a more suitable name considering the
@@ -698,29 +672,6 @@ where
             phantom: PhantomData,
         }
     }
-
-    #[inline(always)]
-    pub(crate) fn chop_quantile_off_state<D, const PRECISION: usize>(&mut self) -> D::Probability
-    where
-        Word: AsPrimitive<D::Probability>,
-        D: EntropyModel<PRECISION>,
-    {
-        let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
-        self.state = self.state >> PRECISION;
-        quantile
-    }
-
-    #[inline(always)]
-    pub(crate) fn encode_remainder_onto_state<D, const PRECISION: usize>(
-        &mut self,
-        remainder: D::Probability,
-        probability: <D::Probability as BitArray>::NonZero,
-    ) where
-        D: EntropyModel<PRECISION>,
-        D::Probability: Into<Word>,
-    {
-        self.state = self.state * probability.get().into().into() + remainder.into().into();
-    }
 }
 
 impl<Word, State> AnsCoder<Word, State>
@@ -789,13 +740,6 @@ where
     State: BitArray + AsPrimitive<Word>,
     Backend: WriteWords<Word>,
 {
-    #[inline(always)]
-    pub(crate) fn flush_state(&mut self) -> Result<(), Backend::WriteError> {
-        self.bulk.write(self.state.as_())?;
-        self.state = self.state >> Word::BITS;
-        Ok(())
-    }
-
     pub fn encode_symbols_reverse<S, D, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
@@ -1038,66 +982,22 @@ where
             .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
         if (self.state >> (State::BITS - PRECISION)) >= probability.get().into().into() {
-            self.flush_state()?;
+            self.bulk.write(self.state.as_())?;
+            self.state = self.state >> Word::BITS;
             // At this point, the invariant on `self.state` (see its doc comment) is
             // temporarily violated, but it will be restored below.
         }
 
-        let remainder = self.decode_remainder_off_state::<D, PRECISION>(probability);
-        self.append_quantile_to_state::<D, PRECISION>(left_sided_cumulative + remainder);
+        let remainder = (self.state % probability.get().into().into()).as_().as_();
+        let prefix = self.state / probability.get().into().into();
+        let quantile = left_sided_cumulative + remainder;
+        self.state = prefix << PRECISION | quantile.into().into();
 
         Ok(())
     }
 
     fn maybe_full(&self) -> bool {
         self.bulk.maybe_full()
-    }
-}
-
-impl<Word, State, Backend> AnsCoder<Word, State, Backend>
-where
-    Word: BitArray + Into<State>,
-    State: BitArray + AsPrimitive<Word>,
-    Backend: ReadWords<Word, Stack>,
-{
-    /// Checks the invariant on `self.state` and restores it if necessary and possible.
-    ///
-    /// Returns `Err(None)` if the `state` should have been refilled but there are no
-    /// compressed words left. Returns `Err(e)` if the `state` should have been refilled but
-    /// reading from the backend returned error `e`. Returns `Ok(())` in all other cases.
-    #[inline(always)]
-    pub(crate) fn try_refill_state_if_necessary(
-        &mut self,
-    ) -> Result<(), Option<Backend::ReadError>> {
-        if self.state < State::one() << (State::BITS - Word::BITS) {
-            // Invariant on `self.state` (see its doc comment) is violated. Restore it by
-            // refilling with a compressed word from `self.bulk` if available.
-            self.refill_state_maybe_truncating()
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Tries to push a compressed word onto `state` without checking for overflow, thus
-    /// potentially truncating `state`. If you're not sure if the operation might overflow,
-    /// call [`try_refill_state_if_necessary`] instead.
-    ///
-    /// This method is *not* declared `unsafe` because the potential truncation is
-    /// well-defined and we consider truncating `state` a logic error but not a
-    /// memory/safety violation.
-    ///
-    /// Returns `Ok(())` if a compressed word to refill the state was available, `Err(None)`
-    /// if no compressed word was available, and `Err(e)` if reading from the backend
-    /// returned error `e`.
-    ///
-    /// TODO: remove all these `pub(crate)` methods and inline them manually again.
-    #[inline(always)]
-    pub(crate) fn refill_state_maybe_truncating(
-        &mut self,
-    ) -> Result<(), Option<Backend::ReadError>> {
-        let word = self.bulk.read().map_err(Some)?.ok_or(None)?;
-        self.state = (self.state << Word::BITS) | word.into();
-        Ok(())
     }
 }
 
@@ -1139,11 +1039,18 @@ where
         D::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<D::Probability>,
     {
-        let quantile = self.chop_quantile_off_state::<D, PRECISION>();
+        let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
         let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
         let remainder = quantile - left_sided_cumulative;
-        self.encode_remainder_onto_state::<D, PRECISION>(remainder, probability);
-        let _ = self.try_refill_state_if_necessary();
+        self.state =
+            (self.state >> PRECISION) * probability.get().into().into() + remainder.into().into();
+        if self.state < State::one() << (State::BITS - Word::BITS) {
+            // Invariant on `self.state` (see its doc comment) is violated. Restore it by
+            // refilling with a compressed word from `self.bulk` if available.
+            if let Some(word) = self.bulk.read()? {
+                self.state = (self.state << Word::BITS) | word.into();
+            }
+        }
 
         Ok(symbol)
     }
@@ -1524,10 +1431,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(&decoded, chunk)
             }
-            assert_eq!(
-                seekable_decoder.pos(),
-                (initial_pos, initial_state)
-            );
+            assert_eq!(seekable_decoder.pos(), (initial_pos, initial_state));
             assert!(seekable_decoder.is_empty());
 
             // Seek to some random offsets in the jump table and decode one chunk
@@ -1564,10 +1468,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(&decoded, chunk)
             }
-            assert_eq!(
-                seekable_decoder.pos(),
-                (initial_pos, initial_state)
-            );
+            assert_eq!(seekable_decoder.pos(), (initial_pos, initial_state));
             assert!(seekable_decoder.is_empty());
 
             // Seek to some random offsets in the jump table and decode one chunk each time.
