@@ -3,10 +3,6 @@
 //! See documentation of [`Code`] for an example how to use these models for data
 //! compression or decompression.
 //!
-//! # TODO
-//!
-//! - Add adapters for discrete probability distributions (e.g., binomial, geometric).
-//!
 //! [`Code`]: crate::Code
 
 pub mod lookup;
@@ -124,7 +120,9 @@ where
 /// entropy model because it ensures that every integer within the chosen domain can
 /// in fact be encoded.
 ///
-/// # Example
+/// # Examples
+///
+/// Quantizing a Gaussian distribution:
 ///
 /// ```
 /// use constriction::stream::{models::LeakyQuantizer, stack::DefaultAnsCoder, Encode};
@@ -145,6 +143,32 @@ where
 /// let mut ans = DefaultAnsCoder::new();
 /// ans.encode_symbol(4, discrete_distribution1);
 /// ans.encode_symbol(-3, discrete_distribution2);
+/// ```
+///
+/// You can use a `LeakyQuantizer` also for quantizing discrete probability distributions.
+/// In this constext, the word "quantizing" only refers to the fact that *probability space*
+/// is being quantized, i.e., that floating point probabilities are approximated with fixed
+/// point precision. The quantization will again be "leaky", i.e., each symbol within the
+/// specified domain will have a nonzero probability.
+///
+/// ```
+/// use constriction::stream::{models::LeakyQuantizer, stack::DefaultAnsCoder, Encode, Decode};
+///
+/// let distribution = probability::distribution::Binomial::new(1000, 0.1); // arguments: `n, p`
+/// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=1000); // natural domain is `0..=n`
+/// let entropy_model = quantizer.quantize(distribution);
+/// let mut ans = DefaultAnsCoder::new();
+///
+/// // Encode a "typical" symbol from the distribution (i.e., one with non-negligible probability).
+/// ans.encode_symbol(107, &entropy_model);
+///
+/// // The following still works despite a ridiculously low probability of the symbol `1000`.
+/// ans.encode_symbol(1000, &entropy_model);
+///
+/// // Decode symbols (in reverse order, since the `AnsCoder` is a stack) and verify correctness.
+/// assert_eq!(ans.decode_symbol(&entropy_model), Ok(1000));
+/// assert_eq!(ans.decode_symbol(&entropy_model), Ok(107));
+/// assert!(ans.is_empty());
 /// ```
 ///
 /// # TODO
@@ -225,7 +249,7 @@ where
         distribution: CD,
     ) -> LeakilyQuantizedDistribution<'_, F, Symbol, Probability, CD, PRECISION>
     where
-        CD: Inverse<Value = f64>,
+        CD: Inverse,
     {
         LeakilyQuantizedDistribution {
             inner: distribution,
@@ -248,10 +272,7 @@ pub struct LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, const PR
 impl<'a, F, Symbol, Probability, CD, const PRECISION: usize> EntropyModel<PRECISION>
     for LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, PRECISION>
 where
-    //     Symbol: PrimInt + AsPrimitive<Probability> + Into<F> + WrappingSub,
-    //     F: Float + AsPrimitive<Probability>,
     Probability: BitArray,
-    //     CD: Distribution<Value = f64>,
 {
     type Probability = Probability;
     type Symbol = Symbol;
@@ -260,10 +281,11 @@ where
 impl<'a, Symbol, Probability, CD, const PRECISION: usize> EncoderModel<PRECISION>
     for LeakilyQuantizedDistribution<'a, f64, Symbol, Probability, CD, PRECISION>
 where
-    f64: AsPrimitive<Symbol> + AsPrimitive<Probability>,
+    f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub,
     Probability: BitArray + Into<f64>,
-    CD: Distribution<Value = f64>,
+    CD: Distribution,
+    CD::Value: AsPrimitive<Symbol>,
 {
     /// Performs (one direction of) the quantization.
     ///
@@ -323,10 +345,11 @@ where
 impl<'a, Symbol, Probability, CD, const PRECISION: usize> DecoderModel<PRECISION>
     for LeakilyQuantizedDistribution<'a, f64, Symbol, Probability, CD, PRECISION>
 where
-    f64: AsPrimitive<Symbol> + AsPrimitive<Probability>,
+    f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub,
     Probability: BitArray + Into<f64>,
-    CD: Inverse<Value = f64>,
+    CD: Inverse,
+    CD::Value: AsPrimitive<Symbol>,
 {
     fn quantile_function(
         &self,
@@ -1020,7 +1043,7 @@ struct LookupTable {}
 mod tests {
     use super::*;
 
-    use probability::distribution::Gaussian;
+    use probability::distribution::{Binomial, Gaussian};
 
     #[test]
     fn leaky_quantized_normal() {
@@ -1030,6 +1053,21 @@ mod tests {
             for &mean in &[-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0] {
                 let distribution = Gaussian::new(mean, std_dev);
                 test_entropy_model(quantizer.quantize(distribution), -127..128);
+            }
+        }
+    }
+
+    #[test]
+    fn leaky_quantized_binomial() {
+        for &n in &[1, 2, 10, 100, 1000] {
+            for &p in &[1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9] {
+                if n < 1000 || p >= 0.1 {
+                    // In the excluded situations, `<Binomial as Inverse>::inverse` currently doesn't terminate.
+                    // TODO: file issue to `probability` repo.
+                    let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=n as u32);
+                    let distribution = Binomial::new(n, p);
+                    test_entropy_model(quantizer.quantize(distribution), 0..(n as u32 + 1));
+                }
             }
         }
     }
