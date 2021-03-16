@@ -1,7 +1,16 @@
 //! Probability distributions that can be used as entropy models for compression.
 //!
-//! See documentation of [`Code`] for an example how to use these models for
-//! data compression or decompression.
+//! See documentation of [`Code`] for an example how to use these models for data
+//! compression or decompression.
+//!
+//! # TODO
+//!
+//! - Add adapters for discrete probability distributions (e.g., binomial, geometric).
+//! - Check if there's a better crate to build upon than `statrs`, which seems to have a lot
+//!   of missing implementations for simple things (like most `InverseCDF` implementations)
+//!   and which is not generic over the symbol type, thus making CDFs of categorical
+//!   distributions awkward.
+//!   - crate `probability` looks better (but also uses floats for CDFs of discrete distributions)
 //!
 //! [`Code`]: crate::Code
 
@@ -45,12 +54,13 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Self::Symbol>,
-    ) -> Result<(Self::Probability, <Self::Probability as BitArray>::NonZero), ()>;
+    ) -> Option<(Self::Probability, <Self::Probability as BitArray>::NonZero)>;
 }
 
 pub trait DecoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
-    /// Returns `(symbol, left_sided_cumulative, probability)` of the unique bin
-    /// that satisfies `left_sided_cumulative <= quantile < right_sided_cumulative`.
+    /// Returns `(symbol, left_sided_cumulative, probability)` of the unique bin that
+    /// satisfies `left_sided_cumulative <= quantile < left_sided_cumulative + probability`
+    /// (where the addition on the right-hand side is non-wrapping).
     fn quantile_function(
         &self,
         quantile: Self::Probability,
@@ -77,7 +87,7 @@ where
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Self::Symbol>,
-    ) -> Result<(Self::Probability, <Self::Probability as BitArray>::NonZero), ()> {
+    ) -> Option<(Self::Probability, <Self::Probability as BitArray>::NonZero)> {
         (*self).left_cumulative_and_probability(symbol)
     }
 }
@@ -272,7 +282,7 @@ where
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Symbol>,
-    ) -> Result<(Probability, Probability::NonZero), ()> {
+    ) -> Option<(Probability, Probability::NonZero)> {
         let half = F::one() / (F::one() + F::one());
 
         let min_symbol_inclusive = self.quantizer.min_symbol_inclusive;
@@ -280,7 +290,7 @@ where
         let free_weight = self.quantizer.free_weight;
 
         if symbol.borrow() < &min_symbol_inclusive || symbol.borrow() > &max_symbol_inclusive {
-            return Err(());
+            return None;
         };
         let slack = symbol.borrow().wrapping_sub(&min_symbol_inclusive).as_();
 
@@ -313,7 +323,7 @@ where
             .into_nonzero()
             .expect("Invalid underlying continuous probability distribution.");
 
-        Ok((left_sided_cumulative, probability))
+        Some((left_sided_cumulative, probability))
     }
 }
 
@@ -930,17 +940,19 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<usize>,
-    ) -> Result<(Probability, Probability::NonZero), ()> {
-        let index: usize = *symbol.borrow();
+    ) -> Option<(Probability, Probability::NonZero)> {
+        let index = *symbol.borrow();
 
         let (cdf, next_cdf) = unsafe {
-            // SAFETY: we perform a single check if index is within bounds.
-            if index as usize + 1 >= self.cdf.len() {
-                return Err(());
+            // SAFETY: we perform a single check if index is within bounds (it's important
+            // that we compare `index >= len - 1` here and not `index + 1 >= len` because
+            // the latter could overflow/wrap but `len` is guaranteed to be nonzero).
+            if index >= self.cdf.len() - 1 {
+                return None;
             }
             (
-                *self.cdf.get_unchecked(index as usize),
-                *self.cdf.get_unchecked(index as usize + 1),
+                *self.cdf.get_unchecked(index),
+                *self.cdf.get_unchecked(index + 1),
             )
         };
 
@@ -949,7 +961,7 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
             next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
         };
 
-        Ok((cdf, probability))
+        Some((cdf, probability))
     }
 }
 

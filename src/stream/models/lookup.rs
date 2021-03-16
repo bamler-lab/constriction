@@ -863,11 +863,10 @@ where
     fn left_cumulative_and_probability(
         &self,
         symbol: impl core::borrow::Borrow<Self::Symbol>,
-    ) -> Result<(Probability, Probability::NonZero), ()> {
+    ) -> Option<(Probability, Probability::NonZero)> {
         self.symbol_to_left_cumulative_and_probability
             .get(symbol.borrow())
-            .ok_or(())
-            .map(Clone::clone)
+            .cloned()
     }
 }
 
@@ -890,12 +889,11 @@ where
     fn left_cumulative_and_probability(
         &self,
         symbol: impl core::borrow::Borrow<Self::Symbol>,
-    ) -> Result<(Probability, Probability::NonZero), ()> {
+    ) -> Option<(Probability, Probability::NonZero)> {
         self.symbol_to_left_cumulative_and_probability
             .as_ref()
             .get(*symbol.borrow())
-            .ok_or(())
-            .map(Clone::clone)
+            .cloned()
     }
 }
 

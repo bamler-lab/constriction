@@ -366,7 +366,8 @@ impl Display for EncoderFrontendError {
 impl std::error::Error for EncoderFrontendError {}
 
 impl EncoderFrontendError {
-    fn into_coder_error<BackendError>(self) -> EncoderError<BackendError> {
+    #[inline(always)]
+    const fn into_coder_error<BackendError>(self) -> EncoderError<BackendError> {
         EncoderError::FrontendError(self)
     }
 }

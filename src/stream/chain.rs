@@ -984,7 +984,7 @@ where
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
+            .ok_or(EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
         if self.heads.remaining
             < probability.get().into().into() << (State::BITS - Word::BITS - PRECISION)

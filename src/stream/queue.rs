@@ -488,7 +488,7 @@ where
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .map_err(|()| EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
+            .ok_or(EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
         let scale = self.state.range.get() >> PRECISION;
         // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
