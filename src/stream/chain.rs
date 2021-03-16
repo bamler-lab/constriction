@@ -96,7 +96,7 @@ use crate::{
 ///
 /// ```
 /// use constriction::stream::{models::DefaultLeakyQuantizer, Decode, chain::DefaultChainCoder};
-/// use statrs::distribution::Normal;
+/// use probability::distribution::Gaussian;
 ///
 /// // Step 0 of the compressor: Generate some sample binary data for demonstration purpose.
 /// let original_data = (0..100u32).map(
@@ -108,7 +108,7 @@ use crate::{
 ///
 /// // Step 2 of the compressor: decode data into symbols using some entropy models.
 /// let quantizer = DefaultLeakyQuantizer::new(-100..=100);
-/// let models = (0..50u32).map(|i| quantizer.quantize(Normal::new(i as f64, 10.0).unwrap()));
+/// let models = (0..50u32).map(|i| quantizer.quantize(Gaussian::new(i as f64, 10.0)));
 /// let symbols = coder.decode_symbols(models.clone()).collect::<Result<Vec<_>, _>>().unwrap();
 ///
 /// // Step 3 of the compressor: export the remaining data.
@@ -153,13 +153,13 @@ use crate::{
 ///
 /// ```
 /// # use constriction::stream::{models::DefaultLeakyQuantizer, Decode, chain::DefaultChainCoder};
-/// # use statrs::distribution::Normal;
+/// # use probability::distribution::Gaussian;
 /// # let original_data = (0..100u32).map(
 /// #     |i| i.wrapping_mul(0xad5f_b2ed).wrapping_add(0xed55_4892)
 /// # ).collect::<Vec<_>>();
 /// # let mut coder = DefaultChainCoder::from_binary(original_data.clone()).unwrap();
 /// # let quantizer = DefaultLeakyQuantizer::new(-100..=100);
-/// # let models = (0..50u32).map(|i| quantizer.quantize(Normal::new(i as f64, 10.0).unwrap()));
+/// # let models = (0..50u32).map(|i| quantizer.quantize(Gaussian::new(i as f64, 10.0)));
 /// # let symbols = coder.decode_symbols(models.clone()).collect::<Result<Vec<_>, _>>().unwrap();
 /// # let (remaining_prefix, remaining_suffix) = coder.into_remaining().unwrap();
 /// // ... compressor same as in the previous example above ...
@@ -662,7 +662,7 @@ where
     /// use constriction::stream::{models::LeakyQuantizer, Decode, chain::DefaultChainCoder};
     ///
     /// // Construct two entropy models with 24 bits and 20 bits of precision, respectively.
-    /// let continuous_distribution = statrs::distribution::Normal::new(0.0, 10.0).unwrap();
+    /// let continuous_distribution = probability::distribution::Gaussian::new(0.0, 10.0);
     /// let quantizer24 = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
     /// let quantizer20 = LeakyQuantizer::<_, _, u32, 20>::new(-100..=100);
     /// let distribution24 = quantizer24.quantize(continuous_distribution);
@@ -1047,11 +1047,11 @@ mod test {
     use super::super::models::LeakyQuantizer;
     use super::*;
 
+    use probability::distribution::Gaussian;
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},
         Xoshiro256StarStar,
     };
-    use statrs::distribution::Normal;
 
     use alloc::vec;
 
@@ -1161,10 +1161,9 @@ mod test {
             .map(|_| {
                 let mean = (200.0 / u32::MAX as f64) * rng.next_u32() as f64 - 100.0;
                 let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
-                Normal::new(mean, std_dev)
+                Gaussian::new(mean, std_dev)
             })
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+            .collect::<Vec<_>>();
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-100..=100);
 
         let mut coder =

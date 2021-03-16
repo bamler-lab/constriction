@@ -51,7 +51,7 @@ use crate::{
 /// // `DefaultAnsCoder` is a type alias to `AnsCoder` with sane generic parameters.
 /// let mut ans = DefaultAnsCoder::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-/// let entropy_model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
+/// let entropy_model = quantizer.quantize(probability::distribution::Gaussian::new(0.0, 10.0));
 ///
 /// let symbols = vec![-10, 4, 0, 3];
 /// ans.encode_iid_symbols_reverse(&symbols, &entropy_model).unwrap();
@@ -563,7 +563,7 @@ where
     /// let symbols = vec![8, -12, 0, 7];
     /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
     /// let model =
-    ///     quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
+    ///     quantizer.quantize(probability::distribution::Gaussian::new(0.0, 10.0));
     /// ans.encode_iid_symbols(&symbols, &model).unwrap();
     ///
     /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
@@ -1171,11 +1171,11 @@ mod tests {
     extern crate std;
     use std::dbg;
 
+    use probability::distribution::{Gaussian, Inverse};
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},
         Xoshiro256StarStar,
     };
-    use statrs::distribution::{InverseCDF, Normal};
 
     #[test]
     fn compress_none() {
@@ -1217,7 +1217,7 @@ mod tests {
 
         let mut encoder = DefaultAnsCoder::new();
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
-        let model = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
+        let model = quantizer.quantize(Gaussian::new(3.2, 5.1));
 
         // We don't reuse the same encoder for decoding because we want to test
         // if exporting and re-importing of compressed data works.
@@ -1323,10 +1323,10 @@ mod tests {
             let mean = (200.0 / u32::MAX as f64) * rng.next_u32() as f64 - 100.0;
             let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
             let quantile = (rng.next_u32() as f64 + 0.5) / (1u64 << 32) as f64;
-            let dist = Normal::new(mean, std_dev).unwrap();
+            let dist = Gaussian::new(mean, std_dev);
             let symbol = core::cmp::max(
                 -127,
-                core::cmp::min(127, dist.inverse_cdf(quantile).round() as i32),
+                core::cmp::min(127, dist.inverse(quantile).round() as i32),
             );
 
             symbols_gaussian.push(symbol);
@@ -1363,9 +1363,7 @@ mod tests {
 
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
         ans.encode_symbols_reverse(symbols_gaussian.iter().zip(&means).zip(&stds).map(
-            |((&symbol, &mean), &core)| {
-                (symbol, quantizer.quantize(Normal::new(mean, core).unwrap()))
-            },
+            |((&symbol, &mean), &core)| (symbol, quantizer.quantize(Gaussian::new(mean, core))),
         ))
         .unwrap();
         dbg!(ans.num_valid_bits());
@@ -1379,7 +1377,7 @@ mod tests {
                 means
                     .iter()
                     .zip(&stds)
-                    .map(|(&mean, &core)| quantizer.quantize(Normal::new(mean, core).unwrap())),
+                    .map(|(&mean, &core)| quantizer.quantize(Gaussian::new(mean, core))),
             )
             .collect::<Result<Vec<_>, CoderError<Infallible, Infallible>>>()
             .unwrap();
@@ -1400,7 +1398,7 @@ mod tests {
         const SYMBOLS_PER_CHUNK: usize = 100;
 
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-        let model = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
+        let model = quantizer.quantize(Gaussian::new(0.0, 10.0));
 
         let mut encoder = DefaultAnsCoder::new();
 

@@ -489,7 +489,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// // Usage example:
 /// let encoder = DefaultAnsCoder::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
-/// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
+/// let model = quantizer.quantize(probability::distribution::Gaussian::new(0.0, 50.0));
 /// encode_and_decode(encoder, model);
 /// ```
 ///
@@ -554,7 +554,7 @@ pub trait IntoDecoder<const PRECISION: usize>: Encode<PRECISION> {
 /// // Usage example:
 /// let mut encoder = DefaultAnsCoder::new();
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=200);
-/// let model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 50.0).unwrap());
+/// let model = quantizer.quantize(probability::distribution::Gaussian::new(0.0, 50.0));
 /// encode_decode_encode(&mut encoder, model);
 /// ```
 pub trait AsDecoder<'a, const PRECISION: usize>: Encode<PRECISION> + 'a {

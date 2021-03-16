@@ -21,13 +21,13 @@
 //!     },
 //! };
 //! use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-//! use statrs::distribution::Normal;
+//! use probability::distribution::Gaussian;
 //! use std::{fs::File, io::{BufReader, BufWriter}};
 //!
 //! fn encode_to_file_on_the_fly(amt: u32) {
 //!     // Some simple entropy model, just for demonstration purpose.
 //!     let quantizer = DefaultLeakyQuantizer::new(-256..=255);
-//!     let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
+//!     let model = quantizer.quantize(Gaussian::new(0.0, 100.0));
 //!
 //!     // Some long-ish sequence of test symbols, made up in a reproducible way.
 //!     let symbols = (0..amt).map(|i| {
@@ -55,7 +55,7 @@
 //! fn decode_from_file_on_the_fly(amt: u32) {
 //!     // Same toy entropy model that we used for encoding.
 //!     let quantizer = DefaultLeakyQuantizer::new(-256..=255);
-//!     let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
+//!     let model = quantizer.quantize(Gaussian::new(0.0, 100.0));
 //!
 //!     // Open the file and iterate over its contents in `u32` words (wrapping it in a `BufReader`
 //!     // is again just for good practice). We're deliberately being pedantic about the errors
@@ -1009,7 +1009,7 @@ where
 mod tests {
     use crate::stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-    use statrs::distribution::Normal;
+    use probability::distribution::Gaussian;
     use std::{
         fs::File,
         io::{BufReader, BufWriter},
@@ -1019,7 +1019,7 @@ mod tests {
     fn decode_on_the_fly_stack() {
         fn encode_to_file(amt: u32) {
             let quantizer = DefaultLeakyQuantizer::new(-256..=255);
-            let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
+            let model = quantizer.quantize(Gaussian::new(0.0, 100.0));
 
             let symbols = (0..amt).map(|i| {
                 let cheap_hash = i.wrapping_mul(0x6979_E2F3).wrapping_add(0x0059_0E91);
@@ -1038,7 +1038,7 @@ mod tests {
 
         fn decode_from_file_on_the_fly(amt: u32) {
             let quantizer = DefaultLeakyQuantizer::new(-256..=255);
-            let model = quantizer.quantize(Normal::new(0.0, 100.0).unwrap());
+            let model = quantizer.quantize(Gaussian::new(0.0, 100.0));
 
             let mut file = BufReader::new(File::open("backend_stack_example.tmp").unwrap());
             let word_iterator = std::iter::from_fn(move || match file.read_u32::<LittleEndian>() {

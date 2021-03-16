@@ -6,11 +6,6 @@
 //! # TODO
 //!
 //! - Add adapters for discrete probability distributions (e.g., binomial, geometric).
-//! - Check if there's a better crate to build upon than `statrs`, which seems to have a lot
-//!   of missing implementations for simple things (like most `InverseCDF` implementations)
-//!   and which is not generic over the symbol type, thus making CDFs of categorical
-//!   distributions awkward.
-//!   - crate `probability` looks better (but also uses floats for CDFs of discrete distributions)
 //!
 //! [`Code`]: crate::Code
 
@@ -19,7 +14,7 @@ pub mod lookup;
 use alloc::vec::Vec;
 use core::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::RangeInclusive};
 use num::{cast::AsPrimitive, traits::WrappingSub, Float, PrimInt};
-use statrs::distribution::{InverseCDF, Univariate};
+use probability::distribution::{Distribution, Inverse};
 
 use crate::{wrapping_pow2, BitArray};
 
@@ -139,11 +134,11 @@ where
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-5..=20);
 ///
 /// // Quantize a normal distribution with mean 8.3 and standard deviation 4.1.
-/// let continuous_distribution1 = statrs::distribution::Normal::new(8.3, 4.1).unwrap();
+/// let continuous_distribution1 = probability::distribution::Gaussian::new(8.3, 4.1);
 /// let discrete_distribution1 = quantizer.quantize(continuous_distribution1);
 ///
 /// // You can reuse the same quantizer for more than one distribution.
-/// let continuous_distribution2 = statrs::distribution::Normal::new(-1.4, 2.7).unwrap();
+/// let continuous_distribution2 = probability::distribution::Gaussian::new(-1.4, 2.7);
 /// let discrete_distribution2 = quantizer.quantize(continuous_distribution2);
 ///
 /// // Use the discrete distributions with a `Code`.
@@ -230,7 +225,7 @@ where
         distribution: CD,
     ) -> LeakilyQuantizedDistribution<'_, F, Symbol, Probability, CD, PRECISION>
     where
-        CD: Univariate<F, F> + InverseCDF<F>,
+        CD: Inverse<Value = f64>,
     {
         LeakilyQuantizedDistribution {
             inner: distribution,
@@ -253,22 +248,22 @@ pub struct LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, const PR
 impl<'a, F, Symbol, Probability, CD, const PRECISION: usize> EntropyModel<PRECISION>
     for LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, PRECISION>
 where
-    Symbol: PrimInt + AsPrimitive<Probability> + Into<F> + WrappingSub,
-    F: Float + AsPrimitive<Symbol> + AsPrimitive<Probability>,
-    Probability: BitArray + Into<F>,
-    CD: Univariate<F, F>,
+    //     Symbol: PrimInt + AsPrimitive<Probability> + Into<F> + WrappingSub,
+    //     F: Float + AsPrimitive<Probability>,
+    Probability: BitArray,
+    //     CD: Distribution<Value = f64>,
 {
     type Probability = Probability;
     type Symbol = Symbol;
 }
 
-impl<'a, F, Symbol, Probability, CD, const PRECISION: usize> EncoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, PRECISION>
+impl<'a, Symbol, Probability, CD, const PRECISION: usize> EncoderModel<PRECISION>
+    for LeakilyQuantizedDistribution<'a, f64, Symbol, Probability, CD, PRECISION>
 where
-    Symbol: PrimInt + AsPrimitive<Probability> + Into<F> + WrappingSub,
-    F: Float + AsPrimitive<Symbol> + AsPrimitive<Probability>,
-    Probability: BitArray + Into<F>,
-    CD: Univariate<F, F>,
+    f64: AsPrimitive<Symbol> + AsPrimitive<Probability>,
+    Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub,
+    Probability: BitArray + Into<f64>,
+    CD: Distribution<Value = f64>,
 {
     /// Performs (one direction of) the quantization.
     ///
@@ -283,8 +278,6 @@ where
         &self,
         symbol: impl Borrow<Symbol>,
     ) -> Option<(Probability, Probability::NonZero)> {
-        let half = F::one() / (F::one() + F::one());
-
         let min_symbol_inclusive = self.quantizer.min_symbol_inclusive;
         let max_symbol_inclusive = self.quantizer.max_symbol_inclusive;
         let free_weight = self.quantizer.free_weight;
@@ -301,7 +294,7 @@ where
             Probability::zero()
         } else {
             let non_leaky: Probability =
-                (free_weight * self.inner.cdf((*symbol.borrow()).into() - half)).as_();
+                (free_weight * self.inner.distribution((*symbol.borrow()).into() - 0.5)).as_();
             non_leaky + slack
         };
 
@@ -314,7 +307,7 @@ where
             max_probability.wrapping_add(&Probability::one())
         } else {
             let non_leaky: Probability =
-                (free_weight * self.inner.cdf((*symbol.borrow()).into() + half)).as_();
+                (free_weight * self.inner.distribution((*symbol.borrow()).into() + 0.5)).as_();
             non_leaky + slack + Probability::one()
         };
 
@@ -327,13 +320,13 @@ where
     }
 }
 
-impl<'a, F, Symbol, Probability, CD, const PRECISION: usize> DecoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, PRECISION>
+impl<'a, Symbol, Probability, CD, const PRECISION: usize> DecoderModel<PRECISION>
+    for LeakilyQuantizedDistribution<'a, f64, Symbol, Probability, CD, PRECISION>
 where
-    Symbol: PrimInt + AsPrimitive<Probability> + Into<F> + WrappingSub,
-    F: Float + AsPrimitive<Symbol> + AsPrimitive<Probability>,
-    Probability: BitArray + Into<F>,
-    CD: Univariate<F, F> + InverseCDF<F>,
+    f64: AsPrimitive<Symbol> + AsPrimitive<Probability>,
+    Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub,
+    Probability: BitArray + Into<f64>,
+    CD: Inverse<Value = f64>,
 {
     fn quantile_function(
         &self,
@@ -344,8 +337,7 @@ where
         // of this method.
         assert!(quantile <= max_probability);
 
-        let half = F::one() / (F::one() + F::one());
-        let inverse_denominator = F::one() / (max_probability.into() + F::one());
+        let inverse_denominator = 1.0 / (max_probability.into() + 1.0);
 
         let min_symbol_inclusive = self.quantizer.min_symbol_inclusive;
         let max_symbol_inclusive = self.quantizer.max_symbol_inclusive;
@@ -354,7 +346,7 @@ where
         // Make an initial guess for the inverse of the leaky CDF.
         let mut symbol: Self::Symbol = self
             .inner
-            .inverse_cdf((quantile.into() + half) * inverse_denominator)
+            .inverse((quantile.into() + 0.5) * inverse_denominator)
             .as_();
 
         let mut left_sided_cumulative = if symbol <= min_symbol_inclusive {
@@ -367,7 +359,8 @@ where
                 symbol = max_symbol_inclusive;
             }
 
-            let non_leaky: Probability = (free_weight * self.inner.cdf(symbol.into() - half)).as_();
+            let non_leaky: Probability =
+                (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
             non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_()
         };
 
@@ -386,7 +379,7 @@ where
                 }
 
                 let non_leaky: Probability =
-                    (free_weight * self.inner.cdf(symbol.into() - half)).as_();
+                    (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
                 left_sided_cumulative =
                     non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_();
                 if left_sided_cumulative <= quantile {
@@ -409,7 +402,7 @@ where
                 }
 
                 let non_leaky: Probability =
-                    (free_weight * self.inner.cdf(symbol.into() + half)).as_();
+                    (free_weight * self.inner.distribution(symbol.into() + 0.5)).as_();
                 let right_sided_cumulative = non_leaky
                     + symbol.wrapping_sub(&min_symbol_inclusive).as_()
                     + Probability::one();
@@ -1027,7 +1020,7 @@ struct LookupTable {}
 mod tests {
     use super::*;
 
-    use statrs::distribution::Normal;
+    use probability::distribution::Gaussian;
 
     #[test]
     fn leaky_quantized_normal() {
@@ -1035,7 +1028,7 @@ mod tests {
 
         for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
             for &mean in &[-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0] {
-                let distribution = Normal::new(mean, std_dev).unwrap();
+                let distribution = Gaussian::new(mean, std_dev);
                 test_entropy_model(quantizer.quantize(distribution), -127..128);
             }
         }

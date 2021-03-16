@@ -79,11 +79,11 @@
 //!
 //! In this example, we'll encode some symbols using a quantized Gaussian distribution as
 //! entropy model, with a different mean and standard deviation of the Gaussian for each
-//! symbol so that the example is not too simplistic. We'll use the `statrs` crate for the
-//! Gaussian distributions, so also add the following dependency to your `Cargo.toml`:
+//! symbol so that the example is not too simplistic. We'll use the `probability` crate for
+//! the Gaussian distributions, so also add the following dependency to your `Cargo.toml`:
 //!
 //! ```toml
-//! statrs = "0.13"
+//! probability = "0.17"
 //! ```
 //!
 //! Now, let's encode (i.e., compress) some symbols. We'll use an Asymmetric Numeral Systems
@@ -93,7 +93,7 @@
 //!
 //! ```
 //! use constriction::stream::{stack::DefaultAnsCoder, models::DefaultLeakyQuantizer};
-//! use statrs::distribution::Normal;
+//! use probability::distribution::Gaussian;
 //!
 //! fn encode_sample_data() -> Vec<u32> {
 //!     // Create an empty ANS Coder with default word and state size:
@@ -112,7 +112,7 @@
 //!     // Encode the data (in reverse order, since ANS Coding operates as a stack):
 //!     coder.encode_symbols_reverse(
 //!         symbols.iter().zip(&means).zip(&stds).map(
-//!             |((&sym, &mean), &std)| (sym, quantizer.quantize(Normal::new(mean, std).unwrap()))
+//!             |((&sym, &mean), &std)| (sym, quantizer.quantize(Gaussian::new(mean, std)))
 //!     )).unwrap();
 //!
 //!     // Retrieve the compressed representation (filling it up to full words with zero bits).
@@ -128,7 +128,7 @@
 //!
 //! ```
 //! use constriction::stream::{stack::DefaultAnsCoder, models::DefaultLeakyQuantizer, Decode};
-//! use statrs::distribution::Normal;
+//! use probability::distribution::Gaussian;
 //!
 //! fn decode_sample_data(compressed: Vec<u32>) -> Vec<i32> {
 //!     // Create an ANS Coder with default word and state size from the compressed data:
@@ -144,7 +144,7 @@
 //!     // Decode the data:
 //!     coder.decode_symbols(
 //!         means.iter().zip(&stds).map(
-//!             |(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())
+//!             |(&mean, &std)| quantizer.quantize(Gaussian::new(mean, std))
 //!     )).collect::<Result<Vec<_>, _>>().unwrap()
 //! }
 //!
@@ -190,7 +190,7 @@
 //!     queue::{DefaultRangeEncoder, DefaultRangeDecoder},
 //!     Encode, Decode,
 //! };
-//! use statrs::distribution::Normal;
+//! use probability::distribution::Gaussian;
 //!
 //! fn encode_sample_data() -> Vec<u32> {
 //!     // Create an empty Range Encoder with default word and state size:
@@ -205,7 +205,7 @@
 //!     // Encode the data (this time in normal order, since Range Coding is a queue):
 //!     encoder.encode_symbols(
 //!         symbols.iter().zip(&means).zip(&stds).map(
-//!             |((&sym, &mean), &std)| (sym, quantizer.quantize(Normal::new(mean, std).unwrap()))
+//!             |((&sym, &mean), &std)| (sym, quantizer.quantize(Gaussian::new(mean, std)))
 //!     )).unwrap();
 //!
 //!     // Retrieve the (sealed up) compressed representation.
@@ -224,7 +224,7 @@
 //!     // Decode the data:
 //!     decoder.decode_symbols(
 //!         means.iter().zip(&stds).map(
-//!             |(&mean, &std)| quantizer.quantize(Normal::new(mean, std).unwrap())
+//!             |(&mean, &std)| quantizer.quantize(Gaussian::new(mean, std))
 //!     )).collect::<Result<Vec<_>, _>>().unwrap()
 //! }
 //!
@@ -513,7 +513,7 @@ pub trait Seek: PosSeek {
     /// // Construct a `DefaultAnsCoder` for encoding and an entropy model:
     /// let mut encoder = DefaultAnsCoder::new();
     /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-    /// let entropy_model = quantizer.quantize(statrs::distribution::Normal::new(0.0, 10.0).unwrap());
+    /// let entropy_model = quantizer.quantize(probability::distribution::Gaussian::new(0.0, 10.0));
     ///
     /// // Encode two chunks of symbols and take a snapshot in-between:
     /// encoder.encode_iid_symbols_reverse(-100..40, &entropy_model).unwrap();

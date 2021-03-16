@@ -3,9 +3,10 @@
 use std::{cmp::max, cmp::min, ops::RangeInclusive};
 
 use num::cast::AsPrimitive;
-use rand::prelude::*;
-use rand_pcg::Pcg64Mcg;
-use statrs::distribution::Normal;
+use probability::{
+    distribution::{Gaussian, Sample},
+    source::{Source, Xorshift128Plus},
+};
 
 use constriction::{
     stream::{models::LeakyQuantizer, queue, stack, Decode, Encode, IntoDecoder},
@@ -15,14 +16,14 @@ use constriction::{
 fn make_random_normal(
     amt: usize,
     domain: RangeInclusive<i32>,
-) -> impl Iterator<Item = (i32, Normal)> + DoubleEndedIterator + Clone {
+) -> impl Iterator<Item = (i32, Gaussian)> + DoubleEndedIterator + Clone {
     (0..amt).map(move |i| {
         // Generate random numbers that can also be reproduced when iterating in reverse direction.
-        let mut rng = Pcg64Mcg::new(i as u128);
+        let mut rng = Xorshift128Plus::new([i as u64 + 123, i as u64 + 456]);
 
-        let mean = (200.0 / u32::MAX as f64) * rng.next_u32() as f64 - 100.0;
-        let std_dev = (30.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.01;
-        let distribution = Normal::new(mean, std_dev).expect("Parameters are valid.");
+        let mean = 200.0 * rng.read_f64() - 100.0;
+        let std_dev = 30.0 * rng.read_f64() + 0.01;
+        let distribution = Gaussian::new(mean, std_dev);
 
         let sample = distribution.sample(&mut rng).round() as i32;
         let symbol = max(min(sample, *domain.end()), *domain.start());

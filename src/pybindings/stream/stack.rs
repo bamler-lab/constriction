@@ -12,7 +12,7 @@ use crate::{
     CoderError, EncoderFrontendError, UnwrapInfallible,
 };
 
-use statrs::distribution::Normal;
+use probability::distribution::Gaussian;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<AnsCoder>()?;
@@ -230,8 +230,11 @@ impl AnsCoder {
                 .zip(means.iter())
                 .zip(stds.iter())
                 .map(|((&symbol, &mean), &std)| {
-                    Normal::new(mean, std)
-                        .map(|distribution| (symbol, quantizer.quantize(distribution)))
+                    if std > 0.0 && std.is_finite() && mean.is_finite() {
+                        Ok((symbol, quantizer.quantize(Gaussian::new(mean, std))))
+                    } else {
+                        Err(())
+                    }
                 }),
         )?;
 
@@ -298,7 +301,11 @@ impl AnsCoder {
         let symbols = self
             .inner
             .try_decode_symbols(means.iter()?.zip(stds.iter()?).map(|(&mean, &std)| {
-                Normal::new(mean, std).map(|distribution| quantizer.quantize(distribution))
+                if std > 0.0 && std.is_finite() && mean.is_finite() {
+                    Ok(quantizer.quantize(Gaussian::new(mean, std)))
+                } else {
+                    Err(())
+                }
             }))
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -380,17 +387,12 @@ impl AnsCoder {
     }
 }
 
-impl<CodingError: Error + Into<PyErr>, ModelError: Error>
-    From<TryCodingError<CodingError, ModelError>> for PyErr
-{
+impl<CodingError: Into<PyErr>, ModelError> From<TryCodingError<CodingError, ModelError>> for PyErr {
     fn from(err: TryCodingError<CodingError, ModelError>) -> Self {
         match err {
             crate::stream::TryCodingError::CodingError(err) => err.into(),
-            crate::stream::TryCodingError::InvalidEntropyModel(err) => {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "Invalid parameters for entropy model: {}",
-                    err
-                ))
+            crate::stream::TryCodingError::InvalidEntropyModel(_) => {
+                pyo3::exceptions::PyValueError::new_err("Invalid parameters for entropy model")
             }
         }
     }

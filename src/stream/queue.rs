@@ -960,11 +960,11 @@ mod tests {
     use super::super::models::{Categorical, LeakyQuantizer};
     use super::*;
 
+    use probability::distribution::{Gaussian, Inverse};
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},
         Xoshiro256StarStar,
     };
-    use statrs::distribution::{InverseCDF, Normal};
 
     #[test]
     fn compress_none() {
@@ -1006,7 +1006,7 @@ mod tests {
 
         let mut encoder = DefaultRangeEncoder::new();
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
-        let model = quantizer.quantize(Normal::new(3.2, 5.1).unwrap());
+        let model = quantizer.quantize(Gaussian::new(3.2, 5.1));
 
         encoder.encode_iid_symbols(symbols.clone(), &model).unwrap();
         let compressed = encoder.into_compressed().unwrap();
@@ -1104,10 +1104,10 @@ mod tests {
             let mean = (200.0 / u32::MAX as f64) * rng.next_u32() as f64 - 100.0;
             let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
             let quantile = (rng.next_u32() as f64 + 0.5) / (1u64 << 32) as f64;
-            let dist = Normal::new(mean, std_dev).unwrap();
+            let dist = Gaussian::new(mean, std_dev);
             let symbol = core::cmp::max(
                 -127,
-                core::cmp::min(127, dist.inverse_cdf(quantile).round() as i32),
+                core::cmp::min(127, dist.inverse(quantile).round() as i32),
             );
 
             symbols_gaussian.push(symbol);
@@ -1146,9 +1146,7 @@ mod tests {
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
         encoder
             .encode_symbols(symbols_gaussian.iter().zip(&means).zip(&stds).map(
-                |((&symbol, &mean), &core)| {
-                    (symbol, quantizer.quantize(Normal::new(mean, core).unwrap()))
-                },
+                |((&symbol, &mean), &core)| (symbol, quantizer.quantize(Gaussian::new(mean, core))),
             ))
             .unwrap();
         dbg!(encoder.num_bits());
@@ -1164,7 +1162,7 @@ mod tests {
                 means
                     .iter()
                     .zip(&stds)
-                    .map(|(&mean, &core)| quantizer.quantize(Normal::new(mean, core).unwrap())),
+                    .map(|(&mean, &core)| quantizer.quantize(Gaussian::new(mean, core))),
             )
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -1181,7 +1179,7 @@ mod tests {
         const SYMBOLS_PER_CHUNK: usize = 100;
 
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
-        let model = quantizer.quantize(Normal::new(0.0, 10.0).unwrap());
+        let model = quantizer.quantize(Gaussian::new(0.0, 10.0));
 
         let mut encoder = DefaultRangeEncoder::new();
 
