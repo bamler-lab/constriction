@@ -9,7 +9,11 @@ pub mod lookup;
 
 use alloc::vec::Vec;
 use core::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::RangeInclusive};
-use num::{cast::AsPrimitive, traits::WrappingSub, Float, PrimInt};
+use num::{
+    cast::AsPrimitive,
+    traits::{WrappingAdd, WrappingSub},
+    Float, PrimInt,
+};
 use probability::distribution::{Distribution, Inverse};
 
 use crate::{wrapping_pow2, BitArray};
@@ -193,7 +197,7 @@ impl<F, Symbol, Probability, const PRECISION: usize>
     LeakyQuantizer<F, Symbol, Probability, PRECISION>
 where
     Probability: BitArray + Into<F>,
-    Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub,
+    Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
     F: Float,
 {
     /// Constructs a "leaky" quantizer defined on a finite domain.
@@ -236,7 +240,7 @@ impl<F, Symbol, Probability, const PRECISION: usize>
     LeakyQuantizer<F, Symbol, Probability, PRECISION>
 where
     Probability: BitArray + Into<F>,
-    Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub,
+    Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
     F: Float,
 {
     /// Quantizes the given continuous probability distribution.
@@ -346,7 +350,7 @@ impl<'a, Symbol, Probability, CD, const PRECISION: usize> DecoderModel<PRECISION
     for LeakilyQuantizedDistribution<'a, f64, Symbol, Probability, CD, PRECISION>
 where
     f64: AsPrimitive<Probability>,
-    Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub,
+    Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub + WrappingAdd,
     Probability: BitArray + Into<f64>,
     CD: Inverse,
     CD::Value: AsPrimitive<Symbol>,
@@ -391,51 +395,149 @@ where
         // `right_sided_cumulative != left_sided_cumulative`.
         let right_sided_cumulative = if left_sided_cumulative > quantile {
             // Our initial guess for `symbol` was too high. Reduce it until we're good.
-            loop {
-                let right_sided_cumulative = left_sided_cumulative;
-                symbol = symbol - Self::Symbol::one();
+            let mut step = Self::Symbol::one(); // `diff` will always be a power of 2.
+            symbol = symbol - step;
+            let mut found_lower_bound = false;
 
-                if symbol == min_symbol_inclusive {
+            loop {
+                let old_left_sided_cumulative = left_sided_cumulative;
+
+                if symbol == min_symbol_inclusive && step <= Symbol::one() {
                     left_sided_cumulative = Probability::zero();
-                    // SAFETY: `right_sided_cumulative > quantile >= 0 = left_sided_cumulative`
-                    break right_sided_cumulative;
+                    // This can only be reached from a downward search, so `old_left_sided_cumulative`
+                    // is the right sided cumulative since the step size is one.
+                    // SAFETY: `old_left_sided_cumulative > quantile >= 0 = left_sided_cumulative`
+                    break old_left_sided_cumulative;
                 }
 
                 let non_leaky: Probability =
                     (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
                 left_sided_cumulative =
                     non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_();
+
                 if left_sided_cumulative <= quantile {
-                    // SAFETY: `right_sided_cumulative > quantile >= left_sided_cumulative`
-                    break right_sided_cumulative;
+                    found_lower_bound = true;
+                    // We found a lower bound, so we're either done or we have to do a binary
+                    // search now.
+                    if step <= Symbol::one() {
+                        let right_sided_cumulative = if symbol == max_symbol_inclusive {
+                            Probability::max_value().wrapping_add(&Probability::one())
+                        } else {
+                            let non_leaky: Probability =
+                                (free_weight * self.inner.distribution(symbol.into() + 0.5)).as_();
+                            (non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_())
+                                .wrapping_add(&Probability::one())
+                        };
+                        // SAFETY: `old_left_sided_cumulative > quantile >= left_sided_cumulative`
+                        break right_sided_cumulative;
+                    } else {
+                        step = step >> 1;
+                        // The following addition can't overflow because we're in the binary search phase.
+                        symbol = symbol + step;
+                    }
+                } else if found_lower_bound {
+                    // We're in the binary search phase, so all following guesses will be within bounds.
+                    if step > Symbol::one() {
+                        step = step >> 1
+                    }
+                    symbol = symbol - step;
+                } else {
+                    // We're still in the downward search phase with exponentially increasing step size.
+                    if step << 1 != Symbol::zero() {
+                        step = step << 1;
+                    }
+
+                    symbol = loop {
+                        let new_symbol = symbol.wrapping_sub(&step);
+                        if new_symbol >= min_symbol_inclusive && new_symbol <= symbol {
+                            // We can't reach this point if the subtraction wrapped because that would
+                            // mean that `step = 1` and therefore the old `symbol` was `Symbol::min_value()`,
+                            // so se would have ended up in the `left_sided_cumulative <= quantile` branch.
+                            break new_symbol;
+                        }
+                        step = step >> 1;
+                    };
                 }
             }
         } else {
             // Our initial guess for `symbol` was either exactly right or too low.
             // Check validity of the right sided cumulative. If it isn't valid,
             // keep increasing `symbol` until it is.
+            let mut step = Self::Symbol::one(); // `diff` will always be a power of 2.
+            let mut found_upper_bound = false;
+
             loop {
-                if symbol == max_symbol_inclusive {
-                    // SAFETY: we have to manually check here.
+                let right_sided_cumulative = if symbol == max_symbol_inclusive {
                     let right_sided_cumulative = max_probability.wrapping_add(&Probability::one());
-                    if right_sided_cumulative == left_sided_cumulative {
-                        panic!("Invalid underlying continuous probability distribution.");
+                    if step <= Symbol::one() {
+                        let non_leaky: Probability =
+                            (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
+                        left_sided_cumulative =
+                            non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_();
+
+                        // SAFETY: we have to manually check here.
+                        if right_sided_cumulative == left_sided_cumulative {
+                            panic!("Invalid underlying probability distribution.");
+                        }
+
+                        break right_sided_cumulative;
+                    } else {
+                        right_sided_cumulative
                     }
-                    break right_sided_cumulative;
-                }
+                } else {
+                    let non_leaky: Probability =
+                        (free_weight * self.inner.distribution(symbol.into() + 0.5)).as_();
+                    (non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_())
+                        .wrapping_add(&Probability::one())
+                };
 
-                let non_leaky: Probability =
-                    (free_weight * self.inner.distribution(symbol.into() + 0.5)).as_();
-                let right_sided_cumulative = non_leaky
-                    + symbol.wrapping_sub(&min_symbol_inclusive).as_()
-                    + Probability::one();
-                if right_sided_cumulative > quantile {
-                    // SAFETY: we have `left_sided_cumulative <= quantile < right_sided_sided_cumulative`
-                    break right_sided_cumulative;
-                }
+                if right_sided_cumulative > quantile
+                    || right_sided_cumulative == Probability::zero()
+                {
+                    found_upper_bound = true;
+                    // We found an upper bound, so we're either done or we have to do a binary
+                    // search now.
+                    if step <= Symbol::one() {
+                        left_sided_cumulative = if symbol == min_symbol_inclusive {
+                            Probability::zero()
+                        } else {
+                            let non_leaky: Probability =
+                                (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
+                            non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_()
+                        };
 
-                left_sided_cumulative = right_sided_cumulative;
-                symbol = symbol + Self::Symbol::one();
+                        if left_sided_cumulative <= quantile || symbol == min_symbol_inclusive {
+                            // SAFETY: we have `left_sided_cumulative <= quantile < right_sided_sided_cumulative`
+                            break right_sided_cumulative;
+                        }
+                    } else {
+                        step = step >> 1;
+                    }
+                    // The following subtraction can't overflow because we're in the binary search phase.
+                    symbol = symbol - step;
+                } else if found_upper_bound {
+                    // We're in the binary search phase, so all following guesses will be within bounds.
+                    if step > Symbol::one() {
+                        step = step >> 1
+                    }
+                    symbol = symbol + step;
+                } else {
+                    // We're still in the upward search phase with exponentially increasing step size.
+                    if step << 1 != Symbol::zero() {
+                        step = step << 1;
+                    }
+
+                    symbol = loop {
+                        let new_symbol = symbol.wrapping_add(&step);
+                        if new_symbol <= max_symbol_inclusive && new_symbol >= symbol {
+                            // We can't reach this point if the addition wrapped because that would
+                            // mean that `step = 1` and therefore the old `symbol` was `Symbol::max_value()`,
+                            // so se would have ended up in the `symbol == max_symbol_inclusive` branch.
+                            break new_symbol;
+                        }
+                        step = step >> 1;
+                    };
+                }
             }
         };
 
@@ -1059,7 +1161,7 @@ mod tests {
 
     #[test]
     fn leaky_quantized_binomial() {
-        for &n in &[1, 2, 10, 100, 1000] {
+        for &n in &[2, 10, 100, 1000, 10_000] {
             for &p in &[1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9] {
                 if n < 1000 || p >= 0.1 {
                     // In the excluded situations, `<Binomial as Inverse>::inverse` currently doesn't terminate.
