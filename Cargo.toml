@@ -22,21 +22,21 @@ std = []
 pybindings = ["ndarray", "numpy", "pyo3"]
 
 [dependencies]
-hashbrown = "0.9"
-num = "0.3.1"
+hashbrown = "0.11"
+num = "0.4"
 probability = "0.17"
 smallvec = "1.6.1"
 
-ndarray = {version = "0.13", optional = true}
-numpy = {version = "0.12", optional = true}
-pyo3 = {version = "0.12.3", features = ["extension-module"], optional = true}
+ndarray = {version = "0.14", optional = true}
+numpy = {version = "0.13", optional = true}
+pyo3 = {version = "0.13", features = ["extension-module"], optional = true}
 
 [dev-dependencies]
 byteorder = "1.4.2"
 criterion = "0.3"
-rand = "0.7.3"
-rand_pcg = "0.2"
-rand_xoshiro = "0.4"
+rand = "0.8.3"
+rand_pcg = "0.3"
+rand_xoshiro = "0.6"
 
 [[bench]]
 harness = false
