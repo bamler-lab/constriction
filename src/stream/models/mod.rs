@@ -691,6 +691,8 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
 
         // Distribute remaining weight evenly among symbols with highest wins.
         while remaining_free_weight != Probability::zero() {
+            // We can't use `sort_unstable_by` here because we want the result to be reproducible
+            // even across updates of the standard library.
             slots.sort_by(|a, b| b.win.partial_cmp(&a.win).unwrap());
             let batch_size = core::cmp::min(remaining_free_weight.as_(), slots.len());
             for slot in &mut slots[..batch_size] {
@@ -740,7 +742,7 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
             buyer.loss = -buyer.prob * (-1.0f64 / buyer.weight.into()).ln_1p();
         }
 
-        slots.sort_by_key(|slot| slot.original_index);
+        slots.sort_unstable_by_key(|slot| slot.original_index);
 
         Ok(Self::from_nonzero_fixed_point_probabilities(
             slots.into_iter().map(|slot| slot.weight),

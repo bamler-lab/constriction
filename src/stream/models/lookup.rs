@@ -1040,7 +1040,10 @@ where
         );
 
         let len = left_sided_cumulative_and_symbol.len();
-        left_sided_cumulative_and_symbol[..len - 1].sort_by_key(|&(cumulative, _)| cumulative);
+        // Unstable sort still yields a unique result because the cumulatives are strictly
+        // increasing since the probabilities are `NonZero`s.
+        left_sided_cumulative_and_symbol[..len - 1]
+            .sort_unstable_by_key(|&(cumulative, _)| cumulative);
 
         let quantile_to_index = fill_decoder_table::<_, _, _, PRECISION>(
             left_sided_cumulative_and_symbol
