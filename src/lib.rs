@@ -335,10 +335,10 @@ impl<FrontendError> CoderError<FrontendError, Infallible> {
     }
 }
 
-type EncoderError<BackendError> = CoderError<EncoderFrontendError, BackendError>;
+type DefaultEncoderError<BackendError> = CoderError<DefaultEncoderFrontendError, BackendError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EncoderFrontendError {
+pub enum DefaultEncoderFrontendError {
     /// Tried to encode a symbol with zero probability under the used entropy model.
     ///
     /// This error can usually be avoided by using a "leaky" distribution, as the
@@ -350,7 +350,7 @@ pub enum EncoderFrontendError {
     ImpossibleSymbol,
 }
 
-impl Display for EncoderFrontendError {
+impl Display for DefaultEncoderFrontendError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::ImpossibleSymbol => write!(
@@ -362,12 +362,12 @@ impl Display for EncoderFrontendError {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for EncoderFrontendError {}
+impl std::error::Error for DefaultEncoderFrontendError {}
 
-impl EncoderFrontendError {
+impl DefaultEncoderFrontendError {
     #[inline(always)]
-    const fn into_coder_error<BackendError>(self) -> EncoderError<BackendError> {
-        EncoderError::Frontend(self)
+    const fn into_coder_error<BackendError>(self) -> DefaultEncoderError<BackendError> {
+        DefaultEncoderError::Frontend(self)
     }
 }
 

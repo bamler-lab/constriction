@@ -6,7 +6,7 @@ use num::{
 };
 
 use super::{Codebook, DecoderCodebook, EncoderCodebook, SymbolCodeError};
-use crate::{CoderError, EncoderError};
+use crate::{CoderError, DefaultEncoderError};
 
 /// Zero-sized marker struct for Exponential-Golomb Coding.
 ///
@@ -67,7 +67,7 @@ impl<N: Unsigned + PrimInt + WrappingAdd + WrappingSub> EncoderCodebook for ExpG
         &self,
         symbol: impl Borrow<Self::Symbol>,
         mut emit: impl FnMut(bool) -> Result<(), BackendError>,
-    ) -> Result<(), EncoderError<BackendError>> {
+    ) -> Result<(), DefaultEncoderError<BackendError>> {
         let n_plus1 = symbol.borrow().wrapping_add(&N::one());
 
         if n_plus1 == N::zero() {
@@ -98,7 +98,7 @@ impl<N: Unsigned + PrimInt + WrappingAdd + WrappingSub> EncoderCodebook for ExpG
         &self,
         symbol: impl Borrow<Self::Symbol>,
         mut emit: impl FnMut(bool) -> Result<(), BackendError>,
-    ) -> Result<(), EncoderError<BackendError>> {
+    ) -> Result<(), DefaultEncoderError<BackendError>> {
         let n_plus1 = symbol.borrow().wrapping_add(&N::one());
 
         if n_plus1 == N::zero() {

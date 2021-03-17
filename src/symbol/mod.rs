@@ -17,7 +17,7 @@ use crate::{
     backends::{
         self, AsReadWords, BoundedReadWords, IntoReadWords, Queue, ReadWords, Stack, WriteWords,
     },
-    BitArray, CoderError, EncoderError,
+    BitArray, CoderError, DefaultEncoderError,
 };
 
 use self::codebooks::{DecoderCodebook, EncoderCodebook, SymbolCodeError};
@@ -67,7 +67,7 @@ pub trait WriteBitStream<S: backends::Semantics> {
         &mut self,
         symbol: Symbol,
         codebook: C,
-    ) -> Result<(), EncoderError<Self::WriteError>>
+    ) -> Result<(), DefaultEncoderError<Self::WriteError>>
     where
         C: EncoderCodebook,
         Symbol: Borrow<C::Symbol>;
@@ -75,7 +75,7 @@ pub trait WriteBitStream<S: backends::Semantics> {
     fn encode_symbols<Symbol, C>(
         &mut self,
         symbols_and_codebooks: impl IntoIterator<Item = (Symbol, C)>,
-    ) -> Result<(), EncoderError<Self::WriteError>>
+    ) -> Result<(), DefaultEncoderError<Self::WriteError>>
     where
         C: EncoderCodebook,
         Symbol: Borrow<C::Symbol>,
@@ -91,7 +91,7 @@ pub trait WriteBitStream<S: backends::Semantics> {
         &mut self,
         symbols: impl IntoIterator<Item = Symbol>,
         codebook: &C,
-    ) -> Result<(), EncoderError<Self::WriteError>>
+    ) -> Result<(), DefaultEncoderError<Self::WriteError>>
     where
         C: EncoderCodebook,
         Symbol: Borrow<C::Symbol>,
@@ -318,7 +318,7 @@ impl<Word: BitArray, B: WriteWords<Word>> WriteBitStream<Queue> for QueueEncoder
         &mut self,
         symbol: Symbol,
         codebook: C,
-    ) -> Result<(), EncoderError<Self::WriteError>>
+    ) -> Result<(), DefaultEncoderError<Self::WriteError>>
     where
         C: EncoderCodebook,
         Symbol: Borrow<C::Symbol>,
@@ -434,7 +434,7 @@ impl<Word: BitArray, B: WriteWords<Word>> StackCoder<Word, B> {
     pub fn encode_symbols_reverse<Symbol, C, I>(
         &mut self,
         symbols_and_codebooks: I,
-    ) -> Result<(), EncoderError<B::WriteError>>
+    ) -> Result<(), DefaultEncoderError<B::WriteError>>
     where
         Symbol: Borrow<C::Symbol>,
         C: EncoderCodebook,
@@ -449,7 +449,7 @@ impl<Word: BitArray, B: WriteWords<Word>> StackCoder<Word, B> {
         &mut self,
         symbols: I,
         codebook: &C,
-    ) -> Result<(), EncoderError<B::WriteError>>
+    ) -> Result<(), DefaultEncoderError<B::WriteError>>
     where
         Symbol: Borrow<C::Symbol>,
         C: EncoderCodebook,
@@ -542,7 +542,7 @@ impl<Word: BitArray, B: WriteWords<Word>> WriteBitStream<Stack> for StackCoder<W
         &mut self,
         symbol: Symbol,
         codebook: C,
-    ) -> Result<(), EncoderError<Self::WriteError>>
+    ) -> Result<(), DefaultEncoderError<Self::WriteError>>
     where
         Symbol: Borrow<C::Symbol>,
         C: EncoderCodebook,

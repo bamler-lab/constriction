@@ -17,8 +17,8 @@ use crate::{
         self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, FallibleIteratorReadWords,
         IntoReadWords, IntoSeekReadWords, ReadWords, ReverseReads, Stack, WriteWords,
     },
-    bit_array_to_chunks_truncated, BitArray, CoderError, EncoderError, EncoderFrontendError,
-    NonZeroBitArray, Pos, PosSeek, Seek, UnwrapInfallible,
+    bit_array_to_chunks_truncated, BitArray, CoderError, DefaultEncoderError,
+    DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, UnwrapInfallible,
 };
 
 /// Entropy coder for both encoding and decoding on a stack
@@ -743,7 +743,7 @@ where
     pub fn encode_symbols_reverse<S, D, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), EncoderError<Backend::WriteError>>
+    ) -> Result<(), DefaultEncoderError<Backend::WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -758,7 +758,7 @@ where
     pub fn try_encode_symbols_reverse<S, D, E, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<(), TryCodingError<EncoderError<Backend::WriteError>, E>>
+    ) -> Result<(), TryCodingError<DefaultEncoderError<Backend::WriteError>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -774,7 +774,7 @@ where
         &mut self,
         symbols: I,
         model: &D,
-    ) -> Result<(), EncoderError<Backend::WriteError>>
+    ) -> Result<(), DefaultEncoderError<Backend::WriteError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -944,6 +944,7 @@ where
     State: BitArray + AsPrimitive<Word>,
     Backend: WriteWords<Word>,
 {
+    type FrontendError = DefaultEncoderFrontendError;
     type BackendError = Backend::WriteError;
 
     /// Encodes a single symbol and appends it to the compressed data.
@@ -971,7 +972,7 @@ where
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncoderError<Self::BackendError>>
+    ) -> Result<(), DefaultEncoderError<Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::Word>,
@@ -979,7 +980,7 @@ where
     {
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .ok_or(EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
+            .ok_or(DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
         if (self.state >> (State::BITS - PRECISION)) >= probability.get().into().into() {
             self.bulk.write(self.state.as_())?;

@@ -122,8 +122,6 @@ impl Semantics for Queue {}
 // MAIN TRAITS FOR CAPABILITIES OF BACKENDS ===================================
 
 /// A trait for backends that read compressed words (used by decoders)
-///
-/// TODO: rename to `ReadWords`, analogous for all other traits in this module.
 pub trait ReadWords<Word, S: Semantics> {
     type ReadError: Debug;
 

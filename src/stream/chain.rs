@@ -55,17 +55,17 @@
 
 use alloc::vec::Vec;
 
-use core::{borrow::Borrow, fmt::Display};
+use core::{borrow::Borrow, convert::Infallible, fmt::Display};
 
 use num::cast::AsPrimitive;
 
 use super::{
     models::{DecoderModel, EncoderModel},
-    Code, Decode, Encode, EncoderError, TryCodingError,
+    Code, Decode, Encode, TryCodingError,
 };
 use crate::{
     backends::{ReadWords, Stack, WriteWords},
-    BitArray, CoderError, EncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek,
+    BitArray, CoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek,
 };
 
 /// # Intended Usage
@@ -503,12 +503,7 @@ where
     pub fn encode_symbols_reverse<S, D, I>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<
-        (),
-        EncoderError<
-            BackendError<CompressedBackend::WriteError, Option<RemainingBackend::ReadError>>,
-        >,
-    >
+    ) -> Result<(), EncoderError<Word, CompressedBackend, RemainingBackend>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -522,19 +517,10 @@ where
         self.encode_symbols(symbols_and_models.into_iter().rev())
     }
 
-    /// TODO: type aliases for these ridiculous error types.
     pub fn try_encode_symbols_reverse<S, D, E, I>(
         &mut self,
         symbols_and_models: I,
-    ) -> Result<
-        (),
-        TryCodingError<
-            EncoderError<
-                BackendError<CompressedBackend::WriteError, Option<RemainingBackend::ReadError>>,
-            >,
-            E,
-        >,
-    >
+    ) -> Result<(), TryCodingError<EncoderError<Word, CompressedBackend, RemainingBackend>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -552,12 +538,7 @@ where
         &mut self,
         symbols: I,
         model: &D,
-    ) -> Result<
-        (),
-        EncoderError<
-            BackendError<CompressedBackend::WriteError, Option<RemainingBackend::ReadError>>,
-        >,
-    >
+    ) -> Result<(), EncoderError<Word, CompressedBackend, RemainingBackend>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -575,7 +556,7 @@ where
         mut self,
     ) -> Result<
         ChainCoder<Word, State, CompressedBackend, RemainingBackend, NEW_PRECISION>,
-        RemainingBackend::WriteError,
+        CoderError<Infallible, BackendError<Infallible, RemainingBackend::WriteError>>,
     >
     where
         RemainingBackend: WriteWords<Word>,
@@ -602,7 +583,7 @@ where
         mut self,
     ) -> Result<
         ChainCoder<Word, State, CompressedBackend, RemainingBackend, NEW_PRECISION>,
-        Option<RemainingBackend::ReadError>,
+        CoderError<EncoderFrontendError, BackendError<Infallible, RemainingBackend::ReadError>>,
     >
     where
         RemainingBackend: ReadWords<Word, Stack>,
@@ -684,38 +665,51 @@ where
         self,
     ) -> Result<
         ChainCoder<Word, State, CompressedBackend, RemainingBackend, NEW_PRECISION>,
-        ChangePrecisionError<RemainingBackend, Word>,
+        ChangePrecisionError<Word, RemainingBackend>,
     >
     where
         RemainingBackend: WriteWords<Word> + ReadWords<Word, Stack>,
     {
         if NEW_PRECISION > PRECISION {
             self.increase_precision()
-                .map_err(ChangePrecisionError::Write)
+                .map_err(ChangePrecisionError::Increase)
         } else {
             self.decrease_precision()
-                .map_err(ChangePrecisionError::Read)
+                .map_err(ChangePrecisionError::Decrease)
         }
     }
 
     #[inline(always)]
     /// This would flush meaningless zero bits if `self.heads.remaining < 1 << Word::BITS`.
-    fn flush_remaining_head(&mut self) -> Result<(), RemainingBackend::WriteError>
+    fn flush_remaining_head<FrontendError, ReadError>(
+        &mut self,
+    ) -> Result<(), CoderError<FrontendError, BackendError<ReadError, RemainingBackend::WriteError>>>
     where
         RemainingBackend: WriteWords<Word>,
     {
-        self.remaining.write(self.heads.remaining.as_())?;
+        self.remaining
+            .write(self.heads.remaining.as_())
+            .map_err(|err| CoderError::Backend(BackendError::Remaining(err)))?;
         self.heads.remaining = self.heads.remaining >> Word::BITS;
         Ok(())
     }
 
     /// This truncates if `self.heads.remaining >= 1 << (State::BITS - Word::BITS)`.
     #[inline(always)]
-    fn refill_remaining_head(&mut self) -> Result<(), Option<RemainingBackend::ReadError>>
+    fn refill_remaining_head<WriteError>(
+        &mut self,
+    ) -> Result<
+        (),
+        CoderError<EncoderFrontendError, BackendError<WriteError, RemainingBackend::ReadError>>,
+    >
     where
         RemainingBackend: ReadWords<Word, Stack>,
     {
-        let word = self.remaining.read().map_err(Some)?.ok_or(None)?;
+        let word = self
+            .remaining
+            .read()
+            .map_err(|err| CoderError::Backend(BackendError::Remaining(err)))?
+            .ok_or(CoderError::Frontend(EncoderFrontendError::OutOfRemaining))?;
         self.heads.remaining = (self.heads.remaining << Word::BITS) | word.into();
         Ok(())
     }
@@ -735,23 +729,65 @@ where
     }
 }
 
-/// Error type for misuse of a [`stable::Decoder`].
-///
-/// [`stable::Decoder`]: Decoder
+#[allow(type_alias_bounds)]
+pub type DecoderError<
+    Word,
+    CompressedBackend: ReadWords<Word, Stack>,
+    RemainingBackend: WriteWords<Word>,
+> = CoderError<
+    DecoderFrontendError,
+    BackendError<CompressedBackend::ReadError, RemainingBackend::WriteError>,
+>;
+
+#[allow(type_alias_bounds)]
+pub type EncoderError<
+    Word,
+    CompressedBackend: WriteWords<Word>,
+    RemainingBackend: ReadWords<Word, Stack>,
+> = CoderError<
+    EncoderFrontendError,
+    BackendError<CompressedBackend::WriteError, RemainingBackend::ReadError>,
+>;
+
+/// Frontend error type for misuse of a [`ChainCoder`] for decoding.
 #[derive(Debug, PartialEq, Eq)]
-pub enum FrontendError {
-    OutOfData,
+pub enum DecoderFrontendError {
+    OutOfCompressedData,
 }
 
-impl core::fmt::Display for FrontendError {
+impl core::fmt::Display for DecoderFrontendError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::OutOfData => {
-                write!(f, "Out of data.")
+            Self::OutOfCompressedData => {
+                write!(f, "Out of compressed data.")
             }
         }
     }
 }
+
+#[cfg(feature = "std")]
+impl std::error::Error for DecoderFrontendError {}
+
+/// Frontend error type for misuse of a [`ChainCoder`] for encoding.
+#[derive(Debug, PartialEq, Eq)]
+pub enum EncoderFrontendError {
+    OutOfRemaining,
+    ImpossibleSymbol,
+}
+
+impl core::fmt::Display for EncoderFrontendError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::OutOfRemaining => {
+                write!(f, "Out of remaining information from previous decoding.")
+            }
+            Self::ImpossibleSymbol => DefaultEncoderFrontendError::ImpossibleSymbol.fmt(f),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for EncoderFrontendError {}
 
 /// Error type for backend errors in a [`stable::Decoder`].
 ///
@@ -792,14 +828,56 @@ impl<
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ChangePrecisionError<RemainingBackend, Word>
+pub enum ChangePrecisionError<Word, RemainingBackend>
 where
     RemainingBackend: WriteWords<Word> + ReadWords<Word, Stack>,
 {
-    Write(RemainingBackend::WriteError),
+    Increase(CoderError<Infallible, BackendError<Infallible, RemainingBackend::WriteError>>),
+    Decrease(
+        CoderError<EncoderFrontendError, BackendError<Infallible, RemainingBackend::ReadError>>,
+    ),
+}
 
-    /// `None` if out of data, `Some(err)` if reading lead to error.
-    Read(Option<RemainingBackend::ReadError>),
+impl<Word, RemainingBackend> Display for ChangePrecisionError<Word, RemainingBackend>
+where
+    RemainingBackend: WriteWords<Word> + ReadWords<Word, Stack>,
+    RemainingBackend::WriteError: Display,
+    RemainingBackend::ReadError: Display,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ChangePrecisionError::Increase(err) => {
+                write!(
+                    f,
+                    "Error while increasing precision of chain coder: {}",
+                    err
+                )
+            }
+            ChangePrecisionError::Decrease(err) => {
+                write!(
+                    f,
+                    "Error while decreasing precision of chain coder: {}",
+                    err
+                )
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<Word, RemainingBackend> std::error::Error for ChangePrecisionError<Word, RemainingBackend>
+where
+    Self: core::fmt::Debug,
+    RemainingBackend: WriteWords<Word> + ReadWords<Word, Stack>,
+    RemainingBackend::WriteError: std::error::Error + 'static,
+    RemainingBackend::ReadError: std::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Increase(err) => Some(err),
+            Self::Decrease(err) => Some(err),
+        }
+    }
 }
 
 impl<Word, State, CompressedBackend, RemainingBackend, const PRECISION: usize> PosSeek
@@ -869,14 +947,14 @@ where
     CompressedBackend: ReadWords<Word, Stack>,
     RemainingBackend: WriteWords<Word>,
 {
-    type FrontendError = FrontendError;
+    type FrontendError = DecoderFrontendError;
 
     type BackendError = BackendError<CompressedBackend::ReadError, RemainingBackend::WriteError>;
 
     fn decode_symbol<D>(
         &mut self,
         model: D,
-    ) -> Result<D::Symbol, CoderError<Self::FrontendError, Self::BackendError>>
+    ) -> Result<D::Symbol, DecoderError<Word, CompressedBackend, RemainingBackend>>
     where
         D: DecoderModel<PRECISION>,
         D::Probability: Into<Self::Word>,
@@ -893,7 +971,9 @@ where
                 .compressed
                 .read()
                 .map_err(BackendError::Compressed)?
-                .ok_or(CoderError::Frontend(FrontendError::OutOfData))?;
+                .ok_or(CoderError::Frontend(
+                    DecoderFrontendError::OutOfCompressedData,
+                ))?;
             if PRECISION != Word::BITS {
                 self.heads.compressed = unsafe {
                     // SAFETY:
@@ -942,8 +1022,7 @@ where
         if self.heads.remaining >= State::one() << (State::BITS - PRECISION) {
             // The invariant on `self.heads.remaining` (see its doc comment) is violated and must
             // be restored.
-            self.flush_remaining_head()
-                .map_err(BackendError::Remaining)?
+            self.flush_remaining_head()?;
         }
 
         Ok(symbol)
@@ -962,15 +1041,14 @@ where
     CompressedBackend: WriteWords<Word>,
     RemainingBackend: ReadWords<Word, Stack>,
 {
-    type BackendError =
-        BackendError<CompressedBackend::WriteError, Option<RemainingBackend::ReadError>>;
+    type FrontendError = EncoderFrontendError;
+    type BackendError = BackendError<CompressedBackend::WriteError, RemainingBackend::ReadError>;
 
-    // TODO: we should be allowed to return our own FrontendError here if we run out of remaining.
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncoderError<Self::BackendError>>
+    ) -> Result<(), EncoderError<Word, CompressedBackend, RemainingBackend>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::Word>,
@@ -982,13 +1060,12 @@ where
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .ok_or(EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
+            .ok_or(CoderError::Frontend(EncoderFrontendError::ImpossibleSymbol))?;
 
         if self.heads.remaining
             < probability.get().into().into() << (State::BITS - Word::BITS - PRECISION)
         {
-            self.refill_remaining_head()
-                .map_err(BackendError::Remaining)?;
+            self.refill_remaining_head()?;
             // At this point, the invariant on `self.heads.remaining` (see its doc comment) is
             // temporarily violated (but it will be restored below). This is how
             // `decode_symbol` can detect that it has to flush `remaining.state`.

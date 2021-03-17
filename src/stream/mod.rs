@@ -160,7 +160,7 @@ use core::{
     fmt::{Debug, Display},
 };
 
-use crate::{BitArray, CoderError, EncoderError};
+use crate::{BitArray, CoderError};
 use models::{DecoderModel, EncoderModel, EntropyModel};
 use num::cast::AsPrimitive;
 
@@ -209,21 +209,24 @@ pub trait Code {
 /// This trait is deliberately called `Encode` and not `Encoder`. See corresponding comment
 /// for the [`Code`] trait for the reasoning.
 pub trait Encode<const PRECISION: usize>: Code {
+    /// The error type for encoding errors that are unrelated from the backend.
+    ///
+    /// This is often a [`DefaultEncoderFrontendError`].
+    type FrontendError: Debug;
+
     /// The error type for writing out encoded data.
     ///
     /// This will typically be the [`WriteError`] type of the of an underlying
     /// [`WriteWords`], which is typically [`Infallible`] for automatically growing
     /// in-memory backends (such as `Vec`). But it may be an inhabitated error type if
     /// you're, e.g., encoding directly to a file or socket.
-    ///
-    /// TODO: add FrontendError
     type BackendError: Debug;
 
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncoderError<Self::BackendError>>
+    ) -> Result<(), CoderError<Self::FrontendError, Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::Word>,
@@ -232,7 +235,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn encode_symbols<S, D>(
         &mut self,
         symbols_and_models: impl IntoIterator<Item = (S, D)>,
-    ) -> Result<(), EncoderError<Self::BackendError>>
+    ) -> Result<(), CoderError<Self::FrontendError, Self::BackendError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -250,7 +253,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn try_encode_symbols<S, D, E>(
         &mut self,
         symbols_and_models: impl IntoIterator<Item = Result<(S, D), E>>,
-    ) -> Result<(), TryCodingError<EncoderError<Self::BackendError>, E>>
+    ) -> Result<(), TryCodingError<CoderError<Self::FrontendError, Self::BackendError>, E>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,
@@ -271,7 +274,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         &mut self,
         symbols: impl IntoIterator<Item = S>,
         model: &D,
-    ) -> Result<(), EncoderError<Self::BackendError>>
+    ) -> Result<(), CoderError<Self::FrontendError, Self::BackendError>>
     where
         S: Borrow<D::Symbol>,
         D: EncoderModel<PRECISION>,

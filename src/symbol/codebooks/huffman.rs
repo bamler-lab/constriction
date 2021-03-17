@@ -10,7 +10,7 @@ use core::{
 };
 
 use super::{Codebook, DecoderCodebook, EncoderCodebook, SymbolCodeError};
-use crate::{CoderError, EncoderError, EncoderFrontendError, UnwrapInfallible};
+use crate::{CoderError, DefaultEncoderError, DefaultEncoderFrontendError, UnwrapInfallible};
 
 #[derive(Debug, Clone)]
 pub struct EncoderHuffmanTree {
@@ -121,10 +121,10 @@ impl EncoderCodebook for EncoderHuffmanTree {
         &self,
         symbol: impl Borrow<Self::Symbol>,
         mut emit: impl FnMut(bool) -> Result<(), BackendError>,
-    ) -> Result<(), EncoderError<BackendError>> {
+    ) -> Result<(), DefaultEncoderError<BackendError>> {
         let symbol = *symbol.borrow();
         if symbol > self.nodes.len() / 2 {
-            return Err(EncoderFrontendError::ImpossibleSymbol.into_coder_error());
+            return Err(DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error());
         }
 
         let mut node_index = symbol;

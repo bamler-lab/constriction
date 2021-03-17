@@ -9,7 +9,7 @@ use core::{
 
 use smallvec::SmallVec;
 
-use crate::{CoderError, EncoderError, UnwrapInfallible};
+use crate::{CoderError, DefaultEncoderError, UnwrapInfallible};
 
 use super::{StackCoder, WriteBitStream};
 
@@ -63,7 +63,7 @@ pub trait EncoderCodebook: Codebook {
         &self,
         symbol: impl Borrow<Self::Symbol>,
         mut emit: impl FnMut(bool) -> Result<(), BackendError>,
-    ) -> Result<(), EncoderError<BackendError>> {
+    ) -> Result<(), DefaultEncoderError<BackendError>> {
         let mut reverse_codeword = SmallBitStack::new();
         self.encode_symbol_suffix(symbol, |bit| reverse_codeword.write_bit(bit))
             .map_err(|err| CoderError::Frontend(err.into_frontend_error()))?;
@@ -78,7 +78,7 @@ pub trait EncoderCodebook: Codebook {
         &self,
         symbol: impl Borrow<Self::Symbol>,
         mut emit: impl FnMut(bool) -> Result<(), BackendError>,
-    ) -> Result<(), EncoderError<BackendError>> {
+    ) -> Result<(), DefaultEncoderError<BackendError>> {
         let mut reverse_codeword = SmallBitStack::new();
         self.encode_symbol_prefix(symbol, |bit| reverse_codeword.write_bit(bit))
             .map_err(|err| CoderError::Frontend(err.into_frontend_error()))?;
@@ -109,7 +109,7 @@ impl<C: EncoderCodebook> EncoderCodebook for &C {
         &self,
         symbol: impl Borrow<Self::Symbol>,
         emit: impl FnMut(bool) -> Result<(), BackendError>,
-    ) -> Result<(), EncoderError<BackendError>> {
+    ) -> Result<(), DefaultEncoderError<BackendError>> {
         (*self).encode_symbol_prefix(symbol, emit)
     }
 
@@ -118,7 +118,7 @@ impl<C: EncoderCodebook> EncoderCodebook for &C {
         &self,
         symbol: impl Borrow<Self::Symbol>,
         emit: impl FnMut(bool) -> Result<(), BackendError>,
-    ) -> Result<(), EncoderError<BackendError>> {
+    ) -> Result<(), DefaultEncoderError<BackendError>> {
         (*self).encode_symbol_suffix(symbol, emit)
     }
 }

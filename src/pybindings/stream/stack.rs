@@ -1,5 +1,5 @@
 use core::convert::Infallible;
-use std::{error::Error, format, prelude::v1::*, vec};
+use std::{prelude::v1::*, vec};
 
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
@@ -9,7 +9,7 @@ use crate::{
         models::{Categorical, LeakyQuantizer},
         Decode, TryCodingError,
     },
-    CoderError, EncoderFrontendError, UnwrapInfallible,
+    CoderError, DefaultEncoderFrontendError, UnwrapInfallible,
 };
 
 use probability::distribution::Gaussian;
@@ -407,10 +407,10 @@ impl<FrontendError: Into<PyErr>> From<CoderError<FrontendError, Infallible>> for
     }
 }
 
-impl From<EncoderFrontendError> for PyErr {
-    fn from(err: EncoderFrontendError) -> Self {
+impl From<DefaultEncoderFrontendError> for PyErr {
+    fn from(err: DefaultEncoderFrontendError) -> Self {
         match err {
-            EncoderFrontendError::ImpossibleSymbol => {
+            DefaultEncoderFrontendError::ImpossibleSymbol => {
                 pyo3::exceptions::PyKeyError::new_err(err.to_string())
             }
         }

@@ -19,8 +19,8 @@ use crate::{
     backends::{
         AsReadWords, BoundedReadWords, Cursor, IntoReadWords, Queue, ReadWords, WriteWords,
     },
-    BitArray, CoderError, EncoderError, EncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek,
-    UnwrapInfallible,
+    BitArray, CoderError, DefaultEncoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos,
+    PosSeek, Seek, UnwrapInfallible,
 };
 
 /// Type of the internal state used by [`RangeEncoder<Word, State>`] and
@@ -471,13 +471,14 @@ where
     State: BitArray + AsPrimitive<Word>,
     Backend: WriteWords<Word>,
 {
+    type FrontendError = DefaultEncoderFrontendError;
     type BackendError = Backend::WriteError;
 
     fn encode_symbol<D>(
         &mut self,
         symbol: impl Borrow<D::Symbol>,
         model: D,
-    ) -> Result<(), EncoderError<Self::BackendError>>
+    ) -> Result<(), DefaultEncoderError<Self::BackendError>>
     where
         D: EncoderModel<PRECISION>,
         D::Probability: Into<Self::Word>,
@@ -488,13 +489,13 @@ where
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .ok_or(EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
+            .ok_or(DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
         let scale = self.state.range.get() >> PRECISION;
         // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
         self.state.range = (scale * probability.get().into().into())
             .into_nonzero()
-            .ok_or(EncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
+            .ok_or(DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
         let new_lower = self
             .state
             .lower
