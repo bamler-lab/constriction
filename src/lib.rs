@@ -277,23 +277,22 @@ use num::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoderError<FrontendError, BackendError> {
-    /// TODO: rename to just `Frontend` and `Backend`
-    FrontendError(FrontendError),
-    BackendError(BackendError),
+    Frontend(FrontendError),
+    Backend(BackendError),
 }
 
 impl<FrontendError, BackendError> CoderError<FrontendError, BackendError> {
     pub fn map_frontend<E>(self, f: impl Fn(FrontendError) -> E) -> CoderError<E, BackendError> {
         match self {
-            Self::FrontendError(err) => CoderError::FrontendError(f(err)),
-            Self::BackendError(err) => CoderError::BackendError(err),
+            Self::Frontend(err) => CoderError::Frontend(f(err)),
+            Self::Backend(err) => CoderError::Backend(err),
         }
     }
 
     pub fn map_backend<E>(self, f: impl Fn(BackendError) -> E) -> CoderError<FrontendError, E> {
         match self {
-            Self::BackendError(err) => CoderError::BackendError(f(err)),
-            Self::FrontendError(err) => CoderError::FrontendError(err),
+            Self::Backend(err) => CoderError::Backend(f(err)),
+            Self::Frontend(err) => CoderError::Frontend(err),
         }
     }
 }
@@ -303,8 +302,8 @@ impl<BackendError: Display, FrontendError: Display> Display
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::FrontendError(err) => write!(f, "Invalid compressed data: {}", err),
-            Self::BackendError(err) => write!(f, "Error while reading compressed data: {}", err),
+            Self::Frontend(err) => write!(f, "Invalid compressed data: {}", err),
+            Self::Backend(err) => write!(f, "Error while reading compressed data: {}", err),
         }
     }
 }
@@ -315,23 +314,23 @@ impl<FrontendError: std::error::Error + 'static, BackendError: std::error::Error
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::FrontendError(source) => Some(source),
-            Self::BackendError(source) => Some(source),
+            Self::Frontend(source) => Some(source),
+            Self::Backend(source) => Some(source),
         }
     }
 }
 
 impl<FrontendError, BackendError> From<BackendError> for CoderError<FrontendError, BackendError> {
     fn from(read_error: BackendError) -> Self {
-        Self::BackendError(read_error)
+        Self::Backend(read_error)
     }
 }
 
 impl<FrontendError> CoderError<FrontendError, Infallible> {
     fn into_frontend_error(self) -> FrontendError {
         match self {
-            CoderError::FrontendError(frontend_error) => frontend_error,
-            CoderError::BackendError(infallible) => match infallible {},
+            CoderError::Frontend(frontend_error) => frontend_error,
+            CoderError::Backend(infallible) => match infallible {},
         }
     }
 }
@@ -368,7 +367,7 @@ impl std::error::Error for EncoderFrontendError {}
 impl EncoderFrontendError {
     #[inline(always)]
     const fn into_coder_error<BackendError>(self) -> EncoderError<BackendError> {
-        EncoderError::FrontendError(self)
+        EncoderError::Frontend(self)
     }
 }
 
@@ -697,8 +696,8 @@ impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
         match self {
             Ok(x) => x,
             Err(infallible) => match infallible {
-                CoderError::BackendError(infallible) => match infallible {},
-                CoderError::FrontendError(infallible) => match infallible {},
+                CoderError::Backend(infallible) => match infallible {},
+                CoderError::Frontend(infallible) => match infallible {},
             },
         }
     }

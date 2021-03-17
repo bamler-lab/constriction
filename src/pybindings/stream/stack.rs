@@ -401,8 +401,8 @@ impl<CodingError: Into<PyErr>, ModelError> From<TryCodingError<CodingError, Mode
 impl<FrontendError: Into<PyErr>> From<CoderError<FrontendError, Infallible>> for PyErr {
     fn from(err: CoderError<FrontendError, Infallible>) -> Self {
         match err {
-            CoderError::FrontendError(err) => err.into(),
-            CoderError::BackendError(infallible) => Err(infallible).unwrap_infallible(),
+            CoderError::Frontend(err) => err.into(),
+            CoderError::Backend(infallible) => Err(infallible).unwrap_infallible(),
         }
     }
 }

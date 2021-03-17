@@ -242,12 +242,12 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
         } else {
             match source.read()? {
                 Some(word) if word != Word::zero() => word.into(),
-                _ => return Err(CoderError::FrontendError(())),
+                _ => return Err(CoderError::Frontend(())),
             }
         };
         while remaining_head < threshold {
             remaining_head = remaining_head << Word::BITS
-                | source.read()?.ok_or(CoderError::FrontendError(()))?.into();
+                | source.read()?.ok_or(CoderError::Frontend(()))?.into();
         }
 
         Ok(ChainCoderHeads {
@@ -287,8 +287,8 @@ where
     {
         let heads = match ChainCoderHeads::new(&mut data, true) {
             Ok(heads) => heads,
-            Err(CoderError::FrontendError(())) => return Err(CoderError::FrontendError(data)),
-            Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
+            Err(CoderError::Frontend(())) => return Err(CoderError::Frontend(data)),
+            Err(CoderError::Backend(err)) => return Err(CoderError::Backend(err)),
         };
         let remaining = RemainingBackend::default();
 
@@ -319,10 +319,8 @@ where
     {
         let heads = match ChainCoderHeads::new(&mut compressed, false) {
             Ok(heads) => heads,
-            Err(CoderError::FrontendError(())) => {
-                return Err(CoderError::FrontendError(compressed))
-            }
-            Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
+            Err(CoderError::Frontend(())) => return Err(CoderError::Frontend(compressed)),
+            Err(CoderError::Backend(err)) => return Err(CoderError::Backend(err)),
         };
         let remaining = RemainingBackend::default();
 
@@ -393,12 +391,12 @@ where
     {
         let compressed_head = match remaining.read()?.and_then(Word::into_nonzero) {
             Some(word) => word,
-            _ => return Err(CoderError::FrontendError(remaining)),
+            _ => return Err(CoderError::Frontend(remaining)),
         };
         let mut heads = match ChainCoderHeads::new(&mut remaining, false) {
             Ok(heads) => heads,
-            Err(CoderError::FrontendError(())) => return Err(CoderError::FrontendError(remaining)),
-            Err(CoderError::BackendError(err)) => return Err(CoderError::BackendError(err)),
+            Err(CoderError::Frontend(())) => return Err(CoderError::Frontend(remaining)),
+            Err(CoderError::Backend(err)) => return Err(CoderError::Backend(err)),
         };
         heads.compressed = compressed_head;
 
@@ -439,7 +437,7 @@ where
         CompressedBackend: WriteWords<Word>,
     {
         if !self.is_whole() {
-            return Err(CoderError::FrontendError(self));
+            return Err(CoderError::Frontend(self));
         }
 
         // Transfer remaining head onto `compressed`.
@@ -482,7 +480,7 @@ where
         if !self.is_whole()
             || (State::BITS - self.heads.remaining.leading_zeros() as usize - 1) % Word::BITS != 0
         {
-            return Err(CoderError::FrontendError(self));
+            return Err(CoderError::Frontend(self));
         }
 
         // Transfer remaining head onto `compressed`.
@@ -895,7 +893,7 @@ where
                 .compressed
                 .read()
                 .map_err(BackendError::Compressed)?
-                .ok_or(CoderError::FrontendError(FrontendError::OutOfData))?;
+                .ok_or(CoderError::Frontend(FrontendError::OutOfData))?;
             if PRECISION != Word::BITS {
                 self.heads.compressed = unsafe {
                     // SAFETY:

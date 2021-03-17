@@ -1148,7 +1148,7 @@ mod tests {
     use probability::distribution::{Binomial, Gaussian};
 
     #[test]
-    fn leaky_quantized_normal() {
+    fn leakily_quantized_normal() {
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
 
         for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
@@ -1160,8 +1160,8 @@ mod tests {
     }
 
     #[test]
-    fn leaky_quantized_binomial() {
-        for &n in &[2, 10, 100, 1000, 10_000] {
+    fn leakily_quantized_binomial() {
+        for &n in &[1, 2, 10, 100, 1000, 10_000] {
             for &p in &[1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9] {
                 if n < 1000 || p >= 0.1 {
                     // In the excluded situations, `<Binomial as Inverse>::inverse` currently doesn't terminate.

@@ -26,7 +26,7 @@ pub enum SymbolCodeError<InvalidCodeword = Infallible> {
 
 impl<InvalidCodeword> SymbolCodeError<InvalidCodeword> {
     pub fn into_coder_error<BackendError>(self) -> CoderError<Self, BackendError> {
-        CoderError::FrontendError(self)
+        CoderError::Frontend(self)
     }
 }
 
@@ -66,7 +66,7 @@ pub trait EncoderCodebook: Codebook {
     ) -> Result<(), EncoderError<BackendError>> {
         let mut reverse_codeword = SmallBitStack::new();
         self.encode_symbol_suffix(symbol, |bit| reverse_codeword.write_bit(bit))
-            .map_err(|err| CoderError::FrontendError(err.into_frontend_error()))?;
+            .map_err(|err| CoderError::Frontend(err.into_frontend_error()))?;
 
         for bit in reverse_codeword {
             emit(bit.unwrap_infallible())?;
@@ -81,7 +81,7 @@ pub trait EncoderCodebook: Codebook {
     ) -> Result<(), EncoderError<BackendError>> {
         let mut reverse_codeword = SmallBitStack::new();
         self.encode_symbol_prefix(symbol, |bit| reverse_codeword.write_bit(bit))
-            .map_err(|err| CoderError::FrontendError(err.into_frontend_error()))?;
+            .map_err(|err| CoderError::Frontend(err.into_frontend_error()))?;
 
         for bit in reverse_codeword {
             emit(bit.unwrap_infallible())?;

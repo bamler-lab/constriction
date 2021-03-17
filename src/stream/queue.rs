@@ -831,7 +831,7 @@ where
             // This can only happen if both of the following conditions apply:
             // (i) we are decoding invalid compressed data; and
             // (ii) we use entropy models with varying `PRECISION`s.
-            return Err(CoderError::FrontendError(FrontendError::InvalidData));
+            return Err(CoderError::Frontend(FrontendError::InvalidData));
         }
 
         let (symbol, left_sided_cumulative, probability) =

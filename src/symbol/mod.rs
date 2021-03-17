@@ -405,7 +405,7 @@ impl<Word: BitArray, B: WriteWords<Word>> StackCoder<Word, B> {
         let (current_word, mask_last_written) = if let Some(last_word) = compressed.read()? {
             if last_word == Word::zero() {
                 // A stack of compressed data must not end in a zero word.
-                return Err(CoderError::FrontendError(compressed));
+                return Err(CoderError::Frontend(compressed));
             }
             let mask_end_bit = Word::one() << last_word.trailing_zeros() as usize;
             (last_word ^ mask_end_bit, mask_end_bit >> 1)
