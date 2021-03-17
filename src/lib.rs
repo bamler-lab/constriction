@@ -653,7 +653,7 @@ macro_rules! unsafe_impl_bit_array {
                 fn get(self) -> Self::Base {
                     let non_zero = self.get();
                     unsafe {
-                        // SAFETY: This is trivially save because `non_zero` came from a
+                        // SAFETY: This is trivially safe because `non_zero` came from a
                         // `NonZero` type. We really shouldn't have to give the compiler
                         // this hint but removing it leads to a massive (~30%) performance
                         // regression in our tests (TODO: file rust bug).

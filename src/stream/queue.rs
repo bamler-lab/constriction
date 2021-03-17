@@ -501,9 +501,9 @@ where
             .lower
             .wrapping_add(&(scale * left_sided_cumulative.into().into()));
 
-        // TODO: mark as unlikely branch.
         if let EncoderSituation::Inverted(num_inverted, first_inverted_lower_word) = self.situation
         {
+            // unlikely branch
             if new_lower.wrapping_add(&self.state.range.get()) > new_lower {
                 // We've transitioned from an inverted to a normal situation.
 
@@ -774,15 +774,15 @@ where
     }
 }
 
-// TODO
-// impl<'a, Word, State, Backend> From<&'a RangeEncoder<Word, State, Backend>>
+// TODO (implement for infallible case)
+// impl<'a, Word, State, Backend> From<&'a mut RangeEncoder<Word, State, Backend>>
 //     for RangeDecoder<Word, State, Backend::AsReadWords>
 // where
 //     Word: BitArray + Into<State>,
 //     State: BitArray + AsPrimitive<Word>,
 //     Backend: WriteWords<Word> + AsReadWords<'a, Word, Queue>,
 // {
-//     fn from(encoder: &'a RangeEncoder<Word, State, Backend>) -> Self {
+//     fn from(encoder: &'a mut RangeEncoder<Word, State, Backend>) -> Self {
 //         encoder.as_decoder()
 //     }
 // }
@@ -871,7 +871,7 @@ where
                 self.point = self.point | word.into();
             }
 
-            // TODO: register reads past end.
+            // TODO: register reads past end?
         }
 
         Ok(symbol)

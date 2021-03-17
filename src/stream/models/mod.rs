@@ -21,10 +21,6 @@ use crate::{wrapping_pow2, BitArray};
 /// A trait for probability distributions that can be used as entropy models.
 ///
 /// TODO: document how `PRECISION` is (not) enforced.
-///
-/// TODO: add trait `EnumerableEntropyModel: EntropyModel` that can enumerate its symbols
-/// and thus be turned into a Huffman tree (probably need to generalize the symbol type of
-/// Huffman trees).
 pub trait EntropyModel<const PRECISION: usize> {
     /// The type of data over which the entropy model is defined.
     ///
@@ -109,20 +105,19 @@ where
 /// This is a builder of [`LeakilyQuantizedDistribution`]s.
 ///
 /// Lossless entropy coding can only be performed over discrete data. Any continuous
-/// (real-valued) data has to be approximate by some discrete set of points. This
-/// builder allows taking continuous distributions (defined over `F`, which is
-/// typically `f64` or `f32`), and approximating them by discrete distributions
-/// defined over the integer type `Symbol` (which is typically something like `i32`) by
-/// rounding all values to the closest integer. The resulting
-/// [`LeakilyQuantizedDistribution`]s can be used for entropy coding with a coder that
-/// implements [`Encode`] or [`Decode`] because they implement [`EntropyModel`].
+/// (real-valued) data has to be approximate by some discrete set of points. This builder
+/// allows taking continuous distributions (defined over `F`, which is typically `f64` or
+/// `f32`), and approximating them by discrete distributions defined over the integer type
+/// `Symbol` (which is typically something like `i32`) by rounding all values to the closest
+/// integer. The resulting [`LeakilyQuantizedDistribution`]s can be used for entropy coding
+/// with a coder that implements [`Encode`] or [`Decode`] because they implement
+/// [`EntropyModel`].
 ///
-/// This quantizer is a "leaky" quantizer. This means that the constructor [`new`]
-/// takes a domain over the `Symbol` type as an argument. The resulting
-/// [`LeakilyQuantizedDistribution`]s are guaranteed to assign a nonzero probability
-/// to every integer within this domain. This is often a useful property of an
-/// entropy model because it ensures that every integer within the chosen domain can
-/// in fact be encoded.
+/// This quantizer is a "leaky" quantizer. This means that the constructor [`new`] takes a
+/// domain over the `Symbol` type as an argument. The resulting
+/// [`LeakilyQuantizedDistribution`]s are guaranteed to assign a nonzero probability to
+/// every integer within this domain. This is often a useful property of an entropy model
+/// because it ensures that every integer within the chosen domain can in fact be encoded.
 ///
 /// # Examples
 ///
@@ -177,12 +172,12 @@ where
 ///
 /// # TODO
 ///
-/// Implement non-leaky variant once minimal const generics are stable
-/// (est. February 2021).
+/// Implement non-leaky variant (implement a private type does both leaky and non-leaky
+/// quantization depending on a const generic argument; then implement two public rapper
+/// types around that; the field `free_weight` would probably only be needed for leaky
+/// quantization, so it can sit outside the wrapper type and then be passed in to methods.)
 ///
-/// [`Encode`]: crate::Encode
-/// [`Decode`]: crate::Decode
-/// [`new`]: #method.new
+/// [`Encode`]: crate::Encode [`Decode`]: crate::Decode [`new`]: #method.new
 #[derive(Debug)]
 pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
     min_symbol_inclusive: Symbol,
