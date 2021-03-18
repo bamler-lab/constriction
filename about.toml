@@ -1,0 +1,16 @@
+# IMPORTANT: 
+#
+# `cargo about` must be invoked with the `--all-features` flag or with
+# `--features=pybindings`. For examplye:
+#
+# ```
+# cargo about --features=pybindings generate about.hbs > html/licenses.html
+# ```
+
+accepted = [
+  "CC0-1.0",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "Apache-2.0",
+]

@@ -118,10 +118,13 @@ for improvement and are open to respectfully phrased opinions of other people).
 
 ## License
 
-TODO (use `cargo-deny`)
+This work is licensed under the terms of the MIT license, Apache License Version 2.0, or
+Boost Software License Version 1.0. You can choose between one of them if you use this work.
+See the files whose name start with `LICENSE` in this directory.
 
-- This repository's source code: MIT OR Apache-2.0 OR BSL
-- Dependencies may be more specific.
+The compiled python extension module is linked with a number of third party libraries.
+Binary distributions of the `constriction` python extension module contain a list of all the
+license terms of its dependencies (TODO: verify).
 
 ## What's With the Name?
 
