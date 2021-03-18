@@ -149,7 +149,7 @@ where
 /// - encoding on a queue (i.e., writing prefix codes); this is type aliased as
 ///   [`QueueEncoder`].
 /// - encoding and decoding on a stack (i.e., writing suffix codes and reading them back in
-///   reoverserder). This is type aliased as [`StackCoder`].
+///   reoverse order). This is type aliased as [`StackCoder`].
 ///
 /// This type does not support decoding from a queue. Use a [`QueueDecoder`] for this
 /// purpose.

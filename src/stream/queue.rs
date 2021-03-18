@@ -530,7 +530,7 @@ where
             // `probability != 0` and therefore:
             //   range >= scale * probability = (old_range >> PRECISION) * probability
             //         >= old_range >> PRECISION
-            //         >= old_range >> CompressedWords::BITS
+            //         >= old_range >> Word::BITS
             // where `old_range` is the `range` at method entry, which satisfied invariant (*)
             // by assumption. Therefore, the following left-shift restores the invariant:
             self.state.range = unsafe {
