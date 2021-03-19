@@ -14,17 +14,15 @@ use core::{
 };
 
 use crate::{
-    backends::{
-        self, AsReadWords, BoundedReadWords, IntoReadWords, Queue, ReadWords, Stack, WriteWords,
-    },
-    BitArray, CoderError, DefaultEncoderError,
+    backends::{AsReadWords, BoundedReadWords, IntoReadWords, ReadWords, WriteWords},
+    BitArray, CoderError, DefaultEncoderError, Queue, Semantics, Stack,
 };
 
 use self::codebooks::{DecoderCodebook, EncoderCodebook, SymbolCodeError};
 
 // TRAITS FOR READING AND WRITNIG STREAMS OF BITS =============================
 
-pub trait ReadBitStream<S: backends::Semantics> {
+pub trait ReadBitStream<S: Semantics> {
     type ReadError;
 
     fn read_bit(&mut self) -> Result<Option<bool>, Self::ReadError>;
@@ -58,7 +56,7 @@ pub trait ReadBitStream<S: backends::Semantics> {
     }
 }
 
-pub trait WriteBitStream<S: backends::Semantics> {
+pub trait WriteBitStream<S: Semantics> {
     type WriteError;
 
     fn write_bit(&mut self, bit: bool) -> Result<(), Self::WriteError>;
@@ -101,7 +99,7 @@ pub trait WriteBitStream<S: backends::Semantics> {
 }
 
 #[derive(Debug)]
-pub struct DecodeSymbols<'a, Stream: ?Sized, I, S: backends::Semantics> {
+pub struct DecodeSymbols<'a, Stream: ?Sized, I, S: Semantics> {
     bit_stream: &'a mut Stream,
     codebooks: I,
     semantics: PhantomData<S>,
@@ -109,7 +107,7 @@ pub struct DecodeSymbols<'a, Stream: ?Sized, I, S: backends::Semantics> {
 
 impl<'a, Stream, I, C, S> Iterator for DecodeSymbols<'a, Stream, I, S>
 where
-    S: backends::Semantics,
+    S: Semantics,
     Stream: ReadBitStream<S>,
     C: DecoderCodebook,
     I: Iterator<Item = C>,
@@ -130,7 +128,7 @@ where
 
 impl<'a, Stream, I, C, S> ExactSizeIterator for DecodeSymbols<'a, Stream, I, S>
 where
-    S: backends::Semantics,
+    S: Semantics,
     Stream: ReadBitStream<S>,
     C: DecoderCodebook,
     I: ExactSizeIterator<Item = C>,
@@ -154,7 +152,7 @@ where
 /// This type does not support decoding from a queue. Use a [`QueueDecoder`] for this
 /// purpose.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct SymbolCoder<Word: BitArray, S: backends::Semantics, B = Vec<Word>> {
+pub struct SymbolCoder<Word: BitArray, S: Semantics, B = Vec<Word>> {
     backend: B,
     current_word: Word,
 
@@ -189,7 +187,7 @@ pub type DefaultStackCoder = StackCoder<u32, Vec<u32>>;
 
 // GENERIC IMPLEMENTATIONS ====================================================
 
-impl<Word: BitArray, S: backends::Semantics, B> SymbolCoder<Word, S, B> {
+impl<Word: BitArray, S: Semantics, B> SymbolCoder<Word, S, B> {
     pub fn new() -> Self
     where
         B: Default,

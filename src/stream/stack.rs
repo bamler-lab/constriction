@@ -15,10 +15,10 @@ use super::{
 use crate::{
     backends::{
         self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, FallibleIteratorReadWords,
-        IntoReadWords, IntoSeekReadWords, ReadWords, ReverseReads, Stack, WriteWords,
+        IntoReadWords, IntoSeekReadWords, ReadWords, ReverseReads, WriteWords,
     },
     bit_array_to_chunks_truncated, BitArray, CoderError, DefaultEncoderError,
-    DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, UnwrapInfallible,
+    DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack, UnwrapInfallible,
 };
 
 /// Entropy coder for both encoding and decoding on a stack

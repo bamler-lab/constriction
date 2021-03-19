@@ -16,11 +16,9 @@ use super::{
     Code, Decode, Encode, IntoDecoder,
 };
 use crate::{
-    backends::{
-        AsReadWords, BoundedReadWords, Cursor, IntoReadWords, Queue, ReadWords, WriteWords,
-    },
+    backends::{AsReadWords, BoundedReadWords, Cursor, IntoReadWords, ReadWords, WriteWords},
     BitArray, CoderError, DefaultEncoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos,
-    PosSeek, Seek, UnwrapInfallible,
+    PosSeek, Queue, Seek, UnwrapInfallible,
 };
 
 /// Type of the internal state used by [`RangeEncoder<Word, State>`] and

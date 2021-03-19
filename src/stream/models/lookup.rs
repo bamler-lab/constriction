@@ -1246,7 +1246,7 @@ where
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     extern crate std;
     use std::{string::String, vec};
 

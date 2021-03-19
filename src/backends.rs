@@ -105,19 +105,7 @@ use core::{
 };
 use smallvec::SmallVec;
 
-use crate::{Pos, PosSeek, Seek};
-
-// READ WRITE LOGICS ==========================================================
-
-pub trait Semantics: Default {}
-
-#[derive(Debug, Default)]
-pub struct Stack {}
-impl Semantics for Stack {}
-
-#[derive(Debug, Default)]
-pub struct Queue {}
-impl Semantics for Queue {}
+use crate::{Pos, PosSeek, Queue, Seek, Semantics, Stack};
 
 // MAIN TRAITS FOR CAPABILITIES OF BACKENDS ===================================
 

@@ -64,8 +64,8 @@ use super::{
     Code, Decode, Encode, TryCodingError,
 };
 use crate::{
-    backends::{ReadWords, Stack, WriteWords},
-    BitArray, CoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek,
+    backends::{ReadWords, WriteWords},
+    BitArray, CoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack,
 };
 
 /// # Intended Usage
@@ -1118,7 +1118,7 @@ where
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::super::models::LeakyQuantizer;
     use super::*;
 

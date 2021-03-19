@@ -275,6 +275,20 @@ use num::{
     PrimInt, Unsigned,
 };
 
+// READ WRITE SEMANTICS =======================================================
+
+pub trait Semantics: Default {}
+
+#[derive(Debug, Default)]
+pub struct Stack {}
+impl Semantics for Stack {}
+
+#[derive(Debug, Default)]
+pub struct Queue {}
+impl Semantics for Queue {}
+
+// GENERIC ERROR TYPES ========================================================
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoderError<FrontendError, BackendError> {
     Frontend(FrontendError),
