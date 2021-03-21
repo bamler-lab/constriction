@@ -448,7 +448,7 @@ pub trait Pos: PosSeek {
 /// let snapshot2 = ans.pos();
 ///
 /// // As discussed above, `DefaultAnsCoder` doesn't impl `Seek` but we can get a decoder that does:
-/// let mut seekable_decoder = ans.seekable_decoder();
+/// let mut seekable_decoder = ans.as_seekable_decoder();
 ///
 /// // `seekable_decoder` is still a `AnsCoder`, so decoding would start with the items we encoded
 /// // last. But since it implements `Seek` we can jump ahead to our first snapshot:
@@ -501,7 +501,7 @@ pub trait Seek: PosSeek {
     /// let snapshot = encoder.pos(); // <-- Returns a tuple `(pos, state)`.
     ///
     /// // Step 3: Encode some more data and then obtain a decoder (omitted for brevity) ...
-    /// # let mut decoder = encoder.seekable_decoder();
+    /// # let mut decoder = encoder.as_seekable_decoder();
     ///
     /// // Step 4: Jump to snapshot by calling `Seek::seek`:
     /// decoder.seek(snapshot); // <-- No need to deconstruct `snapshot` into `(pos, state)`.
@@ -555,25 +555,24 @@ pub trait Seek: PosSeek {
 
 /// A trait for bit strings of fixed (and usually small) length.
 ///
-/// Short fixed-length bit strings are fundamental building blocks of efficient
-/// entropy coding algorithms. They are currently used for the following purposes:
-/// - to represent the smallest unit of compressed data (see
-///   [`Code::Word`]);
+/// Short fixed-length bit strings are fundamental building blocks of efficient entropy
+/// coding algorithms. They are currently used for the following purposes:
+/// - to represent the smallest unit of compressed data (see [`Code::Word`]);
 /// - to represent probabilities in fixed point arithmetic (see
 ///   [`EntropyModel::Probability`]); and
-/// - the internal state of entropy coders (see [`Code::State`]) is typically
-///   comprised of one or more `BitArray`s, although this is not a requirement.
+/// - the internal state of entropy coders (see [`Code::State`]) is typically comprised of
+///   one or more `BitArray`s, although this is not a requirement.
 ///
-/// This trait is implemented on all primitive unsigned integer types. There is
-/// usually no reason to implement it on custom types since coders will assume, for
-/// performance considerations, that `BitArray`s can be represented and manipulated
-/// efficiently in hardware.
+/// This trait is implemented on all primitive unsigned integer types. It is not recommended
+/// to implement this trait for custom types since coders will assume, for performance
+/// considerations, that `BitArray`s can be represented and manipulated efficiently in
+/// hardware.
 ///
 /// # Safety
 ///
-/// This trait is marked `unsafe` so that entropy coders may rely on the assumption
-/// that all `BitArray`s have precisely the same behavior as builtin unsigned
-/// integer types, and that [`BitArray::BITS`] has the correct value.
+/// This trait is marked `unsafe` so that entropy coders may rely on the assumption that all
+/// `BitArray`s have precisely the same behavior as builtin unsigned integer types, and that
+/// [`BitArray::BITS`] has the correct value.
 pub unsafe trait BitArray:
     PrimInt
     + Unsigned
@@ -619,7 +618,7 @@ fn wrapping_pow2<T: BitArray, const EXPONENT: usize>() -> T {
 }
 
 pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq {
-    type Base: BitArray;
+    type Base: BitArray<NonZero = Self>;
 
     fn new(n: Self::Base) -> Option<Self>;
 

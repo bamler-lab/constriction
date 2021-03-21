@@ -197,6 +197,8 @@ where
     /// a sequence of `Words`, load the `Words` back in at a later point and then encode
     /// some more symbols), then consider using an [`AnsCoder`].
     ///
+    /// TODO: rename to `with_write_backend` and then add the same method to `AnsCoder`
+    ///
     /// [`AnsCoder`]: super::stack::AnsCoder
     pub fn with_backend(backend: Backend) -> Self {
         assert!(State::BITS >= 2 * Word::BITS);
@@ -215,7 +217,7 @@ where
         Backend: AsReadWords<'a, Word, Queue>,
         Backend::AsReadWords: BoundedReadWords<Word, Queue>,
     {
-        self.state.range.get() == State::max_value() && self.bulk.as_read_backend().is_exhausted()
+        self.state.range.get() == State::max_value() && self.bulk.as_read_words().is_exhausted()
     }
 
     /// Same as `Encoder::maybe_full`, but can be called on a concrete type without type
@@ -332,7 +334,7 @@ where
         Backend: AsReadWords<'a, Word, Queue>,
         Backend::AsReadWords: BoundedReadWords<Word, Queue>,
     {
-        self.bulk.as_read_backend().remaining() + self.num_seal_words()
+        self.bulk.as_read_words().remaining() + self.num_seal_words()
     }
 
     /// Returns the size of the current queue of compressed data in bits.
@@ -620,7 +622,7 @@ where
         assert!(State::BITS >= 2 * Word::BITS);
         assert_eq!(State::BITS % Word::BITS, 0);
 
-        let mut bulk = compressed.into_read_backend();
+        let mut bulk = compressed.into_read_words();
         let point = Self::read_point(&mut bulk)?;
 
         Ok(RangeDecoder {
@@ -651,7 +653,7 @@ where
         assert!(State::BITS >= 2 * Word::BITS);
         assert_eq!(State::BITS % Word::BITS, 0);
 
-        let mut bulk = compressed.as_read_backend();
+        let mut bulk = compressed.as_read_words();
         let point = Self::read_point(&mut bulk)?;
 
         Ok(RangeDecoder {

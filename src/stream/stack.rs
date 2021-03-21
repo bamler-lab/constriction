@@ -15,7 +15,7 @@ use super::{
 use crate::{
     backends::{
         self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, FallibleIteratorReadWords,
-        IntoReadWords, IntoSeekReadWords, ReadWords, ReverseReads, WriteWords,
+        IntoReadWords, IntoSeekReadWords, ReadWords, Reverse, WriteWords,
     },
     bit_array_to_chunks_truncated, BitArray, CoderError, DefaultEncoderError,
     DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack, UnwrapInfallible,
@@ -260,7 +260,7 @@ where
 
     fn into_decoder(self) -> Self::IntoDecoder {
         AnsCoder {
-            bulk: self.bulk.into_read_backend(),
+            bulk: self.bulk.into_read_words(),
             state: self.state,
             phantom: PhantomData,
         }
@@ -276,7 +276,7 @@ where
 {
     fn from(ans: &'a AnsCoder<Word, State, Backend>) -> Self {
         AnsCoder {
-            bulk: ans.bulk().as_read_backend(),
+            bulk: ans.bulk().as_read_words(),
             state: ans.state(),
             phantom: PhantomData,
         }
@@ -622,6 +622,46 @@ where
             - 1
     }
 
+    pub fn into_decoder(self) -> AnsCoder<Word, State, Backend::IntoReadWords>
+    where
+        Backend: IntoReadWords<Word, Stack>,
+    {
+        AnsCoder {
+            bulk: self.bulk.into_read_words(),
+            state: self.state,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Consumes the `AnsCoder` and returns a decoder that implements [`Seek`].
+    ///
+    /// This method is similar to [`seekable_decoder`] except that it takes ownership of
+    /// the original `AnsCoder`, so the returned seekable decoder can typically be returned
+    /// from the calling function or put on the heap.
+    ///
+    /// [`seekable_decoder`]: Self::seekable_decoder
+    pub fn into_seekable_decoder(self) -> AnsCoder<Word, State, Backend::IntoSeekReadWords>
+    where
+        Backend: IntoSeekReadWords<Word, Stack>,
+    {
+        AnsCoder {
+            bulk: self.bulk.into_seek_read_words(),
+            state: self.state,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn as_decoder<'a>(&'a self) -> AnsCoder<Word, State, Backend::AsReadWords>
+    where
+        Backend: AsReadWords<'a, Word, Stack>,
+    {
+        AnsCoder {
+            bulk: self.bulk.as_read_words(),
+            state: self.state,
+            phantom: PhantomData,
+        }
+    }
+
     /// Returns a decoder that implements [`Seek`].
     ///
     /// The returned decoder shares access to the compressed data with the original
@@ -644,30 +684,12 @@ where
     /// backing data store `Backend = Vec<Word>`.
     ///
     /// [`into_seekable_decoder`]: Self::into_seekable_decoder
-    pub fn seekable_decoder<'a>(&'a self) -> AnsCoder<Word, State, Backend::AsSeekReadWords>
+    pub fn as_seekable_decoder<'a>(&'a self) -> AnsCoder<Word, State, Backend::AsSeekReadWords>
     where
         Backend: AsSeekReadWords<'a, Word, Stack>,
     {
         AnsCoder {
-            bulk: self.bulk.as_seek_read_backend(),
-            state: self.state,
-            phantom: PhantomData,
-        }
-    }
-
-    /// Consumes the `AnsCoder` and returns a decoder that implements [`Seek`].
-    ///
-    /// This method is similar to [`seekable_decoder`] except that it takes ownership of
-    /// the original `AnsCoder`, so the returned seekable decoder can typically be returned
-    /// from the calling function or put on the heap.
-    ///
-    /// [`seekable_decoder`]: Self::seekable_decoder
-    pub fn into_seekable_decoder(self) -> AnsCoder<Word, State, Backend::IntoSeekReadWords>
-    where
-        Backend: IntoSeekReadWords<Word, Stack>,
-    {
-        AnsCoder {
-            bulk: self.bulk.into_seek_read_backend(),
+            bulk: self.bulk.as_seek_read_words(),
             state: self.state,
             phantom: PhantomData,
         }
@@ -692,6 +714,7 @@ where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
+    // TODO: proper error type (also for `from_compressed`)
     pub fn from_compressed_slice(compressed: &'bulk [Word]) -> Result<Self, ()> {
         Self::from_compressed(backends::Cursor::new_at_write_end(compressed)).map_err(|_| ())
     }
@@ -701,19 +724,19 @@ where
     }
 }
 
-impl<Word, State, Buf> AnsCoder<Word, State, ReverseReads<Cursor<Word, Buf>>>
+impl<Word, State, Buf> AnsCoder<Word, State, Reverse<Cursor<Word, Buf>>>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
     Buf: AsRef<[Word]>,
 {
     pub fn from_reversed_compressed(compressed: Buf) -> Result<Self, Buf> {
-        Self::from_compressed(ReverseReads(Cursor::new_at_write_beginning(compressed)))
-            .map_err(|ReverseReads(cursor)| cursor.into_buf_and_pos().0)
+        Self::from_compressed(Reverse(Cursor::new_at_write_beginning(compressed)))
+            .map_err(|Reverse(cursor)| cursor.into_buf_and_pos().0)
     }
 
     pub fn from_reversed_binary(data: Buf) -> Self {
-        Self::from_binary(ReverseReads(Cursor::new_at_write_beginning(data))).unwrap_infallible()
+        Self::from_binary(Reverse(Cursor::new_at_write_beginning(data))).unwrap_infallible()
     }
 }
 
@@ -897,7 +920,7 @@ where
     State: BitArray + AsPrimitive<Word> + From<Word>,
     Buf: AsRef<[Word]> + AsMut<[Word]>,
 {
-    pub fn into_reversed(self) -> AnsCoder<Word, State, ReverseReads<Cursor<Word, Buf>>> {
+    pub fn into_reversed(self) -> AnsCoder<Word, State, Reverse<Cursor<Word, Buf>>> {
         let (bulk, state) = self.into_raw_parts();
         AnsCoder {
             bulk: bulk.into_reversed(),
@@ -907,7 +930,7 @@ where
     }
 }
 
-impl<Word, State, Buf> AnsCoder<Word, State, ReverseReads<Cursor<Word, Buf>>>
+impl<Word, State, Buf> AnsCoder<Word, State, Reverse<Cursor<Word, Buf>>>
 where
     Word: BitArray,
     State: BitArray + AsPrimitive<Word> + From<Word>,
@@ -1419,7 +1442,7 @@ mod tests {
 
         // Test decoding from back to front.
         {
-            let mut seekable_decoder = encoder.seekable_decoder();
+            let mut seekable_decoder = encoder.as_seekable_decoder();
 
             // Verify that decoding leads to the same positions and states.
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {

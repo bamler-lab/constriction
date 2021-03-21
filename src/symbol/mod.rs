@@ -261,7 +261,7 @@ impl<Word: BitArray, B> QueueEncoder<Word, B> {
         B: WriteWords<Word> + IntoReadWords<Word, Queue>,
     {
         Ok(QueueDecoder::from_compressed(
-            self.into_compressed()?.into_read_backend(),
+            self.into_compressed()?.into_read_words(),
         ))
     }
 
@@ -462,7 +462,7 @@ impl<Word: BitArray, B: WriteWords<Word>> StackCoder<Word, B> {
         B: IntoReadWords<Word, Stack>,
     {
         SymbolCoder {
-            backend: self.backend.into_read_backend(),
+            backend: self.backend.into_read_words(),
             current_word: self.current_word,
             mask_last_written: self.mask_last_written,
             semantics: PhantomData,
@@ -474,7 +474,7 @@ impl<Word: BitArray, B: WriteWords<Word>> StackCoder<Word, B> {
         B: AsReadWords<'a, Word, Stack>,
     {
         SymbolCoder {
-            backend: self.backend.as_read_backend(),
+            backend: self.backend.as_read_words(),
             current_word: self.current_word,
             mask_last_written: self.mask_last_written,
             semantics: PhantomData,
