@@ -10,22 +10,23 @@ of `constriction` are to three-fold:
    research vs real-world compression codecs; machine learning researchers will likely want
    to start using `constriction` through its Python/numpy API. It exposes both highly
    optimized entropy coders that are easy to use in common cases as well as a composable set
-   of more low-level primitives that allow researchers to come up with more specialized
-   variants of existing source coding algorithms (e.g., adapters for making custom defined
-   probability distributions *exactly* invertable in fixed-point arithmetic; TODO).
-2. **to simplify the transition from research code to production software** by exposing a
-   superset of the exact same algorithms that the Python API provides also as a Rust crate;
-   if your research lead to a successful prototype of a new compression method then you can
-   use `constriction`'s Rust API to turn your Python research code into a small and highly
-   optimized standalone (statically linked) program, library, or WebAssembly module that
-   runs efficiently and that can be used by customers who don't want to deal with Python's
-   dependency hell. By default, the Rust and Python APIs are binary compatible, so you can,
-   e.g., continue to compress data with your Python research code while decompressing it
-   with your optimized Rust deployment or vice-versa. For deployments with tighter resource
-   constraints, the Rust API provides optional fine-grained control over the trade-off
-   between compression effectiveness, memory usage, and run-time efficency, as well as hooks
-   into the backing data sources and sinks, while preventing accidental misuse through
-   Rust's powerful type system.
+   of more low-level primitives that allow researchers to come up with specialized variants
+   of existing source coding algorithms (for example, `constriction` provides adapters for
+   making custom defined probability distributions *exactly* invertible in fixed-point
+   arithmetic so that they can be used with the provided entropy coders; TODO).
+2. **to simplify the transition from research code to reliable software products** by
+   exposing a superset of the exact same algorithms that the Python API provides also as a
+   Rust crate; if your research lead to a successful prototype of a new compression method
+   then you can use `constriction`'s Rust API to turn your Python research code into a small
+   and highly optimized standalone (statically linked) program, library, or WebAssembly
+   module that runs efficiently and that can be used by customers who don't want to deal
+   with Python's dependency hell. By default, the Rust and Python APIs are binary
+   compatible, so you can, e.g., continue to compress data with your Python research code
+   while decompressing it with your optimized Rust deployment or vice-versa. For deployments
+   with tighter resource constraints, the Rust API provides optional fine-grained control
+   over the trade-off between compression effectiveness, memory usage, and run-time
+   efficency, as well as hooks into the backing data sources and sinks, while preventing
+   accidental misuse through Rust's powerful type system.
 3. **to serve as a teaching resource** by providing a collection of several different
    entropy coding algorithms within a single consistent framework, thus making the various
    algorithms easily discoverable and comparable on practical examples; [additional teaching
