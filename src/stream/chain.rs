@@ -120,7 +120,7 @@ use crate::{
 ///
 /// // Step 1 of the decompressor: create a `ChainCoder` from the remaining data. We only really
 /// // need the `remaining_suffix` here, but it would also be legal to use the concatenation of
-/// // `remaining_prefix` with `remaining_suffix` here (see other example below).
+/// // `remaining_prefix` with `remaining_suffix` (see other example below).
 /// let mut coder = DefaultChainCoder::from_remaining(remaining_suffix).unwrap();
 ///
 /// // Step 2 of the decompressor: re-encode the symbols in reverse order.

@@ -45,7 +45,7 @@ where
 ///
 /// ```
 /// use constriction::stream::{
-///     models::lookup::DefaultEncoderHashLookupTable,
+///     models::lookup::SmallEncoderHashLookupTable,
 ///     stack::{SmallAnsCoder, DefaultAnsCoder},
 ///     queue::{SmallRangeEncoder, DefaultRangeEncoder},
 ///     Encode,
@@ -53,7 +53,7 @@ where
 ///
 /// let allowed_symbols = "Misp";
 /// let probabilities = [373, 1489, 1489, 745];
-/// let encoder_model = DefaultEncoderHashLookupTable::from_symbols_and_probabilities(
+/// let encoder_model = SmallEncoderHashLookupTable::from_symbols_and_probabilities(
 ///     allowed_symbols.chars().zip(probabilities.iter().cloned())
 /// )
 /// .unwrap();
@@ -77,19 +77,19 @@ where
 /// assert_eq!(default_range_encoder.into_compressed().unwrap(), [0x07C10F56u32]);
 /// ```
 ///
-/// See example in [`DefaultDecoderGenericLookupTable`] for decoding the above compressed
+/// See example in [`SmallDecoderGenericLookupTable`] for decoding the above compressed
 /// bit strings.
 ///
 /// # See also
 ///
-/// - [`DefaultEncoderArrayLookupTable`]
-/// - [`DefaultDecoderGenericLookupTable`]
+/// - [`SmallEncoderArrayLookupTable`]
+/// - [`SmallDecoderGenericLookupTable`]
 ///
 /// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
 /// [`SmallRangeEncoder`]: super::super::queue::SmallRangeEncoder
 /// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
 /// [`DefaultRangeEncoder`]: super::super::queue::DefaultRangeEncoder
-pub type DefaultEncoderHashLookupTable<Symbol> = EncoderHashLookupTable<Symbol, u16, 12>;
+pub type SmallEncoderHashLookupTable<Symbol> = EncoderHashLookupTable<Symbol, u16, 12>;
 
 impl<Symbol, Probability, const PRECISION: usize>
     EncoderHashLookupTable<Symbol, Probability, PRECISION>
@@ -241,14 +241,14 @@ where
 ///
 /// ```
 /// use constriction::stream::{
-///     models::lookup::DefaultEncoderArrayLookupTable,
+///     models::lookup::SmallEncoderArrayLookupTable,
 ///     stack::{SmallAnsCoder, DefaultAnsCoder},
 ///     queue::{SmallRangeEncoder, DefaultRangeEncoder},
 ///     Encode,
 /// };
 ///
 /// let probabilities = [1489, 745, 1489, 373];
-/// let encoder_model = DefaultEncoderArrayLookupTable::from_nonzero_probabilities(
+/// let encoder_model = SmallEncoderArrayLookupTable::from_nonzero_probabilities(
 ///     probabilities.iter().cloned()
 /// )
 /// .unwrap();
@@ -272,19 +272,19 @@ where
 /// assert_eq!(default_range_encoder.into_compressed().unwrap(), [0xBCF8733Bu32]);
 /// ```
 ///
-/// See example in [`DefaultDecoderIndexLookupTable`] for decoding the above compressed bit
+/// See example in [`SmallDecoderIndexLookupTable`] for decoding the above compressed bit
 /// strings.
 ///
 /// # See also
 ///
-/// - [`DefaultEncoderHashLookupTable`]
-/// - [`DefaultDecoderIndexLookupTable`]
+/// - [`SmallEncoderHashLookupTable`]
+/// - [`SmallDecoderIndexLookupTable`]
 ///
 /// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
 /// [`SmallRangeEncoder`]: super::super::queue::SmallRangeEncoder
 /// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
 /// [`DefaultRangeEncoder`]: super::super::queue::DefaultRangeEncoder
-pub type DefaultEncoderArrayLookupTable<Symbol> =
+pub type SmallEncoderArrayLookupTable<Symbol> =
     EncoderArrayLookupTable<Symbol, Box<[(u16, NonZeroU16)]>, 12>;
 
 impl<Probability, const PRECISION: usize>
@@ -459,18 +459,18 @@ where
 /// # Example
 ///
 /// Let's decode the compressed bit strings we generated in the example for
-/// [`DefaultEncoderArrayLookupTable`].
+/// [`SmallEncoderArrayLookupTable`].
 ///
 /// ```
 /// use constriction::stream::{
-///     models::lookup::DefaultDecoderIndexLookupTable,
+///     models::lookup::SmallDecoderIndexLookupTable,
 ///     stack::{SmallAnsCoder, DefaultAnsCoder},
 ///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
 ///     Decode, Code,
 /// };
 ///
 /// let probabilities = [1489, 745, 1489, 373];
-/// let decoder_model = DefaultDecoderIndexLookupTable::from_probabilities(
+/// let decoder_model = SmallDecoderIndexLookupTable::from_probabilities(
 ///     probabilities.iter().cloned()
 /// )
 /// .unwrap();
@@ -504,14 +504,14 @@ where
 ///
 /// # See also
 ///
-/// - [`DefaultDecoderGenericLookupTable`]
-/// - [`DefaultEncoderArrayLookupTable`]
+/// - [`SmallDecoderGenericLookupTable`]
+/// - [`SmallEncoderArrayLookupTable`]
 ///
 /// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
 /// [`SmallRangeDecoder`]: super::super::queue::SmallRangeDecoder
 /// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
 /// [`DefaultRangeDecoder`]: super::super::queue::DefaultRangeDecoder
-pub type DefaultDecoderIndexLookupTable<Symbol> =
+pub type SmallDecoderIndexLookupTable<Symbol> =
     DecoderLookupTable<Symbol, u16, Box<[u16]>, IndexSymbolTable<Box<[(u16, ())]>>, 12>;
 
 /// Type alias for a [`DecoderLookupTable`] over arbitrary symbols with sane settings.
@@ -522,11 +522,11 @@ pub type DefaultDecoderIndexLookupTable<Symbol> =
 /// # Example
 ///
 /// Let's decode the compressed bit strings we generated in the example for
-/// [`DefaultEncoderHashLookupTable`].
+/// [`SmallEncoderHashLookupTable`].
 ///
 /// ```
 /// use constriction::stream::{
-///     models::lookup::DefaultDecoderGenericLookupTable,
+///     models::lookup::SmallDecoderGenericLookupTable,
 ///     stack::{SmallAnsCoder, DefaultAnsCoder},
 ///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
 ///     Decode, Code,
@@ -534,7 +534,7 @@ pub type DefaultDecoderIndexLookupTable<Symbol> =
 ///
 /// let allowed_symbols = "Misp";
 /// let probabilities = [373, 1489, 1489, 745];
-/// let decoder_model = DefaultDecoderGenericLookupTable::from_symbols_and_probabilities(
+/// let decoder_model = SmallDecoderGenericLookupTable::from_symbols_and_probabilities(
 ///     allowed_symbols.chars().zip(probabilities.iter().cloned())
 /// )
 /// .unwrap();
@@ -568,14 +568,14 @@ pub type DefaultDecoderIndexLookupTable<Symbol> =
 ///
 /// # See also
 ///
-/// - [`DefaultDecoderIndexLookupTable`]
-/// - [`DefaultEncoderArrayLookupTable`]
+/// - [`SmallDecoderIndexLookupTable`]
+/// - [`SmallEncoderArrayLookupTable`]
 ///
 /// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
 /// [`SmallRangeDecoder`]: super::super::queue::SmallRangeDecoder
 /// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
 /// [`DefaultRangeDecoder`]: super::super::queue::DefaultRangeDecoder
-pub type DefaultDecoderGenericLookupTable<Symbol> =
+pub type SmallDecoderGenericLookupTable<Symbol> =
     DecoderLookupTable<Symbol, u16, Box<[u16]>, GenericSymbolTable<Box<[(u16, Symbol)]>>, 12>;
 
 impl<Symbol, Probability, const PRECISION: usize>

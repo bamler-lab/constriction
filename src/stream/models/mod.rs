@@ -187,6 +187,7 @@ pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
 }
 
 pub type DefaultLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u32, 24>;
+pub type SmallLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u16, 12>;
 
 impl<F, Symbol, Probability, const PRECISION: usize>
     LeakyQuantizer<F, Symbol, Probability, PRECISION>

@@ -19,7 +19,7 @@
 //!    available as a by-product of an upcoming university course on data compression with
 //!    deep probabilistic models.
 //!
-//! ## Crate Status
+//! # Crate Status
 //!
 //! The `constriction` crate currently provides solid implementations of the following
 //! entropy coding algorithms:

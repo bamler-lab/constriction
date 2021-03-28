@@ -124,8 +124,8 @@
 //!     encoder.encode_iid_symbols(symbols, &model).unwrap();
 //!
 //!     // Dropping the encoder doesn't automatically seal the compressed bit string because that
-//!     // could fail. We explicitly have to seal it by calling `.into_compressed()` (which returns
-//!     // the backend since that's what logically "holds" the compressed data.)
+//!     // could fail. We explicitly have to seal it by calling `.into_compressed()`, which returns
+//!     // the backend since that's what logically "holds" the compressed data, and then drop that.
 //!     std::mem::drop(encoder.into_compressed().unwrap());
 //! }
 //!

@@ -2,8 +2,8 @@
 
 The `constriction` library provides a set of composable implementations of entropy coding
 algorithms. It has APIs for both the **Python and Rust** languages and it focuses on
-versatility, ease of use, compression performance, and computational efficiency. The goals
-of `constriction` are to three-fold:
+correctness, versatility, ease of use, compression performance, and computational
+efficiency. The goals of `constriction` are to three-fold:
 
 1. **to facilitate research on novel lossless and lossy compression methods** by bridging
    the gap between vastly different software stacks commonly used for machine learning
@@ -27,7 +27,7 @@ of `constriction` are to three-fold:
    over the trade-off between compression effectiveness, memory usage, and run-time
    efficency, as well as hooks into the backing data sources and sinks, while preventing
    accidental misuse through Rust's powerful type system.
-3. **to serve as a teaching resource** by providing a collection of several different
+3. **to serve as a teaching resource** by providing a collection of several complementary
    entropy coding algorithms within a single consistent framework, thus making the various
    algorithms easily discoverable and comparable on practical examples; [additional teaching
    material](https://robamler.github.io/teaching/compress21) will be made publicly available
