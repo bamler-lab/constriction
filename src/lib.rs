@@ -359,8 +359,8 @@ pub enum DefaultEncoderFrontendError {
     /// entropy model, i.e., a distribution that assigns a nonzero probability to all
     /// symbols within a finite domain. Leaky distributions can be constructed with,
     /// e.g., a [`LeakyQuantizer`](models/struct.LeakyQuantizer.html) or with
-    /// [`Categorical::from_floating_point_probabilities`](
-    /// models/struct.Categorical.html#method.from_floating_point_probabilities).
+    /// [`LeakyCategorical::from_floating_point_probabilities`](
+    /// models/struct.LeakyCategorical.html#method.from_floating_point_probabilities).
     ImpossibleSymbol,
 }
 
@@ -430,12 +430,12 @@ pub trait Pos: PosSeek {
 /// # Example
 ///
 /// ```
-/// use constriction::{stream::{models::Categorical, stack::DefaultAnsCoder, Decode}, Pos, Seek};
+/// use constriction::{stream::{models::LeakyCategorical, stack::DefaultAnsCoder, Decode}, Pos, Seek};
 ///
 /// // Create a `AnsCoder` encoder and an entropy model:
 /// let mut ans = DefaultAnsCoder::new();
 /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-/// let entropy_model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
+/// let entropy_model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
 ///     .unwrap();
 ///
 /// // Encode some symbols in two chunks and take a snapshot after each chunk.

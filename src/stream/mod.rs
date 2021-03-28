@@ -35,7 +35,7 @@
 //! # Which Stream Code Should I Use?
 //!
 //! The list below compares several aspects of the major two provided stream codes, ANS
-//! Coding and Range Coding (most users won't want to use a Chain Coder).
+//! Coding and Range Coding (most users won't want to use the Chain Coder).
 //!
 //! **TL;DR:** Don't overthink it. For many practical use cases, both ANS and Range Coding
 //! will probably do the job, and if you end up painting yourself into a corner then you can

@@ -1,9 +1,10 @@
-//! Probability distributions that can be used as entropy models for compression.
+//! Probability distributions that can be used as entropy models for stream codes.
 //!
-//! See documentation of [`Code`] for an example how to use these models for data
-//! compression or decompression.
+//! See sister modules [`stack`] or [`queue`] for examples of how to use these models for
+//! data compression or decompression.
 //!
-//! [`Code`]: crate::Code
+//! [`stack`]: super::stack
+//! [`queue`]: super::queue
 
 pub mod lookup;
 
@@ -555,7 +556,7 @@ where
 /// [`EntropyModel`]: trait.EntropyModel.html
 /// [`Encode`]: crate::Encode
 /// [`Decode`]: crate::Decode
-pub struct Categorical<Probability, const PRECISION: usize> {
+pub struct LeakyCategorical<Probability, const PRECISION: usize> {
     /// Invariants:
     /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
     ///   this may be relaxed in the future)
@@ -566,10 +567,10 @@ pub struct Categorical<Probability, const PRECISION: usize> {
     cdf: Vec<Probability>,
 }
 
-pub type DefaultCategorical = Categorical<u32, 24>;
-pub type SmallCategorical = Categorical<u16, 12>;
+pub type DefaultCategorical = LeakyCategorical<u32, 24>;
+pub type SmallCategorical = LeakyCategorical<u16, 12>;
 
-impl<Probability, const PRECISION: usize> Debug for Categorical<Probability, PRECISION>
+impl<Probability, const PRECISION: usize> Debug for LeakyCategorical<Probability, PRECISION>
 where
     Probability: BitArray + Debug,
 {
@@ -580,7 +581,7 @@ where
     }
 }
 
-impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRECISION> {
+impl<Probability: BitArray, const PRECISION: usize> LeakyCategorical<Probability, PRECISION> {
     /// Constructs a leaky distribution whose PMF approximates given probabilities.
     ///
     /// The returned distribution will be defined for symbols of type `usize` from
@@ -754,12 +755,12 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     ///
     /// This is a low level method that allows, e.g,. reconstructing a probability
     /// distribution previously exported with [`fixed_point_probabilities`]. The more common
-    /// way to construct a `Categorical` distribution is via
+    /// way to construct a `LeakyCategorical` distribution is via
     /// [`from_floating_point_probabilities`].
     ///
     /// The entries of `probabilities` have to be nonzero and (logically) sum up to
     /// `1 << PRECISION`, where `PRECISION` is a const generic parameter on the
-    /// `Categorical` distribution. Further, all probabilities have to be nonzero (which is
+    /// `LeakyCategorical` distribution. Further, all probabilities have to be nonzero (which is
     /// statically enforced by the trait bound on the iterator's items).
     ///
     /// # Panics
@@ -771,13 +772,13 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// The provided probabilities have to sum up to `1 << PRECISION`:
     ///
     /// ```
-    /// use constriction::stream::models::Categorical;
+    /// use constriction::stream::models::LeakyCategorical;
     ///
     /// let probabilities = vec![1u32 << 21, 1 << 22, 1 << 22, 1 << 22, 1 << 21];
     /// // `probabilities` sums up to `1 << PRECISION` as required:
     /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
     ///
-    /// let model = Categorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities);
+    /// let model = LeakyCategorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities);
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
@@ -787,13 +788,13 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// `1 << PRECISION` (i.e., the summation has to wrap around exactly once):
     ///
     /// ```
-    /// use constriction::stream::models::Categorical;
+    /// use constriction::stream::models::LeakyCategorical;
     ///
     /// let probabilities = vec![1u32 << 29, 1 << 30, 1 << 30, 1 << 30, 1 << 29];
     /// // `probabilities` sums up to `1 << 32` (logically), i.e., it wraps around once.
     /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
     ///
-    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
     /// ```
@@ -801,18 +802,18 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// Wrapping around twice panics:
     ///
     /// ```should_panic
-    /// use constriction::stream::models::Categorical;
+    /// use constriction::stream::models::LeakyCategorical;
     /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
     /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
-    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
     /// ```
     ///
     /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
     ///
     /// ```should_panic
-    /// use constriction::stream::models::Categorical;
+    /// use constriction::stream::models::LeakyCategorical;
     /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
-    /// let model = Categorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
+    /// let model = LeakyCategorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
     /// ```
     ///
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
@@ -874,10 +875,10 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::models::Categorical;
+    /// use constriction::stream::models::LeakyCategorical;
     ///
     /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
-    /// let model = Categorical::<u32, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+    /// let model = LeakyCategorical::<u32, 32>::from_floating_point_probabilities(&probabilities).unwrap();
     ///
     /// let pmf = model.fixed_point_probabilities().collect::<Vec<_>>();
     /// assert_eq!(pmf, vec![1 << 29, 1 << 31, 1 << 30, 1 << 29]);
@@ -925,10 +926,10 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::models::Categorical;
+    /// use constriction::stream::models::LeakyCategorical;
     ///
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -964,9 +965,9 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// be lossless (even though, for these particular values, it would be):
     ///
     /// ```compile_fail
-    /// use constriction::stream::models::Categorical;
+    /// use constriction::stream::models::LeakyCategorical;
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = model.floating_point_probabilities().collect::<Vec<f32>>();
     /// //                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Compiler error: trait bound not satisfied
@@ -977,10 +978,10 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
     /// `floating_point_probabilities_lossy` as follows:
     ///
     /// ```
-    /// use constriction::stream::models::Categorical;
+    /// use constriction::stream::models::LeakyCategorical;
     ///
     /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model = Categorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
     ///
     /// let pmf = model.floating_point_probabilities_lossy().collect::<Vec<f32>>();
     /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
@@ -1044,14 +1045,14 @@ impl<Probability: BitArray, const PRECISION: usize> Categorical<Probability, PRE
 }
 
 impl<Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
-    for Categorical<Probability, PRECISION>
+    for LeakyCategorical<Probability, PRECISION>
 {
     type Probability = Probability;
     type Symbol = usize;
 }
 
 impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
-    for Categorical<Probability, PRECISION>
+    for LeakyCategorical<Probability, PRECISION>
 {
     fn left_cumulative_and_probability(
         &self,
@@ -1082,7 +1083,7 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
 }
 
 impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
-    for Categorical<Probability, PRECISION>
+    for LeakyCategorical<Probability, PRECISION>
 {
     fn quantile_function(
         &self,
@@ -1187,7 +1188,7 @@ mod tests {
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            Categorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+            LeakyCategorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
         let weights: Vec<u32> = categorical.fixed_point_probabilities().collect();
 
         assert_eq!(&weights[..], &hist[..]);
@@ -1204,7 +1205,7 @@ mod tests {
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            Categorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+            LeakyCategorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
         let weights: Vec<u32> = categorical.fixed_point_probabilities().collect();
 
         assert_eq!(weights.len(), hist.len());
@@ -1241,7 +1242,7 @@ mod tests {
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
         let model =
-            Categorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+            LeakyCategorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
         test_entropy_model(model, 0..probabilities.len());
     }
 

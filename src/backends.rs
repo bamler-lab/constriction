@@ -644,7 +644,7 @@ where
 ///
 /// This wrapper is usually used for a [`Cursor`]. The `Cursor` type implements
 /// `ReadWords<Word, S>` for both semantics `S = Queue` and `S = Stack`, so you can read
-/// `Word`s from a cursor in either forward or backward direction. 
+/// `Word`s from a cursor in either forward or backward direction.
 ///
 /// Reading from a `Cursor` with `Queue` semantics reads from the underlying slice `[Word]`
 /// in the normal direction (from index `0` to index `.len() - 1`), which is useful for
@@ -776,7 +776,7 @@ where
 /// # assert!(c7.is_empty());
 /// ```
 ///
-/// [`RangeCoder`]: crate::stream::queue::RangeCoder 
+/// [`RangeCoder`]: crate::stream::queue::RangeCoder
 /// [`AnsCoder`]: crate::stream::stack::AnsCoder
 #[derive(Debug)]
 pub struct Reverse<Backend>(pub Backend);

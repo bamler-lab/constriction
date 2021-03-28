@@ -395,14 +395,14 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::Categorical, stack::DefaultAnsCoder, Decode};
+    /// use constriction::stream::{models::LeakyCategorical, stack::DefaultAnsCoder, Decode};
     ///
     /// let mut coder = DefaultAnsCoder::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let model = Categorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
+    /// let model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
     ///     .unwrap();
     /// coder.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
@@ -958,7 +958,7 @@ mod tests {
     extern crate std;
     use std::dbg;
 
-    use super::super::models::{Categorical, LeakyQuantizer};
+    use super::super::models::{LeakyCategorical, LeakyQuantizer};
     use super::*;
 
     use probability::distribution::{Gaussian, Inverse};
@@ -1122,10 +1122,11 @@ mod tests {
             347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540, 39258, 27988, 54269,
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let categorical = Categorical::<Probability, PRECISION>::from_floating_point_probabilities(
-            &categorical_probabilities,
-        )
-        .unwrap();
+        let categorical =
+            LeakyCategorical::<Probability, PRECISION>::from_floating_point_probabilities(
+                &categorical_probabilities,
+            )
+            .unwrap();
         let mut symbols_categorical = Vec::with_capacity(AMT);
         let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
         for _ in 0..AMT {

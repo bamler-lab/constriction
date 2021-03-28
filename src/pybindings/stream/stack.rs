@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::{
     stream::{
-        models::{Categorical, LeakyQuantizer},
+        models::{LeakyCategorical, LeakyQuantizer},
         Decode, TryCodingError,
     },
     CoderError, DefaultEncoderFrontendError, UnwrapInfallible,
@@ -334,13 +334,14 @@ impl AnsCoder {
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
-        let model =
-            Categorical::<u32, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
-                .map_err(|()| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "Probability model is either degenerate or not normalizable.",
-                    )
-                })?;
+        let model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(
+            probabilities.as_slice()?,
+        )
+        .map_err(|()| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Probability model is either degenerate or not normalizable.",
+            )
+        })?;
 
         self.inner.encode_iid_symbols_reverse(
             symbols
@@ -370,13 +371,14 @@ impl AnsCoder {
         probabilities: PyReadonlyArray1<'_, f64>,
         py: Python<'p>,
     ) -> PyResult<&'p PyArray1<i32>> {
-        let model =
-            Categorical::<u32, 24>::from_floating_point_probabilities(probabilities.as_slice()?)
-                .map_err(|()| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "Probability distribution is either degenerate or not normalizable.",
-                    )
-                })?;
+        let model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(
+            probabilities.as_slice()?,
+        )
+        .map_err(|()| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Probability distribution is either degenerate or not normalizable.",
+            )
+        })?;
 
         Ok(PyArray1::from_iter(
             py,
