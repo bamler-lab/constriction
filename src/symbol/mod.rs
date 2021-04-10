@@ -595,7 +595,7 @@ impl<Word: BitArray, B: BoundedReadWords<Word, Stack>> ExactSizeIterator for Sta
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::{
         codebooks::huffman::{DecoderHuffmanTree, EncoderHuffmanTree},
         *,

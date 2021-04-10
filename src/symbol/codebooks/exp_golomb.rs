@@ -175,7 +175,7 @@ impl<N: Unsigned + PrimInt + WrappingAdd + WrappingSub> DecoderCodebook for ExpG
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use rand::{RngCore, SeedableRng};
     use rand_xoshiro::Xoshiro256StarStar;
 

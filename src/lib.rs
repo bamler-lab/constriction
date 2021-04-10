@@ -266,6 +266,7 @@ pub mod symbol;
 use core::{
     convert::Infallible,
     fmt::{Binary, Debug, Display, LowerHex, UpperHex},
+    hash::Hash,
     num::{NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
 };
 
@@ -578,12 +579,15 @@ pub unsafe trait BitArray:
     + Unsigned
     + WrappingAdd
     + WrappingSub
-    + Debug
     + LowerHex
     + UpperHex
     + Binary
     + Default
+    + Copy
+    + Display
+    + Debug
     + Eq
+    + Hash
     + 'static
 {
     /// The (fixed) length of the `BitArray` in bits.
@@ -617,7 +621,7 @@ fn wrapping_pow2<T: BitArray, const EXPONENT: usize>() -> T {
     }
 }
 
-pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq {
+pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq + Hash + 'static {
     type Base: BitArray<NonZero = Self>;
 
     fn new(n: Self::Base) -> Option<Self>;
@@ -669,10 +673,10 @@ macro_rules! unsafe_impl_bit_array {
                         // SAFETY: This is trivially safe because `non_zero` came from a
                         // `NonZero` type. We really shouldn't have to give the compiler
                         // this hint but removing it leads to a massive (~30%) performance
-                        // regression in our tests (TODO: file rust bug).
-                        if non_zero == num::zero::<$base>() {
+                        // regression on our benchmarks (TODO: file rust bug).
+                        if non_zero == num::zero::<Self::Base>() {
                             core::hint::unreachable_unchecked();
-                        } else{
+                        } else {
                             non_zero
                         }
                     }
@@ -688,7 +692,7 @@ unsafe_impl_bit_array!(
     (u32, NonZeroU32),
     (u64, NonZeroU64),
     (u128, NonZeroU128),
-    (usize, NonZeroUsize)
+    (usize, NonZeroUsize),
 );
 
 pub trait UnwrapInfallible<T> {

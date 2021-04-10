@@ -31,26 +31,29 @@
 //! let symbols = decode_categoricals(&mut ans_coder, &probabilities);
 //! assert_eq!(symbols, [0, 0, 1]);
 //!
-//! // Even if we modify only the first entropy model (slightly), all decoded symbols can change:
+//! // Even if we change only the first entropy model (slightly), *all* decoded symbols can change:
 //! probabilities[0] = [0.09, 0.71, 0.1, 0.1]; // was: `[0.1, 0.7, 0.1, 0.1]`
 //! let mut ans_coder = DefaultAnsCoder::from_binary(data.clone()).unwrap();
 //! let symbols = decode_categoricals(&mut ans_coder, &probabilities);
-//! assert_eq!(symbols, [1, 0, 3]);
-//! // It's no surprise that the first symbol changed since we modified its entropy model. But
-//! // note that the third symbol changed too, even though we hadn't modified its entropy model.
+//! assert_eq!(symbols, [1, 0, 3]); // (instead of `[0, 0, 1]` from above)
+//! // It's no surprise that the first symbol changed since we changed its entropy model. But
+//! // note that the third symbol changed too even though we hadn't changed its entropy model.
+//! // --> Changes to entropy models (and also to compressed bits) have a *global* effect.
 //!
 //! // Let's try the same with a `ChainCoder`:
 //! probabilities[0] = [0.1, 0.7, 0.1, 0.1]; // Restore original entropy model for first symbol.
 //! let mut chain_coder = DefaultChainCoder::from_binary(data.clone()).unwrap();
 //! let symbols = decode_categoricals(&mut chain_coder, &probabilities);
 //! assert_eq!(symbols, [0, 3, 3]);
-//! // We got different symbols than for the `AnsCoder`, of course, but that's not the point here.
+//! // We get different symbols than for the `AnsCoder`, of course, but that's not the point here.
 //!
-//! probabilities[0] = [0.09, 0.71, 0.1, 0.1]; // Modify the first entropy model again slightly.
+//! probabilities[0] = [0.09, 0.71, 0.1, 0.1]; // Change the first entropy model again slightly.
 //! let mut chain_coder = DefaultChainCoder::from_binary(data).unwrap();
 //! let symbols = decode_categoricals(&mut chain_coder, &probabilities);
-//! assert_eq!(symbols, [1, 3, 3]);
-//! // The only symbol that changed was the one whose entropy model we had modified.
+//! assert_eq!(symbols, [1, 3, 3]); // (instead of `[0, 3, 3]` from above)
+//! // The only symbol that changed was the one whose entropy model we had changed.
+//! // --> In a `ChainCoder`, changes to entropy models (and also to compressed bits)
+//! //     only have a *local* effect on the decompressed symbols.
 //! ```
 
 use alloc::vec::Vec;

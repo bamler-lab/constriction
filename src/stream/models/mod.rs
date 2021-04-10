@@ -1,7 +1,78 @@
 //! Probability distributions that can be used as entropy models for stream codes.
 //!
-//! See sister modules [`stack`] or [`queue`] for examples of how to use these models for
-//! data compression or decompression.
+//! This module provides utilities for dealing with probabilistic models of data sources
+//! ("entropy models") in exactly invertible fixed-point arithmetic so as to avoid rounding
+//! errors. As explained in the [motivation](#motivation) below, avoiding rounding errors is
+//! necessary for reliable entropy coding.
+//! 
+//! The types defined in this module approximate arbitrary discrete (or quantized
+//! one-dimensional continuous) probability distributions with a fixed-point representation.
+//! The fixed-point representation has customizable precision and can be either explicit or
+//! implicit (i.e., lazy). While the approximation itself generally involves rounding, no
+//! more rounding occurs when the resulting fixed-point representation is used to invert the
+//! (cumulative distribution function of the) approximated probability distribution.
+//! 
+//! # Module Overview
+//!
+//! This module declares the base trait [`EntropyModel`] and its subtraits [`EncoderModel`]
+//! and [`DecoderModel`], which define the interfaces that entropy models provide and that
+//! entropy coders can rely on.
+//!
+//! In addition, this module provides the following three utilities for constructing entropy
+//! models:
+//! - a generic adapter that turns parameterized discrete or one-dimensional continuous
+//!   probability distributions to the fixed-point representation that the entropy coders in
+//!   the sister modules expect; see [`LeakyQuantizer`].
+//! - a type for representing arbitrary categorical distributions in fixed-point
+//!   representation, intended as a fallback for probability distributions for which the
+//!   above adapter can't be used because there's no closed-form analytic expression for
+//!   them; see [`LeakyCategorical`]; and
+//! - specialized implementations of high-performance "lookup tables", i.e, entropy models
+//!   where the entire distribution is tabularized so that repeated evaluations of the model
+//!   (for i.i.d. symbols) are fast; see submodule [`lookup`].
+//!
+//! # Examples
+//!
+//! See sister modules [`stack`] and [`queue`] for usage examples of these entropy models in
+//! entropy coders.
+//! 
+//! # Motivation
+//!
+//! The general idea of entropy coding is to use a probabilistic model of a data source to
+//! find an optimal compression strategy for the type of data that one intends to compress.
+//! Ideally, all conceivable data points would be compressed into a short bit string.
+//! However, short bit strings are a scarce resource: for any integer `N`, there are only
+//! `2^N - 1` distinct bit strings that are shorter than `N` bits. For this reason, entropy
+//! coding takes into account that, for a typical data source (e.g., of natural images,
+//! videos, audio, ...) many data points may be *possible* but are extremely *improbable* to
+//! occur in practice. An entropy coder assigns longer bit strings to such improbable data
+//! points so that it can use the scarce short bit strings for more probable data points.
+//! More precisely, entropy coding aims to minimize the *expected* bit rate under the
+//! probabilistic model of the data source.
+//! 
+//! We refer to a probabilistic model of a data source in the context of entropy coding as
+//! an "entropy model". In contrast to many other use cases of probabilistic models in
+//! computing, entropy models must be amenable to *exact* arithmetic operations. In
+//! particular, no rounding errors are allowed when inverting the cumulative distribution
+//! function. Even arbitrarily small rounding errors could set off a chain reaction of
+//! arbitrarily large and arbitrarily many errors when compressing and then decompressing a
+//! sequence of symbols (see, e.g., the [motivating example for the
+//! `ChainCoder`](super::chain#motivation)).
+//!
+//!
+//! # Leakiness
+//!
+//! Several types in this module carry the term `Leaky` in their name. We call an entropy
+//! model a "leaky" representation of some probability distribution if all valid symbols
+//! within a user-defined domain (e.g., all integers within a given range) are guaranteed to
+//! have a nonzero probability under the entropy model. This is often both a useful and a
+//! nontrivial property of an entropy model. It is a useful property since a nonzero
+//! probability means that all symbols from the domain *can* be encoded at a finite (albeit
+//! potentially high) bit rate. It is a nontrivial property since entropy models typically
+//! result from converting some floating-point representation of a probability distribution
+//! to a fixed point representation, which involves rounding that can turn low but nonzero
+//! probabilities into zero probabilities when done naively. If you use a "leaky" entropy
+//! model then you don't have to worry about such cases.
 //!
 //! [`stack`]: super::stack
 //! [`queue`]: super::queue
@@ -19,24 +90,74 @@ use probability::distribution::{Distribution, Inverse};
 
 use crate::{wrapping_pow2, BitArray};
 
-/// A trait for probability distributions that can be used as entropy models.
+/// Base trait for probabilistic models of a data source.
 ///
-/// TODO: document how `PRECISION` is (not) enforced.
+/// All entropy models (see [module level documentation](self)) that can be used for
+/// encoding and/or decoding with stream codes implement this trait, and at least one of
+/// [`EncoderModel`] and/or [`DecoderModel`]. This trait exposes the type of [`Symbol`]s
+/// over which the entropy model is defined, the type that is used to represent a
+/// [`Probability`] in fixed-point arithmetic, and the fixed point `PRECISION`.
+///
+/// # Flaoting Point Precisoin
+/// 
+/// The const generic `PRECISION` specifies the number of bits that are used for
+/// representing probabilities. It most not be zero and it must not be higher than
+/// [`Probability`]::BITS. See documentation of the associated type [`Probability`] for a
+/// discussion of further constraints.
+/// 
+/// # Blanket Implementation for `&impl EntropyModel`
+/// 
+/// We provide the following blanket implementation for references to `EntropyModel`s:
+/// 
+/// ```ignore
+/// impl<M: EntropyModel<PRECISION>, const PRECISION: usize> EntropyModel<PRECISION> for &M { ... }
+/// ```
+/// 
+/// This means that, if some type `M` implements `EntropyModel<PRECISION>` for some
+/// `PRECISION`, then so does the reference type `&M`. Analogous blanket implementations are
+/// provided for the traits [`EncoderModel`] and [`DecoderModel`]. The implementations
+/// simply delegate all calls to `M` (which is possible since all methods only take an
+/// `&self` receiver). Therefore:
+/// - you don't need to implement `EntropyModel`, `EncoderModel`, or `DecoderModel` on
+///   reference types `&M`; just implement these traits on "value types" `M` and you'll get
+///   the implementation on the corresponding reference types for free.
+/// - when you write a function or method that takes a generic entropy model as an argument,
+///   always take the entropy model (formally) *by value* (i.e., declare your function as
+///   `fn f<const PRECISION: usize>(model: impl EntropyModel<PRECISION>)`). Since all
+///   references to `EntropyModel`s are also `EntropyModel`s themselves, a generic method
+///   with this signature can be called with an entropy model passed in either by value or
+///   by reference.
+/// 
+/// [`Symbol`]: Self::Symbol
+/// [`Probability`]: Self::Probability
 pub trait EntropyModel<const PRECISION: usize> {
     /// The type of data over which the entropy model is defined.
     ///
-    /// This is the type of an item of the *uncompressed* data. Note that an [`Encode`]
-    /// and [`Decode`] may use a different entropy model for each encoded or decoded
-    /// symbol, and each employed entropy model may have a different `Symbol` type.
-    ///
-    /// [`Encode`]: crate::Encode
-    /// [`Decode`]: crate::Decode
+    /// This is the type of an item of the *uncompressed* data. Note that, when you encode a
+    /// sequence of symbols, you may use a different entropy model with a different `Symbol`
+    /// type for each symbol in the sequence.
     type Symbol;
 
     /// The type used to represent probabilities. Must hold at least PRECISION bits.
     ///
-    /// TODO: once this is possible, we should enforce the constraint that
-    /// `Probability::BITS >= PRECISION` at compile time.
+    /// We represent a probability `p ∈ [0, 1]` as the number `p * (1 << PRECISION)`, which
+    /// must be a (nonegative) integer. The special case of `p = 1` comes up as, e.g., the
+    /// right-cumulative of the last allowed symbol. It is represented as `0` in the
+    /// (uncommon) setup where `PRECISION == Probability::BITS` (implementations of entropy
+    /// models have to ensure that probability zero and probability one can never be
+    /// confused). In the more common setups where `PRECISION < Probability::BITS`, the case
+    /// `p = 1` is represented as `1 << PRECISION`, i.e., as the only allowed value of a
+    /// `Probability` that has more then `PRECISION` valid bits.
+    ///
+    /// Neither the constraint that `1 <= PRECISION <= Probability::BITS` nor the above
+    /// constraints on the valid bits of a `Probability` are currently enforced statically
+    /// since Rust does not yet allow const expressions in type bounds. The constraints are,
+    /// however, enforced at runtime whenever these runtime-checks are either guranteeed to
+    /// get optimized out or in few unavoidable places where these checks are necessary to
+    /// guarantee memory safety. Once Rust allows const expressions in type bounds, most of
+    /// these constraints will be turned into statically checked bounds (which means that
+    /// the API will technically become more restrictive, but it will only forbid usages
+    /// that would panic at runtime today).
     type Probability: BitArray;
 }
 
@@ -63,17 +184,17 @@ pub trait DecoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     );
 }
 
-impl<D, const PRECISION: usize> EntropyModel<PRECISION> for &D
+impl<M, const PRECISION: usize> EntropyModel<PRECISION> for &M
 where
-    D: EntropyModel<PRECISION>,
+    M: EntropyModel<PRECISION>,
 {
-    type Probability = D::Probability;
-    type Symbol = D::Symbol;
+    type Probability = M::Probability;
+    type Symbol = M::Symbol;
 }
 
-impl<D, const PRECISION: usize> EncoderModel<PRECISION> for &D
+impl<M, const PRECISION: usize> EncoderModel<PRECISION> for &M
 where
-    D: EncoderModel<PRECISION>,
+    M: EncoderModel<PRECISION>,
 {
     #[inline(always)]
     fn left_cumulative_and_probability(
@@ -1061,9 +1182,12 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
         let index = *symbol.borrow();
 
         let (cdf, next_cdf) = unsafe {
-            // SAFETY: we perform a single check if index is within bounds (it's important
-            // that we compare `index >= len - 1` here and not `index + 1 >= len` because
-            // the latter could overflow/wrap but `len` is guaranteed to be nonzero).
+            // SAFETY: we perform a single check if index is within bounds (we compare
+            // `index >= len - 1` here and not `index + 1 >= len` because the latter could
+            // overflow/wrap but `len` is guaranteed to be nonzero; once the check passes,
+            // we know that `index + 1` doesn't wrap because `cdf.len()` can't be
+            // `usize::max_value()` since that would mean that there's no space left even
+            // for the call stack).
             if index >= self.cdf.len() - 1 {
                 return None;
             }
@@ -1074,7 +1198,7 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
         };
 
         let probability = unsafe {
-            // SAFETY: The constructors ensure that no probabilities within bounds are nonzero.
+            // SAFETY: The constructors ensure that no probabilities within bounds are zero.
             next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
         };
 

@@ -320,7 +320,7 @@ impl Display for NanError {
 impl std::error::Error for NanError {}
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::{
         super::{super::WriteBitStream, SmallBitStack},
         *,

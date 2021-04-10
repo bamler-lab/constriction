@@ -1,10 +1,7 @@
-//! Stream Codes (entropy codes that amortize compressed bits over several symbols)
+//! Stream Codes (entropy codes that amortize over several symbols)
 //!
 //! This module provides implementations of stream codes and utilities for defining entropy
-//! models for these stream codes. This module is the heart of `constriction`. The symbol
-//! codes in module [`symbol`](crate::symbol) are provided mainly for completeness and for
-//! educational purpose (see also section [What's a Stream Code?](#whats-a-stream-code)
-//! below).
+//! models for these stream codes. This module is the heart of the `constriction` crate.
 //!
 //! Currently, the following stream codes are provided (see below for a
 //! [comparison](#which-stream-code-should-i-use)):
@@ -25,8 +22,8 @@
 //!
 //! All of these stream codes are provided through types that implement the [`Encode`] and
 //! [`Decode`] traits defined in this module. To encode or decode a sequence of symbols, you
-//! have to provide an [`EntropyModel`] for each symbol, for which the submodule [`models`]
-//! provides the necessary utilities.
+//! have to provide an [`EntropyModel`] for each symbol. The submodule [`models`] provides
+//! utilities for defining `EntropyModel`s.
 //!
 //! # Examples
 //!
@@ -46,7 +43,7 @@
 //! prefer Range Coding. In any other case, a possibly biased recommendation from the author
 //! of this paragraph is to use ANS Coding by default for its simplicity and decoding speed.
 //!
-//! Here's the more detailed comparison:
+//! Here's the more detailed comparison between ANS Coding and Chain Coding:
 //!
 //! - **Read/write semantics:** The main practical difference between ANS and Range Coding
 //!   is that ANS Coding operates as a stack ("last in first out") whereas Range Coding
@@ -158,7 +155,7 @@
 //! "codeword"). This leads to a typical overhead of 0.5&nbsp;bits *per symbol* in the best
 //! case, and to an overhead of almost 1&nbsp;bit per symbol for entropy models with very
 //! low (≪&nbsp;1&nbsp;bit of) entropy per symbol, which is common for deep learning based
-//! entropy models). Stream codes do not suffer from this overhead.
+//! entropy models. Stream codes do not suffer from this overhead.
 //!
 //! The computational efficiency of stream codes is to be seen in contrast to block codes,
 //! which are used in many popular general-purpose compression codecs. Block codes encode a
@@ -205,9 +202,8 @@
 //!
 //! ## Customizations for Advanced Use Cases
 //!
-//! Some advanced use cases may require even finer control over details of the algorithms
-//! and models. For such cases, the entropy coders and entropy models can be adjusted with
-//! the following type parameters:
+//! Some advanced use cases may not be covered by the above presets. For such cases, the
+//! entropy coders and entropy models can be adjusted with the following type parameters:
 //!
 //! - `Word`: a [`BitArray`] specifying the smallest unit of compressed data that the
 //!   entropy coder emits or reads in at a time. A `Word` has to have at least `PRECISION`
@@ -230,13 +226,15 @@
 //!   entropy models slow. Most entropy coders are not monomorphized for any `PRECISION`,
 //!   which means that you can use a single entropy coder to encode/decode symbols with
 //!   varying fixed-point precisions. But the entropy models and the `encode` and `decode`
-//!   trait methods are monomorphized based on a `PRECISION` parameter.
+//!   trait methods are monomorphized based on a `PRECISION` parameter to allow generating
+//!   optimized code.
 //!   - The "default" preset sets `PRECISION = 24`.
 //!   - The "small" preset sets `PRECISION = 12`.
 //! - `Backend`: the source and/or sink of compressed data. See module [`backends`]. The
 //!   `Backend` usually defaults to `Vec<Word>` for encoding and to either `Vec<Word>` or
 //!   [`Cursor`] for decoding, depending on which entropy coder you use and who owns the
-//!   compressed data.
+//!   compressed data. The [`ChainCoder`] has two type parameters for backends because it
+//!   saves comopressed data and remainders separately.
 //!
 //! [`AnsCoder::encode_symbols_reverse`]: stack::AnsCoder::encode_symbols_reverse
 //! [`Infallible`]: core::convert::Infallible
@@ -321,8 +319,8 @@ pub trait Code {
     /// while the associated type `Code::State` is typically related to the type parameter
     /// `State`, they do not necessarily need to be the same. For example, in a
     /// [`RangeEncoder`], the associated type `<RangeEncoder as Code>::State` is a struct of
-    /// type [`RangeCoderState`], which has twice the size the type parameter `State` (same
-    /// for [`RangeDecoder`]).
+    /// type [`RangeCoderState`], which has twice the size of the type parameter `State`
+    /// (same for [`RangeDecoder`]).
     ///
     /// [`Pos`]: crate::Pos
     /// [`Seek`]: crate::Seek
