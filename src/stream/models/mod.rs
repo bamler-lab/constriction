@@ -228,7 +228,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
         let entropy_scaled = self
             .symbol_table()
             .into_iter()
-            .map(|(_, _,probability)| {
+            .map(|(_, _, probability)| {
                 let probability = probability.get().into();
                 probability * probability.log2() // prob is guaranteed to be nonzero.
             })
@@ -236,6 +236,26 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
 
         let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
         F::from(PRECISION).unwrap() - entropy_scaled / whole
+    }
+
+    #[inline(always)]
+    fn to_generic_encoder_model(
+        &'m self,
+    ) -> NonContiguousCategoricalEncoderModel<Self::Symbol, Self::Probability, PRECISION>
+    where
+        Self::Symbol: Hash + Eq,
+    {
+        self.into()
+    }
+
+    #[inline(always)]
+    fn to_generic_decoder_model(
+        &'m self,
+    ) -> NonContiguousCategoricalDecoderModel<Self::Symbol, Self::Probability, PRECISION>
+    where
+        Self::Symbol: Clone + Default,
+    {
+        self.into()
     }
 }
 
@@ -1687,6 +1707,20 @@ where
         }
     }
 
+    /// TODO: test
+    pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
+    where
+        M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
+    {
+        let last_entry = (wrapping_pow2(PRECISION), Symbol::default());
+        let cdf = model
+            .symbol_table()
+            .map(|(symbol, left_sided_cumulative, _)| (left_sided_cumulative, symbol))
+            .chain(core::iter::once(last_entry))
+            .collect::<Vec<_>>();
+        Self { cdf }
+    }
+
     /// Returns the number of symbols supported by the model.
     ///
     /// The distribution is defined on the contiguous range of symbols from zero
@@ -1695,6 +1729,18 @@ where
     /// have a zero probability.
     pub fn num_symbols(&self) -> usize {
         self.cdf.len() - 1
+    }
+}
+
+impl<'m, Symbol, Probability, M, const PRECISION: usize> From<&'m M>
+    for NonContiguousCategoricalDecoderModel<Symbol, Probability, PRECISION>
+where
+    Symbol: Clone + Default,
+    Probability: BitArray,
+    M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
+{
+    fn from(model: &'m M) -> Self {
+        Self::from_iterable_entropy_model(model)
     }
 }
 
@@ -1730,6 +1776,139 @@ where
     #[inline(always)]
     fn symbol_table(&'m self) -> Self::Iter {
         CategoricalIter::new(&self.cdf)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NonContiguousCategoricalEncoderModel<Symbol, Probability, const PRECISION: usize>
+where
+    Symbol: Hash,
+    Probability: BitArray,
+{
+    table: HashMap<Symbol, (Probability, Probability::NonZero)>,
+}
+
+pub type DefaultNonContiguousCategoricalEncoderModel<Symbol> =
+    NonContiguousCategoricalEncoderModel<Symbol, u32, 24>;
+pub type SmallNonContiguousCategoricalEncoderModel<Symbol> =
+    NonContiguousCategoricalEncoderModel<Symbol, u16, 12>;
+
+impl<Symbol, Probability, const PRECISION: usize>
+    NonContiguousCategoricalEncoderModel<Symbol, Probability, PRECISION>
+where
+    Symbol: Hash + Eq,
+    Probability: BitArray,
+{
+    pub fn from_symbols_and_floating_point_probabilities<F>(
+        mut symbols: impl Iterator<Item = Symbol>,
+        probabilities: &[F],
+    ) -> Result<Self, ()>
+    where
+        F: Float + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
+        Self::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols,
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
+    pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
+        symbols: S,
+        probabilities: P,
+        infer_last_probability: bool,
+    ) -> Result<Self, ()>
+    where
+        S: IntoIterator<Item = Symbol>,
+        P: IntoIterator,
+        P::Item: Borrow<Probability>,
+    {
+        let symbols = symbols.into_iter();
+        let mut table = HashMap::with_capacity(symbols.size_hint().0 + 1);
+        let mut symbols = accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
+            symbols,
+            probabilities.into_iter(),
+            |symbol, left_sided_cumulative, probability| match table.entry(symbol) {
+                Occupied(_) => Err(()),
+                Vacant(slot) => {
+                    let probability = probability.into_nonzero().ok_or(())?;
+                    slot.insert((left_sided_cumulative, probability));
+                    Ok(())
+                }
+            },
+            infer_last_probability,
+        )?;
+
+        if symbols.next().is_some() {
+            Err(())
+        } else {
+            Ok(Self { table })
+        }
+    }
+
+    /// TODO: test
+    pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
+    where
+        M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
+    {
+        let table = model
+            .symbol_table()
+            .map(|(symbol, left_sided_cumulative, probability)| {
+                (symbol, (left_sided_cumulative, probability))
+            })
+            .collect::<HashMap<_, _>>();
+        Self { table }
+    }
+
+    /// Returns the number of symbols supported by the model.
+    ///
+    /// The distribution is defined on the contiguous range of symbols from zero
+    /// (inclusively) to `num_symbols()` (exclusively). All symbols within this range are
+    /// guaranteed to have a nonzero probability, while all symbols outside of this range
+    /// have a zero probability.
+    pub fn num_symbols(&self) -> usize {
+        self.table.len()
+    }
+}
+
+impl<'m, Symbol, Probability, M, const PRECISION: usize> From<&'m M>
+    for NonContiguousCategoricalEncoderModel<Symbol, Probability, PRECISION>
+where
+    Symbol: Hash + Eq,
+    Probability: BitArray,
+    M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
+{
+    fn from(model: &'m M) -> Self {
+        Self::from_iterable_entropy_model(model)
+    }
+}
+
+impl<Symbol, Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
+    for NonContiguousCategoricalEncoderModel<Symbol, Probability, PRECISION>
+where
+    Symbol: Hash,
+    Probability: BitArray,
+{
+    type Probability = Probability;
+    type Symbol = Symbol;
+}
+
+impl<Symbol, Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
+    for NonContiguousCategoricalEncoderModel<Symbol, Probability, PRECISION>
+where
+    Symbol: Hash + Eq,
+    Probability: BitArray,
+{
+    #[inline(always)]
+    fn left_cumulative_and_probability(
+        &self,
+        symbol: impl Borrow<Self::Symbol>,
+    ) -> Option<(Self::Probability, Probability::NonZero)> {
+        self.table.get(symbol.borrow()).cloned()
     }
 }
 
@@ -1894,7 +2073,7 @@ mod tests {
             for &mean in &[-10., 2.3, 50.1] {
                 let distribution = Gaussian::new(mean, std_dev);
                 let model = quantizer.quantize(distribution);
-                let entropy= model.entropy_base2::<f64>();
+                let entropy = model.entropy_base2::<f64>();
                 let expected_entropy = 2.047095585180641 + std_dev.log2();
                 assert!((entropy - expected_entropy).abs() < 0.01);
             }
