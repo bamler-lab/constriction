@@ -873,7 +873,7 @@ where
     }
 }
 
-trait CdfArray<Row>: AsRef<[Row]> {
+pub trait CdfArray<Row>: AsRef<[Row]> {
     type Symbol;
     type Probability: BitArray;
 
@@ -965,7 +965,7 @@ where
 
     #[inline(always)]
     unsafe fn symbol_unchecked(&self, index: usize) -> Symbol {
-        self.as_ref().get_unchecked(index).1
+        self.as_ref().get_unchecked(index).1.clone()
     }
 }
 
@@ -992,32 +992,69 @@ where
     }
 }
 
-// impl<'a, Row, Table> IntoIterator for &'a Table
-// where
-//     Table: CdfArray<Row>,
-// {
-//     type Item = (
-//         Table::Symbol,
-//         Table::Probability,
-//         <Table::Probability as BitArray>::NonZero,
-//     );
+pub struct CdfArrayIterator<'a, Row, Table: CdfArray<Row>> {
+    table: &'a Table,
+    index: usize,
+    phantom: PhantomData<*mut Row>,
+}
 
-//     /// Don't rely on this specific (ugly) type, it will become an unnamed existential type
-//     /// once that's in trait methods.
-//     type IntoIter = CdfIterator<
-//         Probability,
-//         core::iter::Enumerate<
-//             core::iter::Cloned<core::iter::Skip<core::slice::Iter<'a, (Probability, ())>>>,
-//         >,
-//     >;
+impl<'a, Row, Table: CdfArray<Row>> CdfArrayIterator<'a, Row, Table> {
+    fn new(table: &'a Table) -> Self {
+        Self {
+            table,
+            index: 0,
+            phantom: PhantomData,
+        }
+    }
+}
 
-//     fn into_iter(self) -> Self::IntoIter {
-//         unsafe {
-//             // SAFETY: a `ContiguousCategorical` satisfies the required contract.
-//             CdfIterator::new(self.cdf.iter().skip(1).cloned().enumerate())
-//         }
-//     }
-// }
+impl<'a, Row, Table: CdfArray<Row>> Iterator for CdfArrayIterator<'a, Row, Table> {
+    type Item = (
+        Table::Symbol,
+        Table::Probability,
+        <Table::Probability as BitArray>::NonZero,
+    );
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let old_index = self.index;
+        let new_index = old_index + 1;
+        if new_index == self.table.as_ref().len() {
+            None
+        } else {
+            self.index = new_index;
+            unsafe {
+                // SAFETY: TODO
+                let left_cumulative = self.table.left_cumulative_unchecked(old_index);
+                let symbol = self.table.symbol_unchecked(old_index);
+                let right_cumulative = self.table.left_cumulative_unchecked(new_index);
+                let probability = right_cumulative
+                    .wrapping_sub(&left_cumulative)
+                    .into_nonzero_unchecked();
+                Some((symbol, left_cumulative, probability))
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.table.as_ref().len() - self.index - 1;
+        (len, Some(len))
+    }
+}
+
+impl<'a, Probability, const PRECISION: usize> IntoIterator
+    for &'a ContiguousCategorical<Probability, PRECISION>
+where
+    Probability: BitArray,
+{
+    type Item = (usize, Probability, Probability::NonZero);
+
+    type IntoIter = CdfArrayIterator<'a, (Probability,), Vec<(Probability,)>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        CdfArrayIterator::new(&self.cdf)
+    }
+}
 
 // /// TODO: workaround to avoid introducing lots of very similar iterator types while we're
 // /// wating for existential types in trait methods (which will allow us to express all usages
@@ -1538,9 +1575,12 @@ mod tests {
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategorical::<_, 32>::from_floating_point_probabilities(&probabilities)
+            ContiguousCategorical::<u32, 32>::from_floating_point_probabilities(&probabilities)
                 .unwrap();
-        let weights: Vec<u32> = categorical.fixed_point_probabilities().collect();
+        let weights: Vec<_> = categorical
+            .symbol_table()
+            .map(|(_, _, probability)| probability.get())
+            .collect();
 
         assert_eq!(&weights[..], &hist[..]);
     }
@@ -1556,9 +1596,12 @@ mod tests {
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategorical::<_, 32>::from_floating_point_probabilities(&probabilities)
+            ContiguousCategorical::<u32, 32>::from_floating_point_probabilities(&probabilities)
                 .unwrap();
-        let weights: Vec<u32> = categorical.fixed_point_probabilities().collect();
+        let weights: Vec<_> = categorical
+            .symbol_table()
+            .map(|(_, _, probability)| probability.get())
+            .collect();
 
         assert_eq!(weights.len(), hist.len());
         assert_eq!(weights.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);

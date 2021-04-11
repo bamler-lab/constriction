@@ -958,7 +958,7 @@ mod tests {
     extern crate std;
     use std::dbg;
 
-    use super::super::models::{LeakyCategorical, LeakyQuantizer};
+    use super::super::models::{ContiguousCategorical, EntropyModel, LeakyQuantizer};
     use super::*;
 
     use probability::distribution::{Gaussian, Inverse};
@@ -1123,7 +1123,7 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            LeakyCategorical::<Probability, PRECISION>::from_floating_point_probabilities(
+            ContiguousCategorical::<Probability, PRECISION>::from_floating_point_probabilities(
                 &categorical_probabilities,
             )
             .unwrap();
@@ -1142,7 +1142,7 @@ mod tests {
             .unwrap();
         dbg!(
             encoder.num_bits(),
-            AMT as f64 * categorical.entropy::<f64>()
+            AMT as f64 * categorical.entropy::<'_, f64>()
         );
 
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
