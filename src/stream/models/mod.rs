@@ -958,7 +958,7 @@ where
     }
 }
 
-pub trait CdfArray<Row>: AsRef<[Row]> {
+pub trait ArraySymbolTable<Row>: AsRef<[Row]> {
     type Symbol;
     type Probability: BitArray;
 
@@ -1029,7 +1029,7 @@ pub trait CdfArray<Row>: AsRef<[Row]> {
     }
 }
 
-impl<Probability: BitArray, Symbol, Table> CdfArray<(Probability, Symbol)> for Table
+impl<Probability: BitArray, Symbol, Table> ArraySymbolTable<(Probability, Symbol)> for Table
 where
     Probability: BitArray,
     Symbol: Clone,
@@ -1054,7 +1054,7 @@ where
     }
 }
 
-impl<Probability: BitArray, Table> CdfArray<(Probability,)> for Table
+impl<Probability: BitArray, Table> ArraySymbolTable<(Probability,)> for Table
 where
     Table: AsRef<[(Probability,)]>,
 {
@@ -1077,13 +1077,13 @@ where
     }
 }
 
-pub struct CdfArrayIterator<'a, Row, Table: CdfArray<Row>> {
+pub struct ArraySymbolTableIter<'a, Row, Table: ArraySymbolTable<Row>> {
     table: &'a Table,
     index: usize,
     phantom: PhantomData<*mut Row>,
 }
 
-impl<'a, Row, Table: CdfArray<Row>> CdfArrayIterator<'a, Row, Table> {
+impl<'a, Row, Table: ArraySymbolTable<Row>> ArraySymbolTableIter<'a, Row, Table> {
     fn new(table: &'a Table) -> Self {
         Self {
             table,
@@ -1093,7 +1093,7 @@ impl<'a, Row, Table: CdfArray<Row>> CdfArrayIterator<'a, Row, Table> {
     }
 }
 
-impl<'a, Row, Table: CdfArray<Row>> Iterator for CdfArrayIterator<'a, Row, Table> {
+impl<'a, Row, Table: ArraySymbolTable<Row>> Iterator for ArraySymbolTableIter<'a, Row, Table> {
     type Item = (
         Table::Symbol,
         Table::Probability,
@@ -1124,18 +1124,6 @@ impl<'a, Row, Table: CdfArray<Row>> Iterator for CdfArrayIterator<'a, Row, Table
     fn size_hint(&self) -> (usize, Option<usize>) {
         let len = self.table.as_ref().len() - self.index - 1;
         (len, Some(len))
-    }
-}
-
-impl<'m, Probability, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
-    for ContiguousCategorical<Probability, PRECISION>
-where
-    Probability: BitArray,
-{
-    type Iter = CdfArrayIterator<'m, (Probability,), Vec<(Probability,)>>;
-
-    fn symbol_table(&'m self) -> Self::Iter {
-        CdfArrayIterator::new(&self.cdf)
     }
 }
 
@@ -1484,6 +1472,19 @@ impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
         quantile: Self::Probability,
     ) -> (Self::Symbol, Self::Probability, Probability::NonZero) {
         self.cdf.quantile_function::<PRECISION>(quantile)
+    }
+}
+
+impl<'m, Probability, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
+    for ContiguousCategorical<Probability, PRECISION>
+where
+    Probability: BitArray,
+{
+    type Iter = ArraySymbolTableIter<'m, (Probability,), Vec<(Probability,)>>;
+
+    #[inline(always)]
+    fn symbol_table(&'m self) -> Self::Iter {
+        ArraySymbolTableIter::new(&self.cdf)
     }
 }
 
