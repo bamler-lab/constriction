@@ -1365,7 +1365,7 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategorical::<Probability, PRECISION>::from_floating_point_probabilities(
+            ContiguousCategorical::<Probability, _, PRECISION>::from_floating_point_probabilities(
                 &categorical_probabilities,
             )
             .unwrap();
