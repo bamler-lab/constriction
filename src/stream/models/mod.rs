@@ -1077,27 +1077,25 @@ where
     }
 }
 
-pub struct ArraySymbolTableIter<'a, Row, Table: ArraySymbolTable<Row>> {
-    table: &'a Table,
+pub struct CategoricalIter<'a, Row> {
+    table: &'a [Row],
     index: usize,
-    phantom: PhantomData<*mut Row>,
 }
 
-impl<'a, Row, Table: ArraySymbolTable<Row>> ArraySymbolTableIter<'a, Row, Table> {
-    fn new(table: &'a Table) -> Self {
-        Self {
-            table,
-            index: 0,
-            phantom: PhantomData,
-        }
+impl<'a, Row> CategoricalIter<'a, Row> {
+    fn new(table: &'a [Row]) -> Self {
+        Self { table, index: 0 }
     }
 }
 
-impl<'a, Row, Table: ArraySymbolTable<Row>> Iterator for ArraySymbolTableIter<'a, Row, Table> {
+impl<'a, Row> Iterator for CategoricalIter<'a, Row>
+where
+    &'a [Row]: ArraySymbolTable<Row>,
+{
     type Item = (
-        Table::Symbol,
-        Table::Probability,
-        <Table::Probability as BitArray>::NonZero,
+        <&'a [Row] as ArraySymbolTable<Row>>::Symbol,
+        <&'a [Row] as ArraySymbolTable<Row>>::Probability,
+        <<&'a [Row] as ArraySymbolTable<Row>>::Probability as BitArray>::NonZero,
     );
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1280,11 +1278,9 @@ impl<Probability: BitArray, const PRECISION: usize> ContiguousCategorical<Probab
         usize: AsPrimitive<Probability>,
     {
         let mut slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        slots.sort_unstable_by_key(|slot| slot.original_index);
-        Self::from_partial_nonzero_fixed_point_probabilities(
-            slots[0..slots.len() - 1]
-                .into_iter()
-                .map(|slot| slot.weight),
+        Self::from_nonzero_fixed_point_probabilities(
+            slots.into_iter().map(|slot| slot.weight),
+            false,
         )
     }
 
@@ -1355,60 +1351,28 @@ impl<Probability: BitArray, const PRECISION: usize> ContiguousCategorical<Probab
     ///
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
     /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
-    pub fn from_nonzero_fixed_point_probabilities(
-        probabilities: &[Probability],
-    ) -> Result<Self, ()> {
-        if probabilities.len() < 2 {
-            return Err(());
-        }
-
-        let model = Self::from_partial_nonzero_fixed_point_probabilities(
-            &probabilities[0..probabilities.len() - 1],
-        )?;
-
-        let whole: Probability = wrapping_pow2(PRECISION);
-        let last_left_cumulative = model
-            .cdf
-            .left_cumulative(probabilities.len() - 1)
-            .expect("probabilities.len() != 0");
-        if whole.wrapping_sub(&last_left_cumulative) != *probabilities.last().unwrap() {
-            Err(())
-        } else {
-            Ok(model)
-        }
-    }
-
-    pub fn from_partial_nonzero_fixed_point_probabilities<I>(probabilities: I) -> Result<Self, ()>
+    pub fn from_nonzero_fixed_point_probabilities<I>(
+        probabilities: I,
+        infer_last_probability: bool,
+    ) -> Result<Self, ()>
     where
         I: IntoIterator,
         I::Item: Borrow<Probability>,
     {
-        assert!(PRECISION > 0);
-        assert!(PRECISION <= Probability::BITS);
+        let probabilities = probabilities.into_iter();
+        let mut cdf = Vec::with_capacity(probabilities.size_hint().0 + 1);
+        accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
+            core::iter::repeat(()),
+            probabilities,
+            |(), left_sided_cumulative, _| {
+                cdf.push((left_sided_cumulative,));
+                Ok(())
+            },
+            infer_last_probability,
+        )?;
+        cdf.push((wrapping_pow2(PRECISION),));
 
-        // We accumulate all validity checks into single branches at the end in order to
-        // keep the loop itself branchless.
-        let mut wraps_or_has_zero = false;
-        let mut accum = Probability::zero();
-        let whole: Probability = wrapping_pow2(PRECISION);
-        let mask = whole.wrapping_sub(&Probability::one());
-
-        let cdf = core::iter::once((Probability::zero(),))
-            .chain(probabilities.into_iter().map(|prob| {
-                let old_accum = accum;
-                accum = accum.wrapping_add(prob.borrow()) & mask;
-                wraps_or_has_zero = wraps_or_has_zero || accum <= old_accum;
-                (accum,)
-            }))
-            .chain(core::iter::once((whole,)))
-            .collect::<Vec<_>>();
-
-        if wraps_or_has_zero || accum > mask {
-            // `accum > mask` means that the last (inferred) probability is zero.
-            Err(())
-        } else {
-            Ok(Self { cdf })
-        }
+        Ok(Self { cdf })
     }
 
     /// Returns the number of symbols supported by the model.
@@ -1420,6 +1384,56 @@ impl<Probability: BitArray, const PRECISION: usize> ContiguousCategorical<Probab
     pub fn num_symbols(&self) -> usize {
         self.cdf.len() - 1
     }
+}
+
+/// Note: does not check if `symbols` is exhausted (this is so that you one can provide an
+/// infinite iterator for `symbols` to optimize out the bounds check on it).
+fn accumulate_nonzero_probabilities<Symbol, Probability, S, P, Op, const PRECISION: usize>(
+    mut symbols: S,
+    probabilities: P,
+    mut operation: Op,
+    infer_last_probability: bool,
+) -> Result<S, ()>
+where
+    Probability: BitArray,
+    S: Iterator<Item = Symbol>,
+    P: Iterator,
+    P::Item: Borrow<Probability>,
+    Op: FnMut(Symbol, Probability, Probability) -> Result<(), ()>,
+{
+    assert!(PRECISION > 0);
+    assert!(PRECISION <= Probability::BITS);
+
+    // We accumulate all validity checks into single branches at the end in order to
+    // keep the loop itself branchless.
+    let mut laps_or_zeros = 0usize;
+    let mut accum = Probability::zero();
+    let whole: Probability = wrapping_pow2(PRECISION);
+
+    for probability in probabilities {
+        let old_accum = accum;
+        accum = accum.wrapping_add(probability.borrow());
+        laps_or_zeros = laps_or_zeros + (accum <= old_accum) as usize;
+        let symbol = symbols.next().ok_or(())?;
+        operation(symbol, old_accum, *probability.borrow())?;
+    }
+
+    let total = wrapping_pow2::<Probability>(PRECISION);
+
+    if infer_last_probability {
+        if accum >= total || laps_or_zeros != 0 {
+            return Err(());
+        }
+        let symbol = symbols.next().ok_or(())?;
+        let probability = total.wrapping_sub(&accum);
+        operation(symbol, accum, probability)?;
+    } else {
+        if accum != total || laps_or_zeros != (PRECISION == Probability::BITS) as usize {
+            return Err(());
+        }
+    }
+
+    Ok(symbols)
 }
 
 impl<Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
@@ -1480,11 +1494,242 @@ impl<'m, Probability, const PRECISION: usize> IterableEntropyModel<'m, PRECISION
 where
     Probability: BitArray,
 {
-    type Iter = ArraySymbolTableIter<'m, (Probability,), Vec<(Probability,)>>;
+    type Iter = CategoricalIter<'m, (Probability,)>;
 
     #[inline(always)]
     fn symbol_table(&'m self) -> Self::Iter {
-        ArraySymbolTableIter::new(&self.cdf)
+        CategoricalIter::new(&self.cdf)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, const PRECISION: usize> {
+    /// Invariants:
+    /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
+    ///   this may be relaxed in the future)
+    /// - `cdf[0] == 0`
+    /// - `cdf` is monotonically increasing except that it may wrap around only at
+    ///   the very last entry (this happens iff `PRECISION == Probability::BITS`).
+    ///   Thus, all probabilities within range are guaranteed to be nonzero.
+    cdf: Vec<(Probability, Symbol)>,
+}
+
+pub type DefaultNonContiguousCategoricalDecoderModel<Symbol> =
+    NonContiguousCategoricalDecoderModel<Symbol, u32, 24>;
+pub type SmallNonContiguousCategoricalDecoderModel<Symbol> =
+    NonContiguousCategoricalDecoderModel<Symbol, u16, 12>;
+
+impl<Symbol, Probability: BitArray, const PRECISION: usize>
+    NonContiguousCategoricalDecoderModel<Symbol, Probability, PRECISION>
+where
+    Symbol: Clone + Default,
+{
+    /// Constructs a leaky distribution whose PMF approximates given probabilities.
+    ///
+    /// The returned distribution will be defined for symbols of type `usize` from
+    /// the range `0..probabilities.len()`.
+    ///
+    /// The argument `probabilities` is a slice of floating point values (`F` is
+    /// typically `f64` or `f32`). All entries must be nonnegative and at least one
+    /// entry has to be nonzero. The entries do not necessarily need to add up to
+    /// one (the resulting distribution will automatically get normalized and an
+    /// overall scaling of all entries of `probabilities` does not affect the
+    /// result, up to effects due to rounding errors).
+    ///
+    /// The probability mass function of the returned distribution will approximate
+    /// the provided probabilities as well as possible, subject to the following
+    /// constraints:
+    /// - probabilities are represented in fixed point arithmetic, where the const
+    ///   generic parameter `PRECISION` controls the number of bits of precision.
+    ///   This typically introduces rounding errors;
+    /// - despite the possibility of rounding errors, the returned probability
+    ///   distribution will be exactly normalized; and
+    /// - each symbol in the domain defined above gets assigned a strictly nonzero
+    ///   probability, even if the provided probability for the symbol is zero or
+    ///   below the threshold that can be resolved in fixed point arithmetic with
+    ///   type `Probability`. We refer to this property as the resulting distribution
+    ///   being "leaky". This probability ensures that all symbols within the domain
+    ///   can be encoded when this distribution is used as an entropy model.
+    ///
+    /// More precisely, the resulting probability distribution minimizes the cross
+    /// entropy from the provided (floating point) to the resulting (fixed point)
+    /// probabilities subject to the above three constraints.
+    ///
+    /// # Error Handling
+    ///
+    /// Returns an error if the provided probability distribution cannot be
+    /// normalized, either because `probabilities` is of length zero, or because one
+    /// of its entries is negative with a nonzero magnitude, or because the sum of
+    /// its elements is zero, infinite, or NaN.
+    ///
+    /// Also returns an error if the probability distribution is degenerate, i.e.,
+    /// if `probabilities` has only a single element, because degenerate probability
+    /// distributions currently cannot be represented.
+    ///
+    /// TODO: should also return an error if domain is too large to support leaky
+    /// distribution
+    pub fn from_symbols_and_floating_point_probabilities<F>(
+        mut symbols: &[Symbol],
+        probabilities: &[F],
+    ) -> Result<Self, ()>
+    where
+        F: Float + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        if symbols.len() != probabilities.len() {
+            return Err(());
+        };
+
+        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
+        Self::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols.iter().cloned(),
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
+    /// Constructs a distribution with a PMF given in fixed point arithmetic.
+    ///
+    /// This is a low level method that allows, e.g,. reconstructing a probability
+    /// distribution previously exported with [`fixed_point_probabilities`]. The more common
+    /// way to construct a `LeakyCategorical` distribution is via
+    /// [`from_floating_point_probabilities`].
+    ///
+    /// The entries of `probabilities` have to be nonzero and (logically) sum up to
+    /// `1 << PRECISION`, where `PRECISION` is a const generic parameter on the
+    /// `LeakyCategorical` distribution. Further, all probabilities have to be nonzero (which is
+    /// statically enforced by the trait bound on the iterator's items).
+    ///
+    /// # Panics
+    ///
+    /// If `probabilities` is not properly normalized (including if it is empty).
+    ///
+    /// # Examples
+    ///
+    /// The provided probabilities have to sum up to `1 << PRECISION`:
+    ///
+    /// ```
+    /// use constriction::stream::models::LeakyCategorical;
+    ///
+    /// let probabilities = vec![1u32 << 21, 1 << 22, 1 << 22, 1 << 22, 1 << 21];
+    /// // `probabilities` sums up to `1 << PRECISION` as required:
+    /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
+    ///
+    /// let model = LeakyCategorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities);
+    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
+    /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
+    /// ```
+    ///
+    /// If `PRECISION` is set to the maximum value supported by the `Word` type
+    /// `Probability`, then the provided probabilities still have to *logically* sum up to
+    /// `1 << PRECISION` (i.e., the summation has to wrap around exactly once):
+    ///
+    /// ```
+    /// use constriction::stream::models::LeakyCategorical;
+    ///
+    /// let probabilities = vec![1u32 << 29, 1 << 30, 1 << 30, 1 << 30, 1 << 29];
+    /// // `probabilities` sums up to `1 << 32` (logically), i.e., it wraps around once.
+    /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
+    ///
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
+    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
+    /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
+    /// ```
+    ///
+    /// Wrapping around twice panics:
+    ///
+    /// ```should_panic
+    /// use constriction::stream::models::LeakyCategorical;
+    /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
+    /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
+    /// ```
+    ///
+    /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
+    ///
+    /// ```should_panic
+    /// use constriction::stream::models::LeakyCategorical;
+    /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
+    /// let model = LeakyCategorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
+    /// ```
+    ///
+    /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
+    /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
+    pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
+        symbols: S,
+        probabilities: P,
+        infer_last_probability: bool,
+    ) -> Result<Self, ()>
+    where
+        S: IntoIterator<Item = Symbol>,
+        P: IntoIterator,
+        P::Item: Borrow<Probability>,
+    {
+        let symbols = symbols.into_iter();
+        let mut cdf = Vec::with_capacity(symbols.size_hint().0 + 1);
+        let mut symbols = accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
+            symbols,
+            probabilities.into_iter(),
+            |symbol, left_sided_cumulative, _| {
+                cdf.push((left_sided_cumulative, symbol));
+                Ok(())
+            },
+            infer_last_probability,
+        )?;
+        cdf.push((wrapping_pow2(PRECISION), Symbol::default()));
+
+        if symbols.next().is_some() {
+            Err(())
+        } else {
+            Ok(Self { cdf })
+        }
+    }
+
+    /// Returns the number of symbols supported by the model.
+    ///
+    /// The distribution is defined on the contiguous range of symbols from zero
+    /// (inclusively) to `num_symbols()` (exclusively). All symbols within this range are
+    /// guaranteed to have a nonzero probability, while all symbols outside of this range
+    /// have a zero probability.
+    pub fn num_symbols(&self) -> usize {
+        self.cdf.len() - 1
+    }
+}
+
+impl<Symbol, Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
+    for NonContiguousCategoricalDecoderModel<Symbol, Probability, PRECISION>
+{
+    type Probability = Probability;
+    type Symbol = Symbol;
+}
+
+impl<Symbol, Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
+    for NonContiguousCategoricalDecoderModel<Symbol, Probability, PRECISION>
+where
+    Symbol: Clone,
+{
+    #[inline(always)]
+    fn quantile_function(
+        &self,
+        quantile: Self::Probability,
+    ) -> (Self::Symbol, Self::Probability, Probability::NonZero) {
+        self.cdf.quantile_function::<PRECISION>(quantile)
+    }
+}
+
+impl<'m, Symbol: 'm, Probability, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
+    for NonContiguousCategoricalDecoderModel<Symbol, Probability, PRECISION>
+where
+    Probability: BitArray,
+    Symbol: Clone,
+{
+    type Iter = CategoricalIter<'m, (Probability, Symbol)>;
+
+    #[inline(always)]
+    fn symbol_table(&'m self) -> Self::Iter {
+        CategoricalIter::new(&self.cdf)
     }
 }
 
@@ -1606,6 +1851,7 @@ where
         buyer.loss = -buyer.prob * (-1.0f64 / buyer.weight.into()).ln_1p();
     }
 
+    slots.sort_unstable_by_key(|slot| slot.original_index);
     Ok(slots)
 }
 
@@ -1710,7 +1956,7 @@ mod tests {
     }
 
     #[test]
-    fn categorical() {
+    fn contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
             896675, 922197, 930672, 916665, 0, 0, 0, 0, 0, 723031, 650522, 572300, 494702, 418703,
@@ -1718,22 +1964,41 @@ mod tests {
         ];
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
-        let model =
-            ContiguousCategorical::<_, 32>::from_floating_point_probabilities(&probabilities)
-                .unwrap();
+        let model = ContiguousCategorical::<_, 32>::from_floating_point_probabilities(
+            &probabilities,
+        )
+        .unwrap();
         test_entropy_model(&model, 0..probabilities.len());
+    }
+
+    #[test]
+    fn non_contiguous_categorical() {
+        let hist = [
+            1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
+            896675, 922197, 930672, 916665, 0, 0, 0, 0, 0, 723031, 650522, 572300, 494702, 418703,
+            347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540, 39258, 27988, 54269,
+        ];
+        let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
+        let symbols = "QWERTYUIOPASDFGHJKLZXCVBNM 1234567890".chars().collect::<Vec<_>>();
+
+        let model =
+            NonContiguousCategoricalDecoderModel::<_, _, 32>::from_symbols_and_floating_point_probabilities(
+                &symbols,
+                &probabilities,
+            )
+            .unwrap();
+        test_iterable_entropy_model(&model, symbols.iter().cloned());
     }
 
     fn test_entropy_model<'m, D, const PRECISION: usize>(
         model: &'m D,
-        domain: core::ops::Range<<D as EntropyModel<PRECISION>>::Symbol>,
+        domain: impl Clone + Iterator<Item = D::Symbol>,
     ) where
         D: IterableEntropyModel<'m, PRECISION, Probability = u32>
             + EncoderModel<PRECISION>
             + DecoderModel<PRECISION>
             + 'm,
         D::Symbol: Copy + core::fmt::Debug + PartialEq,
-        core::ops::Range<D::Symbol>: Iterator<Item = D::Symbol>,
     {
         let mut sum = 0;
         for symbol in domain.clone() {
@@ -1751,6 +2016,16 @@ mod tests {
         }
         assert_eq!(sum, 1 << PRECISION);
 
+        test_iterable_entropy_model(model, domain);
+    }
+
+    fn test_iterable_entropy_model<'m, D, const PRECISION: usize>(
+        model: &'m D,
+        domain: impl Clone + Iterator<Item = D::Symbol>,
+    ) where
+        D: IterableEntropyModel<'m, PRECISION, Probability = u32> + 'm,
+        D::Symbol: Copy + core::fmt::Debug + PartialEq,
+    {
         let mut expected_cumulative = 0u64;
         let mut count = 0;
         for (expected_symbol, (symbol, left_sided_cumulative, probability)) in
