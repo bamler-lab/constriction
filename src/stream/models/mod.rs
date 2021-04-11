@@ -220,7 +220,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// TODO: implement `entropy` as inherent method for
     /// `NonContiguousCategoricalEncoderwhich does not implement `IntoIterator` because it
     /// cannot guarantee a fixed order of the iteration.
-    fn entropy<F>(&'m self) -> F
+    fn entropy_base2<F>(&'m self) -> F
     where
         F: Float + core::iter::Sum,
         Self::Probability: Into<F>,
@@ -228,8 +228,8 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
         let entropy_scaled = self
             .symbol_table()
             .into_iter()
-            .map(|(_, probability, _)| {
-                let probability = probability.into();
+            .map(|(_, _,probability)| {
+                let probability = probability.get().into();
                 probability * probability.log2() // prob is guaranteed to be nonzero.
             })
             .sum::<F>();
@@ -1864,7 +1864,6 @@ mod tests {
     #[test]
     fn leakily_quantized_normal() {
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
-
         for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
             for &mean in &[-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0] {
                 let distribution = Gaussian::new(mean, std_dev);
@@ -1884,6 +1883,20 @@ mod tests {
                     let distribution = Binomial::new(n, p);
                     test_entropy_model(&quantizer.quantize(distribution), 0..(n as u32 + 1));
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn entropy() {
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-1000..=1000);
+        for &std_dev in &[100., 200., 300.] {
+            for &mean in &[-10., 2.3, 50.1] {
+                let distribution = Gaussian::new(mean, std_dev);
+                let model = quantizer.quantize(distribution);
+                let entropy= model.entropy_base2::<f64>();
+                let expected_entropy = 2.047095585180641 + std_dev.log2();
+                assert!((entropy - expected_entropy).abs() < 0.01);
             }
         }
     }
@@ -1964,10 +1977,9 @@ mod tests {
         ];
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
-        let model = ContiguousCategorical::<_, 32>::from_floating_point_probabilities(
-            &probabilities,
-        )
-        .unwrap();
+        let model =
+            ContiguousCategorical::<_, 32>::from_floating_point_probabilities(&probabilities)
+                .unwrap();
         test_entropy_model(&model, 0..probabilities.len());
     }
 
@@ -1979,7 +1991,9 @@ mod tests {
             347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540, 39258, 27988, 54269,
         ];
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let symbols = "QWERTYUIOPASDFGHJKLZXCVBNM 1234567890".chars().collect::<Vec<_>>();
+        let symbols = "QWERTYUIOPASDFGHJKLZXCVBNM 1234567890"
+            .chars()
+            .collect::<Vec<_>>();
 
         let model =
             NonContiguousCategoricalDecoderModel::<_, _, 32>::from_symbols_and_floating_point_probabilities(

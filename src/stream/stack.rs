@@ -1383,7 +1383,7 @@ mod tests {
             .unwrap();
         dbg!(
             ans.num_valid_bits(),
-            AMT as f64 * categorical.entropy::<f64>()
+            AMT as f64 * categorical.entropy_base2::<f64>()
         );
 
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
