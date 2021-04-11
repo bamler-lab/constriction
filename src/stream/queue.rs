@@ -958,7 +958,7 @@ mod tests {
     extern crate std;
     use std::dbg;
 
-    use super::super::models::{ContiguousCategorical, EntropyModel, LeakyQuantizer};
+    use super::super::models::{ContiguousCategorical, IterableEntropyModel, LeakyQuantizer};
     use super::*;
 
     use probability::distribution::{Gaussian, Inverse};
@@ -1142,7 +1142,7 @@ mod tests {
             .unwrap();
         dbg!(
             encoder.num_bits(),
-            AMT as f64 * categorical.entropy::<'_, f64>()
+            AMT as f64 * categorical.entropy::<f64>()
         );
 
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);

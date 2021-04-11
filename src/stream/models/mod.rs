@@ -171,6 +171,16 @@ pub trait EntropyModel<const PRECISION: usize> {
     /// the API will technically become more restrictive, but it will only forbid usages
     /// that would panic at runtime today).
     type Probability: BitArray;
+}
+
+pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISION> {
+    type Iter: Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    >;
 
     /// Iterates over symbols, the (left sided) cumulative distribution and the probability
     /// mass function, in fixed point arithmetic.
@@ -203,34 +213,15 @@ pub trait EntropyModel<const PRECISION: usize> {
     ///
     /// This is not implemented as a normal method because it may not be feasible to
     /// implement this method for all entroy models in an efficient way.
-    #[inline(always)]
-    fn symbol_table<'a>(&'a self) -> <&'a Self as IntoIterator>::IntoIter
-    where
-        &'a Self: IntoIterator<
-            Item = (
-                Self::Symbol,
-                Self::Probability,
-                <Self::Probability as BitArray>::NonZero,
-            ),
-        >,
-    {
-        self.into_iter()
-    }
+    fn symbol_table(&'m self) -> Self::Iter;
 
     /// Returns the entropy in units of bits (i.e., base 2).
     ///
     /// TODO: implement `entropy` as inherent method for
     /// `NonContiguousCategoricalEncoderwhich does not implement `IntoIterator` because it
     /// cannot guarantee a fixed order of the iteration.
-    fn entropy<'a, F>(&'a self) -> F
+    fn entropy<F>(&'m self) -> F
     where
-        &'a Self: IntoIterator<
-            Item = (
-                Self::Symbol,
-                Self::Probability,
-                <Self::Probability as BitArray>::NonZero,
-            ),
-        >,
         F: Float + core::iter::Sum,
         Self::Probability: Into<F>,
     {
@@ -590,13 +581,27 @@ where
 /// Such a `LeakilyQuantizedDistribution` can be created with a [`LeakyQuantizer`].
 /// It can be used for entropy coding since it implements [`EntropyModel`].
 #[derive(Debug)]
-pub struct LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, const PRECISION: usize> {
+pub struct LeakilyQuantizedDistribution<'q, F, Symbol, Probability, CD, const PRECISION: usize> {
     inner: CD,
-    quantizer: &'a LeakyQuantizer<F, Symbol, Probability, PRECISION>,
+    quantizer: &'q LeakyQuantizer<F, Symbol, Probability, PRECISION>,
 }
 
-impl<'a, F, Symbol, Probability, CD, const PRECISION: usize> EntropyModel<PRECISION>
-    for LeakilyQuantizedDistribution<'a, F, Symbol, Probability, CD, PRECISION>
+#[inline(always)]
+fn slack<Probability, Symbol>(symbol: Symbol, min_symbol_inclusive: Symbol) -> Probability
+where
+    Probability: BitArray,
+    Symbol: AsPrimitive<Probability> + WrappingSub,
+{
+    // This whole `mask` business is only relevant if `Symbol` is a signed type smaller than
+    // `Probability`, which should be very uncommon. In all other cases, this whole stuff
+    // will be optimized away.
+    let mask = wrapping_pow2::<Probability>(8 * std::mem::size_of::<Symbol>())
+        .wrapping_sub(&Probability::one());
+    symbol.borrow().wrapping_sub(&min_symbol_inclusive).as_() & mask
+}
+
+impl<'q, F, Symbol, Probability, CD, const PRECISION: usize> EntropyModel<PRECISION>
+    for LeakilyQuantizedDistribution<'q, F, Symbol, Probability, CD, PRECISION>
 where
     Probability: BitArray,
 {
@@ -604,8 +609,8 @@ where
     type Symbol = Symbol;
 }
 
-impl<'a, Symbol, Probability, CD, const PRECISION: usize> EncoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<'a, f64, Symbol, Probability, CD, PRECISION>
+impl<'q, Symbol, Probability, CD, const PRECISION: usize> EncoderModel<PRECISION>
+    for LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, CD, PRECISION>
 where
     f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub,
@@ -633,7 +638,7 @@ where
         if symbol.borrow() < &min_symbol_inclusive || symbol.borrow() > &max_symbol_inclusive {
             return None;
         };
-        let slack = symbol.borrow().wrapping_sub(&min_symbol_inclusive).as_();
+        let slack = slack(*symbol.borrow(), min_symbol_inclusive);
 
         // Round both cumulatives *independently* to fixed point precision.
         let left_sided_cumulative = if symbol.borrow() == &min_symbol_inclusive {
@@ -651,8 +656,7 @@ where
             // calculation in the `else` branch may lead to a lower total probability
             // because we're cutting off the right tail of the distribution and we're
             // rounding down.
-            let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-            max_probability.wrapping_add(&Probability::one())
+            wrapping_pow2(PRECISION)
         } else {
             let non_leaky: Probability =
                 (free_weight * self.inner.distribution((*symbol.borrow()).into() + 0.5)).as_();
@@ -668,8 +672,8 @@ where
     }
 }
 
-impl<'a, Symbol, Probability, CD, const PRECISION: usize> DecoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<'a, f64, Symbol, Probability, CD, PRECISION>
+impl<'q, Symbol, Probability, CD, const PRECISION: usize> DecoderModel<PRECISION>
+    for LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, CD, PRECISION>
 where
     f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub + WrappingAdd,
@@ -710,7 +714,7 @@ where
 
             let non_leaky: Probability =
                 (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
-            non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_()
+            non_leaky + slack(symbol, min_symbol_inclusive)
         };
 
         // SAFETY: We have to ensure that all paths lead to a state where
@@ -734,8 +738,7 @@ where
 
                 let non_leaky: Probability =
                     (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
-                left_sided_cumulative =
-                    non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_();
+                left_sided_cumulative = non_leaky + slack(symbol, min_symbol_inclusive);
 
                 if left_sided_cumulative <= quantile {
                     found_lower_bound = true;
@@ -743,11 +746,11 @@ where
                     // search now.
                     if step <= Symbol::one() {
                         let right_sided_cumulative = if symbol == max_symbol_inclusive {
-                            Probability::max_value().wrapping_add(&Probability::one())
+                            wrapping_pow2(PRECISION)
                         } else {
                             let non_leaky: Probability =
                                 (free_weight * self.inner.distribution(symbol.into() + 0.5)).as_();
-                            (non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_())
+                            (non_leaky + slack(symbol, min_symbol_inclusive))
                                 .wrapping_add(&Probability::one())
                         };
                         // SAFETY: `old_left_sided_cumulative > quantile >= left_sided_cumulative`
@@ -794,8 +797,7 @@ where
                     if step <= Symbol::one() {
                         let non_leaky: Probability =
                             (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
-                        left_sided_cumulative =
-                            non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_();
+                        left_sided_cumulative = non_leaky + slack(symbol, min_symbol_inclusive);
 
                         // SAFETY: we have to manually check here.
                         if right_sided_cumulative == left_sided_cumulative {
@@ -809,7 +811,7 @@ where
                 } else {
                     let non_leaky: Probability =
                         (free_weight * self.inner.distribution(symbol.into() + 0.5)).as_();
-                    (non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_())
+                    (non_leaky + slack(symbol, min_symbol_inclusive))
                         .wrapping_add(&Probability::one())
                 };
 
@@ -825,7 +827,7 @@ where
                         } else {
                             let non_leaky: Probability =
                                 (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
-                            non_leaky + symbol.wrapping_sub(&min_symbol_inclusive).as_()
+                            non_leaky + slack(symbol, min_symbol_inclusive)
                         };
 
                         if left_sided_cumulative <= quantile || symbol == min_symbol_inclusive {
@@ -870,6 +872,89 @@ where
                 .into_nonzero_unchecked()
         };
         (symbol, left_sided_cumulative, probability)
+    }
+}
+
+impl<'m, 'q: 'm, Symbol, Probability, CD, const PRECISION: usize>
+    IterableEntropyModel<'m, PRECISION>
+    for LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, CD, PRECISION>
+where
+    f64: AsPrimitive<Probability>,
+    Symbol: PrimInt + AsPrimitive<Probability> + AsPrimitive<usize> + Into<f64> + WrappingSub,
+    Probability: BitArray + Into<f64>,
+    CD: Distribution + 'm,
+    CD::Value: AsPrimitive<Symbol>,
+{
+    type Iter = LeakilyQuantizedDistributionIter<Symbol, Probability, &'m Self, PRECISION>;
+
+    fn symbol_table(&'m self) -> Self::Iter {
+        LeakilyQuantizedDistributionIter {
+            model: self,
+            symbol: Some(self.quantizer.min_symbol_inclusive),
+            left_sided_cumulative: Probability::zero(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct LeakilyQuantizedDistributionIter<Symbol, Probability, M, const PRECISION: usize> {
+    model: M,
+    symbol: Option<Symbol>,
+    left_sided_cumulative: Probability,
+}
+
+impl<'m, 'q, Symbol, Probability, CD, const PRECISION: usize> Iterator
+    for LeakilyQuantizedDistributionIter<
+        Symbol,
+        Probability,
+        &'m LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, CD, PRECISION>,
+        PRECISION,
+    >
+where
+    f64: AsPrimitive<Probability>,
+    Symbol: PrimInt + AsPrimitive<Probability> + AsPrimitive<usize> + Into<f64> + WrappingSub,
+    Probability: BitArray + Into<f64>,
+    CD: Distribution,
+    CD::Value: AsPrimitive<Symbol>,
+{
+    type Item = (Symbol, Probability, Probability::NonZero);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let symbol = self.symbol?;
+
+        let right_sided_cumulative = if symbol == self.model.quantizer.max_symbol_inclusive {
+            self.symbol = None;
+            wrapping_pow2(PRECISION)
+        } else {
+            let next_symbol = symbol + Symbol::one();
+            self.symbol = Some(next_symbol);
+            let non_leaky: Probability = (self.model.quantizer.free_weight
+                * self.model.inner.distribution((symbol).into() - 0.5))
+            .as_();
+            non_leaky + slack(next_symbol, self.model.quantizer.min_symbol_inclusive)
+        };
+
+        let probability = unsafe {
+            // SAFETY: probabilities of
+            right_sided_cumulative
+                .wrapping_sub(&self.left_sided_cumulative)
+                .into_nonzero_unchecked()
+        };
+
+        let left_sided_cumulative = self.left_sided_cumulative;
+        self.left_sided_cumulative = right_sided_cumulative;
+
+        Some((symbol, left_sided_cumulative, probability))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        if let Some(symbol) = self.symbol {
+            let len = slack::<usize, _>(symbol, self.model.quantizer.max_symbol_inclusive)
+                .saturating_add(1);
+            (len, None)
+        } else {
+            (0, Some(0))
+        }
     }
 }
 
@@ -1042,16 +1127,14 @@ impl<'a, Row, Table: CdfArray<Row>> Iterator for CdfArrayIterator<'a, Row, Table
     }
 }
 
-impl<'a, Probability, const PRECISION: usize> IntoIterator
-    for &'a ContiguousCategorical<Probability, PRECISION>
+impl<'m, Probability, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
+    for ContiguousCategorical<Probability, PRECISION>
 where
     Probability: BitArray,
 {
-    type Item = (usize, Probability, Probability::NonZero);
+    type Iter = CdfArrayIterator<'m, (Probability,), Vec<(Probability,)>>;
 
-    type IntoIter = CdfArrayIterator<'a, (Probability,), Vec<(Probability,)>>;
-
-    fn into_iter(self) -> Self::IntoIter {
+    fn symbol_table(&'m self) -> Self::Iter {
         CdfArrayIterator::new(&self.cdf)
     }
 }
@@ -1429,10 +1512,8 @@ where
 
     // Start by assigning each symbol weight 1 and then distributing no more than
     // the remaining weight approximately evenly across all symbols.
-    let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-    let mut remaining_free_weight = max_probability
-        .wrapping_add(&Probability::one())
-        .wrapping_sub(&probabilities.len().as_());
+    let mut remaining_free_weight =
+        wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&probabilities.len().as_());
     let normalization = probabilities.iter().map(|&x| x.into()).sum::<f64>();
     if !normalization.is_normal() || !normalization.is_sign_positive() {
         return Err(());
@@ -1540,7 +1621,7 @@ mod tests {
         for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
             for &mean in &[-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0] {
                 let distribution = Gaussian::new(mean, std_dev);
-                test_entropy_model(quantizer.quantize(distribution), -127..128);
+                test_entropy_model(&quantizer.quantize(distribution), -127..128);
             }
         }
     }
@@ -1554,7 +1635,7 @@ mod tests {
                     // TODO: file issue to `probability` repo.
                     let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=n as u32);
                     let distribution = Binomial::new(n, p);
-                    test_entropy_model(quantizer.quantize(distribution), 0..(n as u32 + 1));
+                    test_entropy_model(&quantizer.quantize(distribution), 0..(n as u32 + 1));
                 }
             }
         }
@@ -1639,18 +1720,22 @@ mod tests {
         let model =
             ContiguousCategorical::<_, 32>::from_floating_point_probabilities(&probabilities)
                 .unwrap();
-        test_entropy_model(model, 0..probabilities.len());
+        test_entropy_model(&model, 0..probabilities.len());
     }
 
-    fn test_entropy_model<D, const PRECISION: usize>(model: D, domain: core::ops::Range<D::Symbol>)
-    where
-        D: EncoderModel<PRECISION, Probability = u32> + DecoderModel<PRECISION, Probability = u32>,
+    fn test_entropy_model<'m, D, const PRECISION: usize>(
+        model: &'m D,
+        domain: core::ops::Range<<D as EntropyModel<PRECISION>>::Symbol>,
+    ) where
+        D: IterableEntropyModel<'m, PRECISION, Probability = u32>
+            + EncoderModel<PRECISION>
+            + DecoderModel<PRECISION>
+            + 'm,
         D::Symbol: Copy + core::fmt::Debug + PartialEq,
         core::ops::Range<D::Symbol>: Iterator<Item = D::Symbol>,
     {
         let mut sum = 0;
-
-        for symbol in domain {
+        for symbol in domain.clone() {
             let (left_cumulative, prob) = model.left_cumulative_and_probability(symbol).unwrap();
             assert_eq!(left_cumulative as u64, sum);
             sum += prob.get() as u64;
@@ -1663,7 +1748,19 @@ mod tests {
                 expected
             );
         }
-
         assert_eq!(sum, 1 << PRECISION);
+
+        let mut expected_cumulative = 0u64;
+        let mut count = 0;
+        for (expected_symbol, (symbol, left_sided_cumulative, probability)) in
+            domain.clone().zip(model.symbol_table())
+        {
+            assert_eq!(symbol, expected_symbol);
+            assert_eq!(left_sided_cumulative as u64, expected_cumulative);
+            expected_cumulative += probability.get() as u64;
+            count += 1;
+        }
+        assert_eq!(count, domain.size_hint().0);
+        assert_eq!(expected_cumulative, 1 << PRECISION);
     }
 }

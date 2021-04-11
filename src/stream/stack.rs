@@ -1190,7 +1190,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::models::{ContiguousCategorical, EntropyModel, LeakyQuantizer};
+    use super::super::models::{ContiguousCategorical, IterableEntropyModel, LeakyQuantizer};
     use super::*;
     extern crate std;
     use std::dbg;
