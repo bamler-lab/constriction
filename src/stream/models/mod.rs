@@ -96,7 +96,7 @@ use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::Ran
 use num::{
     cast::AsPrimitive,
     traits::{WrappingAdd, WrappingSub},
-    Float, One, PrimInt, Zero,
+    Bounded, Float, One, PrimInt, Zero,
 };
 use probability::distribution::{Distribution, Inverse};
 
@@ -873,6 +873,221 @@ where
     }
 }
 
+trait CdfArray<Row>: AsRef<[Row]> {
+    type Symbol;
+    type Probability: BitArray;
+
+    fn left_cumulative(&self, index: usize) -> Option<Self::Probability>;
+
+    unsafe fn left_cumulative_unchecked(&self, index: usize) -> Self::Probability;
+
+    unsafe fn symbol_unchecked(&self, index: usize) -> Self::Symbol;
+
+    /// Bisects the symbol table to find the bin that contains `quantile`.
+    fn quantile_function<const PRECISION: usize>(
+        &self,
+        quantile: Self::Probability,
+    ) -> (
+        Self::Symbol,
+        Self::Probability,
+        <Self::Probability as BitArray>::NonZero,
+    ) {
+        assert!(PRECISION <= Self::Probability::BITS);
+        let max_probability =
+            Self::Probability::max_value() >> (Self::Probability::BITS - PRECISION);
+        assert!(quantile <= max_probability);
+
+        let mut left = 0; // Smallest possible index.
+        let mut right = self.as_ref().len() - 1; // One above largest possible index.
+
+        // Binary search for the last entry whose left-sided cumulative is <= quantile,
+        // exploiting the following facts:
+        // - `self.as_ref.len() >= 2` (therefore, `left < right` initially)
+        // - `cdf[0] == 0` (where `cdf[n] = self.left_cumulative_unchecked(n).0`)
+        // - `quantile <= max_probability` (if this is violated then the method is still memory
+        //   safe but will return the last bin; thus, memory safety doesn't hinge on
+        //   `PRECISION` being correct).
+        // - `cdf[self.as_ref().len() - 1] == max_probability.wrapping_add(1)`
+        // - `cdf` is monotonically increasing except that it may wrap around only at the
+        //   last entry (this happens iff `PRECISION == Probability::BITS`).
+        //
+        // The loop maintains the following two invariants:
+        // (1) `0 <= left <= mid < right < self.as_ref().len()`
+        // (2) `cdf[left] <= cdf[mid]`
+        // (3) `cdf[mid] <= cdf[right]` unless `right == cdf.len() - 1`
+        while left + 1 != right {
+            let mid = (left + right) / 2;
+
+            // SAFETY: safe by invariant (1)
+            let pivot = unsafe { self.left_cumulative_unchecked(mid) };
+            if pivot <= quantile {
+                // Since `mid < right` and wrapping can occur only at the last entry,
+                // `pivot` has not yet wrapped around
+                left = mid;
+            } else {
+                right = mid;
+            }
+        }
+
+        // SAFETY: invariant `0 <= left < right < self.as_ref().len()` still holds.
+        let cdf = unsafe { self.left_cumulative_unchecked(left) };
+        let symbol = unsafe { self.symbol_unchecked(left) };
+        let next_cdf = unsafe { self.left_cumulative_unchecked(right) };
+
+        let probability = unsafe {
+            // SAFETY: The constructor ensures that all probabilities within bounds are
+            // nonzero. (TODO)
+            next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
+        };
+
+        (symbol, cdf, probability)
+    }
+}
+
+impl<Probability: BitArray, Symbol, Table> CdfArray<(Probability, Symbol)> for Table
+where
+    Probability: BitArray,
+    Symbol: Clone,
+    Table: AsRef<[(Probability, Symbol)]>,
+{
+    type Probability = Probability;
+    type Symbol = Symbol;
+
+    #[inline(always)]
+    fn left_cumulative(&self, index: usize) -> Option<Self::Probability> {
+        self.as_ref().get(index).map(|&(cumulative, _)| cumulative)
+    }
+
+    #[inline(always)]
+    unsafe fn left_cumulative_unchecked(&self, index: usize) -> Self::Probability {
+        self.as_ref().get_unchecked(index).0
+    }
+
+    #[inline(always)]
+    unsafe fn symbol_unchecked(&self, index: usize) -> Symbol {
+        self.as_ref().get_unchecked(index).1
+    }
+}
+
+impl<Probability: BitArray, Table> CdfArray<(Probability,)> for Table
+where
+    Table: AsRef<[(Probability,)]>,
+{
+    type Probability = Probability;
+    type Symbol = usize;
+
+    #[inline(always)]
+    fn left_cumulative(&self, index: usize) -> Option<Self::Probability> {
+        self.as_ref().get(index).map(|&(cumulative,)| cumulative)
+    }
+
+    #[inline(always)]
+    unsafe fn left_cumulative_unchecked(&self, index: usize) -> Self::Probability {
+        self.as_ref().get_unchecked(index).0
+    }
+
+    #[inline(always)]
+    unsafe fn symbol_unchecked(&self, index: usize) -> usize {
+        index
+    }
+}
+
+// impl<'a, Row, Table> IntoIterator for &'a Table
+// where
+//     Table: CdfArray<Row>,
+// {
+//     type Item = (
+//         Table::Symbol,
+//         Table::Probability,
+//         <Table::Probability as BitArray>::NonZero,
+//     );
+
+//     /// Don't rely on this specific (ugly) type, it will become an unnamed existential type
+//     /// once that's in trait methods.
+//     type IntoIter = CdfIterator<
+//         Probability,
+//         core::iter::Enumerate<
+//             core::iter::Cloned<core::iter::Skip<core::slice::Iter<'a, (Probability, ())>>>,
+//         >,
+//     >;
+
+//     fn into_iter(self) -> Self::IntoIter {
+//         unsafe {
+//             // SAFETY: a `ContiguousCategorical` satisfies the required contract.
+//             CdfIterator::new(self.cdf.iter().skip(1).cloned().enumerate())
+//         }
+//     }
+// }
+
+// /// TODO: workaround to avoid introducing lots of very similar iterator types while we're
+// /// wating for existential types in trait methods (which will allow us to express all usages
+// /// CdfIterator as unnamed iterators constructed from iterator combinators).
+// ///
+// /// TODO: use also for other entropy models and move up in the file.
+// #[derive(Debug)]
+// pub struct CdfIterator<Probability, I> {
+//     left_sided_cumulative: Probability,
+//     right_sided_cumulatives: I,
+// }
+
+// impl<Probability, I> CdfIterator<Probability, I>
+// where
+//     Probability: BitArray,
+//     I: Iterator<Item = (Probability, ())>,
+// {
+//     /// # Safety
+//     ///
+//     /// The provided `right_sided_cumulatives` yields tuples `(symbol,
+//     /// right_sided_cumulative)` that must satisfy all of the following constraints:
+//     /// - it must yield at least two items;
+//     /// - if the type `Symbol` implements `Eq` then all yielded symbols must be unequal;
+//     /// - the first item must have a nonzero `right_sided_cumulative`;
+//     /// - the `right_sided_cumulative` must strictly increase, except for the last item
+//     ///   which may be zero; and
+//     /// - the last item must have a`right_sided_cumulative` that is either zero or a power
+//     ///   of two.
+//     unsafe fn new(right_sided_cumulatives: I) -> Self {
+//         Self {
+//             left_sided_cumulative: Probability::zero(),
+//             right_sided_cumulatives,
+//         }
+//     }
+// }
+
+// impl<Probability, I> Iterator for CdfIterator<Probability, I>
+// where
+//     Probability: BitArray,
+//     I: Iterator<Item = (Probability, ())>,
+// {
+//     type Item = (usize, Probability, Probability::NonZero);
+
+//     fn next(&mut self) -> Option<Self::Item> {
+//         // let mut previous = Probability::zero();
+//         let (symbol, right_sided_cumulative) = self.right_sided_cumulatives.next()?;
+//         let left_sided_cumulative = self.left_sided_cumulative;
+//         let probability = unsafe {
+//             // SAFETY: The contract of the constructor ensures that probabilities strictly
+//             // increase.
+//             right_sided_cumulative
+//                 .wrapping_sub(&left_sided_cumulative)
+//                 .into_nonzero_unchecked()
+//         };
+//         self.left_sided_cumulative = right_sided_cumulative;
+//         Some((symbol, left_sided_cumulative, probability))
+//     }
+
+//     fn size_hint(&self) -> (usize, Option<usize>) {
+//         self.right_sided_cumulatives.size_hint()
+//     }
+// }
+
+// impl<Symbol, Probability, I> ExactSizeIterator for CdfIterator<Probability, I>
+// where
+//     Probability: BitArray,
+//     I: ExactSizeIterator<Item = (Symbol, Probability)>,
+// {
+// }
+
 /// A categorical distribution over a finite number of bins.
 ///
 /// This distribution implements [`EntropyModel`], which means that it can be
@@ -898,7 +1113,7 @@ pub struct ContiguousCategorical<Probability, const PRECISION: usize> {
     /// - `cdf` is monotonically increasing except that it may wrap around only at
     ///   the very last entry (this happens iff `PRECISION == Probability::BITS`).
     ///   Thus, all probabilities within range are guaranteed to be nonzero.
-    cdf: Vec<Probability>,
+    cdf: Vec<(Probability,)>, // Symbols are implicit.
 }
 
 pub type DefaultContiguousCategorical = ContiguousCategorical<u32, 24>;
@@ -1043,9 +1258,12 @@ impl<Probability: BitArray, const PRECISION: usize> ContiguousCategorical<Probab
             &probabilities[0..probabilities.len() - 1],
         )?;
 
-        if model.cdf[probabilities.len()].wrapping_sub(&model.cdf[probabilities.len() - 1])
-            != *probabilities.last().unwrap()
-        {
+        let whole: Probability = wrapping_pow2(PRECISION);
+        let last_left_cumulative = model
+            .cdf
+            .left_cumulative(probabilities.len() - 1)
+            .expect("probabilities.len() != 0");
+        if whole.wrapping_sub(&last_left_cumulative) != *probabilities.last().unwrap() {
             Err(())
         } else {
             Ok(model)
@@ -1067,14 +1285,14 @@ impl<Probability: BitArray, const PRECISION: usize> ContiguousCategorical<Probab
         let whole: Probability = wrapping_pow2(PRECISION);
         let mask = whole.wrapping_sub(&Probability::one());
 
-        let cdf = core::iter::once(Probability::zero())
+        let cdf = core::iter::once((Probability::zero(),))
             .chain(probabilities.into_iter().map(|prob| {
                 let old_accum = accum;
                 accum = accum.wrapping_add(prob.borrow()) & mask;
                 wraps_or_has_zero = wraps_or_has_zero || accum <= old_accum;
-                accum
+                (accum,)
             }))
-            .chain(core::iter::once(whole))
+            .chain(core::iter::once((whole,)))
             .collect::<Vec<_>>();
 
         if wraps_or_has_zero || accum > mask {
@@ -1094,97 +1312,6 @@ impl<Probability: BitArray, const PRECISION: usize> ContiguousCategorical<Probab
     pub fn num_symbols(&self) -> usize {
         self.cdf.len() - 1
     }
-}
-
-impl<'a, Probability: BitArray, const PRECISION: usize> IntoIterator
-    for &'a ContiguousCategorical<Probability, PRECISION>
-{
-    type Item = (usize, Probability, Probability::NonZero);
-
-    /// Don't rely on this specific (ugly) type, it will become an unnamed existential type
-    /// once that's in trait methods.
-    type IntoIter = CdfIterator<
-        Probability,
-        core::iter::Enumerate<
-            core::iter::Cloned<core::iter::Skip<core::slice::Iter<'a, Probability>>>,
-        >,
-    >;
-
-    fn into_iter(self) -> Self::IntoIter {
-        unsafe {
-            // SAFETY: a `ContiguousCategorical` satisfies the required contract.
-            CdfIterator::new(self.cdf.iter().skip(1).cloned().enumerate())
-        }
-    }
-}
-
-/// TODO: workaround to avoid introducing lots of very similar iterator types while we're
-/// wating for existential types in trait methods (which will allow us to express all usages
-/// CdfIterator as unnamed iterators constructed from iterator combinators).
-///
-/// TODO: use also for other entropy models and move up in the file.
-#[derive(Debug)]
-pub struct CdfIterator<Probability, I> {
-    left_sided_cumulative: Probability,
-    right_sided_cumulatives: I,
-}
-
-impl<Symbol, Probability, I> CdfIterator<Probability, I>
-where
-    Probability: BitArray,
-    I: Iterator<Item = (Symbol, Probability)>,
-{
-    /// # Safety
-    ///
-    /// The provided `right_sided_cumulatives` yields tuples `(symbol,
-    /// right_sided_cumulative)` that must satisfy all of the following constraints:
-    /// - it must yield at least two items;
-    /// - if the type `Symbol` implements `Eq` then all yielded symbols must be unequal;
-    /// - the first item must have a nonzero `right_sided_cumulative`;
-    /// - the `right_sided_cumulative` must strictly increase, except for the last item
-    ///   which may be zero; and
-    /// - the last item must have a`right_sided_cumulative` that is either zero or a power
-    ///   of two.
-    unsafe fn new(right_sided_cumulatives: I) -> Self {
-        Self {
-            left_sided_cumulative: Probability::zero(),
-            right_sided_cumulatives,
-        }
-    }
-}
-
-impl<Symbol, Probability, I> Iterator for CdfIterator<Probability, I>
-where
-    Probability: BitArray,
-    I: Iterator<Item = (Symbol, Probability)>,
-{
-    type Item = (Symbol, Probability, Probability::NonZero);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // let mut previous = Probability::zero();
-        let (symbol, right_sided_cumulative) = self.right_sided_cumulatives.next()?;
-        let left_sided_cumulative = self.left_sided_cumulative;
-        let probability = unsafe {
-            // SAFETY: The contract of the constructor ensures that probabilities strictly
-            // increase.
-            right_sided_cumulative
-                .wrapping_sub(&left_sided_cumulative)
-                .into_nonzero_unchecked()
-        };
-        self.left_sided_cumulative = right_sided_cumulative;
-        Some((symbol, left_sided_cumulative, probability))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.right_sided_cumulatives.size_hint()
-    }
-}
-
-impl<Symbol, Probability, I> ExactSizeIterator for CdfIterator<Probability, I>
-where
-    Probability: BitArray,
-    I: ExactSizeIterator<Item = (Symbol, Probability)>,
-{
 }
 
 impl<Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
@@ -1214,8 +1341,8 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
                 return None;
             }
             (
-                *self.cdf.get_unchecked(index),
-                *self.cdf.get_unchecked(index + 1),
+                self.cdf.get_unchecked(index).0,
+                self.cdf.get_unchecked(index + 1).0,
             )
         };
 
@@ -1225,6 +1352,18 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
         };
 
         Some((cdf, probability))
+    }
+}
+
+impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
+    for ContiguousCategorical<Probability, PRECISION>
+{
+    #[inline(always)]
+    fn quantile_function(
+        &self,
+        quantile: Self::Probability,
+    ) -> (Self::Symbol, Self::Probability, Probability::NonZero) {
+        self.cdf.quantile_function::<PRECISION>(quantile)
     }
 }
 

@@ -613,11 +613,11 @@ pub unsafe trait BitArray:
 }
 
 #[inline(always)]
-fn wrapping_pow2<T: BitArray, const EXPONENT: usize>() -> T {
-    if EXPONENT >= T::BITS {
+fn wrapping_pow2<T: BitArray>(exponent: usize) -> T {
+    if exponent >= T::BITS {
         T::zero()
     } else {
-        T::one() << EXPONENT
+        T::one() << exponent
     }
 }
 
