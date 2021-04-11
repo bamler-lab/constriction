@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::{
     stream::{
-        models::{LeakyCategorical, LeakyQuantizer},
+        models::{ContiguousCategorical, LeakyQuantizer},
         Decode, TryCodingError,
     },
     CoderError, DefaultEncoderFrontendError, UnwrapInfallible,
@@ -334,7 +334,7 @@ impl AnsCoder {
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
-        let model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(
+        let model = ContiguousCategorical::<u32, 24>::from_floating_point_probabilities(
             probabilities.as_slice()?,
         )
         .map_err(|()| {
@@ -371,7 +371,7 @@ impl AnsCoder {
         probabilities: PyReadonlyArray1<'_, f64>,
         py: Python<'p>,
     ) -> PyResult<&'p PyArray1<i32>> {
-        let model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(
+        let model = ContiguousCategorical::<u32, 24>::from_floating_point_probabilities(
             probabilities.as_slice()?,
         )
         .map_err(|()| {

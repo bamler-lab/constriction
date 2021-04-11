@@ -4,14 +4,14 @@
 //! ("entropy models") in exactly invertible fixed-point arithmetic so as to avoid rounding
 //! errors. As explained in the [motivation](#motivation) below, avoiding rounding errors is
 //! necessary for reliable entropy coding.
-//! 
+//!
 //! The types defined in this module approximate arbitrary discrete (or quantized
 //! one-dimensional continuous) probability distributions with a fixed-point representation.
 //! The fixed-point representation has customizable precision and can be either explicit or
 //! implicit (i.e., lazy). While the approximation itself generally involves rounding, no
 //! more rounding occurs when the resulting fixed-point representation is used to invert the
 //! (cumulative distribution function of the) approximated probability distribution.
-//! 
+//!
 //! # Module Overview
 //!
 //! This module declares the base trait [`EntropyModel`] and its subtraits [`EncoderModel`]
@@ -35,7 +35,7 @@
 //!
 //! See sister modules [`stack`] and [`queue`] for usage examples of these entropy models in
 //! entropy coders.
-//! 
+//!
 //! # Motivation
 //!
 //! The general idea of entropy coding is to use a probabilistic model of a data source to
@@ -49,7 +49,7 @@
 //! points so that it can use the scarce short bit strings for more probable data points.
 //! More precisely, entropy coding aims to minimize the *expected* bit rate under the
 //! probabilistic model of the data source.
-//! 
+//!
 //! We refer to a probabilistic model of a data source in the context of entropy coding as
 //! an "entropy model". In contrast to many other use cases of probabilistic models in
 //! computing, entropy models must be amenable to *exact* arithmetic operations. In
@@ -79,16 +79,28 @@
 
 pub mod lookup;
 
+#[cfg(feature = "std")]
+use std::collections::{
+    hash_map::Entry::{Occupied, Vacant},
+    HashMap,
+};
+
+#[cfg(not(feature = "std"))]
+use hashbrown::hash_map::{
+    Entry::{Occupied, Vacant},
+    HashMap,
+};
+
 use alloc::vec::Vec;
-use core::{borrow::Borrow, fmt::Debug, marker::PhantomData, ops::RangeInclusive};
+use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::RangeInclusive};
 use num::{
     cast::AsPrimitive,
     traits::{WrappingAdd, WrappingSub},
-    Float, PrimInt,
+    Float, One, PrimInt, Zero,
 };
 use probability::distribution::{Distribution, Inverse};
 
-use crate::{wrapping_pow2, BitArray};
+use crate::{wrapping_pow2, BitArray, NonZeroBitArray};
 
 /// Base trait for probabilistic models of a data source.
 ///
@@ -99,20 +111,20 @@ use crate::{wrapping_pow2, BitArray};
 /// [`Probability`] in fixed-point arithmetic, and the fixed point `PRECISION`.
 ///
 /// # Flaoting Point Precisoin
-/// 
+///
 /// The const generic `PRECISION` specifies the number of bits that are used for
 /// representing probabilities. It most not be zero and it must not be higher than
 /// [`Probability`]::BITS. See documentation of the associated type [`Probability`] for a
 /// discussion of further constraints.
-/// 
+///
 /// # Blanket Implementation for `&impl EntropyModel`
-/// 
+///
 /// We provide the following blanket implementation for references to `EntropyModel`s:
-/// 
+///
 /// ```ignore
 /// impl<M: EntropyModel<PRECISION>, const PRECISION: usize> EntropyModel<PRECISION> for &M { ... }
 /// ```
-/// 
+///
 /// This means that, if some type `M` implements `EntropyModel<PRECISION>` for some
 /// `PRECISION`, then so does the reference type `&M`. Analogous blanket implementations are
 /// provided for the traits [`EncoderModel`] and [`DecoderModel`]. The implementations
@@ -127,7 +139,7 @@ use crate::{wrapping_pow2, BitArray};
 ///   references to `EntropyModel`s are also `EntropyModel`s themselves, a generic method
 ///   with this signature can be called with an entropy model passed in either by value or
 ///   by reference.
-/// 
+///
 /// [`Symbol`]: Self::Symbol
 /// [`Probability`]: Self::Probability
 pub trait EntropyModel<const PRECISION: usize> {
@@ -159,6 +171,81 @@ pub trait EntropyModel<const PRECISION: usize> {
     /// the API will technically become more restrictive, but it will only forbid usages
     /// that would panic at runtime today).
     type Probability: BitArray;
+
+    /// Iterates over symbols, the (left sided) cumulative distribution and the probability
+    /// mass function, in fixed point arithmetic.
+    ///
+    /// This method may be used, e.g., to export
+    /// the model into a serializable format, or to construct a different but equivalent representation of
+    /// the same entropy model (e.g., to construct a [`LookupDecoderModel`] from some
+    /// `EncoderModel`).
+    ///
+    /// # Example
+    ///
+    /// TODO: update the example
+    ///
+    /// ```
+    /// use constriction::stream::models::LeakyCategorical;
+    ///
+    /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
+    /// let model = LeakyCategorical::<u32, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+    ///
+    /// let pmf = model.fixed_point_probabilities().collect::<Vec<_>>();
+    /// assert_eq!(pmf, vec![1 << 29, 1 << 31, 1 << 30, 1 << 29]);
+    /// ```
+    ///
+    /// TODO: this a convenience wrapper that just calls `.into_iter()`. Its main purpose is
+    /// to establish a convention that entropy models should implement `IntoIterator` when
+    /// possible. It is used, e.g., for creating lookup table decoder models from arbitrary
+    /// entropy models.
+    ///
+    /// The iterator must iterate in order of increasing cumulative.
+    ///
+    /// This is not implemented as a normal method because it may not be feasible to
+    /// implement this method for all entroy models in an efficient way.
+    #[inline(always)]
+    fn symbol_table<'a>(&'a self) -> <&'a Self as IntoIterator>::IntoIter
+    where
+        &'a Self: IntoIterator<
+            Item = (
+                Self::Symbol,
+                Self::Probability,
+                <Self::Probability as BitArray>::NonZero,
+            ),
+        >,
+    {
+        self.into_iter()
+    }
+
+    /// Returns the entropy in units of bits (i.e., base 2).
+    ///
+    /// TODO: implement `entropy` as inherent method for
+    /// `NonContiguousCategoricalEncoderwhich does not implement `IntoIterator` because it
+    /// cannot guarantee a fixed order of the iteration.
+    fn entropy<'a, F>(&'a self) -> F
+    where
+        &'a Self: IntoIterator<
+            Item = (
+                Self::Symbol,
+                Self::Probability,
+                <Self::Probability as BitArray>::NonZero,
+            ),
+        >,
+        F: Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let entropy_scaled = self
+            .symbol_table()
+            .into_iter()
+            .map(|(_, probability, _)| {
+                let probability = probability.into();
+                probability * probability.log2() // prob is guaranteed to be nonzero.
+            })
+            .sum::<F>();
+
+        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
+        F::from(PRECISION).unwrap() - entropy_scaled / whole
+    }
 }
 
 pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
@@ -168,6 +255,123 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
         &self,
         symbol: impl Borrow<Self::Symbol>,
     ) -> Option<(Self::Probability, <Self::Probability as BitArray>::NonZero)>;
+
+    /// TODO: update docs
+    ///
+    /// Returns the underlying probability mass function in floating point arithmetic.
+    ///
+    /// This method is similar to [`floating_point_probabilities_lossy`] except that it
+    /// guarantees that the conversion from the internally used fixed point arithmetic
+    /// to the requested floating point type `F` is lossless.
+    ///
+    /// This method is similar to [`fixed_point_probabilities`] except that it converts
+    /// the probabilities to the desired floating point type `F`. If you use builtin
+    /// integer and floating point types for `Probability` and `F`, respectively then the
+    /// conversion is guaranteed to be lossless (because of the trait bound
+    /// `Probability: Into<F>`). In this case, the yielded probabilities sum up *exactly* to one,
+    /// and passing them to [`from_floating_point_probabilities`] will reconstruct the
+    /// exact same model (although using [`fixed_point_probabilities`] and
+    /// [`from_nonzero_fixed_point_probabilities`] would be cheaper for this purpose).
+    ///
+    /// The trait bound `Probability: Into<F>` is a conservative bound. In reality, whether or not
+    /// the conversion can be guaranteed to be lossless depends on the const generic
+    /// parameter `PRECISION`. However, there is currently no way to express the more
+    /// precise bound based on `PRECISION` as a compile time check, so the method
+    /// currently conservatively assumes `PRECISION` has the highest value allowed for
+    /// type `Probability`.
+    ///
+    /// Note that the returned floating point probabilities will likely be slightly
+    /// different than the ones you may have used to construct the
+    /// `CategoricalDistribution` in [`from_floating_point_probabilities`]. This is because
+    /// probabilities are internally represented in fixed-point arithmetic with `PRECISION`
+    /// bits, and because of the constraint that each bin has a strictly nonzero
+    /// probability.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::stream::models::LeakyCategorical;
+    ///
+    /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
+    ///
+    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
+    /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
+    /// ```
+    ///
+    /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
+    /// [`floating_point_probabilities_lossy`]: #method.floating_point_probabilities_lossy
+    /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
+    /// [`from_nonzero_fixed_point_probabilities`]: #method.from_nonzero_fixed_point_probabilities
+    #[inline]
+    fn floating_point_probability<F>(&self, symbol: impl Borrow<Self::Symbol>) -> F
+    where
+        F: Float,
+        Self::Probability: Into<F>,
+    {
+        // This will be compiled into a single floating point multiplication rather than a (slow)
+        // division (it should actually be possible to avoid even that and instead just
+        // manually compose the floating point number from mantissa and exponent).
+        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
+        let probability = self
+            .left_cumulative_and_probability(symbol)
+            .map_or(Self::Probability::zero(), |(_, p)| p.get());
+        probability.into() / whole
+    }
+
+    /// TODO: update docs
+    ///
+    /// Returns the underlying probability mass function in floating point arithmetic.
+    ///
+    /// This method is similar to [`floating_point_probabilities`] except that it does
+    /// *not* guarantee that the conversion from the internally used fixed point
+    /// arithmetic to the requested floating point type `F` is lossless.
+    ///
+    /// # Example
+    ///
+    /// The following call to [`floating_point_probabilities`] does not compile because
+    /// the compiler cannot guarantee that the requested conversion from `u32` to `f32`
+    /// be lossless (even though, for these particular values, it would be):
+    ///
+    /// ```compile_fail
+    /// use constriction::stream::models::LeakyCategorical;
+    /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
+    ///
+    /// let pmf = model.floating_point_probabilities().collect::<Vec<f32>>();
+    /// //                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Compiler error: trait bound not satisfied
+    /// ```
+    ///
+    /// This can either be fixed by replacing `f32` with `f64` (thus guaranteeing
+    /// lossless conversion) or by replacing `floating_point_probabilities` with
+    /// `floating_point_probabilities_lossy` as follows:
+    ///
+    /// ```
+    /// use constriction::stream::models::LeakyCategorical;
+    ///
+    /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
+    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
+    ///
+    /// let pmf = model.floating_point_probabilities_lossy().collect::<Vec<f32>>();
+    /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
+    /// ```
+    ///
+    /// [`floating_point_probabilities`]: #method.floating_point_probabilities
+    #[inline]
+    fn floating_point_probability_lossy<F>(&self, symbol: impl Borrow<Self::Symbol>) -> F
+    where
+        F: Float + 'static,
+        Self::Probability: AsPrimitive<F>,
+    {
+        // This will be compiled into a single floating point multiplication rather than a (slow)
+        // division (it should actually be possible to avoid even that and instead just
+        // manually compose the floating point number from mantissa and exponent).
+        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).as_();
+        let probability = self
+            .left_cumulative_and_probability(symbol)
+            .map_or(Self::Probability::zero(), |(_, p)| p.get());
+        probability.as_() / whole
+    }
 }
 
 pub trait DecoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
@@ -674,10 +878,19 @@ where
 /// This distribution implements [`EntropyModel`], which means that it can be
 /// used for entropy coding with a coder that implements [`Encode`] or [`Decode`].
 ///
+/// Note: We currently don't provide a non-contiguous variant of this model. If you have
+/// non-contiguous models, you can trivially map them to a contiguous range using a
+/// [`HashMap`] for encoding or a simple array lookup for decoding. By contrast, we do
+/// provide a specialized non-contiguous variant of lookup models because those models are
+/// optimized for speed and the specialized non-contiguous variant allows us to remove one
+/// indirection.
+///
 /// [`EntropyModel`]: trait.EntropyModel.html
 /// [`Encode`]: crate::Encode
 /// [`Decode`]: crate::Decode
-pub struct LeakyCategorical<Probability, const PRECISION: usize> {
+/// [`HashMap`]: std::hash::HashMap
+#[derive(Debug, Clone)]
+pub struct ContiguousCategorical<Probability, const PRECISION: usize> {
     /// Invariants:
     /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
     ///   this may be relaxed in the future)
@@ -688,21 +901,10 @@ pub struct LeakyCategorical<Probability, const PRECISION: usize> {
     cdf: Vec<Probability>,
 }
 
-pub type DefaultCategorical = LeakyCategorical<u32, 24>;
-pub type SmallCategorical = LeakyCategorical<u16, 12>;
+pub type DefaultContiguousCategorical = ContiguousCategorical<u32, 24>;
+pub type SmallContiguousCategorical = ContiguousCategorical<u16, 12>;
 
-impl<Probability, const PRECISION: usize> Debug for LeakyCategorical<Probability, PRECISION>
-where
-    Probability: BitArray + Debug,
-{
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_list()
-            .entries(self.fixed_point_probabilities())
-            .finish()
-    }
-}
-
-impl<Probability: BitArray, const PRECISION: usize> LeakyCategorical<Probability, PRECISION> {
+impl<Probability: BitArray, const PRECISION: usize> ContiguousCategorical<Probability, PRECISION> {
     /// Constructs a leaky distribution whose PMF approximates given probabilities.
     ///
     /// The returned distribution will be defined for symbols of type `usize` from
@@ -754,122 +956,13 @@ impl<Probability: BitArray, const PRECISION: usize> LeakyCategorical<Probability
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
     {
-        struct Slot<Probability> {
-            original_index: usize,
-            prob: f64,
-            weight: Probability,
-            win: f64,
-            loss: f64,
-        }
-
-        assert!(PRECISION > 0 && PRECISION <= Probability::BITS);
-
-        if probabilities.len() < 2 || probabilities.len() > Probability::max_value().as_() {
-            return Err(());
-        }
-
-        // Start by assigning each symbol weight 1 and then distributing no more than
-        // the remaining weight approximately evenly across all symbols.
-        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-        let mut remaining_free_weight = max_probability
-            .wrapping_add(&Probability::one())
-            .wrapping_sub(&probabilities.len().as_());
-        let normalization = probabilities.iter().map(|&x| x.into()).sum::<f64>();
-        if !normalization.is_normal() || !normalization.is_sign_positive() {
-            return Err(());
-        }
-        let scale = remaining_free_weight.into() / normalization;
-
-        let mut slots = probabilities
-            .iter()
-            .enumerate()
-            .map(|(original_index, &prob)| {
-                if prob < F::zero() {
-                    return Err(());
-                }
-                let prob: f64 = prob.into();
-                let current_free_weight = (prob * scale).as_();
-                remaining_free_weight = remaining_free_weight - current_free_weight;
-                let weight = current_free_weight + Probability::one();
-
-                // How much the cross entropy would decrease when increasing the weight by one.
-                let win = prob * (1.0f64 / weight.into()).ln_1p();
-
-                // How much the cross entropy would increase when decreasing the weight by one.
-                let loss = if weight == Probability::one() {
-                    f64::infinity()
-                } else {
-                    -prob * (-1.0f64 / weight.into()).ln_1p()
-                };
-
-                Ok(Slot {
-                    original_index,
-                    prob,
-                    weight,
-                    win,
-                    loss,
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Distribute remaining weight evenly among symbols with highest wins.
-        while remaining_free_weight != Probability::zero() {
-            // We can't use `sort_unstable_by` here because we want the result to be reproducible
-            // even across updates of the standard library.
-            slots.sort_by(|a, b| b.win.partial_cmp(&a.win).unwrap());
-            let batch_size = core::cmp::min(remaining_free_weight.as_(), slots.len());
-            for slot in &mut slots[..batch_size] {
-                slot.weight = slot.weight + Probability::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
-                slot.win = slot.prob * (1.0f64 / slot.weight.into()).ln_1p();
-                slot.loss = -slot.prob * (-1.0f64 / slot.weight.into()).ln_1p();
-            }
-            remaining_free_weight = remaining_free_weight - batch_size.as_();
-        }
-
-        loop {
-            // Find slot where increasing its weight by one would incur the biggest win.
-            let (buyer_index, &Slot { win: buyer_win, .. }) = slots
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.win.partial_cmp(&b.win).unwrap())
-                .unwrap();
-            // Find slot where decreasing its weight by one would incur the smallest loss.
-            let (seller_index, seller) = slots
-                .iter_mut()
-                .enumerate()
-                .min_by(|(_, a), (_, b)| a.loss.partial_cmp(&b.loss).unwrap())
-                .unwrap();
-
-            if buyer_index == seller_index {
-                // This can only happen due to rounding errors. In this case, we can't expect
-                // to be able to improve further.
-                break;
-            }
-
-            if buyer_win <= seller.loss {
-                // We've found the optimal solution.
-                break;
-            }
-
-            seller.weight = seller.weight - Probability::one();
-            seller.win = seller.prob * (1.0f64 / seller.weight.into()).ln_1p();
-            seller.loss = if seller.weight == Probability::one() {
-                f64::infinity()
-            } else {
-                -seller.prob * (-1.0f64 / seller.weight.into()).ln_1p()
-            };
-
-            let buyer = &mut slots[buyer_index];
-            buyer.weight = buyer.weight + Probability::one();
-            buyer.win = buyer.prob * (1.0f64 / buyer.weight.into()).ln_1p();
-            buyer.loss = -buyer.prob * (-1.0f64 / buyer.weight.into()).ln_1p();
-        }
-
+        let mut slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
         slots.sort_unstable_by_key(|slot| slot.original_index);
-
-        Ok(Self::from_nonzero_fixed_point_probabilities(
-            slots.into_iter().map(|slot| slot.weight),
-        ))
+        Self::from_partial_nonzero_fixed_point_probabilities(
+            slots[0..slots.len() - 1]
+                .into_iter()
+                .map(|slot| slot.weight),
+        )
     }
 
     /// Constructs a distribution with a PMF given in fixed point arithmetic.
@@ -939,241 +1032,170 @@ impl<Probability: BitArray, const PRECISION: usize> LeakyCategorical<Probability
     ///
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
     /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
-    pub fn from_nonzero_fixed_point_probabilities<I>(probabilities: I) -> Self
+    pub fn from_nonzero_fixed_point_probabilities(
+        probabilities: &[Probability],
+    ) -> Result<Self, ()> {
+        if probabilities.len() < 2 {
+            return Err(());
+        }
+
+        let model = Self::from_partial_nonzero_fixed_point_probabilities(
+            &probabilities[0..probabilities.len() - 1],
+        )?;
+
+        if model.cdf[probabilities.len()].wrapping_sub(&model.cdf[probabilities.len() - 1])
+            != *probabilities.last().unwrap()
+        {
+            Err(())
+        } else {
+            Ok(model)
+        }
+    }
+
+    pub fn from_partial_nonzero_fixed_point_probabilities<I>(probabilities: I) -> Result<Self, ()>
     where
         I: IntoIterator,
         I::Item: Borrow<Probability>,
     {
-        assert!(PRECISION > 0 && PRECISION <= Probability::BITS);
+        assert!(PRECISION > 0);
+        assert!(PRECISION <= Probability::BITS);
 
         // We accumulate all validity checks into single branches at the end in order to
         // keep the loop itself branchless.
-        let mut laps: usize = 0;
+        let mut wraps_or_has_zero = false;
         let mut accum = Probability::zero();
-        let mut fingerprint = Probability::zero();
-        let mut has_zero = false;
+        let whole: Probability = wrapping_pow2(PRECISION);
+        let mask = whole.wrapping_sub(&Probability::one());
 
         let cdf = core::iter::once(Probability::zero())
             .chain(probabilities.into_iter().map(|prob| {
                 let old_accum = accum;
-                accum = accum.wrapping_add(prob.borrow());
-                laps += (accum < old_accum) as usize; // branchless check if we've wrapped around
-                has_zero = has_zero || *prob.borrow() == Probability::zero(); // branchless check for any zeros
-                fingerprint = fingerprint | *prob.borrow(); // branchless check for degenerateness
+                accum = accum.wrapping_add(prob.borrow()) & mask;
+                wraps_or_has_zero = wraps_or_has_zero || accum <= old_accum;
                 accum
             }))
+            .chain(core::iter::once(whole))
             .collect::<Vec<_>>();
 
-        assert!(!has_zero);
-        if PRECISION == Probability::BITS {
-            assert_eq!(laps, 1);
-            assert!(cdf.last() == Some(&Probability::zero()));
+        if wraps_or_has_zero || accum > mask {
+            // `accum > mask` means that the last (inferred) probability is zero.
+            Err(())
         } else {
-            assert_eq!(laps, 0);
-            let expected_last = wrapping_pow2::<Probability, PRECISION>();
-            assert!(fingerprint != expected_last);
-            assert!(cdf.last() == Some(&expected_last));
+            Ok(Self { cdf })
         }
-
-        Self { cdf }
     }
 
-    /// Returns the underlying probability mass function in fixed point arithmetic.
+    /// Returns the number of symbols supported by the model.
     ///
-    /// This method may be used together with [`domain`](#method.domain) to export
-    /// the model into a format that will be stable across minor version
-    /// changes of this library. The model can then be reconstructed via
-    /// [`from_nonzero_fixed_point_probabilities`](#method.from_nonzero_fixed_point_probabilities).
-    ///
-    /// The entries of the returned iterator add up to `Probability::max_value() + 1`
-    /// (logically).
-    ///
-    /// To get the probabilities in a more interpretable representation, consider
-    /// [`floating_point_probabilities`](#method.floating_point_probabilities) or
-    /// [`floating_point_probabilities_lossy`](
-    /// #method.floating_point_probabilities_lossy).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::stream::models::LeakyCategorical;
-    ///
-    /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
-    /// let model = LeakyCategorical::<u32, 32>::from_floating_point_probabilities(&probabilities).unwrap();
-    ///
-    /// let pmf = model.fixed_point_probabilities().collect::<Vec<_>>();
-    /// assert_eq!(pmf, vec![1 << 29, 1 << 31, 1 << 30, 1 << 29]);
-    /// ```
-    pub fn fixed_point_probabilities(
-        &self,
-    ) -> impl Iterator<Item = Probability> + ExactSizeIterator + '_ {
-        let mut previous = Probability::zero();
-        self.cdf.iter().skip(1).map(move |&current| {
-            let probability = current.wrapping_sub(&previous);
-            previous = current;
-            probability
-        })
-    }
-
-    /// Returns the underlying probability mass function in floating point arithmetic.
-    ///
-    /// This method is similar to [`floating_point_probabilities_lossy`] except that it
-    /// guarantees that the conversion from the internally used fixed point arithmetic
-    /// to the requested floating point type `F` is lossless.
-    ///
-    /// This method is similar to [`fixed_point_probabilities`] except that it converts
-    /// the probabilities to the desired floating point type `F`. If you use builtin
-    /// integer and floating point types for `Probability` and `F`, respectively then the
-    /// conversion is guaranteed to be lossless (because of the trait bound
-    /// `Probability: Into<F>`). In this case, the yielded probabilities sum up *exactly* to one,
-    /// and passing them to [`from_floating_point_probabilities`] will reconstruct the
-    /// exact same model (although using [`fixed_point_probabilities`] and
-    /// [`from_nonzero_fixed_point_probabilities`] would be cheaper for this purpose).
-    ///
-    /// The trait bound `Probability: Into<F>` is a conservative bound. In reality, whether or not
-    /// the conversion can be guaranteed to be lossless depends on the const generic
-    /// parameter `PRECISION`. However, there is currently no way to express the more
-    /// precise bound based on `PRECISION` as a compile time check, so the method
-    /// currently conservatively assumes `PRECISION` has the highest value allowed for
-    /// type `Probability`.
-    ///
-    /// Note that the returned floating point probabilities will likely be slightly
-    /// different than the ones you may have used to construct the
-    /// `CategoricalDistribution` in [`from_floating_point_probabilities`]. This is because
-    /// probabilities are internally represented in fixed-point arithmetic with `PRECISION`
-    /// bits, and because of the constraint that each bin has a strictly nonzero
-    /// probability.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::stream::models::LeakyCategorical;
-    ///
-    /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
-    ///
-    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
-    /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
-    /// ```
-    ///
-    /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
-    /// [`floating_point_probabilities_lossy`]: #method.floating_point_probabilities_lossy
-    /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
-    /// [`from_nonzero_fixed_point_probabilities`]: #method.from_nonzero_fixed_point_probabilities
-    pub fn floating_point_probabilities<'s, F>(
-        &'s self,
-    ) -> impl Iterator<Item = F> + ExactSizeIterator + 's
-    where
-        F: Float + 's,
-        Probability: Into<F>,
-    {
-        let half = F::one() / (F::one() + F::one());
-        let scale = half / (Probability::one() << (PRECISION - 1)).into();
-        self.fixed_point_probabilities()
-            .map(move |x| scale * x.into())
-    }
-
-    /// Returns the underlying probability mass function in floating point arithmetic.
-    ///
-    /// This method is similar to [`floating_point_probabilities`] except that it does
-    /// *not* guarantee that the conversion from the internally used fixed point
-    /// arithmetic to the requested floating point type `F` is lossless.
-    ///
-    /// # Example
-    ///
-    /// The following call to [`floating_point_probabilities`] does not compile because
-    /// the compiler cannot guarantee that the requested conversion from `u32` to `f32`
-    /// be lossless (even though, for these particular values, it would be):
-    ///
-    /// ```compile_fail
-    /// use constriction::stream::models::LeakyCategorical;
-    /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
-    ///
-    /// let pmf = model.floating_point_probabilities().collect::<Vec<f32>>();
-    /// //                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Compiler error: trait bound not satisfied
-    /// ```
-    ///
-    /// This can either be fixed by replacing `f32` with `f64` (thus guaranteeing
-    /// lossless conversion) or by replacing `floating_point_probabilities` with
-    /// `floating_point_probabilities_lossy` as follows:
-    ///
-    /// ```
-    /// use constriction::stream::models::LeakyCategorical;
-    ///
-    /// let probabilities = vec![1u32 << 29, 1 << 31, 1 << 30, 1 << 29];
-    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
-    ///
-    /// let pmf = model.floating_point_probabilities_lossy().collect::<Vec<f32>>();
-    /// assert_eq!(pmf, vec![0.125, 0.5, 0.25, 0.125]);
-    /// ```
-    ///
-    /// [`floating_point_probabilities`]: #method.floating_point_probabilities
-    pub fn floating_point_probabilities_lossy<'s, F>(
-        &'s self,
-    ) -> impl Iterator<Item = F> + ExactSizeIterator + 's
-    where
-        F: Float + 'static,
-        Probability: AsPrimitive<F>,
-    {
-        let half_denominator: F = (Probability::one() << (PRECISION - 1)).as_();
-        let denominator = half_denominator + half_denominator;
-        self.fixed_point_probabilities()
-            .map(move |x| x.as_() / denominator)
-    }
-
-    /// Returns the size of the domain of the distribution
-    ///
-    /// The distribution is defined on symbols ranging from 0 (inclusively) to the
-    /// value returned by this method (exclusively). Any symbol larger than or equal to
-    /// the value returned by this method is guaranteed to have zero probability
-    /// under the distribution.
-    ///
-    /// Note that symbols within the above domain may also have zero probability
-    /// unless the probability distribution is "leaky" (use
-    /// [`from_floating_point_probabilities`](
-    /// #method.from_floating_point_probabilities) to construct a *leaky*
-    /// categorical distribution).
-    pub fn domain_size(&self) -> usize {
+    /// The distribution is defined on the contiguous range of symbols from zero
+    /// (inclusively) to `num_symbols()` (exclusively). All symbols within this range are
+    /// guaranteed to have a nonzero probability, while all symbols outside of this range
+    /// have a zero probability.
+    pub fn num_symbols(&self) -> usize {
         self.cdf.len() - 1
-    }
-
-    /// Returns the entropy in units of bits (i.e., base 2).
-    pub fn entropy<F>(&self) -> F
-    where
-        F: Float + core::iter::Sum,
-        Probability: Into<F>,
-    {
-        let entropy_scaled = self
-            .cdf
-            .iter()
-            .skip(1)
-            .scan(Probability::zero(), |previous, &cdf| {
-                let prob = cdf.wrapping_sub(previous);
-                *previous = cdf;
-                Some(if prob.is_zero() {
-                    F::zero()
-                } else {
-                    let prob = prob.into();
-                    prob * prob.log2()
-                })
-            })
-            .sum::<F>();
-
-        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-        F::from(PRECISION).unwrap() - entropy_scaled / (max_probability.into() + F::one())
     }
 }
 
+impl<'a, Probability: BitArray, const PRECISION: usize> IntoIterator
+    for &'a ContiguousCategorical<Probability, PRECISION>
+{
+    type Item = (usize, Probability, Probability::NonZero);
+
+    /// Don't rely on this specific (ugly) type, it will become an unnamed existential type
+    /// once that's in trait methods.
+    type IntoIter = CdfIterator<
+        Probability,
+        core::iter::Enumerate<
+            core::iter::Cloned<core::iter::Skip<core::slice::Iter<'a, Probability>>>,
+        >,
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        unsafe {
+            // SAFETY: a `ContiguousCategorical` satisfies the required contract.
+            CdfIterator::new(self.cdf.iter().skip(1).cloned().enumerate())
+        }
+    }
+}
+
+/// TODO: workaround to avoid introducing lots of very similar iterator types while we're
+/// wating for existential types in trait methods (which will allow us to express all usages
+/// CdfIterator as unnamed iterators constructed from iterator combinators).
+///
+/// TODO: use also for other entropy models and move up in the file.
+#[derive(Debug)]
+pub struct CdfIterator<Probability, I> {
+    left_sided_cumulative: Probability,
+    right_sided_cumulatives: I,
+}
+
+impl<Symbol, Probability, I> CdfIterator<Probability, I>
+where
+    Probability: BitArray,
+    I: Iterator<Item = (Symbol, Probability)>,
+{
+    /// # Safety
+    ///
+    /// The provided `right_sided_cumulatives` yields tuples `(symbol,
+    /// right_sided_cumulative)` that must satisfy all of the following constraints:
+    /// - it must yield at least two items;
+    /// - if the type `Symbol` implements `Eq` then all yielded symbols must be unequal;
+    /// - the first item must have a nonzero `right_sided_cumulative`;
+    /// - the `right_sided_cumulative` must strictly increase, except for the last item
+    ///   which may be zero; and
+    /// - the last item must have a`right_sided_cumulative` that is either zero or a power
+    ///   of two.
+    unsafe fn new(right_sided_cumulatives: I) -> Self {
+        Self {
+            left_sided_cumulative: Probability::zero(),
+            right_sided_cumulatives,
+        }
+    }
+}
+
+impl<Symbol, Probability, I> Iterator for CdfIterator<Probability, I>
+where
+    Probability: BitArray,
+    I: Iterator<Item = (Symbol, Probability)>,
+{
+    type Item = (Symbol, Probability, Probability::NonZero);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // let mut previous = Probability::zero();
+        let (symbol, right_sided_cumulative) = self.right_sided_cumulatives.next()?;
+        let left_sided_cumulative = self.left_sided_cumulative;
+        let probability = unsafe {
+            // SAFETY: The contract of the constructor ensures that probabilities strictly
+            // increase.
+            right_sided_cumulative
+                .wrapping_sub(&left_sided_cumulative)
+                .into_nonzero_unchecked()
+        };
+        self.left_sided_cumulative = right_sided_cumulative;
+        Some((symbol, left_sided_cumulative, probability))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.right_sided_cumulatives.size_hint()
+    }
+}
+
+impl<Symbol, Probability, I> ExactSizeIterator for CdfIterator<Probability, I>
+where
+    Probability: BitArray,
+    I: ExactSizeIterator<Item = (Symbol, Probability)>,
+{
+}
+
 impl<Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
-    for LeakyCategorical<Probability, PRECISION>
+    for ContiguousCategorical<Probability, PRECISION>
 {
     type Probability = Probability;
     type Symbol = usize;
 }
 
 impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
-    for LeakyCategorical<Probability, PRECISION>
+    for ContiguousCategorical<Probability, PRECISION>
 {
     fn left_cumulative_and_probability(
         &self,
@@ -1198,7 +1220,7 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
         };
 
         let probability = unsafe {
-            // SAFETY: The constructors ensure that no probabilities within bounds are zero.
+            // SAFETY: The constructors ensure that all probabilities within bounds are nonzero.
             next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
         };
 
@@ -1206,63 +1228,128 @@ impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
     }
 }
 
-impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
-    for LeakyCategorical<Probability, PRECISION>
-{
-    fn quantile_function(
-        &self,
-        quantile: Probability,
-    ) -> (Self::Symbol, Probability, Probability::NonZero) {
-        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-        // This check should usually compile away in inlined and verifiably correct usages
-        // of this method.
-        assert!(quantile <= max_probability);
-
-        let mut left = 0; // Smallest possible index.
-        let mut right = self.cdf.len() - 1; // One above largest possible index.
-
-        // Binary search for the last entry of `self.cdf` that is <= quantile,
-        // exploiting the following facts:
-        // - `self.cdf.len() >= 2` (therefore, `left < right` initially)
-        // - `self.cdf[0] == 0`
-        // - `quantile <= max_probability`
-        // - `*self.cdf.last().unwrap() == max_probability.wrapping_add(1)`
-        // - `self.cdf` is monotonically nondecreasing except that it may wrap around
-        //   only at the very last entry (this happens iff `PRECISION == Probability::BITS`).
-        //
-        // The loop maintains the following two invariants:
-        // (1) `0 <= left <= mid < right < self.cdf.len()`
-        // (2) `cdf[left] <= cdf[mid]`
-        // (3) `cdf[mid] <= cdf[right]` unless `right == cdf.len() - 1`
-        while left + 1 != right {
-            let mid = (left + right) / 2;
-
-            // SAFETY: safe by invariant (1)
-            let pivot = unsafe { *self.cdf.get_unchecked(mid) };
-            if pivot <= quantile {
-                // Since `mid < right` and wrapping can occur only at the last entry,
-                // `pivot` has not yet wrapped around
-                left = mid;
-            } else {
-                right = mid;
-            }
-        }
-
-        // SAFETY: invariant `0 <= left < right < self.cdf.len()` still holds.
-        let cdf = unsafe { *self.cdf.get_unchecked(left) };
-        let next_cdf = unsafe { *self.cdf.get_unchecked(right) };
-
-        let probability = unsafe {
-            // SAFETY: The constructors ensure that no probabilities within bounds are nonzero.
-            next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
-        };
-
-        (left, cdf, probability)
-    }
+struct Slot<Probability> {
+    original_index: usize,
+    prob: f64,
+    weight: Probability,
+    win: f64,
+    loss: f64,
 }
 
-#[derive(Clone, Debug)]
-struct LookupTable {}
+fn optimize_leaky_categorical<Probability, F, const PRECISION: usize>(
+    probabilities: &[F],
+) -> Result<Vec<Slot<Probability>>, ()>
+where
+    F: Float + core::iter::Sum<F> + Into<f64>,
+    Probability: BitArray + Into<f64> + AsPrimitive<usize>,
+    f64: AsPrimitive<Probability>,
+    usize: AsPrimitive<Probability>,
+{
+    assert!(PRECISION > 0 && PRECISION <= Probability::BITS);
+
+    if probabilities.len() < 2 || probabilities.len() > Probability::max_value().as_() {
+        return Err(());
+    }
+
+    // Start by assigning each symbol weight 1 and then distributing no more than
+    // the remaining weight approximately evenly across all symbols.
+    let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
+    let mut remaining_free_weight = max_probability
+        .wrapping_add(&Probability::one())
+        .wrapping_sub(&probabilities.len().as_());
+    let normalization = probabilities.iter().map(|&x| x.into()).sum::<f64>();
+    if !normalization.is_normal() || !normalization.is_sign_positive() {
+        return Err(());
+    }
+    let scale = remaining_free_weight.into() / normalization;
+
+    let mut slots = probabilities
+        .iter()
+        .enumerate()
+        .map(|(original_index, &prob)| {
+            if prob < F::zero() {
+                return Err(());
+            }
+            let prob: f64 = prob.into();
+            let current_free_weight = (prob * scale).as_();
+            remaining_free_weight = remaining_free_weight - current_free_weight;
+            let weight = current_free_weight + Probability::one();
+
+            // How much the cross entropy would decrease when increasing the weight by one.
+            let win = prob * (1.0f64 / weight.into()).ln_1p();
+
+            // How much the cross entropy would increase when decreasing the weight by one.
+            let loss = if weight == Probability::one() {
+                f64::infinity()
+            } else {
+                -prob * (-1.0f64 / weight.into()).ln_1p()
+            };
+
+            Ok(Slot {
+                original_index,
+                prob,
+                weight,
+                win,
+                loss,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Distribute remaining weight evenly among symbols with highest wins.
+    while remaining_free_weight != Probability::zero() {
+        // We can't use `sort_unstable_by` here because we want the result to be reproducible
+        // even across updates of the standard library.
+        slots.sort_by(|a, b| b.win.partial_cmp(&a.win).unwrap());
+        let batch_size = core::cmp::min(remaining_free_weight.as_(), slots.len());
+        for slot in &mut slots[..batch_size] {
+            slot.weight = slot.weight + Probability::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
+            slot.win = slot.prob * (1.0f64 / slot.weight.into()).ln_1p();
+            slot.loss = -slot.prob * (-1.0f64 / slot.weight.into()).ln_1p();
+        }
+        remaining_free_weight = remaining_free_weight - batch_size.as_();
+    }
+
+    loop {
+        // Find slot where increasing its weight by one would incur the biggest win.
+        let (buyer_index, &Slot { win: buyer_win, .. }) = slots
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.win.partial_cmp(&b.win).unwrap())
+            .unwrap();
+        // Find slot where decreasing its weight by one would incur the smallest loss.
+        let (seller_index, seller) = slots
+            .iter_mut()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.loss.partial_cmp(&b.loss).unwrap())
+            .unwrap();
+
+        if buyer_index == seller_index {
+            // This can only happen due to rounding errors. In this case, we can't expect
+            // to be able to improve further.
+            break;
+        }
+
+        if buyer_win <= seller.loss {
+            // We've found the optimal solution.
+            break;
+        }
+
+        seller.weight = seller.weight - Probability::one();
+        seller.win = seller.prob * (1.0f64 / seller.weight.into()).ln_1p();
+        seller.loss = if seller.weight == Probability::one() {
+            f64::infinity()
+        } else {
+            -seller.prob * (-1.0f64 / seller.weight.into()).ln_1p()
+        };
+
+        let buyer = &mut slots[buyer_index];
+        buyer.weight = buyer.weight + Probability::one();
+        buyer.win = buyer.prob * (1.0f64 / buyer.weight.into()).ln_1p();
+        buyer.loss = -buyer.prob * (-1.0f64 / buyer.weight.into()).ln_1p();
+    }
+
+    Ok(slots)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1312,7 +1399,8 @@ mod tests {
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            LeakyCategorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+            ContiguousCategorical::<_, 32>::from_floating_point_probabilities(&probabilities)
+                .unwrap();
         let weights: Vec<u32> = categorical.fixed_point_probabilities().collect();
 
         assert_eq!(&weights[..], &hist[..]);
@@ -1329,7 +1417,8 @@ mod tests {
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            LeakyCategorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+            ContiguousCategorical::<_, 32>::from_floating_point_probabilities(&probabilities)
+                .unwrap();
         let weights: Vec<u32> = categorical.fixed_point_probabilities().collect();
 
         assert_eq!(weights.len(), hist.len());
@@ -1366,7 +1455,8 @@ mod tests {
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
         let model =
-            LeakyCategorical::<_, 32>::from_floating_point_probabilities(&probabilities).unwrap();
+            ContiguousCategorical::<_, 32>::from_floating_point_probabilities(&probabilities)
+                .unwrap();
         test_entropy_model(model, 0..probabilities.len());
     }
 

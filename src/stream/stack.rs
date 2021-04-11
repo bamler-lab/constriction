@@ -1190,7 +1190,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::models::{LeakyCategorical, LeakyQuantizer};
+    use super::super::models::{ContiguousCategorical, LeakyQuantizer};
     use super::*;
     extern crate std;
     use std::dbg;
@@ -1365,7 +1365,7 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            LeakyCategorical::<Probability, PRECISION>::from_floating_point_probabilities(
+            ContiguousCategorical::<Probability, PRECISION>::from_floating_point_probabilities(
                 &categorical_probabilities,
             )
             .unwrap();
