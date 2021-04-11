@@ -91,7 +91,7 @@ use hashbrown::hash_map::{
     HashMap,
 };
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::RangeInclusive};
 use num::{
     cast::AsPrimitive,
@@ -1392,7 +1392,8 @@ impl<Probability: BitArray, const PRECISION: usize>
         I::Item: Borrow<Probability>,
     {
         let probabilities = probabilities.into_iter();
-        let mut cdf = Vec::with_capacity(probabilities.size_hint().0 + 1);
+        let mut cdf =
+            Vec::with_capacity(probabilities.size_hint().0 + 1 + infer_last_probability as usize);
         accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
             core::iter::repeat(()),
             probabilities,
@@ -2116,6 +2117,217 @@ where
 
     slots.sort_unstable_by_key(|slot| slot.original_index);
     Ok(slots)
+}
+
+// LOOKUP TABLE ENTROPY MODELS (FOR FAST DECODING) ================================================
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LookupDecoderModel<Symbol, Probability, SymbolTable, LookupTable, const PRECISION: usize>
+where
+    Probability: BitArray,
+{
+    /// Satisfies invariant:
+    /// `lookup_table.as_ref().len() == 1 << PRECISION`
+    lookup_table: LookupTable,
+
+    /// Satisfies invariant:
+    /// `left_sided_cumulative_and_symbol.as_ref().len()
+    /// == *lookup_table.as_ref().iter().max() as usize + 2`
+    cdf: SymbolTable,
+
+    phantom: PhantomData<(Probability, Symbol)>,
+}
+
+/// Type alias for a [`LookupDecoderModel`] over symbols `{0, 1, ..., n-1}` with sane settings.
+///
+/// This array lookup table can be used with a [`SmallAnsCoder`] or a [`SmallRangeDecoder`]
+/// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeDecoder`]).
+///
+/// # Example
+///
+/// Let's decode the compressed bit strings we generated in the example for
+/// [`SmallEncoderArrayLookupTable`].
+///
+/// ```
+/// use constriction::stream::{
+///     models::lookup::SmallDecoderIndexLookupTable,
+///     stack::{SmallAnsCoder, DefaultAnsCoder},
+///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
+///     Decode, Code,
+/// };
+///
+/// let probabilities = [1489, 745, 1489, 373];
+/// let decoder_model = SmallDecoderIndexLookupTable::from_probabilities(
+///     probabilities.iter().cloned()
+/// )
+/// .unwrap();
+///
+/// let expected = [2, 1, 3, 0, 0, 2, 0, 2, 1, 0, 2];
+///
+/// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![0xDA86, 0x2949]).unwrap();
+/// let reconstructed = small_ans_coder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+/// assert!(small_ans_coder.is_empty());
+/// assert_eq!(reconstructed, expected);
+///
+/// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![0x2949DA86]).unwrap();
+/// let reconstructed = default_ans_decoder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+/// assert!(default_ans_decoder.is_empty());
+/// assert_eq!(reconstructed, expected);
+///
+/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0xBCF8, 0x3ECA]).unwrap();
+/// let reconstructed = small_range_decoder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+/// assert!(small_range_decoder.maybe_exhausted());
+/// assert_eq!(reconstructed, expected);
+///
+/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0xBCF8733B]).unwrap();
+/// let reconstructed = default_range_decoder
+///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+/// assert!(default_range_decoder.maybe_exhausted());
+/// assert_eq!(reconstructed, expected);
+/// ```
+///
+/// # See also
+///
+/// - [`SmallDecoderGenericLookupTable`]
+/// - [`SmallEncoderArrayLookupTable`]
+///
+/// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
+/// [`SmallRangeDecoder`]: super::super::queue::SmallRangeDecoder
+/// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
+/// [`DefaultRangeDecoder`]: super::super::queue::DefaultRangeDecoder
+pub type SmallLookupDecoderModel<
+    Symbol,
+    SymbolTable = Vec<[(u16, Symbol)]>,
+    LookupTable = Box<[u16]>,
+> = LookupDecoderModel<Symbol, u16, LookupTable, SymbolTable, 12>;
+
+impl<Symbol, Probability, const PRECISION: usize>
+    LookupDecoderModel<
+        Symbol,
+        Probability,
+        Vec<(Probability, Symbol)>,
+        Box<[Probability]>,
+        PRECISION,
+    >
+where
+    Probability: BitArray + Into<usize>,
+    usize: AsPrimitive<Probability>,
+    Symbol: Copy + Default,
+{
+    pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
+        symbols: S,
+        probabilities: P,
+        infer_last_probability: bool,
+    ) -> Result<Self, ()>
+    where
+        S: IntoIterator<Item = Symbol>,
+        P: IntoIterator,
+        P::Item: Borrow<Probability>,
+    {
+        assert!(PRECISION > 0);
+        assert!(PRECISION <= Probability::BITS);
+        assert!(PRECISION < <usize as BitArray>::BITS);
+
+        let mut lookup_table = Vec::with_capacity(1 << PRECISION);
+        let symbols = symbols.into_iter();
+        let mut cdf = Vec::with_capacity(symbols.size_hint().0 + 1);
+        let mut symbols = accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
+            symbols,
+            probabilities.into_iter(),
+            |symbol, _, probability| {
+                let index = cdf.len().as_();
+                cdf.push((lookup_table.len().as_(), symbol));
+                lookup_table.resize(lookup_table.len() + probability.into(), index);
+                Ok(())
+            },
+            infer_last_probability,
+        )?;
+
+        cdf.push((wrapping_pow2(PRECISION), Symbol::default()));
+
+        if symbols.next().is_some() {
+            Err(())
+        } else {
+            Ok(Self {
+                lookup_table: lookup_table.into_boxed_slice(),
+                cdf,
+                phantom: PhantomData,
+            })
+        }
+    }
+}
+
+impl<Probability, const PRECISION: usize>
+    LookupDecoderModel<Probability, Probability, Vec<(Probability,)>, Box<[Probability]>, PRECISION>
+where
+    Probability: BitArray + Into<usize>,
+    usize: AsPrimitive<Probability>,
+{
+    pub fn contiguous_from_nonzero_fixed_point_probabilities<P>(
+        probabilities: P,
+        infer_last_probability: bool,
+    ) -> Result<Self, ()>
+    where
+        P: IntoIterator,
+        P::Item: Borrow<Probability>,
+    {
+        assert!(PRECISION > 0);
+        assert!(PRECISION <= Probability::BITS);
+        assert!(PRECISION < <usize as BitArray>::BITS);
+
+        let probabilities = probabilities.into_iter();
+        let mut lookup_table = Vec::with_capacity(1 << PRECISION);
+        let mut cdf =
+            Vec::with_capacity(probabilities.size_hint().0 + 1 + infer_last_probability as usize);
+        accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
+            core::iter::repeat(()),
+            probabilities.into_iter(),
+            |symbol, _, probability| {
+                let index = cdf.len().as_();
+                cdf.push((lookup_table.len().as_(),));
+                lookup_table.resize(lookup_table.len() + probability.into(), index);
+                Ok(())
+            },
+            infer_last_probability,
+        )?;
+
+        cdf.push((wrapping_pow2(PRECISION),));
+
+        Ok(Self {
+            lookup_table: lookup_table.into_boxed_slice(),
+            cdf,
+            phantom: PhantomData,
+        })
+    }
+}
+
+impl<Probability, SymbolTable, LookupTable, const PRECISION: usize>
+    LookupDecoderModel<Probability, Probability, SymbolTable, LookupTable, PRECISION>
+where
+    Probability: BitArray + Into<usize>,
+    usize: AsPrimitive<Probability>,
+    SymbolTable: ArraySymbolTable<(Probability,)>,
+{
+    pub fn as_contiguous_categorical(
+        &self,
+    ) -> ContiguousCategorical<Probability, &[(Probability,)], PRECISION> {
+        ContiguousCategorical {
+            cdf: self.cdf.as_ref(),
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn into_contiguous_categorical(
+        self,
+    ) -> ContiguousCategorical<Probability, SymbolTable, PRECISION> {
+        ContiguousCategorical {
+            cdf: self.cdf,
+            phantom: PhantomData,
+        }
+    }
 }
 
 #[cfg(test)]
