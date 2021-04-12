@@ -503,16 +503,16 @@ where
         self.heads.compressed.get() == Word::one()
     }
 
-    pub fn encode_symbols_reverse<S, D, I>(
+    pub fn encode_symbols_reverse<S, M, I>(
         &mut self,
         symbols_and_models: I,
     ) -> Result<(), EncoderError<Word, CompressedBackend, RemainingBackend>>
     where
-        S: Borrow<D::Symbol>,
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
-        I: IntoIterator<Item = (S, D)>,
+        S: Borrow<M::Symbol>,
+        M: EncoderModel<PRECISION>,
+        M::Probability: Into<Word>,
+        Word: AsPrimitive<M::Probability>,
+        I: IntoIterator<Item = (S, M)>,
         I::IntoIter: DoubleEndedIterator,
         CompressedBackend: WriteWords<Word>,
         RemainingBackend: ReadWords<Word, Stack>,
@@ -520,16 +520,16 @@ where
         self.encode_symbols(symbols_and_models.into_iter().rev())
     }
 
-    pub fn try_encode_symbols_reverse<S, D, E, I>(
+    pub fn try_encode_symbols_reverse<S, M, E, I>(
         &mut self,
         symbols_and_models: I,
     ) -> Result<(), TryCodingError<EncoderError<Word, CompressedBackend, RemainingBackend>, E>>
     where
-        S: Borrow<D::Symbol>,
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
-        I: IntoIterator<Item = core::result::Result<(S, D), E>>,
+        S: Borrow<M::Symbol>,
+        M: EncoderModel<PRECISION>,
+        M::Probability: Into<Word>,
+        Word: AsPrimitive<M::Probability>,
+        I: IntoIterator<Item = core::result::Result<(S, M), E>>,
         I::IntoIter: DoubleEndedIterator,
         CompressedBackend: WriteWords<Word>,
         RemainingBackend: ReadWords<Word, Stack>,
@@ -537,16 +537,17 @@ where
         self.try_encode_symbols(symbols_and_models.into_iter().rev())
     }
 
-    pub fn encode_iid_symbols_reverse<S, D, I>(
+    #[inline(always)]
+    pub fn encode_iid_symbols_reverse<S, M, I>(
         &mut self,
         symbols: I,
-        model: &D,
+        model: M,
     ) -> Result<(), EncoderError<Word, CompressedBackend, RemainingBackend>>
     where
-        S: Borrow<D::Symbol>,
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
+        S: Borrow<M::Symbol>,
+        M: EncoderModel<PRECISION> + Copy,
+        M::Probability: Into<Word>,
+        Word: AsPrimitive<M::Probability>,
         I: IntoIterator<Item = S>,
         I::IntoIter: DoubleEndedIterator,
         CompressedBackend: WriteWords<Word>,
@@ -954,14 +955,14 @@ where
 
     type BackendError = BackendError<CompressedBackend::ReadError, RemainingBackend::WriteError>;
 
-    fn decode_symbol<D>(
+    fn decode_symbol<M>(
         &mut self,
-        model: D,
-    ) -> Result<D::Symbol, DecoderError<Word, CompressedBackend, RemainingBackend>>
+        model: M,
+    ) -> Result<M::Symbol, DecoderError<Word, CompressedBackend, RemainingBackend>>
     where
-        D: DecoderModel<PRECISION>,
-        D::Probability: Into<Self::Word>,
-        Self::Word: AsPrimitive<D::Probability>,
+        M: DecoderModel<PRECISION>,
+        M::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<M::Probability>,
     {
         assert!(PRECISION <= Word::BITS);
         assert!(PRECISION != 0);
@@ -1047,15 +1048,15 @@ where
     type FrontendError = EncoderFrontendError;
     type BackendError = BackendError<CompressedBackend::WriteError, RemainingBackend::ReadError>;
 
-    fn encode_symbol<D>(
+    fn encode_symbol<M>(
         &mut self,
-        symbol: impl Borrow<D::Symbol>,
-        model: D,
+        symbol: impl Borrow<M::Symbol>,
+        model: M,
     ) -> Result<(), EncoderError<Word, CompressedBackend, RemainingBackend>>
     where
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Self::Word>,
-        Self::Word: AsPrimitive<D::Probability>,
+        M: EncoderModel<PRECISION>,
+        M::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<M::Probability>,
     {
         // assert!(State::BITS >= Word::BITS + PRECISION);
         assert!(PRECISION <= Word::BITS);

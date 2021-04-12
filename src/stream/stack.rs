@@ -763,46 +763,46 @@ where
     State: BitArray + AsPrimitive<Word>,
     Backend: WriteWords<Word>,
 {
-    pub fn encode_symbols_reverse<S, D, I, const PRECISION: usize>(
+    pub fn encode_symbols_reverse<S, M, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
     ) -> Result<(), DefaultEncoderError<Backend::WriteError>>
     where
-        S: Borrow<D::Symbol>,
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
-        I: IntoIterator<Item = (S, D)>,
+        S: Borrow<M::Symbol>,
+        M: EncoderModel<PRECISION>,
+        M::Probability: Into<Word>,
+        Word: AsPrimitive<M::Probability>,
+        I: IntoIterator<Item = (S, M)>,
         I::IntoIter: DoubleEndedIterator,
     {
         self.encode_symbols(symbols_and_models.into_iter().rev())
     }
 
-    pub fn try_encode_symbols_reverse<S, D, E, I, const PRECISION: usize>(
+    pub fn try_encode_symbols_reverse<S, M, E, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
     ) -> Result<(), TryCodingError<DefaultEncoderError<Backend::WriteError>, E>>
     where
-        S: Borrow<D::Symbol>,
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
-        I: IntoIterator<Item = core::result::Result<(S, D), E>>,
+        S: Borrow<M::Symbol>,
+        M: EncoderModel<PRECISION>,
+        M::Probability: Into<Word>,
+        Word: AsPrimitive<M::Probability>,
+        I: IntoIterator<Item = core::result::Result<(S, M), E>>,
         I::IntoIter: DoubleEndedIterator,
     {
         self.try_encode_symbols(symbols_and_models.into_iter().rev())
     }
 
-    pub fn encode_iid_symbols_reverse<S, D, I, const PRECISION: usize>(
+    pub fn encode_iid_symbols_reverse<S, M, I, const PRECISION: usize>(
         &mut self,
         symbols: I,
-        model: &D,
+        model: M,
     ) -> Result<(), DefaultEncoderError<Backend::WriteError>>
     where
-        S: Borrow<D::Symbol>,
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Word>,
-        Word: AsPrimitive<D::Probability>,
+        S: Borrow<M::Symbol>,
+        M: EncoderModel<PRECISION> + Copy,
+        M::Probability: Into<Word>,
+        Word: AsPrimitive<M::Probability>,
         I: IntoIterator<Item = S>,
         I::IntoIter: DoubleEndedIterator,
     {
@@ -976,7 +976,7 @@ where
     /// like [`encode_symbols`](#method.encode_symbols) or
     /// [`encode_iid_symbols`](#method.encode_iid_symbols) instead. See examples there.
     ///
-    /// The bound `impl Borrow<D::Symbol>` on argument `symbol` essentially means that
+    /// The bound `impl Borrow<M::Symbol>` on argument `symbol` essentially means that
     /// you can provide the symbol either by value or by reference, at your choice.
     ///
     /// Returns [`Err(ImpossibleSymbol)`] if `symbol` has zero probability under the
@@ -991,15 +991,15 @@ where
     /// TODO: move this and similar doc comments to the trait definition.
     ///
     /// [`Err(ImpossibleSymbol)`]: enum.EncodingError.html#variant.ImpossibleSymbol
-    fn encode_symbol<D>(
+    fn encode_symbol<M>(
         &mut self,
-        symbol: impl Borrow<D::Symbol>,
-        model: D,
+        symbol: impl Borrow<M::Symbol>,
+        model: M,
     ) -> Result<(), DefaultEncoderError<Self::BackendError>>
     where
-        D: EncoderModel<PRECISION>,
-        D::Probability: Into<Self::Word>,
-        Self::Word: AsPrimitive<D::Probability>,
+        M: EncoderModel<PRECISION>,
+        M::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<M::Probability>,
     {
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
@@ -1054,14 +1054,14 @@ where
     /// Still, being able to pop off an arbitrary number of symbols can sometimes be
     /// useful in edge cases of, e.g., the bits-back algorithm.
     #[inline(always)]
-    fn decode_symbol<D>(
+    fn decode_symbol<M>(
         &mut self,
-        model: D,
-    ) -> Result<D::Symbol, CoderError<Self::FrontendError, Self::BackendError>>
+        model: M,
+    ) -> Result<M::Symbol, CoderError<Self::FrontendError, Self::BackendError>>
     where
-        D: DecoderModel<PRECISION>,
-        D::Probability: Into<Self::Word>,
-        Self::Word: AsPrimitive<D::Probability>,
+        M: DecoderModel<PRECISION>,
+        M::Probability: Into<Self::Word>,
+        Self::Word: AsPrimitive<M::Probability>,
     {
         let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
         let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);

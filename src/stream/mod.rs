@@ -589,9 +589,16 @@ pub trait Encode<const PRECISION: usize>: Code {
 
     /// Encodes a sequence of symbols, all with the same entropy model.
     ///
-    /// The provided iterator `symbols` may yield symbols either by value or by reference.
     /// This method short-circuits as soon as encoding leads to an error (see discussion of
     /// error states for [`encode_symbol`]).
+    ///
+    /// While this method takes `model` formally by value, you'll typically want to pass the
+    /// `EncoderModel` by reference (which is possible since any reference to an
+    /// `EncoderModel` implements `EncoderModel` too). The bound on `M: Copy` prevents
+    /// accidental misuse in this regard. We provide the ability to pass the `EncoderModel`
+    /// by value as an opportunity for microoptimzations when dealing with models that can
+    /// be cheaply copied (see, e.g.,
+    /// [`ContiguousCategoricalEntropyModel::as_view`](models::ContiguousCategoricalEntropyModel::as_view)).
     ///
     /// Note that this method encodes the symbols in the order in which they are yielded by
     /// the iterator. This is suitable for an encoder with "queue" semantics, like a
@@ -612,11 +619,11 @@ pub trait Encode<const PRECISION: usize>: Code {
     fn encode_iid_symbols<S, M>(
         &mut self,
         symbols: impl IntoIterator<Item = S>,
-        model: &M,
+        model: M,
     ) -> Result<(), CoderError<Self::FrontendError, Self::BackendError>>
     where
         S: Borrow<M::Symbol>,
-        M: EncoderModel<PRECISION>,
+        M: EncoderModel<PRECISION> + Copy,
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
@@ -939,6 +946,14 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// - you can, in principle, continue to decode after an error, but you'll likely rather
     ///   want to short-circuit the returned iterator.
     ///
+    /// While this method takes `model` formally by value, you'll typically want to pass the
+    /// `DecoderModel` by reference (which is possible since any reference to a
+    /// `DecoderModel` implements `DecoderModel` too). The bound on `M: Copy` prevents
+    /// accidental misuse in this regard. We provide the ability to pass the `DecoderModel`
+    /// by value as an opportunity for microoptimzations when dealing with models that can
+    /// be cheaply copied (see, e.g.,
+    /// [`LookupDecoderModel::as_view`](models::LookupDecoderModel::as_view)).
+    /// 
     /// If you want to decode each symbol with its individual entropy model, then consider
     /// calling [`decode_symbols`] instead. If you just want to decode a single symbol, then
     /// call [`decode_symbol`] instead.
@@ -949,10 +964,10 @@ pub trait Decode<const PRECISION: usize>: Code {
     fn decode_iid_symbols<'s, M>(
         &'s mut self,
         amt: usize,
-        model: &'s M,
+        model: M,
     ) -> DecodeIidSymbols<'s, Self, M, PRECISION>
     where
-        M: DecoderModel<PRECISION>,
+        M: DecoderModel<PRECISION> + Copy,
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
@@ -961,39 +976,6 @@ pub trait Decode<const PRECISION: usize>: Code {
             model,
             amt,
         }
-    }
-
-    /// Decodes multiple symbols driven by a provided iterator.
-    ///
-    /// Iterates over all `x` in `iterator.into_iter()`. In each iteration, it decodes
-    /// a symbol using the entropy model `model`, terminates on error and otherwise
-    /// calls `callback(x, decoded_symbol)`.
-    ///
-    /// The default implementation literally just has a `for` loop over
-    /// `iterator.into_iter()`, which contains a single line of code in its body. But,
-    /// in a real-world example, it turns out to be significantly faster this way than
-    /// if we would write the same `for` loop at the call site. This may hint at some
-    /// issues with method inlining.
-    ///
-    /// TODO: test if this is still true.
-    #[inline]
-    fn map_decode_iid_symbols<'s, M, I>(
-        &'s mut self,
-        iterator: I,
-        model: &'s M,
-        mut callback: impl FnMut(I::Item, M::Symbol),
-    ) -> Result<(), CoderError<Self::FrontendError, Self::BackendError>>
-    where
-        M: DecoderModel<PRECISION>,
-        M::Probability: Into<Self::Word>,
-        Self::Word: AsPrimitive<M::Probability>,
-        I: IntoIterator,
-    {
-        for x in iterator.into_iter() {
-            callback(x, self.decode_symbol(model)?)
-        }
-
-        Ok(())
     }
 
     /// Checks if there might be no compressed data left for decoding.
@@ -1232,21 +1214,21 @@ where
 
 /// The iterator returned by [`Decode::decode_iid_symbols`].
 #[derive(Debug)]
-pub struct DecodeIidSymbols<'a, Decoder: ?Sized, D, const PRECISION: usize> {
+pub struct DecodeIidSymbols<'a, Decoder: ?Sized, M, const PRECISION: usize> {
     decoder: &'a mut Decoder,
-    model: &'a D,
+    model: M,
     amt: usize,
 }
 
-impl<'a, Decoder, D, const PRECISION: usize> Iterator
-    for DecodeIidSymbols<'a, Decoder, D, PRECISION>
+impl<'a, Decoder, M, const PRECISION: usize> Iterator
+    for DecodeIidSymbols<'a, Decoder, M, PRECISION>
 where
     Decoder: Decode<PRECISION>,
-    D: DecoderModel<PRECISION>,
-    Decoder::Word: AsPrimitive<D::Probability>,
-    D::Probability: Into<Decoder::Word>,
+    M: DecoderModel<PRECISION> + Copy,
+    Decoder::Word: AsPrimitive<M::Probability>,
+    M::Probability: Into<Decoder::Word>,
 {
-    type Item = Result<D::Symbol, CoderError<Decoder::FrontendError, Decoder::BackendError>>;
+    type Item = Result<M::Symbol, CoderError<Decoder::FrontendError, Decoder::BackendError>>;
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
@@ -1264,13 +1246,13 @@ where
     }
 }
 
-impl<'a, Decoder, D, const PRECISION: usize> ExactSizeIterator
-    for DecodeIidSymbols<'a, Decoder, D, PRECISION>
+impl<'a, Decoder, M, const PRECISION: usize> ExactSizeIterator
+    for DecodeIidSymbols<'a, Decoder, M, PRECISION>
 where
     Decoder: Decode<PRECISION>,
-    D: DecoderModel<PRECISION>,
-    Decoder::Word: AsPrimitive<D::Probability>,
-    D::Probability: Into<Decoder::Word>,
+    M: DecoderModel<PRECISION> + Copy,
+    Decoder::Word: AsPrimitive<M::Probability>,
+    M::Probability: Into<Decoder::Word>,
 {
 }
 

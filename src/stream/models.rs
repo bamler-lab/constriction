@@ -2065,7 +2065,7 @@ where
 
 // LOOKUP TABLE ENTROPY MODELS (FOR FAST DECODING) ================================================
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct LookupDecoderModel<Symbol, Probability, SymbolTable, LookupTable, const PRECISION: usize>
 where
     Probability: BitArray,
