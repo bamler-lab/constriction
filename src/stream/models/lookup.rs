@@ -696,8 +696,7 @@ where
             let (_, dummy_symbol) = left_sided_cumulative_and_symbol.last().expect(
                 "We already pushed at least one entry because quantile_to_index.len() != 1 << PRECISION != 0");
             let dummy_symbol = dummy_symbol.clone();
-            left_sided_cumulative_and_symbol
-                .push((wrapping_pow2(PRECISION), dummy_symbol));
+            left_sided_cumulative_and_symbol.push((wrapping_pow2(PRECISION), dummy_symbol));
 
             Ok(Self {
                 quantile_to_index: quantile_to_index.into_boxed_slice(),
@@ -751,8 +750,7 @@ where
             }
 
             // Reuse the last symbol for the additional closing entry. This will never be read.
-            left_sided_cumulative_and_symbol
-                .push((wrapping_pow2(PRECISION), symbol));
+            left_sided_cumulative_and_symbol.push((wrapping_pow2(PRECISION), symbol));
 
             Ok(Self {
                 quantile_to_index: quantile_to_index.into_boxed_slice(),
@@ -1118,8 +1116,7 @@ where
     let (_, dummy_symbol) = left_sided_cumulative_and_symbol.last().expect(
             "We already pushed at least one entry because quantile_to_index.len() != 1 << PRECISION != 0");
     let dummy_symbol = dummy_symbol.clone();
-    left_sided_cumulative_and_symbol
-        .push((wrapping_pow2(PRECISION), dummy_symbol));
+    left_sided_cumulative_and_symbol.push((wrapping_pow2(PRECISION), dummy_symbol));
 
     left_sided_cumulative_and_symbol.into_boxed_slice()
 }
