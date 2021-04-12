@@ -77,8 +77,6 @@
 //! [`stack`]: super::stack
 //! [`queue`]: super::queue
 
-pub mod lookup;
-
 #[cfg(feature = "std")]
 use std::collections::{
     hash_map::Entry::{Occupied, Vacant},
@@ -96,7 +94,7 @@ use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::Ran
 use num::{
     cast::AsPrimitive,
     traits::{WrappingAdd, WrappingSub},
-    Bounded, Float, One, PrimInt, Zero,
+    Float, One, PrimInt, Zero,
 };
 use probability::distribution::{Distribution, Inverse};
 
@@ -2144,17 +2142,20 @@ where
 /// [`SmallRangeDecoder`]: super::super::queue::SmallRangeDecoder
 /// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
 /// [`DefaultRangeDecoder`]: super::super::queue::DefaultRangeDecoder
-pub type SmallLookupDecoderModel<
+pub type SmallNonContiguousLookupDecoderModel<
     Symbol,
-    SymbolTable = Vec<[(u16, Symbol)]>,
+    SymbolTable = Vec<(u16, Symbol)>,
     LookupTable = Box<[u16]>,
-> = LookupDecoderModel<Symbol, u16, LookupTable, SymbolTable, 12>;
+> = LookupDecoderModel<Symbol, u16, NonContiguousSymbolTable<SymbolTable>, LookupTable, 12>;
+
+pub type SmallContiguousLookupDecoderModel<SymbolTable = Vec<u16>, LookupTable = Box<[u16]>> =
+    LookupDecoderModel<usize, u16, ContiguousSymbolTable<SymbolTable>, LookupTable, 12>;
 
 impl<Symbol, Probability, const PRECISION: usize>
     LookupDecoderModel<
         Symbol,
         Probability,
-        Vec<(Probability, Symbol)>,
+        NonContiguousSymbolTable<Vec<(Probability, Symbol)>>,
         Box<[Probability]>,
         PRECISION,
     >
@@ -2163,6 +2164,28 @@ where
     usize: AsPrimitive<Probability>,
     Symbol: Copy + Default,
 {
+    pub fn from_symbols_and_floating_point_probabilities<F>(
+        symbols: &[Symbol],
+        probabilities: &[F],
+    ) -> Result<Self, ()>
+    where
+        F: Float + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        if symbols.len() != probabilities.len() {
+            return Err(());
+        };
+
+        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
+        Self::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols.iter().cloned(),
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
         probabilities: P,
@@ -2179,7 +2202,8 @@ where
 
         let mut lookup_table = Vec::with_capacity(1 << PRECISION);
         let symbols = symbols.into_iter();
-        let mut cdf = Vec::with_capacity(symbols.size_hint().0 + 1);
+        let mut cdf =
+            Vec::with_capacity(symbols.size_hint().0 + 1 + infer_last_probability as usize);
         let mut symbols = accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
             symbols,
             probabilities.into_iter(),
@@ -2199,52 +2223,99 @@ where
         } else {
             Ok(Self {
                 lookup_table: lookup_table.into_boxed_slice(),
-                cdf,
+                cdf: NonContiguousSymbolTable(cdf),
                 phantom: PhantomData,
             })
         }
     }
-}
 
-impl<Probability, const PRECISION: usize>
-    LookupDecoderModel<Probability, Probability, Vec<(Probability,)>, Box<[Probability]>, PRECISION>
-where
-    Probability: BitArray + Into<usize>,
-    usize: AsPrimitive<Probability>,
-{
-    pub fn contiguous_from_nonzero_fixed_point_probabilities<P>(
-        probabilities: P,
-        infer_last_probability: bool,
-    ) -> Result<Self, ()>
+    /// TODO: test
+    pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
     where
-        P: IntoIterator,
-        P::Item: Borrow<Probability>,
+        M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
     {
         assert!(PRECISION > 0);
         assert!(PRECISION <= Probability::BITS);
         assert!(PRECISION < <usize as BitArray>::BITS);
 
-        let probabilities = probabilities.into_iter();
         let mut lookup_table = Vec::with_capacity(1 << PRECISION);
+        let symbol_table = model.symbol_table();
+        let mut cdf = Vec::with_capacity(symbol_table.size_hint().0 + 1);
+        for (symbol, left_sided_cumulative, probability) in symbol_table {
+            let index = cdf.len().as_();
+            debug_assert_eq!(left_sided_cumulative, lookup_table.len().as_());
+            cdf.push((lookup_table.len().as_(), symbol));
+            lookup_table.resize(lookup_table.len() + probability.get().into(), index);
+        }
+        cdf.push((wrapping_pow2(PRECISION), Symbol::default()));
+
+        Self {
+            lookup_table: lookup_table.into_boxed_slice(),
+            cdf: NonContiguousSymbolTable(cdf),
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<Symbol, Probability, const PRECISION: usize>
+    LookupDecoderModel<
+        Symbol,
+        Probability,
+        ContiguousSymbolTable<Vec<Probability>>,
+        Box<[Probability]>,
+        PRECISION,
+    >
+where
+    Probability: BitArray + Into<usize>,
+    usize: AsPrimitive<Probability>,
+    Symbol: Copy + Default,
+{
+    pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
+    where
+        F: Float + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
+        Self::from_nonzero_fixed_point_probabilities_contiguous(
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
+    pub fn from_nonzero_fixed_point_probabilities_contiguous<I>(
+        probabilities: I,
+        infer_last_probability: bool,
+    ) -> Result<Self, ()>
+    where
+        I: IntoIterator,
+        I::Item: Borrow<Probability>,
+    {
+        assert!(PRECISION > 0);
+        assert!(PRECISION <= Probability::BITS);
+        assert!(PRECISION < <usize as BitArray>::BITS);
+
+        let mut lookup_table = Vec::with_capacity(1 << PRECISION);
+        let probabilities = probabilities.into_iter();
         let mut cdf =
             Vec::with_capacity(probabilities.size_hint().0 + 1 + infer_last_probability as usize);
         accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
             core::iter::repeat(()),
             probabilities.into_iter(),
-            |symbol, _, probability| {
+            |(), _, probability| {
                 let index = cdf.len().as_();
-                cdf.push((lookup_table.len().as_(),));
+                cdf.push(lookup_table.len().as_());
                 lookup_table.resize(lookup_table.len() + probability.into(), index);
                 Ok(())
             },
             infer_last_probability,
         )?;
-
-        cdf.push((wrapping_pow2(PRECISION),));
+        cdf.push(wrapping_pow2(PRECISION));
 
         Ok(Self {
             lookup_table: lookup_table.into_boxed_slice(),
-            cdf,
+            cdf: ContiguousSymbolTable(cdf),
             phantom: PhantomData,
         })
     }
@@ -2262,7 +2333,24 @@ where
     Probability: BitArray + Into<usize>,
     usize: AsPrimitive<Probability>,
     Table: AsRef<[Probability]>,
+    LookupTable: AsRef<[Probability]>,
 {
+    pub fn as_view(
+        &self,
+    ) -> LookupDecoderModel<
+        Probability,
+        Probability,
+        ContiguousSymbolTable<&[Probability]>,
+        &[Probability],
+        PRECISION,
+    > {
+        LookupDecoderModel {
+            lookup_table: self.lookup_table.as_ref(),
+            cdf: ContiguousSymbolTable(self.cdf.0.as_ref()),
+            phantom: PhantomData,
+        }
+    }
+
     pub fn as_contiguous_categorical(
         &self,
     ) -> ContiguousCategoricalEntropyModel<Probability, &[Probability], PRECISION> {
@@ -2282,10 +2370,98 @@ where
     }
 }
 
+impl<Symbol, Probability, Table, LookupTable, const PRECISION: usize>
+    LookupDecoderModel<Symbol, Probability, NonContiguousSymbolTable<Table>, LookupTable, PRECISION>
+where
+    Probability: BitArray + Into<usize>,
+    usize: AsPrimitive<Probability>,
+    Table: AsRef<[(Probability, Symbol)]>,
+    LookupTable: AsRef<[Probability]>,
+{
+    pub fn as_view(
+        &self,
+    ) -> LookupDecoderModel<
+        Symbol,
+        Probability,
+        NonContiguousSymbolTable<&[(Probability, Symbol)]>,
+        &[Probability],
+        PRECISION,
+    > {
+        LookupDecoderModel {
+            lookup_table: self.lookup_table.as_ref(),
+            cdf: NonContiguousSymbolTable(self.cdf.0.as_ref()),
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<Symbol, Probability, Table, LookupTable, const PRECISION: usize> EntropyModel<PRECISION>
+    for LookupDecoderModel<Symbol, Probability, Table, LookupTable, PRECISION>
+where
+    Probability: BitArray + Into<usize>,
+{
+    type Symbol = Symbol;
+    type Probability = Probability;
+}
+
+impl<Symbol, Probability, Table, LookupTable, const PRECISION: usize> DecoderModel<PRECISION>
+    for LookupDecoderModel<Symbol, Probability, Table, LookupTable, PRECISION>
+where
+    Probability: BitArray + Into<usize>,
+    Table: SymbolTable<Symbol, Probability>,
+    LookupTable: AsRef<[Probability]>,
+    Symbol: Clone,
+{
+    #[inline(always)]
+    fn quantile_function(
+        &self,
+        quantile: Probability,
+    ) -> (Symbol, Probability, Probability::NonZero) {
+        if Probability::BITS != PRECISION {
+            // It would be nice if we could avoid this but we currently don't statically enforce
+            // `quantile` to fit into `PRECISION` bits.
+            assert!(PRECISION == Probability::BITS || quantile < Probability::one() << PRECISION);
+        }
+
+        let (left_sided_cumulative, symbol, next_cumulative) = unsafe {
+            // SAFETY:
+            // - `quantile_to_index` has length `1 << PRECISION` and we verified that
+            //   `quantile` fits into `PRECISION` bits above.
+            // - `left_sided_cumulative_and_symbol` has length
+            //   `*quantile_to_index.as_ref().iter().max() as usize + 2`, so we can always
+            //   access it at `index + 1` for `index` coming from `quantile_to_index`.
+            let index = *self.lookup_table.as_ref().get_unchecked(quantile.into());
+            let index = index.into();
+
+            (
+                self.cdf.left_cumulative_unchecked(index),
+                self.cdf.symbol_unchecked(index),
+                self.cdf.left_cumulative_unchecked(index + 1),
+            )
+        };
+
+        let probability = unsafe {
+            // SAFETY: The constructors ensure that `cdf` is strictly increasing (in
+            // wrapping arithmetic) except at indices that can't be reached from
+            // `quantile_to_index`).
+            next_cumulative
+                .wrapping_sub(&left_sided_cumulative)
+                .into_nonzero_unchecked()
+        };
+
+        (symbol, left_sided_cumulative, probability)
+    }
+}
+
+// TODO: implement `IterableEntropyModel` for lookup model.
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use super::super::{stack::DefaultAnsCoder, Decode};
+
+    use alloc::{string::String, vec};
     use probability::distribution::{Binomial, Gaussian};
 
     #[test]
@@ -2485,5 +2661,127 @@ mod tests {
         }
         assert_eq!(count, domain.size_hint().0);
         assert_eq!(expected_cumulative, 1 << PRECISION);
+    }
+
+    #[test]
+    fn lookup_contiguous() {
+        let probabilities = vec![3u8, 18, 1, 42];
+        let model =
+            ContiguousCategoricalEntropyModel::<_, _, 6>::from_nonzero_fixed_point_probabilities(
+                probabilities,
+                false,
+            )
+            .unwrap();
+        let lookup_decoder_model = LookupDecoderModel::from_iterable_entropy_model(&model);
+
+        // Verify that `decode(encode(x)) == x` and that `lookup_decode(encode(x)) == x`.
+        for symbol in 0..4 {
+            let (left_cumulative, probability) =
+                model.left_cumulative_and_probability(symbol).unwrap();
+            for quantile in left_cumulative..left_cumulative + probability.get() {
+                assert_eq!(
+                    model.quantile_function(quantile),
+                    (symbol, left_cumulative, probability)
+                );
+                assert_eq!(
+                    lookup_decoder_model.quantile_function(quantile),
+                    (symbol, left_cumulative, probability)
+                );
+            }
+        }
+
+        // Verify that `encode(decode(x)) == x` and that `encode(lookup_decode(x)) == x`.
+        for quantile in 0..1 << 6 {
+            let (symbol, left_cumulative, probability) = model.quantile_function(quantile);
+            assert_eq!(
+                lookup_decoder_model.quantile_function(quantile),
+                (symbol, left_cumulative, probability)
+            );
+            assert_eq!(
+                model.left_cumulative_and_probability(symbol).unwrap(),
+                (left_cumulative, probability)
+            );
+        }
+
+        // Test encoding and decoding a few symbols.
+        let symbols = vec![0, 3, 2, 3, 1, 3, 2, 0, 3];
+        let mut ans = DefaultAnsCoder::new();
+        ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
+        assert!(!ans.is_empty());
+
+        let mut ans2 = ans.clone();
+        let decoded = ans
+            .decode_iid_symbols(9, &model)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(decoded, symbols);
+        assert!(ans.is_empty());
+
+        let decoded = ans2
+            .decode_iid_symbols(9, &lookup_decoder_model)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(decoded, symbols);
+        assert!(ans2.is_empty());
+    }
+
+    #[test]
+    fn lookup_noncontiguous() {
+        let symbols = "axcy";
+        let probabilities = vec![3u8, 18, 1, 42];
+        let encoder_model = NonContiguousCategoricalEncoderModel::<_, u8, 6>::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols.chars(),probabilities.iter(),false
+        )
+        .unwrap();
+        let decoder_model = NonContiguousCategoricalDecoderModel::<_, _,_, 6>::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols.chars(),probabilities.iter(),false
+        )
+        .unwrap();
+        let lookup_decoder_model = LookupDecoderModel::from_iterable_entropy_model(&decoder_model);
+
+        // Verify that `decode(encode(x)) == x` and that `lookup_decode(encode(x)) == x`.
+        for symbol in symbols.chars() {
+            let (left_cumulative, probability) = encoder_model
+                .left_cumulative_and_probability(symbol)
+                .unwrap();
+            for quantile in left_cumulative..left_cumulative + probability.get() {
+                assert_eq!(
+                    decoder_model.quantile_function(quantile),
+                    (symbol, left_cumulative, probability)
+                );
+                assert_eq!(
+                    lookup_decoder_model.quantile_function(quantile),
+                    (symbol, left_cumulative, probability)
+                );
+            }
+        }
+
+        // Verify that `encode(decode(x)) == x` and that `encode(lookup_decode(x)) == x`.
+        for quantile in 0..1 << 6 {
+            let (symbol, left_cumulative, probability) = decoder_model.quantile_function(quantile);
+            assert_eq!(
+                lookup_decoder_model.quantile_function(quantile),
+                (symbol, left_cumulative, probability)
+            );
+            assert_eq!(
+                encoder_model
+                    .left_cumulative_and_probability(symbol)
+                    .unwrap(),
+                (left_cumulative, probability)
+            );
+        }
+
+        // Test encoding and decoding a few symbols.
+        let symbols = "axcxcyaac";
+        let mut ans = DefaultAnsCoder::new();
+        ans.encode_iid_symbols_reverse(symbols.chars(), &encoder_model)
+            .unwrap();
+        assert!(!ans.is_empty());
+        let decoded = ans
+            .decode_iid_symbols(9, &decoder_model)
+            .collect::<Result<String, _>>()
+            .unwrap();
+        assert_eq!(decoded, symbols);
+        assert!(ans.is_empty());
     }
 }

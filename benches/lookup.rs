@@ -2,8 +2,10 @@ use std::any::type_name;
 
 use constriction::{
     stream::{
-        models::lookup::EncoderHashLookupTable, queue::RangeEncoder, stack::AnsCoder, Code, Decode,
-        Encode,
+        models::{LookupDecoderModel, NonContiguousCategoricalEncoderModel},
+        queue::RangeEncoder,
+        stack::AnsCoder,
+        Code, Decode, Encode,
     },
     BitArray, Pos, Seek,
 };
@@ -66,8 +68,8 @@ where
 {
     let (symbols, probabilities) = make_symbols_and_probabilities(PRECISION, 100);
     let encoder_model =
-        EncoderHashLookupTable::<u16, Probability, PRECISION>::from_symbols_and_probabilities(
-            symbols.iter().cloned().zip(probabilities),
+        NonContiguousCategoricalEncoderModel::<u16,Probability,PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols.iter().cloned(),&probabilities[..],false
         )
         .unwrap();
 
@@ -94,7 +96,11 @@ where
         })
     });
 
-    let decoder_model = encoder_model.to_decoder_model();
+    let decoder_model =
+    LookupDecoderModel::<u16,Probability,_,_,PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
+        symbols,probabilities,false
+    )
+    .unwrap();
 
     let mut backward_decoder = encoder.into_seekable_decoder();
     let reset_snapshot = backward_decoder.pos();
@@ -112,7 +118,7 @@ where
 
     backward_decoder.seek(reset_snapshot).unwrap();
     let decoded = backward_decoder
-        .decode_iid_symbols(data.len(), &encoder_model.to_decoder_model())
+        .decode_iid_symbols(data.len(), &decoder_model)
         .map(Result::unwrap)
         .collect::<Vec<_>>();
     assert_eq!(decoded, data);
@@ -135,7 +141,7 @@ where
 
     forward_decoder.seek(reset_snapshot).unwrap();
     let decoded = forward_decoder
-        .decode_iid_symbols(data.len(), &encoder_model.to_decoder_model())
+        .decode_iid_symbols(data.len(), &decoder_model)
         .map(Result::unwrap)
         .collect::<Vec<_>>();
     assert_eq!(decoded, data);
@@ -153,8 +159,8 @@ where
 {
     let (symbols, probabilities) = make_symbols_and_probabilities(PRECISION, 100);
     let encoder_model =
-        EncoderHashLookupTable::<u16, Probability, PRECISION>::from_symbols_and_probabilities(
-            symbols.iter().cloned().zip(probabilities),
+    NonContiguousCategoricalEncoderModel::<u16,Probability,PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols.iter().cloned(),probabilities.iter(),false
         )
         .unwrap();
 
@@ -182,7 +188,11 @@ where
         })
     });
 
-    let decoder_model = encoder_model.to_decoder_model();
+    let decoder_model =
+    LookupDecoderModel::<u16,Probability,_,_,PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
+        symbols,probabilities,false
+    )
+    .unwrap();
 
     let mut decoder = encoder.into_decoder().unwrap();
 
@@ -199,7 +209,7 @@ where
 
     decoder.seek(reset_snapshot).unwrap();
     let decoded = decoder
-        .decode_iid_symbols(data.len(), &encoder_model.to_decoder_model())
+        .decode_iid_symbols(data.len(), &decoder_model)
         .map(Result::unwrap)
         .collect::<Vec<_>>();
     assert_eq!(decoded, data);
