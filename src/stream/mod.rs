@@ -1,7 +1,11 @@
 //! Stream Codes (entropy codes that amortize over several symbols)
 //!
+//! # Module Overview
+//!
 //! This module provides implementations of stream codes and utilities for defining entropy
 //! models for these stream codes. This module is the heart of the `constriction` crate.
+//!
+//! ## Provided Implementations of Stream Codes
 //!
 //! Currently, the following stream codes are provided (see below for a
 //! [comparison](#which-stream-code-should-i-use)):
@@ -21,8 +25,12 @@
 //!   and bits-back coding in an end-to-end optimization. See submodule [`chain`].
 //!
 //! All of these stream codes are provided through types that implement the [`Encode`] and
-//! [`Decode`] traits defined in this module. To encode or decode a sequence of symbols, you
-//! have to provide an [`EntropyModel`] for each symbol. The submodule [`models`] provides
+//! [`Decode`] traits defined in this module.
+//!
+//! ## Provided Utilities for Entropy Models
+//!
+//! To encode or decode a sequence of symbols with one of the above stream codes, you have
+//! to specify an [`EntropyModel`] for each symbol. The submodule [`models`] provides
 //! utilities for defining `EntropyModel`s.
 //!
 //! # Examples
@@ -31,7 +39,7 @@
 //!
 //! # Which Stream Code Should I Use?
 //!
-//! The list below compares several aspects of the major two provided stream codes, ANS
+//! The list below shows a detailed comparison of the major two provided stream codes, ANS
 //! Coding and Range Coding (most users won't want to use the Chain Coder).
 //!
 //! **TL;DR:** Don't overthink it. For many practical use cases, both ANS and Range Coding
@@ -93,40 +101,40 @@
 //!   string will *not* restore the original (unrealizable) bit string. This means that the
 //!   provided Range Coder cannot be used for bits-back coding in a reliable way.
 //! - **Compression effectiveness: virtually no difference unless misused.** With the
-//!   provided presets (see [below](#presets)), the bitrates of both ANS Coding and Range
-//!   Coding are both very close to the theoretical bound for lossless compression. The lack
-//!   of surjectivity in Range Coding leads to a small overhead, but it seems to be roughly
+//!   provided [presets](#presets)), the bitrates of both ANS Coding and Range Coding are
+//!   both very close to the theoretical bound for lossless compression. The lack of
+//!   surjectivity in Range Coding leads to a small overhead, but it seems to be roughly
 //!   countered by a slightly larger rounding overhead in ANS Coding. Keep in mind, however,
-//!   that deviating from the presets (see discussion
-//!   [below](#customizations-for-advanced-use-cases)) can considerably degrade compression
-//!   effectiveness if not done carefully. It is strongly recommended to always start with
-//!   the [`DefaultXxx` type aliases](#presets) (for either ANS or Range Coding), which use
-//!   well-tested presets, before experimenting with deviations from these defaults.
+//!   that [deviating from the presets](#customizations-for-advanced-use-cases) can
+//!   considerably degrade compression effectiveness if not done carefully. It is strongly
+//!   recommended to always start with the [`DefaultXxx` type aliases](#presets) (for either
+//!   ANS or Range Coding), which use well-tested presets, before experimenting with
+//!   deviations from these defaults.
 //! - **Computational efficiency: point for ANS Coding.** ANS Coding is a simpler algorithm
 //!   than Range Coding, especially the decoding part. This manifests itself in fewer
 //!   branches and a smaller internal coder state. Empirically, our decoding benchmarks in
 //!   the file `benches/lookup.rs` run more than twice as fast with an `AnsCoder` than with
 //!   a `RangeDecoder`. However, please note that (i) these benchmarks use the highly
-//!   optimized entropy models from the [`models::lookup`] module; if you use other entropy
+//!   optimized lookup models [[1](models::LookupDecoderModel),
+//!   [2](models::NonContiguousCategoricalEncoderModel)]; if you use other entropy
 //!   models then these will likely be the computational bottleneck, not the coder; (ii)
 //!   future versions of `constriction` may introduce further run-time optimizations; and
 //!   (iii) while *decoding* is more than two times faster with ANS, *encoding* is somewhat
-//!   (~&nbsp;10&nbsp;%) faster with Range Coding (this *might* be because the encoding
-//!   algorithm for Range Coding is not quite as complicated as the decoding algorithm, and
-//!   because encoding with ANS, unlike decoding, involves an integer division, which is a
-//!   surprisingly slow operation on most hardware).
+//!   (~&nbsp;10&nbsp;%) faster with Range Coding (this *might* be because encoding with
+//!   ANS, unlike decoding, involves an integer division, which is a surprisingly slow
+//!   operation on most hardware).
 //! - **Random access decoding: minor point for ANS Coding.** Both ANS and Range Coding
 //!   support decoding with random access via the [`Seek`](crate::Seek) trait, but it comes
 //!   at different costs. In order to jump ("[`seek`]") to a given location in a slice of
 //!   compressed data, you have to provide an index for a position in the slice and an
-//!   internal coder state (you can get these during encoding via [`Pos::pos`]). While the
+//!   internal coder state (you can get both during encoding via [`Pos::pos`]). While the
 //!   type of the internal coder state can be controlled through type parameters, its
 //!   minimal (and also default) size is only two words for ANS Coding but four words for
 //!   Range Coding. Thus, if you're developing a container file format that contains a jump
 //!   table for random access decoding, then choosing ANS Coding over Range Coding will
 //!   allow you to reduce the memory footprint of the jump table. Whether or not this is
 //!   significant depends on how fine grained your jump table is.
-//! - **Serialization: minor point for ANS Coding.** The state of an ANS Coder is uniquely
+//! - **Serialization: minor point for ANS Coding.** The state of an ANS Coder is entirely
 //!   described by the compressed bit string. This means that you can interrupt encoding
 //!   and/or decoding with an ANS Coder at any time, serialize the ANS Coder to a bit
 //!   string, recover it at a later time by deserialization, and continue encoding and/or
@@ -142,13 +150,11 @@
 //! compressed bit string, one symbol at a time, in a way that amortizes compressed bits
 //! over several symbols. This amortization allows stream codes to reach near-optimal
 //! compression performance without giving up computational efficiency. In our experiments,
-//! the default variants of both the provided ANS Coder and the Range Coder implementations
-//! showed about 0.1&nbsp;% relative overhead over the theoretical bound on the bitrate (the
-//! overhead is due to finite numerical precision and state size, which can even be
-//! increased further from their default values via type parameters, at the cost of runtime
-//! performance and memory consumption).
+//! both the provided ANS Coder and the Range Coder implementations showed about 0.1&nbsp;%
+//! relative overhead over the theoretical bound on the bitrate (using ["default"
+//! presets](#presets)).
 //!
-//! The near-optimal compression performance of stream codes is to be seen in contrast to
+//! *The near-optimal compression performance* of stream codes is to be seen in contrast to
 //! symbol codes (see module [`symbol`](crate::symbol)), such as the well-known [Huffman
 //! code](crate::symbol::codebooks::huffman). Symbol codes do not amortize over symbols.
 //! Instead, they map each symbol to a fixed sequence of bits of integer length (a
@@ -157,19 +163,23 @@
 //! low (≪&nbsp;1&nbsp;bit of) entropy per symbol, which is common for deep learning based
 //! entropy models. Stream codes do not suffer from this overhead.
 //!
-//! The computational efficiency of stream codes is to be seen in contrast to block codes,
-//! which are used in many popular general-purpose compression codecs. Block codes encode a
-//! block of consecutive symbols at once, which leads to a computational cost that is
-//! exponential in the block size, in contrast to a linear cost of stream codes.
+//! *The computational efficiency* of stream codes is to be seen in contrast to block codes.
+//! Block codes are symbol codes that operate on blocks of several consecutive symbols at
+//! once, which reduces the relative impact of the constant overhead of ~0.5&nbsp;bits per
+//! block compared to regular symbol codes. Block codes typically require some method of
+//! constructing the code books dynamically (e.g., [Deflate]) to avoid the computational
+//! cost from growing exponentially in the block size. By contrast, stream codes amortize
+//! over long sequences of symbols without ever constructing an explicit code book for the
+//! entire sequence of symbols. This keeps their  computational cost linear in the number of
+//! symbols.
 //!
 //! # Highly Customizable Implementations With Sane Presets
 //!
 //! Users who need precise control over the trade-off between compression effectiveness,
 //! runtime performance, and memory consumption can fine tune the provided implementations
-//! of stream codes and entropy models at compile time through type parameters that control
-//! the word size, internal coder state size, and numerical precision. Before discussing
-//! these type parameters in detail [below](#customizations-for-advanced-use-cases), we
-//! point out two sane presets that cover most typicall use cases.
+//! of stream codes and entropy models at compile time through type parameters discussed
+//! [below](#customizations-for-advanced-use-cases). For most users, however, we recommend
+//! using one of the following presets.
 //!
 //! ## Presets
 //!
@@ -180,34 +190,54 @@
 //!   also used by `constriction`'s [Python API](TODO). The "default" presets provide very
 //!   near-optimal compression effectiveness for most conceivable applications and high
 //!   runtime performance on typical (64&nbsp;bit) desktop computers. However, the "default"
-//!   presets are not recommended for [lookup entropy models](models::lookup) as their high
-//!   numerical precision would lead to enormeous lookup tables (~100&nbsp;MB).
+//!   presets are *not* recommended for a [`LookupDecoderModel`] as their high numerical
+//!   precision would lead to enormeous lookup tables (~&nbsp;67&nbsp;MB), which would take
+//!   a considerable time to build and likely leead to extremely poor cashing.
 //!   - entropy *coders* with "default" presets: [`DefaultAnsCoder`],
 //!     [`DefaultRangeEncoder`], [`DefaultRangeDecoder`], and [`DefaultChainCoder`];
-//!   - entropy *models* with "default" presets: [`DefaultLeakyQuantizer`] and
-//!     [`DefaultCategorical`].
+//!   - entropy *models* with "default" presets: [`DefaultLeakyQuantizer`],
+//!     [`DefaultContiguousCategoricalEntropyModel`],
+//!     [`DefaultNonContiguousCategoricalEncoderModel`], and
+//!     [`DefaultNonContiguousCategoricalDecoderModel`].
 //! - **"Small" presets** may be considered when optimizing a final product for runtime
 //!   efficiency and memory consumption. The "small" presets use a lower numerical precision
 //!   and a smaller state and word size than the "default" presets. The lower numerical
-//!   precision makes it possible to use highly runtime efficient [lookup entropy
-//!   models](models::lookup), the smaller state size reduces the memory overhead of jump
+//!   precision makes it possible to use the highly runtime efficient
+//!   [`LookupDecoderModel`], the smaller state size reduces the memory overhead of jump
 //!   tables for random access, and the smaller word size may be advantageous on some
 //!   embedded devices.
 //!   - entropy *coders* with "small" presets: [`SmallAnsCoder`], [`SmallRangeEncoder`],
 //!     [`SmallRangeDecoder`], and [`SmallChainCoder`];
-//!   - entropy *models* with "small" presets: [`SmallDecoderGenericLookupTable`],
-//!     [`SmallDecoderIndexLookupTable`], [`SmallEncoderArrayLookupTable`],
-//!     [`SmallEncoderHashLookupTable`], [`SmallLeakyQuantizer`], and
-//!     [`SmallCategorical`].
+//!   - entropy *models* with "small" presets: [`SmallContiguousLookupDecoderModel`],
+//!     [`SmallNonContiguousLookupDecoderModel`],
+//!     [`SmallContiguousCategoricalEntropyModel`],
+//!     [`SmallNonContiguousCategoricalEncoderModel`],
+//!     [`SmallNonContiguousCategoricalDecoderModel`], and [`SmallLeakyQuantizer`].
+//!
+//! You'll usually want to use matching presets for entropy *coders* and entropy *models*.
+//! However, it is legal to use entropy models with the "small" preset for an entropy coder
+//! with the (larger) "default" preset (the opposite way is statically prohibited on purpose
+//! by the type system). Using "small" models with a "default" coder may make sense if you
+//! want to mix entropy models with "default" and "small" presets (e.g., if some of the
+//! models are lookup tables but others aren't).
 //!
 //! ## Customizations for Advanced Use Cases
 //!
 //! Some advanced use cases may not be covered by the above presets. For such cases, the
-//! entropy coders and entropy models can be adjusted with the following type parameters:
+//! entropy coders and entropy models can be adjusted type parameters listed below.
+//!
+//! **Warning:** Adjusting these parameters can severly impact compression effectiveness if
+//! not done with care. We strongly recommend to always start from one of the above
+//! [presets](#presets), to only deviate from them when necessary, and to measure the effect
+//! of any deviations from the presets (on compression effectiveness, computational
+//! performance, and memory consumption).
+//!
+//! ### Type Parameters of Entropy Coders
 //!
 //! - `Word`: a [`BitArray`] specifying the smallest unit of compressed data that the
-//!   entropy coder emits or reads in at a time. A `Word` has to have at least `PRECISION`
-//!   bits.
+//!   entropy coder emits or reads in at a time; an entropy coder's `Word` type has to be at
+//!   least as large as the `Probability` type (see below) of any entropy model used with
+//!   it.
 //!   - The "default" preset sets `Word = u32`.
 //!   - The "small" preset sets `Word = u16`.
 //! - `State`: a [`BitArray`] that parameterizes the size of the internal coder state (the
@@ -215,26 +245,33 @@
 //!   several fields of type `State`, as in the case of a Range Coder). Typically, `State`
 //!   has to be at least twice as large as `Word`. You'll want to use a small `State` if
 //!   you're planning to perform random accesses via the [`Seek`](crate::Seek) trait because
-//!   the size of your jump table for random access will grow as `State` grows.
+//!   your container format will then typically contain some kind of jump table composed of
+//!   indices and `Code::State`s (see [`PosSeek::Position`](crate::PosSeek::Position)).
 //!   - The "default" preset sets `State = u64`.
 //!   - The "small" preset sets `State = u32`.
+//! - `Backend`: the source and/or sink of compressed data. See module [`backends`]. You'll
+//!   rarely have to specify `Backend` explictily, it usually defaults to `Vec<Word>` for
+//!   encoding and to either `Vec<Word>` or [`Cursor`] for decoding, depending on which
+//!   entropy coder you use and who owns the compressed data. The [`ChainCoder`] has two
+//!   type parameters for backends because it keeps track of compressed data and remainders
+//!   separately.
+//!
+//! ### Type Parameters of Entropy Models
+//!
+//! - `Probability`: a [`BitArray`] specifying the type used to represent probabilities
+//!   (smaller than one) in fixed point arithmetic; must hold at least `PRECISION` bits (see
+//!   below) and must not be larger than the `Word` type of the entropy coder that uses the
+//!   model.
+//!   - The "default" preset sets `Probability = u32` (same as for `Word` above).
+//!   - The "small" preset sets `Probability = u16` (same as for `Word` above).
 //! - `PRECISION`: a `usize` const generic that defines the number of bits used when
 //!   representing probabilities in fixed-point arithmetic. Must not be zero or larger than
-//!   `Word::BITS`. A small `PRECISION` will lead to compression overhead due to poor
-//!   approximations of your entropy models. A large `PRECISION` will lead to a large memory
-//!   overhead if you use lookup entropy models, and it can make some quantized continuous
-//!   entropy models slow. Most entropy coders are not monomorphized for any `PRECISION`,
-//!   which means that you can use a single entropy coder to encode/decode symbols with
-//!   varying fixed-point precisions. But the entropy models and the `encode` and `decode`
-//!   trait methods are monomorphized based on a `PRECISION` parameter to allow generating
-//!   optimized code.
+//!   `Probability::BITS`. A small `PRECISION` will lead to compression overhead due to poor
+//!   approximations of the true probability distribution. A large `PRECISION` will lead to
+//!   a large memory overhead if you use a [`LookupDecoderModel`], and it can make decoding
+//!   with a [`LeakilyQuantizedDistribution`] slow.
 //!   - The "default" preset sets `PRECISION = 24`.
 //!   - The "small" preset sets `PRECISION = 12`.
-//! - `Backend`: the source and/or sink of compressed data. See module [`backends`]. The
-//!   `Backend` usually defaults to `Vec<Word>` for encoding and to either `Vec<Word>` or
-//!   [`Cursor`] for decoding, depending on which entropy coder you use and who owns the
-//!   compressed data. The [`ChainCoder`] has two type parameters for backends because it
-//!   saves comopressed data and remainders separately.
 //!
 //! [`AnsCoder::encode_symbols_reverse`]: stack::AnsCoder::encode_symbols_reverse
 //! [`Infallible`]: core::convert::Infallible
@@ -245,22 +282,27 @@
 //! [`DefaultRangeDecoder`]: queue::DefaultRangeDecoder
 //! [`DefaultChainCoder`]: chain::DefaultChainCoder
 //! [`DefaultLeakyQuantizer`]: models::DefaultLeakyQuantizer
-//! [`DefaultCategorical`]: models::DefaultCategorical
+//! [`DefaultContiguousCategoricalEntropyModel`]: models::DefaultContiguousCategoricalEntropyModel
+//! [`DefaultNonContiguousCategoricalEncoderModel`]: models::DefaultNonContiguousCategoricalEncoderModel
+//! [`DefaultNonContiguousCategoricalDecoderModel`]: models::DefaultNonContiguousCategoricalDecoderModel
 //! [`SmallAnsCoder`]: stack::SmallAnsCoder
 //! [`SmallRangeEncoder`]: queue::SmallRangeEncoder
 //! [`SmallRangeDecoder`]: queue::SmallRangeDecoder
 //! [`SmallChainCoder`]: chain::SmallChainCoder
 //! [`SmallLeakyQuantizer`]: models::SmallLeakyQuantizer
-//! [`SmallCategorical`]: models::SmallCategorical
-//! [`SmallDecoderGenericLookupTable`]: models::lookup::SmallDecoderGenericLookupTable
-//! [`SmallDecoderIndexLookupTable`]: models::lookup::SmallDecoderIndexLookupTable
-//! [`SmallEncoderArrayLookupTable`]: models::lookup::SmallEncoderArrayLookupTable
-//! [`SmallEncoderHashLookupTable`]: models::lookup::SmallEncoderHashLookupTable
+//! [`SmallContiguousLookupDecoderModel`]: models::SmallContiguousLookupDecoderModel
+//! [`SmallNonContiguousLookupDecoderModel`]: models::SmallNonContiguousLookupDecoderModel
+//! [`SmallContiguousCategoricalEntropyModel`]: models::SmallContiguousCategoricalEntropyModel
+//! [`SmallNonContiguousCategoricalEncoderModel`]: models::SmallNonContiguousCategoricalEncoderModel
+//! [`SmallNonContiguousCategoricalDecoderModel`]: models::SmallNonContiguousCategoricalDecoderModel
 //! [`AnsCoder`]: stack::AnsCoder
 //! [`AnsCoder::from_binary`]: stack::AnsCoder::from_binary
 //! [`ChainCoder`]: chain::ChainCoder
 //! [`Cursor`]: crate::backends::Cursor
 //! [`backends`]: crate::backends
+//! [Deflate]: https://en.wikipedia.org/wiki/Deflate
+//! [`LookupDecoderModel`]: models::LookupDecoderModel
+//! [`LeakilyQuantizedDistribution`]: models::LeakilyQuantizedDistribution
 
 pub mod chain;
 pub mod models;
@@ -953,7 +995,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// by value as an opportunity for microoptimzations when dealing with models that can
     /// be cheaply copied (see, e.g.,
     /// [`LookupDecoderModel::as_view`](models::LookupDecoderModel::as_view)).
-    /// 
+    ///
     /// If you want to decode each symbol with its individual entropy model, then consider
     /// calling [`decode_symbols`] instead. If you just want to decode a single symbol, then
     /// call [`decode_symbol`] instead.
