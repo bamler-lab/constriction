@@ -4,7 +4,8 @@
 //!
 //! ```
 //! use constriction::stream::{
-//!     models::DefaultCategorical, stack::DefaultAnsCoder, chain::DefaultChainCoder, Decode
+//!     models::DefaultContiguousCategoricalEntropyModel,
+//!     stack::DefaultAnsCoder, chain::DefaultChainCoder, Decode
 //! };
 //!
 //! /// Shorthand for decoding a sequence of symbols with categorical entropy models.
@@ -14,7 +15,10 @@
 //! ) -> Vec<usize> {
 //!     let entropy_models = probabilities
 //!         .iter()
-//!         .map(|probs| DefaultCategorical::from_floating_point_probabilities(probs).unwrap());
+//!         .map(
+//!             |probs| DefaultContiguousCategoricalEntropyModel
+//!                 ::from_floating_point_probabilities(probs).unwrap()
+//!         );
 //!     decoder.decode_symbols(entropy_models).collect::<Result<Vec<_>, _>>().unwrap()
 //! }
 //!

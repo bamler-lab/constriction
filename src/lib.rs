@@ -431,13 +431,16 @@ pub trait Pos: PosSeek {
 /// # Example
 ///
 /// ```
-/// use constriction::{stream::{models::LeakyCategorical, stack::DefaultAnsCoder, Decode}, Pos, Seek};
+/// use constriction::stream::{
+///     models::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
+/// };
+/// use constriction::{Pos, Seek};
 ///
 /// // Create a `AnsCoder` encoder and an entropy model:
 /// let mut ans = DefaultAnsCoder::new();
 /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-/// let entropy_model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
-///     .unwrap();
+/// let entropy_model = DefaultContiguousCategoricalEntropyModel
+///     ::from_floating_point_probabilities(&probabilities).unwrap();
 ///
 /// // Encode some symbols in two chunks and take a snapshot after each chunk.
 /// let symbols1 = vec![8, 2, 0, 7];

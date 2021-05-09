@@ -395,15 +395,17 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::LeakyCategorical, stack::DefaultAnsCoder, Decode};
+    /// use constriction::stream::{
+    ///     models::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
+    /// };
     ///
     /// let mut coder = DefaultAnsCoder::new();
     ///
     /// // Push some data on the coder.
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
-    ///     .unwrap();
+    /// let model = DefaultContiguousCategoricalEntropyModel
+    ///     ::from_floating_point_probabilities(&probabilities).unwrap();
     /// coder.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Inspect the compressed data.

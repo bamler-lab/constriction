@@ -115,8 +115,7 @@
 //!   branches and a smaller internal coder state. Empirically, our decoding benchmarks in
 //!   the file `benches/lookup.rs` run more than twice as fast with an `AnsCoder` than with
 //!   a `RangeDecoder`. However, please note that (i) these benchmarks use the highly
-//!   optimized lookup models [[1](models::LookupDecoderModel),
-//!   [2](models::NonContiguousCategoricalEncoderModel)]; if you use other entropy
+//!   optimized [lookup models](models::LookupDecoderModel); if you use other entropy
 //!   models then these will likely be the computational bottleneck, not the coder; (ii)
 //!   future versions of `constriction` may introduce further run-time optimizations; and
 //!   (iii) while *decoding* is more than two times faster with ANS, *encoding* is somewhat

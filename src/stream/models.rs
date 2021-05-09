@@ -309,9 +309,9 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// // Create a lookup model. This method is provided by the trait `IterableEntropyModel`.
     /// let lookup_decoder_model = model.to_generic_lookup_decoder_model();
     /// ```
-    /// 
+    ///
     /// # See also
-    /// 
+    ///
     /// - [`floating_point_symbol_table`](Self::floating_point_symbol_table)
     fn symbol_table(&'m self) -> Self::Iter;
 
@@ -320,7 +320,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     ///
     /// The conversion to floats is guaranteed to be lossless due to the trait bound `F:
     /// From<Self::Probability>`.
-    /// 
+    ///
     /// [`symbol_table`]: Self::symbol_table
     fn floating_point_symbol_table<F>(
         &'m self,
@@ -463,7 +463,9 @@ where
     }
 
     #[inline(always)]
-    fn size_hint(&self)->(usize, Option<usize>){self.inner.size_hint()}
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
 }
 
 impl<F, Symbol, Probability, I, const PRECISION: usize> ExactSizeIterator
@@ -472,7 +474,8 @@ where
     F: Float,
     Probability: BitArray + Into<F>,
     I: ExactSizeIterator<Item = (Symbol, Probability, <Probability as BitArray>::NonZero)>,
-{}
+{
+}
 
 /// A trait for [`EntropyModel`]s that can be used for encoding (compressing) data.
 ///
@@ -967,7 +970,7 @@ pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
 }
 
 /// Type alias for a typical [`LeakyQuantizer`].
-/// 
+///
 /// See:
 /// - [`LeakyQuantizer`]
 /// - [discussion of presets](super#presets)
@@ -1094,10 +1097,10 @@ where
 /// # Examples
 ///
 /// See [examples for `LeakyQuantizer`](LeakyQuantizer#examples).
-/// 
+///
 /// # Computational Efficiency
-/// 
-/// See [discussion for `LeakyQuantizer`](LeakyQuantizer#computational-efficiency). 
+///
+/// See [discussion for `LeakyQuantizer`](LeakyQuantizer#computational-efficiency).
 ///
 /// [`Gaussian`]: probability::distribution::Gaussian
 /// [`Laplace`]: probability::distribution::Laplace
@@ -1966,7 +1969,7 @@ pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, cons
 }
 
 /// Type alias for a typical [`ContiguousCategoricalEntropyModel`].
-/// 
+///
 /// See:
 /// - [`ContiguousCategoricalEntropyModel`]
 /// - [discussion of presets](super#presets)
@@ -1983,7 +1986,7 @@ pub type SmallContiguousCategoricalEntropyModel<Table = Vec<u16>> =
     ContiguousCategoricalEntropyModel<u16, Table, 12>;
 
 /// Type alias for a typical [`NonContiguousCategoricalDecoderModel`].
-/// 
+///
 /// See:
 /// - [`NonContiguousCategoricalDecoderModel`]
 /// - [discussion of presets](super#presets)
@@ -2227,7 +2230,7 @@ where
     /// # Error Handling
     ///
     /// Returns an error if `symbols.len() != probabilities.len()`.
-    /// 
+    ///
     /// Also returns an error if the provided probability distribution cannot be normalized,
     /// either because `probabilities` is of length zero, or because one of its entries is
     /// negative with a nonzero magnitude, or because the sum of its elements is zero,
@@ -2294,7 +2297,7 @@ where
     /// assert!(partial_probabilities.iter().sum::<u32>() < 1 << 24);
     ///
     /// let symbols = "abcde"; // Has one more entry than `probabilities`
-    /// 
+    ///
     /// let model = DefaultNonContiguousCategoricalDecoderModel
     ///     ::from_symbols_and_nonzero_fixed_point_probabilities(
     ///         symbols.chars(), &partial_probabilities, true).unwrap();
@@ -2441,7 +2444,7 @@ where
     ///   model; the conversion to a `LookupDecoderModel` bears a significant runtime and
     ///   memory overhead, so if you're going to use the resulting model only for a single
     ///   or a handful of symbols then you'll end up paying more than you gain.
-    /// 
+    ///
     /// [preset]: super#presets
     #[inline(always)]
     pub fn to_lookup_decoder_model(
@@ -2746,13 +2749,13 @@ where
 }
 
 /// Type alias for a typical [`NonContiguousCategoricalEncoderModel`].
-/// 
+///
 /// See:
 /// - [`NonContiguousCategoricalEncoderModel`]
 /// - [discussion of presets](super#presets)
 pub type DefaultNonContiguousCategoricalEncoderModel<Symbol> =
     NonContiguousCategoricalEncoderModel<Symbol, u32, 24>;
-    
+
 /// Type alias for a [`NonContiguousCategoricalEncoderModel`] optimized for compatibility
 /// with lookup decoder models.
 ///
@@ -3097,7 +3100,7 @@ where
 // LOOKUP TABLE ENTROPY MODELS (FOR FAST DECODING) ================================================
 
 /// A tabularized [`DecoderModel`] that is optimized for fast decoding of i.i.d. symbols
-/// 
+///
 /// You will usually want to use this type through one of the type aliases
 /// [`SmallContiguousLookupDecoderModel`] or [`SmallNonContiguousLookupDecoderModel`]. See
 /// these types for extended documentation and examples.
@@ -3119,11 +3122,11 @@ where
 }
 
 /// Type alias for a [`LookupDecoderModel`] over arbitrary symbols.
-/// 
+///
 /// # Examples
-/// 
+///
 /// TODO
-/// 
+///
 /// # See also
 ///
 /// - [`SmallNonContiguousLookupDecoderModel`]
@@ -3140,7 +3143,7 @@ pub type SmallNonContiguousLookupDecoderModel<
 /// always use a "bigger" coder on a "smaller" model).
 ///
 /// # Example
-/// 
+///
 /// Decoding a sequence of symbols with a [`SmallAnsCoder`], a [`DefaultAnsCoder`], a
 /// [`SmallRangeDecoder`], and a [`DefaultRangeDecoder`], all using the same
 /// `SmallContiguousLookupDecoderModel`.
@@ -3153,7 +3156,7 @@ pub type SmallNonContiguousLookupDecoderModel<
 ///     Decode, Code,
 /// };
 ///
-/// // Create a `SmallContiguousLookupDecoderModel` from a probability distribution that's already 
+/// // Create a `SmallContiguousLookupDecoderModel` from a probability distribution that's already
 /// // available in fixed point representation (e.g., because it was deserialized from a file).
 /// // Alternatively, we could use `from_floating_point_probabilities_contiguous`.
 /// let probabilities = [1489, 745, 1489, 373];
@@ -3212,7 +3215,7 @@ where
     Symbol: Copy + Default,
 {
     /// Create a `LookupDecoderModel` over arbitrary symbols.
-    /// 
+    ///
     /// TODO: example
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
@@ -3237,7 +3240,7 @@ where
     }
 
     /// Create a `LookupDecoderModel` over arbitrary symbols.
-    /// 
+    ///
     /// TODO: example
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
@@ -3324,7 +3327,7 @@ where
     Symbol: Copy + Default,
 {
     /// Create a `LookupDecoderModel` over a contiguous range of symbols.
-    /// 
+    ///
     /// TODO: example
     pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
     where
@@ -3341,9 +3344,9 @@ where
     }
 
     /// Create a `LookupDecoderModel` over a contiguous range of symbols using fixed point arighmetic.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// See [`SmallContiguousLookupDecoderModel`].
     pub fn from_nonzero_fixed_point_probabilities_contiguous<I>(
         probabilities: I,

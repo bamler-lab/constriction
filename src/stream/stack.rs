@@ -1,6 +1,15 @@
 //! Encoding and infallible decoding on a stack ("last in first out")
 //!
+//! This module provides the [`AnsCoder`], a highly efficient entropy coder with
+//! near-optimal compression effectiveness that operates as a *stack* data structure.
+//! Encoding and decoding operate in reverse direction with respect to each other.
+//! Importantly, and unlike the coders in the sister module [`queue`], the `AnsCoder` allows
+//! you to interleave encoding and decoding operations arbitrarily, which is important for
+//! bits-back coding in hierarchical probabilistic models. See [discussion in parent
+//! module](super#which-stream-code-should-i-use) for more information on when a stack is
+//! good or a bad fit.
 //!
+//! [`queue`]: super::queue
 
 use alloc::vec::Vec;
 use core::{
@@ -21,44 +30,47 @@ use crate::{
     DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack, UnwrapInfallible,
 };
 
-/// Entropy coder for both encoding and decoding on a stack
+/// Entropy coder for both encoding and decoding on a stack.
 ///
-/// This is is a very general entropy coder that provides both encoding and
-/// decoding, and that is generic over a type `Word` that defines the smallest unit of
-/// compressed data, and a constant `PRECISION` that defines the fixed point
-/// precision used in entropy models. See [below](
-/// #generic-parameters-compressed-word-type-w-and-precision) for details on these
-/// parameters. If you're unsure about the choice of `Word` and `PRECISION` then use
-/// the type alias [`DefaultAnsCoder`], which makes sane choices for typical
-/// applications.
+/// This is the generic struct for an ANS coder. It provides fine-tuned control over type
+/// parameters (see [discussion in parent
+/// module](super#highly-customizable-implementations-with-sane-presets)). You'll usually
+/// want to use this type through the type alias [`DefaultAnsCoder`], which provides sane
+/// default settings for the type parameters.
 ///
 /// The `AnsCoder` uses an entropy coding algorithm called [range Asymmetric
 /// Numeral Systems (rANS)]. This means that it operates as a stack, i.e., a "last
 /// in first out" data structure: encoding "pushes symbols on" the stack and
-/// decoding "pops symbols off" the stack in reverse order. In contrast to
-/// [`SeekableDecoder`], decoding with a `AnsCoder` *consumes* the compressed data for
-/// the decoded symbols. This means that encoding and decoding can be interleaved
-/// arbitrarily, thus growing and shrinking the stack of compressed data as you go.
+/// decoding "pops symbols off" the stack in reverse order. In default operation, decoding
+/// with an `AnsCoder` *consumes* the compressed data for the decoded symbols (however, you
+/// can also decode immutable data by using a [`Cursor`]). This means
+/// that encoding and decoding can be interleaved arbitrarily, thus growing and shrinking
+/// the stack of compressed data as you go.
 ///
 /// # Example
 ///
-/// The following shows a basic usage example. For more examples, see
-/// [`encode_symbols`] or [`encode_iid_symbols`].
+/// Basic usage example:
 ///
 /// ```
 /// use constriction::stream::{models::LeakyQuantizer, stack::DefaultAnsCoder, Decode};
 ///
 /// // `DefaultAnsCoder` is a type alias to `AnsCoder` with sane generic parameters.
 /// let mut ans = DefaultAnsCoder::new();
+///
+/// // Create an entropy model based on a quantized Gaussian distribution. You can use `AnsCoder`
+/// // with any entropy model defined in the `models` module.
 /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
 /// let entropy_model = quantizer.quantize(probability::distribution::Gaussian::new(0.0, 10.0));
 ///
 /// let symbols = vec![-10, 4, 0, 3];
+/// // Encode symbols in *reverse* order, so that we can decode them in forward order.
 /// ans.encode_iid_symbols_reverse(&symbols, &entropy_model).unwrap();
+///
+/// // Obtain temporary shared access to the compressed bit string. If you want ownership of the
+/// // compressed bit string, call `.into_compressed()` instead of `.get_compressed()`.
 /// println!("Encoded into {} bits: {:?}", ans.num_bits(), &*ans.get_compressed().unwrap());
 ///
-/// // The call to `encode_iid_symbols` above encoded the symbols in reverse order (see
-/// // documentation). So popping them off now will yield the same symbols in original order.
+/// // Decode the symbols and verify correctness.
 /// let reconstructed = ans
 ///     .decode_iid_symbols(4, &entropy_model)
 ///     .collect::<Result<Vec<_>, _>>()
@@ -66,135 +78,30 @@ use crate::{
 /// assert_eq!(reconstructed, symbols);
 /// ```
 ///
-/// # Generic Parameters: Compressed Word Type `Word` and `PRECISION`
-///
-/// The `AnsCoder` is generic over a type `Word`, which is a [`BitArray`],
-/// and over a constant `PRECISION` of type `usize`. **If you're unsure how to set
-/// these parameters, consider using the type alias [`DefaultAnsCoder`], which uses
-/// sane default values.**
-///
-/// ## Meaning of `Word` and `PRECISION`
-///
-/// If you need finer control over the entropy coder, and [`DefaultAnsCoder`] does not
-/// fit your needs, then here are the details about the parameters `Word`
-/// and `PRECISION`:
-///
-/// - `Word` is the smallest "chunk" of compressed data. It is usually a
-///   primitive unsigned integer type, such as `u32` or `u16`. The type
-///   `Word` is also used to represent probabilities in fixed-point
-///   arithmetic in any [`EntropyModel`] that can be employed as an entropy
-///   model for this `AnsCoder` (however, when representing probabilities, only use the
-///   lowest `PRECISION` bits of a `Word` are ever used).
-///
-///   The `AnsCoder` operates on an internal state whose size is twice as large as
-///   `Word`. When encoding data, the `AnsCoder` keeps filling up this
-///   internal state with compressed data until it is about to overflow. Just before
-///   the internal state would overflow, the stack chops off half of it and pushes
-///   one "compressed word" of type `Word` onto a dynamically growable and
-///   shrinkable buffer of `Word`s. Once all data is encoded, the encoder
-///   chops the final internal state into two `Word`s, pushes them onto
-///   the buffer, and returns the buffer as the compressed data (see method
-///   [`into_compressed`]).
-///
-/// - `PRECISION` defines the number of bits that the entropy models use for
-///   fixed-point representation of probabilities. `PRECISION` must be positive and
-///   no larger than the bitlength of `Word` (e.g., if `Word` is
-///  `u32` then we must have `1 <= PRECISION <= 32`).
-///
-///   Since the smallest representable nonzero probability is `(1/2)^PRECISION`, the
-///   largest possible (finite) [information content] of a single symbol is
-///   `PRECISION` bits. Thus, pushing a single symbol onto the `AnsCoder` increases the
-///   "filling level" of the `AnsCoder`'s internal state by at most `PRECISION` bits.
-///   Since `PRECISION` is at most the bitlength of `Word`, the procedure
-///   of transferring one `Word` from the internal state to the buffer
-///   described in the list item above is guaranteed to free up enough internal
-///   state to encode at least one additional symbol.
-///
-/// ## Guidance for Choosing `Word` and `PRECISION`
-///
-/// If you choose `Word` and `PRECISION` manually (rather than using a
-/// [`DefaultAnsCoder`]), then your choice should take into account the following
-/// considerations:
-///
-/// - Set `PRECISION` to a high enough value so that you can approximate your
-///   entropy models sufficiently well. If you have a very precise entropy model of
-///   your data in your mind, then choosing a low `PRECISION` won't allow you to
-///   represent this entropy model very accurately, thus leading to a mismatch
-///   between the used entropy model and the true distribution of the encoded data.
-///   This will lead to a *linear* overhead in bitrate (i.e., an overhead that is
-///   proportional to the number of encoded symbols).
-/// - Depending on the entropy models used, a high `PRECISION` may be more expensive
-///   in terms of runtime and memory requirements. If this is a concern, then don't
-///   set `PRECISION` too high. In particular, a [`LookupDistribution`] allocates  
-///   memory on the order of `O(2^PRECISION)`, i.e., *exponential* in `PRECISION`.
-/// - Since `Word` must be at least `PRECISION` bits in size, a high
-///   `PRECISION` means that you will have to use a larger `Word` type.
-///   This has several consequences:
-///   - it affects the size of the internal state of the stack; this is relevant if
-///     you want to store many different internal states, e.g., as a jump table for
-///     a [`SeekableDecoder`].
-///   - it leads to a small *constant* overhead in bitrate: since the `AnsCoder`
-///     operates on an internal  state of two `Word`s, it has a constant
-///     bitrate  overhead between zero and two `Word`s depending on the
-///     filling level of the internal state. This constant  overhead is usually
-///     negligible unless you want to compress a very small amount of data.
-///   - the choice of `Word` may have some effect on runtime performance
-///     since operations on larger types may be more expensive (remember that the x
-///     since operates on a state of twice the size as `Word`, i.e., if
-///     `Word = u64` then the stack will operate on a `u128`, which may be
-///     slow on some hardware). On the other hand, this overhead should not be used
-///     as an argument for setting `Word` to a very small type like `u8`
-///     or `u16` since common computing architectures are usually not really faster
-///     on very small registers, and a very small `Word` type will lead to
-///     more frequent transfers between the internal state and the growable buffer,
-///     which requires potentially expensive branching and memory lookups.
-/// - Finally, the "slack" between `PRECISION` and the size of `Word` has
-///   an influence on the bitrate. It is usually *not* a good idea to set
-///   `PRECISION` to the highest value allowed for a given `Word` (e.g.,
-///   setting `Word = u32` and `PRECISION = 32` is *not* recommended).
-///   This is because, when encoding a symbol, the `AnsCoder` expects there to be at
-///   least `PRECISION` bits of entropy in its internal state (conceptually,
-///   encoding a symbol `s` consists of consuming `PRECISION` bits of entropy
-///   followed by pushing `PRECISION + information_content(s)` bits of entropy onto
-///   the internal state).  If `PRECISION` is set to the full size of
-///   `Word` then there will be relatively frequent situations where the
-///   internal state contains less than `PRECISION` bits of entropy, leading to an
-///   overhead (this situation will typically arise after the `AnsCoder` transferred a
-///   `Word` from the internal state to the growable buffer).
-///
-/// The type alias [`DefaultAnsCoder`] was chose with the above considerations in mind.
-///
 /// # Consistency Between Encoding and Decoding
 ///
-/// As elaborated in the [crate documentation](index.html#streaming-entropy-coding),
-/// encoding and decoding operates on a sequence of symbols. Each symbol can be
-/// encoded and decoded with its own entropy model (the symbols can even have
-/// heterogeneous types). If your goal is to reconstruct the originally encoded
-/// symbols during decoding, then you must employ the same sequence of entropy
-/// models (in reversed order) during encoding and decoding.
+/// As elaborated in the [parent module's documentation](super#whats-a-stream-code),
+/// encoding and decoding operates on a sequence of symbols. Each symbol can be encoded and
+/// decoded with its own entropy model (the symbols can even have heterogeneous types). If
+/// your goal is to reconstruct the originally encoded symbols during decoding, then you
+/// must employ the same sequence of entropy models (in reversed order) during encoding and
+/// decoding.
 ///
-/// However, using the same entropy models for encoding and decoding is not a
-/// *general* requirement. It is perfectly legal to push (encode) symbols on the
-/// `AnsCoder` using some entropy models, and then pop off (decode) symbols using
-/// different entropy models. The popped off symbols will then in general be
-/// different from the original symbols, but will be generated in a deterministic
-/// way. If there is no deterministic relation between the entropy models used for
-/// pushing and popping, and if there is still compressed data left at the end
-/// (i.e., if [`is_empty`] returns false), then the popped off symbols are
-/// approximately distributed as independent samples from the respective entropy
-/// models. Such random samples, which consume parts of the compressed data, are
-/// useful in the bits-back algorithm.
+/// However, using the same entropy models for encoding and decoding is not a *general*
+/// requirement. It is perfectly legal to push (encode) symbols on the `AnsCoder` using some
+/// entropy models, and then pop off (decode) symbols using different entropy models. The
+/// popped off symbols will then in general be different from the original symbols, but will
+/// be generated in a deterministic way. If there is no deterministic relation between the
+/// entropy models used for pushing and popping, and if there is still compressed data left
+/// at the end (i.e., if [`is_empty`] returns false), then the popped off symbols are, to a
+/// very good approximation, distributed as independent samples from the respective entropy
+/// models. Such random samples, which consume parts of the compressed data, are useful in
+/// the bits-back algorithm.
 ///
 /// [range Asymmetric Numeral Systems (rANS)]:
 /// https://en.wikipedia.org/wiki/Asymmetric_numeral_systems#Range_variants_(rANS)_and_streaming
-/// [`encode_symbols`]: #method.encode_symbols
-/// [`encode_iid_symbols`]: #method.encode_iid_symbols
-/// [`models`]: models/index.html
-/// [entropy]: https://en.wikipedia.org/wiki/Entropy_(information_theory)
-/// [information content]: https://en.wikipedia.org/wiki/Information_content
-/// [`encode_symbols`]: #method.encode_symbols
 /// [`is_empty`]: #method.is_empty`
-/// [`into_compressed`]: #method.into_compressed
+/// [`Cursor`]: crate::backends::Cursor
 #[derive(Clone)]
 pub struct AnsCoder<Word, State, Backend = Vec<Word>>
 where
@@ -218,24 +125,17 @@ where
 /// sane values for many typical use cases.
 pub type DefaultAnsCoder<Backend = Vec<u32>> = AnsCoder<u32, u64, Backend>;
 
-/// Type alias for an [`AnsCoder`] for use with [lookup models]
+/// Type alias for an [`AnsCoder`] for use with a [`LookupDecoderModel`]
 ///
 /// This encoder has a smaller word size and internal state than [`AnsCoder`]. It is
-/// optimized for use with lookup entropy models, in particular with a
-/// [`DefaultEncoderArrayLookupTable`] or [`DefaultEncoderHashLookupTable`] for encoding, or
-/// with a [`DefaultDecoderIndexLookupTable`] or [`DefaultDecoderGenericLookupTable`] for
-/// decoding.
+/// optimized for use with a [`LookupDecoderModel`].
 ///
 /// # Examples
 ///
-/// See [`DefaultEncoderArrayLookupTable`], [`DefaultEncoderHashLookupTable`],
-/// [`DefaultDecoderIndexLookupTable`], and [`DefaultDecoderGenericLookupTable`].
+/// See [`SmallContiguousLookupDecoderModel`].
 ///
-/// [lookup models]: super::models::lookup
-/// [`DefaultEncoderArrayLookupTable`]: super::models::lookup::DefaultEncoderArrayLookupTable
-/// [`DefaultEncoderHashLookupTable`]: super::models::lookup::DefaultEncoderHashLookupTable
-/// [`DefaultDecoderIndexLookupTable`]: super::models::lookup::DefaultDecoderIndexLookupTable
-/// [`DefaultDecoderGenericLookupTable`]: super::models::lookup::DefaultDecoderGenericLookupTable
+/// [`LookupDecoderModel`]: super::models::LookupDecoderModel
+/// [`SmallContiguousLookupDecoderModel`]: super::models::SmallContiguousLookupDecoderModel
 pub type SmallAnsCoder<Backend = Vec<u16>> = AnsCoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> Debug for AnsCoder<Word, State, Backend>
@@ -478,15 +378,11 @@ where
 
     /// Check if no data for decoding is left.
     ///
-    /// Same as [`Code::maybe_empty`], just with a more suitable name considering the
-    /// fact that this particular implementation of `Code` can decide with certainty
-    /// whether or not it is empty.
-    ///
     /// Note that you can still pop symbols off an empty stack, but this is only
     /// useful in rare edge cases, see documentation of
     /// [`decode_symbol`](#method.decode_symbol).
     pub fn is_empty(&self) -> bool {
-        // We don't need to check if `bulk` is empty (which would require an additional type
+        // We don't need to check if `bulk` is empty (which would require an additional
         // type bound `Backend: ReadLookaheadItems<Word>` because we keep up the
         // invariant that `state >= State::one() << (State::BITS - Word::BITS))`
         // when `bulk` is not empty.
@@ -512,15 +408,17 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::LeakyCategorical, stack::DefaultAnsCoder, Decode};
+    /// use constriction::stream::{
+    ///     models::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
+    /// };
     ///
     /// let mut ans = DefaultAnsCoder::new();
     ///
     /// // Push some data on the ans.
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
-    ///     .unwrap();
+    /// let model = DefaultContiguousCategoricalEntropyModel
+    ///     ::from_floating_point_probabilities(&probabilities).unwrap();
     /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Inspect the compressed data.
@@ -556,17 +454,17 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::{LeakyCategorical, LeakyQuantizer}, stack::DefaultAnsCoder, Encode};
+    /// use constriction::stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
     ///
     /// // Create a stack and encode some stuff.
     /// let mut ans = DefaultAnsCoder::new();
     /// let symbols = vec![8, -12, 0, 7];
-    /// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
+    /// let quantizer = DefaultLeakyQuantizer::new(-100..=100);
     /// let model =
     ///     quantizer.quantize(probability::distribution::Gaussian::new(0.0, 10.0));
-    /// ans.encode_iid_symbols(&symbols, &model).unwrap();
+    /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
-    /// // Iterate over compressed data, collect it into to a vector, and compare to more direct method.
+    /// // Iterate over compressed data, collect it into to a Vec``, and compare to direct method.
     /// let compressed_iter = ans.iter_compressed();
     /// let compressed_collected = compressed_iter.collect::<Vec<_>>();
     /// assert!(!compressed_collected.is_empty());
@@ -822,15 +720,17 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::LeakyCategorical, stack::DefaultAnsCoder, Decode};
+    /// use constriction::stream::{
+    ///     models::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
+    /// };
     ///
     /// let mut ans = DefaultAnsCoder::new();
     ///
     /// // Push some data onto the ANS coder's stack:
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let model = LeakyCategorical::<u32, 24>::from_floating_point_probabilities(&probabilities)
-    ///     .unwrap();
+    /// let model = DefaultContiguousCategoricalEntropyModel
+    ///     ::from_floating_point_probabilities(&probabilities).unwrap();
     /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Get the compressed data, consuming the ANS coder:
