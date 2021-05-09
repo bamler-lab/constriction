@@ -1107,7 +1107,7 @@ where
 /// [`Exponential`]: probability::distribution::Exponential
 /// [`Binomial`]: probability::distribution::Binomial
 /// [`Categorical`]: probability::distribution::Categorical
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct LeakilyQuantizedDistribution<'q, F, Symbol, Probability, D, const PRECISION: usize> {
     inner: D,
     quantizer: &'q LeakyQuantizer<F, Symbol, Probability, PRECISION>,

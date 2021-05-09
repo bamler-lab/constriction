@@ -201,8 +201,6 @@ fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 }
 
 /// Stream codes, i.e., entropy codes that amortize compressed bits over several symbols.
-///
-/// TODO
 #[pymodule]
 fn stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     stream::init_module(py, module)
@@ -210,8 +208,6 @@ fn stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 
 /// Symbol codes. Mainly provided for teaching purpose. You probably want to use a [stream
 /// code](stream.html) instead.
-///
-/// TODO
 #[pymodule]
 fn symbol(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     symbol::init_module(py, module)

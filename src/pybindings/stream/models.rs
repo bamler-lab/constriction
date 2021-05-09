@@ -38,7 +38,7 @@ impl CustomModel {
 }
 
 impl CustomModel {
-    fn quantized<'d, 'py>(
+    pub fn quantized<'d, 'py>(
         &'d self,
         py: Python<'py>,
     ) -> LeakilyQuantizedDistribution<'d, f64, i32, u32, FixedCustomDistribution<'d, 'py>, 24> {
@@ -50,7 +50,7 @@ impl CustomModel {
         self.quantizer.quantize(distribution)
     }
 
-    fn quantized_with_parameters<'d, 'py>(
+    pub fn quantized_with_parameters<'d, 'py>(
         &'d self,
         py: Python<'py>,
         params: PyReadonlyArray1<'py, f64>,
@@ -71,7 +71,9 @@ impl EntropyModel<24> for CustomModel {
     type Probability = u32;
 }
 
-struct FixedCustomDistribution<'d, 'py> {
+#[allow(missing_debug_implementations)]
+#[derive(Clone, Copy)]
+pub struct FixedCustomDistribution<'d, 'py> {
     py: Python<'py>,
     cdf: &'d PyObject,
     approximate_inverse_cdf: &'d PyObject,
@@ -99,7 +101,8 @@ impl<'d, 'py> Inverse for FixedCustomDistribution<'d, 'py> {
     }
 }
 
-struct ParameterizedCustomDistribution<'d, 'py> {
+#[allow(missing_debug_implementations)]
+pub struct ParameterizedCustomDistribution<'d, 'py> {
     py: Python<'py>,
     cdf: &'d PyObject,
     approximate_inverse_cdf: &'d PyObject,

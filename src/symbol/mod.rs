@@ -11,11 +11,12 @@ use core::{
     borrow::Borrow,
     iter::{Repeat, Take},
     marker::PhantomData,
+    ops::Deref,
 };
 
 use crate::{
-    backends::{AsReadWords, BoundedReadWords, IntoReadWords, ReadWords, WriteWords},
-    BitArray, CoderError, DefaultEncoderError, Queue, Semantics, Stack,
+    backends::{AsReadWords, BoundedReadWords, Cursor, IntoReadWords, ReadWords, WriteWords},
+    BitArray, CoderError, DefaultEncoderError, Queue, Semantics, Stack, UnwrapInfallible,
 };
 
 use self::codebooks::{DecoderCodebook, EncoderCodebook, SymbolCodeError};
@@ -182,7 +183,7 @@ pub struct QueueDecoder<Word: BitArray, B> {
 }
 
 pub type DefaultQueueEncoder = QueueEncoder<u32, Vec<u32>>;
-pub type DefaultQueueDecoder = QueueDecoder<u32, Vec<u32>>;
+pub type DefaultQueueDecoder = QueueDecoder<u32, Cursor<u32, Vec<u32>>>;
 pub type DefaultStackCoder = StackCoder<u32, Vec<u32>>;
 
 // GENERIC IMPLEMENTATIONS ====================================================
@@ -232,6 +233,10 @@ impl<Word: BitArray> StackCoder<Word, Vec<Word>> {
             ..Default::default()
         }
     }
+
+    pub fn get_compressed(&mut self) -> StackCoderGuard<'_, Word> {
+        StackCoderGuard::new(self)
+    }
 }
 
 impl<Word: BitArray> QueueEncoder<Word, Vec<Word>> {
@@ -240,6 +245,76 @@ impl<Word: BitArray> QueueEncoder<Word, Vec<Word>> {
             backend: Vec::with_capacity((bit_capacity + Word::BITS - 1) / Word::BITS),
             ..Default::default()
         }
+    }
+
+    pub fn get_compressed(&mut self) -> QueueEncoderGuard<'_, Word> {
+        QueueEncoderGuard::new(self)
+    }
+}
+
+#[derive(Debug)]
+pub struct StackCoderGuard<'a, Word: BitArray> {
+    inner: &'a mut StackCoder<Word, Vec<Word>>,
+}
+
+impl<'a, Word: BitArray> StackCoderGuard<'a, Word> {
+    fn new(stack_coder: &'a mut StackCoder<Word, Vec<Word>>) -> Self {
+        // Stacks need to be sealed by one additional bit so that the end can be discovered.
+        stack_coder.write_bit(true).unwrap_infallible();
+        if stack_coder.mask_last_written != Word::zero() {
+            stack_coder.backend.push(stack_coder.current_word);
+        }
+        Self { inner: stack_coder }
+    }
+}
+
+impl<'a, Word: BitArray> Drop for StackCoderGuard<'a, Word> {
+    fn drop(&mut self) {
+        if self.inner.mask_last_written != Word::zero() {
+            self.inner.backend.pop();
+        }
+        self.inner.read_bit().expect("The constructor wrote a bit.");
+    }
+}
+
+impl<'a, Word: BitArray> Deref for StackCoderGuard<'a, Word> {
+    type Target = [Word];
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner.backend
+    }
+}
+
+#[derive(Debug)]
+pub struct QueueEncoderGuard<'a, Word: BitArray> {
+    inner: &'a mut QueueEncoder<Word, Vec<Word>>,
+}
+
+impl<'a, Word: BitArray> QueueEncoderGuard<'a, Word> {
+    fn new(queue_encoder: &'a mut QueueEncoder<Word, Vec<Word>>) -> Self {
+        // Queues don't need to be sealed, so just flush the remaining word if any.
+        if queue_encoder.mask_last_written != Word::zero() {
+            queue_encoder.backend.push(queue_encoder.current_word);
+        }
+        Self {
+            inner: queue_encoder,
+        }
+    }
+}
+
+impl<'a, Word: BitArray> Drop for QueueEncoderGuard<'a, Word> {
+    fn drop(&mut self) {
+        if self.inner.mask_last_written != Word::zero() {
+            self.inner.backend.pop();
+        }
+    }
+}
+
+impl<'a, Word: BitArray> Deref for QueueEncoderGuard<'a, Word> {
+    type Target = [Word];
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner.backend
     }
 }
 

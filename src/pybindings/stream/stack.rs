@@ -1,18 +1,19 @@
 use core::convert::Infallible;
 use std::{prelude::v1::*, vec};
 
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
+use probability::distribution::Gaussian;
 use pyo3::prelude::*;
 
 use crate::{
     stream::{
-        models::{ContiguousCategorical, LeakyQuantizer},
+        models::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
         Decode, TryCodingError,
     },
     CoderError, DefaultEncoderFrontendError, UnwrapInfallible,
 };
 
-use probability::distribution::Gaussian;
+use super::models::CustomModel;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<AnsCoder>()?;
@@ -222,8 +223,7 @@ impl AnsCoder {
             ));
         }
 
-        let quantizer =
-            LeakyQuantizer::<_, _, u32, 24>::new(min_supported_symbol..=max_supported_symbol);
+        let quantizer = DefaultLeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
         self.inner.try_encode_symbols_reverse(
             symbols
                 .iter()
@@ -296,8 +296,7 @@ impl AnsCoder {
             ));
         }
 
-        let quantizer =
-            LeakyQuantizer::<_, _, u32, 24>::new(min_supported_symbol..=max_supported_symbol);
+        let quantizer = DefaultLeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
         let symbols = self
             .inner
             .try_decode_symbols(means.iter()?.zip(stds.iter()?).map(|(&mean, &std)| {
@@ -334,7 +333,7 @@ impl AnsCoder {
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
-        let model = ContiguousCategorical::<u32, 24>::from_floating_point_probabilities(
+        let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
             probabilities.as_slice()?,
         )
         .map_err(|()| {
@@ -364,14 +363,14 @@ impl AnsCoder {
     /// categorical entropy model. See documentation of `decode_leaky_gaussian_symbols` for a
     /// discussion of the reverse order of decoding, and for a related usage
     /// example.
-    pub fn decode_iid_categorical_symbols<'p>(
+    pub fn decode_iid_categorical_symbols<'py>(
         &mut self,
         amt: usize,
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<'_, f64>,
-        py: Python<'p>,
-    ) -> PyResult<&'p PyArray1<i32>> {
-        let model = ContiguousCategorical::<u32, 24>::from_floating_point_probabilities(
+        py: Python<'py>,
+    ) -> PyResult<&'py PyArray1<i32>> {
+        let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
             probabilities.as_slice()?,
         )
         .map_err(|()| {
@@ -386,6 +385,81 @@ impl AnsCoder {
                 (symbol.unwrap_infallible() as i32).wrapping_add(min_supported_symbol)
             }),
         ))
+    }
+
+    #[text_signature = "(symbols, model)"]
+    pub fn encode_iid_custom_model_reverse<'py>(
+        &mut self,
+        symbols: PyReadonlyArray1<'_, i32>,
+        model: &CustomModel,
+        py: Python<'py>,
+    ) -> PyResult<()> {
+        self.inner
+            .encode_iid_symbols_reverse(symbols.as_slice()?, model.quantized(py))?;
+        Ok(())
+    }
+
+    #[text_signature = "(amt, model)"]
+    pub fn decode_iid_custom_model<'py>(
+        &mut self,
+        amt: usize,
+        model: &CustomModel,
+        py: Python<'py>,
+    ) -> PyResult<&'py PyArray1<i32>> {
+        Ok(PyArray1::from_iter(
+            py,
+            self.inner
+                .decode_iid_symbols(amt, model.quantized(py))
+                .map(|symbol| symbol.unwrap_infallible() as i32),
+        ))
+    }
+
+    #[text_signature = "(symbols, model, model_parameters)"]
+    pub fn encode_custom_model_reverse<'py>(
+        &mut self,
+        symbols: PyReadonlyArray1<'_, i32>,
+        model: &CustomModel,
+        model_parameters: PyReadonlyArray2<'_, f64>,
+        py: Python<'py>,
+    ) -> PyResult<()> {
+        let dims = model_parameters.dims();
+        let num_symbols = dims[0];
+        let num_parameters = dims[1];
+        if symbols.len() != num_symbols {
+            return Err(pyo3::exceptions::PyAttributeError::new_err(
+                "`len(symbols)` must match first dimension of `model_parameters`.",
+            ));
+        }
+
+        let model_parameters = model_parameters.as_slice()?.chunks_exact(num_parameters);
+        let models = model_parameters.map(|params| {
+            model.quantized_with_parameters(py, PyArray1::from_vec(py, params.to_vec()).readonly())
+        });
+        self.inner
+            .encode_symbols_reverse(symbols.as_slice()?.iter().zip(models))?;
+        Ok(())
+    }
+
+    #[text_signature = "(model, model_parameters)"]
+    pub fn decode_custom_model<'py>(
+        &mut self,
+        model: &CustomModel,
+        model_parameters: PyReadonlyArray2<'_, f64>,
+        py: Python<'py>,
+    ) -> PyResult<&'py PyArray1<i32>> {
+        let num_parameters = model_parameters.dims()[1];
+        let model_parameters = model_parameters.as_slice()?.chunks_exact(num_parameters);
+        let models = model_parameters.map(|params| {
+            model.quantized_with_parameters(py, PyArray1::from_vec(py, params.to_vec()).readonly())
+        });
+
+        let symbols = self
+            .inner
+            .decode_symbols(models)
+            .map(|symbol| symbol.unwrap_infallible() as i32)
+            .collect::<Vec<_>>();
+
+        Ok(PyArray1::from_vec(py, symbols))
     }
 }
 
