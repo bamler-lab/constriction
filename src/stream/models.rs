@@ -49,7 +49,7 @@
 //! See [`LeakyQuantizer`](LeakyQuantizer#examples), [`ContiguousCategoricalEntropyModel`],
 //! [`NonContiguousCategoricalEncoderModel`]. [`NonContiguousCategoricalDecoderModel`], and
 //! [`LookupDecoderModel`].
-//! 
+//!
 //! TODO: direct links to "Examples" sections.
 //!
 //! # Motivation
@@ -81,16 +81,16 @@
 //! This is an important property for entropy coding because trying to encode a symbol that
 //! has zero probability under the used entropy model would fail.
 //!
-//! When constructing an entropy model then the caller always has to provide a domain
+//! When constructing an entropy model then the caller always has to provide a support
 //! (either as an integer range or as a list of symbols of arbitrary type). All entropy
 //! models in this module enforce the following constraints:
 //!
-//! 1. all symbols within the user-provided domain are assigned at least the smallest
+//! 1. all symbols within the user-provided support are assigned at least the smallest
 //!    nonzero probability that is representable at the used fixed-point `PRECISION` (even
 //!    if naive rounding would lead to zero probability);
-//! 2. all symbols that are not in the user-provided domain have probability zero;
+//! 2. all symbols that are not in the user-provided support have probability zero;
 //! 3. the probabilities add up to one (this even holds when, e.g., quantizing a continuous
-//!    probability distribution on a finite domain that is smaller than the continuous
+//!    probability distribution on a finite support that is smaller than the continuous
 //!    distribution's possibly unbounded support); and
 //! 4. no single symbol has probability one, i.e., we disallow degenerate entropy models
 //!    that put all probability mass on a single symbol, as such models can lead to problems
@@ -309,7 +309,30 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// // Create a lookup model. This method is provided by the trait `IterableEntropyModel`.
     /// let lookup_decoder_model = model.to_generic_lookup_decoder_model();
     /// ```
+    /// 
+    /// # See also
+    /// 
+    /// - [`floating_point_symbol_table`](Self::floating_point_symbol_table)
     fn symbol_table(&'m self) -> Self::Iter;
+
+    /// Similar to [`symbol_table`], but yields both cumulatives and probabilities in
+    /// floating point representation.
+    ///
+    /// The conversion to floats is guaranteed to be lossless due to the trait bound `F:
+    /// From<Self::Probability>`.
+    /// 
+    /// [`symbol_table`]: Self::symbol_table
+    fn floating_point_symbol_table<F>(
+        &'m self,
+    ) -> FloatingPointSymbolTable<F, Self::Iter, PRECISION>
+    where
+        F: From<Self::Probability>,
+    {
+        FloatingPointSymbolTable {
+            inner: self.symbol_table(),
+            phantom: PhantomData,
+        }
+    }
 
     /// Returns the entropy in units of bits (i.e., base 2).
     ///
@@ -381,7 +404,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
         PRECISION,
     >
     where
-        Self::Symbol: Clone + Default,
+        Self::Symbol: Clone,
     {
         self.into()
     }
@@ -390,8 +413,8 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     ///
     /// This is a fallback method that should only be used if no more specialized
     /// conversions are available. It generates a [`LookupDecoderModel`] that makes no
-    /// assumption about contiguity of the symbol domain. Thus, before calling this method
-    /// first check if the `Self` type has some inherent method with a name like
+    /// assumption about contiguity of the support. Thus, before calling this method first
+    /// check if the `Self` type has some inherent method with a name like
     /// `to_lookup_decoder_model`. If it does, that method probably returns a
     /// `LookupDecoderModel` that is better optimized for your use case.
     #[inline(always)]
@@ -412,6 +435,44 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
         self.into()
     }
 }
+
+/// The iterator returned by [`IterableEntropyModel::floating_point_symbol_table`].
+#[derive(Debug)]
+pub struct FloatingPointSymbolTable<F, I, const PRECISION: usize> {
+    inner: I,
+    phantom: PhantomData<F>,
+}
+
+impl<F, Symbol, Probability, I, const PRECISION: usize> Iterator
+    for FloatingPointSymbolTable<F, I, PRECISION>
+where
+    F: Float,
+    Probability: BitArray + Into<F>,
+    I: Iterator<Item = (Symbol, Probability, <Probability as BitArray>::NonZero)>,
+{
+    type Item = (Symbol, F, F);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (symbol, cumulative, prob) = self.inner.next()?;
+
+        // This gets compiled into a constant, and the divisions by `whole` get compiled
+        // into floating point multiplications rather than (slower) divisions.
+        let whole = (F::one() + F::one()) * (Probability::one() << (PRECISION - 1)).into();
+        Some((symbol, cumulative.into() / whole, prob.get().into() / whole))
+    }
+
+    #[inline(always)]
+    fn size_hint(&self)->(usize, Option<usize>){self.inner.size_hint()}
+}
+
+impl<F, Symbol, Probability, I, const PRECISION: usize> ExactSizeIterator
+    for FloatingPointSymbolTable<F, I, PRECISION>
+where
+    F: Float,
+    Probability: BitArray + Into<F>,
+    I: ExactSizeIterator<Item = (Symbol, Probability, <Probability as BitArray>::NonZero)>,
+{}
 
 /// A trait for [`EntropyModel`]s that can be used for encoding (compressing) data.
 ///
@@ -484,7 +545,7 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     /// the conversion. You may have to specify the return type explicitly using "turbofish"
     /// notation `::<f64>(...)` or `::<f32>(...)`, see example below.
     ///
-    /// Returns `0.0` if `symbol` is not in the domain of the entropy model.
+    /// Returns `0.0` if `symbol` is not in the support of the entropy model.
     ///
     /// This method is provided mainly as a convenience for debugging.
     ///
@@ -653,7 +714,7 @@ where
         PRECISION,
     >
     where
-        Self::Symbol: Clone + Default,
+        Self::Symbol: Clone,
     {
         (*self).to_generic_decoder_model()
     }
@@ -694,6 +755,79 @@ where
 /// You will usually want to use this type through one of its type aliases,
 /// [`DefaultLeakyQuantizer`] or [`SmallLeakyQuantizer`], see [discussion of
 /// presets](super#presets).
+///
+/// # Examples
+///
+/// ## Quantizing Continuous Distributions
+///
+/// ```
+/// use constriction::{
+///     stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Encode, Decode},
+///     UnwrapInfallible,
+/// };
+///
+/// // Create a quantizer that supports integer symbols from -5 to 20 (inclusively),
+/// // using the "default" preset for `Probability` and `PRECISION`.
+/// let quantizer = DefaultLeakyQuantizer::new(-5..=20);
+///
+/// // Quantize a normal distribution with mean 8.3 and standard deviation 4.1.
+/// let continuous_distribution1 = probability::distribution::Gaussian::new(8.3, 4.1);
+/// let entropy_model1 = quantizer.quantize(continuous_distribution1);
+///
+/// // You can reuse the same quantizer for more than one distribution, and the distributions don't
+/// // even have to be of the same type (e.g., one can be a `Gaussian` and another a `Laplace`).
+/// let continuous_distribution2 = probability::distribution::Laplace::new(-1.4, 2.7);
+/// let entropy_model2 = quantizer.quantize(continuous_distribution2);
+///
+/// // Use the entropy models with an entropy coder.
+/// let mut ans_coder = DefaultAnsCoder::new();
+/// ans_coder.encode_symbol(4, &entropy_model1).unwrap();
+/// ans_coder.encode_symbol(-3, &entropy_model2).unwrap();
+///
+/// // Decode symbols (in reverse order, since the `AnsCoder` is a stack) and verify correctness.
+/// assert_eq!(ans_coder.decode_symbol(entropy_model2).unwrap_infallible(), -3);
+/// assert_eq!(ans_coder.decode_symbol(entropy_model1).unwrap_infallible(), 4);
+/// assert!(ans_coder.is_empty());
+/// ```
+///
+/// ## Quantizing a Discrete Distribution (That Has an Analytic Expression)
+///
+/// If you pass a discrete probability distribution to the method [`quantize`] then it no
+/// longer needs to perform any quantization in the data space, but it will still perform
+/// steps 2 and 3 in the list below, i.e., it will still convert to a "leaky" fixed-point
+/// approximation that can be used by any of `constrictions`'s stream codes. In the
+/// following example, we'll quantize a [`Binomial`](probability::distribution::Binomial)
+/// distribution (as discussed [below](#dont-quantize-categorical-distributions-though), you
+/// should *not* quantize a [`Categorical`](probability::distribution::Categorical)
+/// distribution since there are more efficient specialized types for this use case).
+///
+/// ```
+/// use constriction::stream::{
+///     models::DefaultLeakyQuantizer, queue::DefaultRangeEncoder, Encode, Decode
+/// };
+///
+/// let distribution = probability::distribution::Binomial::new(1000, 0.1); // arguments: `n, p`
+/// let quantizer = DefaultLeakyQuantizer::new(0..=1000); // natural support is `0..=n`
+/// let entropy_model = quantizer.quantize(distribution);
+///
+/// // Let's use a Range Coder this time, just for fun (we could as well use an ANS Coder again).
+/// let mut range_encoder = DefaultRangeEncoder::new();
+///
+/// // Encode a "typical" symbol from the distribution (i.e., one with non-negligible probability).
+/// range_encoder.encode_symbol(107, &entropy_model).unwrap();
+///
+/// // Due to the "leakiness" of the quantizer, the following still works despite the fact that
+/// // the symbol `1000` has a ridiculously low probability under the binomial distribution.
+/// range_encoder.encode_symbol(1000, &entropy_model).unwrap();
+///
+/// // Decode symbols (in forward order, since range coding operates as a queue) and verify.
+/// let mut range_decoder = range_encoder.into_decoder().unwrap();
+/// assert_eq!(range_decoder.decode_symbol(&entropy_model).unwrap(), 107);
+/// assert_eq!(range_decoder.decode_symbol(&entropy_model).unwrap(), 1000);
+/// assert!(range_decoder.maybe_exhausted());
+/// ```
+///
+/// # Detailed Description
 ///
 /// A `LeakyQuantizer` is a builder of [`LeakilyQuantizedDistribution`]s. It takes an
 /// arbitrary probability distribution that implements the [`Distribution`] trait from the
@@ -737,73 +871,24 @@ where
 /// and quantiles to fixed-point arithmetic in a way that ensures that all probabilities
 /// within a user-defined range are nonzero.
 ///
-/// # Examples
+/// ## Don't Quantize *Categorical* Distributions, Though.
 ///
-/// ## Quantizing a Continuous Distribution
+/// Although you can use a `LeakyQuantizer` for *discrete* probability distributions, you
+/// should *not* use it for probability distributions of the type
+/// [`probability::distribution::Categorical`]. While this will technically work, it will
+/// lead to poor computational performance (and also to *slightly* suboptimal compression
+/// efficiency). If you're dealing with categorical distributions, use one of the dedicated
+/// types [`ContiguousCategoricalEntropyModel`], [`NonContiguousCategoricalEncoderModel`],
+/// [`NonContiguousCategoricalDecoderModel`], or [`LookupDecoderModel`] instead.
 ///
-/// ```
-/// use constriction::{
-///     stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Encode, Decode},
-///     UnwrapInfallible,
-/// };
-///
-/// // Create a quantizer that supports integer symbols from -5 to 20 (inclusively),
-/// // using the "default" preset for `Probability` and `PRECISION`.
-/// let quantizer = DefaultLeakyQuantizer::new(-5..=20);
-///
-/// // Quantize a normal distribution with mean 8.3 and standard deviation 4.1.
-/// let continuous_distribution1 = probability::distribution::Gaussian::new(8.3, 4.1);
-/// let entropy_model1 = quantizer.quantize(continuous_distribution1);
-///
-/// // You can reuse the same quantizer for more than one distribution, and the distributions don't
-/// // even have to be of the same type (e.g., one can be a `Gaussian` and another a `Laplace`).
-/// let continuous_distribution2 = probability::distribution::Laplace::new(-1.4, 2.7);
-/// let entropy_model2 = quantizer.quantize(continuous_distribution2);
-///
-/// // Use the entropy models with an entropy coder.
-/// let mut ans_coder = DefaultAnsCoder::new();
-/// ans_coder.encode_symbol(4, &entropy_model1).unwrap();
-/// ans_coder.encode_symbol(-3, &entropy_model2).unwrap();
-///
-/// // Decode symbols (in reverse order, since the `AnsCoder` is a stack) and verify correctness.
-/// assert_eq!(ans_coder.decode_symbol(entropy_model2).unwrap_infallible(), -3);
-/// assert_eq!(ans_coder.decode_symbol(entropy_model1).unwrap_infallible(), 4);
-/// assert!(ans_coder.is_empty());
-/// ```
-///
-/// ## Quantizing a Discrete Distribution
-///
-/// If you pass a discrete probability distribution (such as a Binomial distribution) to the
-/// method [`quantize`] then it no longer needs to perform any quantization in the data
-/// space, but it will still perform steps 2 and 3 in the above list, i.e., it will still
-/// convert to a "leaky" fixed-point approximation that can be used by any of
-/// `constrictions`'s stream codes.
-///
-/// ```
-/// use constriction::stream::{
-///     models::DefaultLeakyQuantizer, queue::DefaultRangeEncoder, Encode, Decode
-/// };
-///
-/// let distribution = probability::distribution::Binomial::new(1000, 0.1); // arguments: `n, p`
-/// let quantizer = DefaultLeakyQuantizer::new(0..=1000); // natural domain is `0..=n`
-/// let entropy_model = quantizer.quantize(distribution);
-/// 
-/// // Let's use a Range Coder this time, just for fun (we could as well use an ANS Coder again).
-/// let mut range_encoder = DefaultRangeEncoder::new();
-///
-/// // Encode a "typical" symbol from the distribution (i.e., one with non-negligible probability).
-/// range_encoder.encode_symbol(107, &entropy_model).unwrap();
-///
-/// // Due to the "leakiness" of the quantizer, the following still works despite the fact that
-/// // the symbol `1000` has a ridiculously low probability under the binomial distribution.
-/// range_encoder.encode_symbol(1000, &entropy_model).unwrap();
-///
-/// // Decode symbols (in forward order, since range coding operates as a queue) and verify.
-/// let mut range_decoder = range_encoder.into_decoder().unwrap();
-/// assert_eq!(range_decoder.decode_symbol(&entropy_model).unwrap(), 107);
-/// assert_eq!(range_decoder.decode_symbol(&entropy_model).unwrap(), 1000);
-/// assert!(range_decoder.maybe_exhausted());
-/// ```
+/// By contrast, *do* use a `LeakyQuantizer` if the underlying probability [`Distribution`]
+/// can be described by some analytic function (e.g., the function `f(x) ∝ e^{-(x-\mu)^2/2}`
+/// describing the bell curve of a Gaussian distribution, or the function `f_n(k) = (n
+/// choose k) p^k (1-p)^{n-k}` describing the probability mass function of a binomial
+/// distribution). For such parameterized distributions, both the cumulative distribution
+/// function and its inverse can often be expressed as, or at least approximated by, some
+/// analytic expression that can be evaluated in constant time, independent of the number of
+/// possible symbols.
 ///
 /// # Computational Efficiency
 ///
@@ -857,12 +942,14 @@ where
 /// - The quantile function or inverse CDF [`Inverse::inverse`] evaluates to a finite
 ///   non-NaN value everywhere on the open interval `(0.0, 1.0)`, and it is monotonically
 ///   nondecreasing on this interval. It does not have to be defined at the boundaries `0.0`
-///   or `1.0`. Further, the implementation of `Inverse::inverse` does not actually have to
-///   be the inverse of `Distribution::distribution` because it is only used as an initial
-///   hint where to start a search for the true inverse. It is OK if `Inverse::inverse` is
-///   just some approximation of the true inverse CDF. Any deviations between
-///   `Inverse::inverse` and the true inverse CDF will negatively impact runtime performance
-///   but will otherwise have no observable effect.
+///   or `1.0` (more precisely, it only has to be defined on the closed interval
+///   `[epsilon, 1.0 - epsilon]` where `epsilon := 2.0^{-(PRECISION+1)}` and `^` denotes
+///   mathematical exponentiation). Further, the implementation of `Inverse::inverse` does
+///   not actually have to be the inverse of `Distribution::distribution` because it is only
+///   used as an initial hint where to start a search for the true inverse. It is OK if
+///   `Inverse::inverse` is just some approximation of the true inverse CDF. Any deviations
+///   between `Inverse::inverse` and the true inverse CDF will negatively impact runtime
+///   performance but will otherwise have no observable effect.
 ///
 /// [`quantize`]: Self::quantize
 /// [`Gaussian`]: probability::distribution::Gaussian
@@ -879,7 +966,19 @@ pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
     phantom: PhantomData<Probability>,
 }
 
+/// Type alias for a typical [`LeakyQuantizer`].
+/// 
+/// See:
+/// - [`LeakyQuantizer`]
+/// - [discussion of presets](super#presets)
 pub type DefaultLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u32, 24>;
+
+/// Type alias for a [`LeakyQuantizer`] optimized for compatibility with lookup decoder
+/// models.
+///
+/// See:
+/// - [`LeakyQuantizer`]
+/// - [discussion of presets](super#presets)
 pub type SmallLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u16, 12>;
 
 impl<F, Symbol, Probability, const PRECISION: usize>
@@ -889,61 +988,54 @@ where
     Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
     F: Float,
 {
-    /// Constructs a `LeakyQuantizer` defined on a finite domain.
+    /// Constructs a `LeakyQuantizer` with a finite support.
     ///
-    /// The `domain` is an inclusive range (which can be expressed with the `..=` notation,
+    /// The `support` is an inclusive range (which can be expressed with the `..=` notation,
     /// as in `-100..=100`). All [`LeakilyQuantizedDistribution`]s generated by this
     /// `LeakyQuantizer` are then guaranteed to assign a nonzero probability to all symbols
-    /// within the `domain`, and a zero probability to all symbols outside of the `domain`.
-    /// Having a known domain is often a useful property of entropy models because it
-    /// ensures that all symbols within the `domain` can indeed be encoded, even if their
-    /// probability under the underlying probability distribution is extremely small.
+    /// within the `support`, and a zero probability to all symbols outside of the
+    /// `support`. Having a known support is often a useful property of entropy models
+    /// because it ensures that all symbols within the `support` can indeed be encoded, even
+    /// if their probability under the underlying probability distribution is extremely
+    /// small.
     ///
-    /// This method takes a `RangeInclusive` because we want to support, e.g., probability
-    /// distributions over the `Symbol` type `u8` with full domain `0..=255`.
+    /// This method takes `support` as a `RangeInclusive` because we want to support, e.g.,
+    /// probability distributions over the `Symbol` type `u8` with full support `0..=255`.
     ///
     /// # Panics
     ///
     /// Panics if either of the following conditions is met:
     ///
-    /// - `domain` is empty; or
-    /// - `domain` contains only a single value (we do not support degenerate probability
+    /// - `support` is empty; or
+    /// - `support` contains only a single value (we do not support degenerate probability
     ///   distributions that put all probability mass on a single symbol); or
-    /// - `domain` is larger than `1 << PRECISION` (because in this case, assigning any
-    ///   representable nonzero probability to all elements of `domain` would exceed our
+    /// - `support` is larger than `1 << PRECISION` (because in this case, assigning any
+    ///   representable nonzero probability to all elements of `support` would exceed our
     ///   probability budge).
     ///
     /// [`quantize`]: #method.quantize
-    pub fn new(domain: RangeInclusive<Symbol>) -> Self {
+    pub fn new(support: RangeInclusive<Symbol>) -> Self {
         assert!(PRECISION > 0 && PRECISION <= Probability::BITS);
 
         // We don't support degenerate probability distributions (i.e., distributions that
         // place all probability mass on a single symbol).
-        assert!(domain.end() > domain.start());
+        assert!(support.end() > support.start());
 
-        let domain_size_minus_one = domain.end().wrapping_sub(&domain.start()).as_();
+        let support_size_minus_one = support.end().wrapping_sub(&support.start()).as_();
         let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
         let free_weight = max_probability
-            .checked_sub(&domain_size_minus_one)
-            .expect("The domain is too large to assign a nonzero probability to each element.")
+            .checked_sub(&support_size_minus_one)
+            .expect("The support is too large to assign a nonzero probability to each element.")
             .into();
 
         LeakyQuantizer {
-            min_symbol_inclusive: *domain.start(),
-            max_symbol_inclusive: *domain.end(),
+            min_symbol_inclusive: *support.start(),
+            max_symbol_inclusive: *support.end(),
             free_weight,
             phantom: PhantomData,
         }
     }
-}
 
-impl<F, Symbol, Probability, const PRECISION: usize>
-    LeakyQuantizer<F, Symbol, Probability, PRECISION>
-where
-    Probability: BitArray + Into<F>,
-    Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
-    F: Float,
-{
     /// Quantizes the given probability distribution and returns an [`EntropyModel`].
     ///
     /// See [struct documentation](Self) for details and code examples.
@@ -959,17 +1051,140 @@ where
             quantizer: self,
         }
     }
+
+    /// Returns the exact range of symbols that have nonzero probability.
+    ///
+    /// The returned inclusive range is the same as the one that was passed in to the
+    /// constructor [`new`](Self::new). All entropy models created by the method
+    /// [`quantize`](Self::quantize) will assign a nonzero probability to all elements in
+    /// the `support`, and they will assign a zero probability to all elements outside of
+    /// the `support`. The support contains at least two and at most `1 << PRECISION`
+    /// elements.
+    #[inline]
+    pub fn support(&self) -> RangeInclusive<Symbol> {
+        self.min_symbol_inclusive..=self.max_symbol_inclusive
+    }
 }
 
-/// Wrapper that turns a continuous probability density into a
-/// [`EntropyModel`].
+/// An [`EntropyModel`] that approximates a parameterized probability [`Distribution`].
 ///
-/// Such a `LeakilyQuantizedDistribution` can be created with a [`LeakyQuantizer`].
-/// It can be used for entropy coding since it implements [`EntropyModel`].
+/// A `LeakilyQuantizedDistribution` can be created with a [`LeakyQuantizer`]. It can be
+/// used for encoding and decoding with any of the stream codes provided by the
+/// `constriction` crate (it can only be used for decoding if the underlying
+/// [`Distribution`] implements the the trait [`Inverse`] from the [`probability`] crate).
+///
+/// # When Should I Use This Type of Entropy Model?
+///
+/// Use a `LeakilyQuantizedDistribution` when you have a probabilistic model that is defined
+/// through some analytic expression (e.g., a mathematical formula for the probability
+/// density function of a continuous probability distribution, or a mathematical formula for
+/// the probability mass functions of some discrete probability distribution). Examples of
+/// probabilistic models that lend themselves to being quantized are continuous
+/// distributions such as [`Gaussian`], [`Laplace`], or [`Exponential`], as well as discrete
+/// distributions with some analytic expression, such as [`Binomial`].
+///
+/// Do *not* use a `LeakilyQuantizedDistribution` if your probabilistic model can only be
+/// presented as an explicit probability table. While you could, in principle, apply a
+/// [`LeakyQuantizer`] to such a [`Categorical`] distribution, you will get better
+/// computational performance (and also *slightly* better compression effectiveness) if you
+/// instead use one of the dedicated types [`ContiguousCategoricalEntropyModel`],
+/// [`NonContiguousCategoricalEncoderModel`], [`NonContiguousCategoricalDecoderModel`], or
+/// [`LookupDecoderModel`].
+///
+/// # Examples
+///
+/// See [examples for `LeakyQuantizer`](LeakyQuantizer#examples).
+/// 
+/// # Computational Efficiency
+/// 
+/// See [discussion for `LeakyQuantizer`](LeakyQuantizer#computational-efficiency). 
+///
+/// [`Gaussian`]: probability::distribution::Gaussian
+/// [`Laplace`]: probability::distribution::Laplace
+/// [`Exponential`]: probability::distribution::Exponential
+/// [`Binomial`]: probability::distribution::Binomial
+/// [`Categorical`]: probability::distribution::Categorical
 #[derive(Debug)]
 pub struct LeakilyQuantizedDistribution<'q, F, Symbol, Probability, D, const PRECISION: usize> {
     inner: D,
     quantizer: &'q LeakyQuantizer<F, Symbol, Probability, PRECISION>,
+}
+
+impl<'q, F, Symbol, Probability, D, const PRECISION: usize>
+    LeakilyQuantizedDistribution<'q, F, Symbol, Probability, D, PRECISION>
+where
+    Probability: BitArray + Into<F>,
+    Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
+    F: Float,
+{
+    /// Returns the quantizer that was used to create this entropy model.
+    ///
+    /// You may want to reuse this quantizer to quantize further probability distributions.
+    #[inline]
+    pub fn quantizer(&self) -> &'q LeakyQuantizer<F, Symbol, Probability, PRECISION> {
+        self.quantizer
+    }
+
+    /// Returns a reference to the underlying (floating-point) probability [`Distribution`].
+    ///
+    /// Returns the floating-point probability distribution which this
+    /// `LeakilyQuantizedDistribution` approximates in fixed-point arithmetic.
+    ///
+    /// # See also
+    ///
+    /// - [`inner_mut`](Self::inner_mut)
+    /// - [`into_inner`](Self::into_inner)
+    ///
+    /// [`Distribution`]: probability::distribution::Distribution
+    #[inline]
+    pub fn inner(&self) -> &D {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to the underlying (floating-point) probability
+    /// [`Distribution`].
+    ///
+    /// You can use this method to mutate parameters of the underlying [`Distribution`]
+    /// after it was already quantized. This is safe and cheap since quantization is done
+    /// lazily anyway. Note that you can't mutate the [`support`](Self::support) since it is a
+    /// property of the [`LeakyQuantizer`], not of the `Distribution`. If you want to modify
+    /// the `support` then you have to create a new `LeakyQuantizer` with a different support.
+    ///
+    /// # See also
+    ///
+    /// - [`inner`](Self::inner)
+    /// - [`into_inner`](Self::into_inner)
+    ///
+    /// [`Distribution`]: probability::distribution::Distribution
+    #[inline]
+    pub fn inner_mut(&mut self) -> &mut D {
+        &mut self.inner
+    }
+
+    /// Consumes the entropy model and returns the underlying (floating-point) probability
+    /// [`Distribution`].
+    ///
+    /// Returns the floating-point probability distribution which this
+    /// `LeakilyQuantizedDistribution` approximates in fixed-point arithmetic.
+    ///
+    /// # See also
+    ///
+    /// - [`inner`](Self::inner)
+    /// - [`inner_mut`](Self::inner_mut)
+    ///
+    /// [`Distribution`]: probability::distribution::Distribution
+    #[inline]
+    pub fn into_inner(self) -> D {
+        self.inner
+    }
+
+    /// Returns the exact range of symbols that have nonzero probability.
+    ///
+    /// See [`LeakyQuantizer::support`].
+    #[inline]
+    pub fn support(&self) -> RangeInclusive<Symbol> {
+        self.quantizer.support()
+    }
 }
 
 #[inline(always)]
@@ -1008,11 +1223,21 @@ where
     ///
     /// # Panics
     ///
-    /// If the underlying probability distribution is invalid, i.e., if the quantization
-    /// leads to a zero probability despite the added leakiness (and despite the fact that
-    /// the constructor checks that `min_symbol_inclusive < max_symbol_inclusive`, i.e.,
-    /// that there are at least two symbols with nonzero probability and therefore the
-    /// probability of a single symbol cannot overflow).
+    /// Panics if it detects some invalidity in the underlying probability distribution.
+    /// This means that there is a bug in the implementation of [`Distribution`] for the
+    /// distribution `D`: the cumulative distribution function is either not monotonically
+    /// nondecreasing, returns NaN, or its values exceed the interval `[0.0, 1.0]` at some
+    /// point.
+    ///
+    /// More precisely, this method panics if the quantization procedure leads to a zero
+    /// probability despite the added leakiness (and despite the fact that the constructor
+    /// checks that `min_symbol_inclusive < max_symbol_inclusive`, i.e., that there are at
+    /// least two symbols with nonzero probability and therefore the probability of a single
+    /// symbol should not be able to overflow).
+    ///
+    /// See [requirements for correctness](LeakyQuantizer#requirements-for-correctness).
+    ///
+    /// [`Distribution`]: probability::distribution::Distribution
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<Symbol>,
@@ -1281,6 +1506,12 @@ where
     }
 }
 
+/// Iterator over the [`symbol_table`] of a [`LeakilyQuantizedDistribution`].
+///
+/// This type will become private once anonymous return types are allowed in trait methods.
+/// Do not use it outside of the `constriction` library.
+///
+/// [`symbol_table`]: IterableEntropyModel::symbol_table
 #[derive(Debug)]
 pub struct LeakilyQuantizedDistributionIter<Symbol, Probability, M, const PRECISION: usize> {
     model: M,
@@ -1343,10 +1574,14 @@ where
     }
 }
 
+/// A trait for internal representations of various forms of categorical entropy models.
+///
+/// This trait will become private once anonymous return types are allowed in trait methods.
+/// Do not use it outside of the `constriction` library.
 pub trait SymbolTable<Symbol, Probability: BitArray> {
     fn left_cumulative(&self, index: usize) -> Option<Probability>;
 
-    fn num_symbols(&self) -> usize;
+    fn support_size(&self) -> usize;
 
     unsafe fn left_cumulative_unchecked(&self, index: usize) -> Probability;
 
@@ -1362,7 +1597,7 @@ pub trait SymbolTable<Symbol, Probability: BitArray> {
         assert!(quantile <= max_probability);
 
         let mut left = 0; // Smallest possible index.
-        let mut right = self.num_symbols(); // One above largest possible index.
+        let mut right = self.support_size(); // One above largest possible index.
 
         // Bisect the symbol table to find the last entry whose left-sided cumulative is
         // `<= quantile`, exploiting the following facts:
@@ -1408,9 +1643,18 @@ pub trait SymbolTable<Symbol, Probability: BitArray> {
     }
 }
 
+/// Internal representation of [`ContiguousCategoricalEntropyModel`].
+///
+/// This type will become private once anonymous return types are allowed in trait methods.
+/// Do not use it outside of the `constriction` library.
 #[derive(Debug, Clone, Copy)]
 pub struct ContiguousSymbolTable<Table>(Table);
 
+/// Internal representation of [`NonContiguousCategoricalEncoderModel`] and
+/// [`NonContiguousCategoricalDecoderModel`].
+///
+/// This type will become private once anonymous return types are allowed in trait methods.
+/// Do not use it outside of the `constriction` library.
 #[derive(Debug, Clone, Copy)]
 pub struct NonContiguousSymbolTable<Table>(Table);
 
@@ -1437,7 +1681,7 @@ where
     }
 
     #[inline(always)]
-    fn num_symbols(&self) -> usize {
+    fn support_size(&self) -> usize {
         self.0.as_ref().len() - 1
     }
 }
@@ -1468,11 +1712,16 @@ where
     }
 
     #[inline(always)]
-    fn num_symbols(&self) -> usize {
+    fn support_size(&self) -> usize {
         self.0.as_ref().len() - 1
     }
 }
 
+/// Iterator over the [`symbol_table`] of various categorical distributions.
+///
+/// This type will become private once anonymous return types are allowed in trait methods.
+///
+/// [`symbol_table`]: IterableEntropyModel::symbol_table
 #[derive(Debug)]
 pub struct SymbolTableIter<Symbol, Probability, Table> {
     table: Table,
@@ -1499,7 +1748,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let old_index = self.index;
-        if old_index == self.table.num_symbols() {
+        if old_index == self.table.support_size() {
             None
         } else {
             let new_index = old_index + 1;
@@ -1519,22 +1768,105 @@ where
 
     #[inline(always)]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.table.num_symbols() - self.index;
+        let len = self.table.support_size() - self.index;
         (len, Some(len))
     }
 }
 
-/// A categorical distribution over a finite number of bins.
+/// An entropy model for a categorical probability distribution over a contiguous range of
+/// integers starting at zero.
 ///
-/// This distribution implements [`EntropyModel`], which means that it can be
-/// used for entropy coding with a coder that implements [`Encode`] or [`Decode`].
+/// You will usually want to use this type through one of its type aliases,
+/// [`DefaultContiguousCategoricalEntropyModel`] or
+/// [`SmallContiguousCategoricalEntropyModel`], see [discussion of presets](super#presets).
 ///
-/// Note: We currently don't provide a non-contiguous variant of this model. If you have
-/// non-contiguous models, you can trivially map them to a contiguous range using a
-/// [`HashMap`] for encoding or a simple array lookup for decoding. By contrast, we do
-/// provide a specialized non-contiguous variant of lookup models because those models are
-/// optimized for speed and the specialized non-contiguous variant allows us to remove one
-/// indirection.
+/// This entropy model implements both [`EncoderModel`] and [`DecoderModel`], which means
+/// that it can be used for both encoding and decoding with any of the stream coders
+/// provided by the `constriction` crate.
+///
+/// # Example
+///
+/// ```
+/// use constriction::{
+///     stream::{stack::DefaultAnsCoder, models::DefaultContiguousCategoricalEntropyModel, Decode},
+///     UnwrapInfallible,
+/// };
+///
+/// // Create a `ContiguousCategoricalEntropyModel` that approximates floating point probabilities.
+/// let probabilities = [0.3, 0.0, 0.4, 0.1, 0.2]; // Note that `probabilities[1] == 0.0`.
+/// let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+///     &probabilities
+/// ).unwrap();
+/// assert_eq!(model.support_size(), 5); // `model` supports the symbols `0..5usize`.
+///
+/// // Use `model` for entropy coding.
+/// let message = vec![2, 0, 3, 1, 2, 4, 3, 2, 0];
+/// let mut ans_coder = DefaultAnsCoder::new();
+///
+/// // We could pass `model` by reference but passing `model.as_view()` is slightly more efficient.
+/// ans_coder.encode_iid_symbols_reverse(message.iter().cloned(), model.as_view()).unwrap();
+/// // Note that `message` contains the symbol `1`, and that `probabilities[1] == 0.0`. However, we
+/// // can still encode the symbol because the `ContiguousCategoricalEntropyModel` is "leaky", i.e.,
+/// // it assigns a nonzero probability to all symbols in the range `0..model.support_size()`.
+///
+/// // Decode the encoded message and verify correctness.
+/// let decoded = ans_coder
+///     .decode_iid_symbols(9, model.as_view())
+///     .collect::<Result<Vec<_>, _>>()
+///     .unwrap_infallible();
+/// assert_eq!(decoded, message);
+/// assert!(ans_coder.is_empty());
+///
+/// // The `model` assigns zero probability to any symbols that are not in the support
+/// // `0..model.support_size()`, so trying to encode a message that contains such a symbol fails.
+/// assert!(ans_coder.encode_iid_symbols_reverse(&[2, 0, 5, 1], model.as_view()).is_err())
+/// // ERROR: symbol `5` is not in the support of `model`.
+/// ```
+///
+/// # When Should I Use This Type of Entropy Model?
+///
+/// Use a `ContiguousCategoricalEntropyModel` for probabilistic models that can *only* be
+/// represented as an explicit probability table, and not by some more compact analytic
+/// expression. If you have a probability model that can be expressed by some analytical
+/// expression (e.g., a [`Binomial`](probability::distribution::Binomial) distribution),
+/// then use [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the
+/// same entropy model, in which case the explicitly tabulated representation of a
+/// categorical entropy model could improve runtime performance).
+///
+/// Further, a `ContiguousCategoricalEntropyModel` can only represent probability
+/// distribution whose support (i.e., the set of symbols to which the model assigns a
+/// non-zero probability) is a contiguous range of integers starting at zero. If the support
+/// of your probability distribution has a more complicated structure (or if the `Symbol`
+/// type is not an integer type), then you can use a
+/// [`NonContiguousCategoricalEncoderModel`] or a [`NonContiguousCategoricalDecoderModel`],
+/// which are strictly more general than a `ContiguousCategoricalEntropyModel` but which
+/// have a larger memory footprint and slightly worse runtime performance.
+///
+/// If you want to *decode* lots of symbols with the same entropy model, and if reducing the
+/// `PRECISION` to a moderate value is acceptable to you, then you may want to consider
+/// using a [`LookupDecoderModel`] instead for even better runtime performance (at the cost
+/// of a larger memory footprint and worse compression efficiency due to lower `PRECISION`).
+///
+/// # Computational Efficiency
+///
+/// For a probability distribution with a support of `N` symbols, a
+/// `ContiguousCategoricalEntropyModel` has the following asymptotic costs:
+///
+/// - creation:
+///   - runtime cost: `Θ(N)` when creating from fixed point probabilities, `Θ(N log(N))`
+///     when creating from floating point probabilities;
+///   - memory footprint: `Θ(N)`;
+///   - both are cheaper by a constant factor than for a
+///     [`NonContiguousCategoricalEncoderModel`] or a
+///     [`NonContiguousCategoricalDecoderModel`].
+/// - encoding a symbol (calling [`EncoderModel::left_cumulative_and_probability`]):
+///   - runtime cost: `Θ(1)` (cheaper than for [`NonContiguousCategoricalEncoderModel`]
+///     since it compiles to a simiple array lookup rather than a `HashMap` lookup)
+///   - memory footprint: no heap allocations, constant stack space.
+/// - decoding a symbol (calling [`DecoderModel::quantile_function`]):
+///   - runtime cost: `Θ(log(N))` (both expected and worst-case; probably slightly cheaper
+///     than for [`NonContiguousCategoricalDecoderModel`] due to better memory locality)
+///   - memory footprint: no heap allocations, constant stack space.
 ///
 /// [`EntropyModel`]: trait.EntropyModel.html
 /// [`Encode`]: crate::Encode
@@ -1554,6 +1886,70 @@ pub struct ContiguousCategoricalEntropyModel<Probability, Table, const PRECISION
     phantom: PhantomData<Probability>,
 }
 
+/// An entropy model for a categorical probability distribution over arbitrary symbols, for
+/// decoding only.
+///
+/// You will usually want to use this type through one of its type aliases,
+/// [`DefaultNonContiguousCategoricalDecoderModel`] or
+/// [`SmallNonContiguousCategoricalDecoderModel`], see [discussion of
+/// presets](super#presets).
+///
+/// This type implements the trait [`DecoderModel`] but not the trait [`EncoderModel`].
+/// Thus, you can use a `NonContiguousCategoricalDecoderModel` for *decoding* with any of
+/// the stream decoders provided by the `constriction` crate, but not for encoding. If you
+/// want to encode data, use a [`NonContiguousCategoricalEncoderModel`] instead. You can
+/// convert a `NonContiguousCategoricalDecoderModel` to a
+/// `NonContiguousCategoricalEncoderModel` by calling
+/// [`to_generic_encoder_model`](IterableEntropyModel::to_generic_encoder_model) on it
+/// (you'll have to bring the trait [`IterableEntropyModel`] into scope to do so: `use
+/// constriction::stream::models::IterableEntropyModel`).
+///
+/// # Example
+///
+/// See [example for
+/// `NonContiguousCategoricalEncoderModel`](NonContiguousCategoricalEncoderModel#example).
+///
+/// # When Should I Use This Type of Entropy Model?
+///
+/// Use a `NonContiguousCategoricalDecoderModel` for probabilistic models that can *only* be
+/// represented as an explicit probability table, and not by some more compact analytic
+/// expression. If you have a probability model that can be expressed by some analytical
+/// expression (e.g., a [`Binomial`](probability::distribution::Binomial) distribution),
+/// then use [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the
+/// same entropy model, in which case the explicitly tabulated representation of a
+/// categorical entropy model could improve runtime performance).
+///
+/// Further, if the *support* of your probabilistic model (i.e., the set of symbols to which
+/// the model assigns a non-zero probability) is a contiguous range of integers starting at
+/// zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
+/// computational efficiency and it is easier to use since it supports both encoding and
+/// decoding with a single type.
+///
+/// If you want to *decode* lots of symbols with the same entropy model, and if reducing the
+/// `PRECISION` to a moderate value is acceptable to you, then you may want to consider
+/// using a [`LookupDecoderModel`] instead for even better runtime performance (at the cost
+/// of a larger memory footprint and worse compression efficiency due to lower `PRECISION`).
+///
+/// # Computational Efficiency
+///
+/// For a probability distribution with a support of `N` symbols, a
+/// `NonContiguousCategoricalDecoderModel` has the following asymptotic costs:
+///
+/// - creation:
+///   - runtime cost: `Θ(N)` when creating from fixed point probabilities, `Θ(N log(N))`
+///     when creating from floating point probabilities;
+///   - memory footprint: `Θ(N)`;
+///   - both are more expensive by a constant factor than for a
+///     [`ContiguousCategoricalEntropyModel`].
+/// - encoding a symbol: not supported; use a [`NonContiguousCategoricalEncoderModel`].
+/// - decoding a symbol (calling [`DecoderModel::quantile_function`]):
+///   - runtime cost: `Θ(log(N))` (both expected and worst-case)
+///   - memory footprint: no heap allocations, constant stack space.
+///
+/// [`EntropyModel`]: trait.EntropyModel.html
+/// [`Encode`]: crate::Encode
+/// [`Decode`]: crate::Decode
+/// [`HashMap`]: std::hash::HashMap
 #[derive(Debug, Clone, Copy)]
 pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, const PRECISION: usize>
 {
@@ -1569,13 +1965,37 @@ pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, cons
     phantom: PhantomData<(Symbol, Probability)>,
 }
 
+/// Type alias for a typical [`ContiguousCategoricalEntropyModel`].
+/// 
+/// See:
+/// - [`ContiguousCategoricalEntropyModel`]
+/// - [discussion of presets](super#presets)
 pub type DefaultContiguousCategoricalEntropyModel<Table = Vec<u32>> =
     ContiguousCategoricalEntropyModel<u32, Table, 24>;
+
+/// Type alias for a [`ContiguousCategoricalEntropyModel`] optimized for compatibility with
+/// lookup decoder models.
+///
+/// See:
+/// - [`ContiguousCategoricalEntropyModel`]
+/// - [discussion of presets](super#presets)
 pub type SmallContiguousCategoricalEntropyModel<Table = Vec<u16>> =
     ContiguousCategoricalEntropyModel<u16, Table, 12>;
 
+/// Type alias for a typical [`NonContiguousCategoricalDecoderModel`].
+/// 
+/// See:
+/// - [`NonContiguousCategoricalDecoderModel`]
+/// - [discussion of presets](super#presets)
 pub type DefaultNonContiguousCategoricalDecoderModel<Symbol, Table = Vec<(u32, Symbol)>> =
     NonContiguousCategoricalDecoderModel<Symbol, u32, Table, 24>;
+
+/// Type alias for a [`NonContiguousCategoricalDecoderModel`] optimized for compatibility
+/// with lookup decoder models.
+///
+/// See:
+/// - [`NonContiguousCategoricalDecoderModel`]
+/// - [discussion of presets](super#presets)
 pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Table = Vec<(u16, Symbol)>> =
     NonContiguousCategoricalDecoderModel<Symbol, u16, Table, 12>;
 
@@ -1602,12 +2022,12 @@ impl<Probability: BitArray, const PRECISION: usize>
     ///   This typically introduces rounding errors;
     /// - despite the possibility of rounding errors, the returned probability
     ///   distribution will be exactly normalized; and
-    /// - each symbol in the domain defined above gets assigned a strictly nonzero
-    ///   probability, even if the provided probability for the symbol is zero or
+    /// - each symbol in the support `0..probabilities.len()` gets assigned a strictly
+    ///   nonzero probability, even if the provided probability for the symbol is zero or
     ///   below the threshold that can be resolved in fixed point arithmetic with
-    ///   type `Probability`. We refer to this property as the resulting distribution
-    ///   being "leaky". This probability ensures that all symbols within the domain
-    ///   can be encoded when this distribution is used as an entropy model.
+    ///   `PRECISION` bits. We refer to this property as the resulting distribution being
+    ///   "leaky". The leakiness guarantees that all symbols within the support can be
+    ///   encoded when this distribution is used as an entropy model.
     ///
     /// More precisely, the resulting probability distribution minimizes the cross
     /// entropy from the provided (floating point) to the resulting (fixed point)
@@ -1624,7 +2044,7 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// if `probabilities` has only a single element, because degenerate probability
     /// distributions currently cannot be represented.
     ///
-    /// TODO: should also return an error if domain is too large to support leaky
+    /// TODO: should also return an error if support is too large to support leaky
     /// distribution
     pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
@@ -1643,68 +2063,102 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// Constructs a distribution with a PMF given in fixed point arithmetic.
     ///
     /// This is a low level method that allows, e.g,. reconstructing a probability
-    /// distribution previously exported with [`fixed_point_probabilities`]. The more common
-    /// way to construct a `LeakyCategorical` distribution is via
+    /// distribution previously exported with [`symbol_table`]. The more common way to
+    /// construct a `LeakyCategorical` distribution is via
     /// [`from_floating_point_probabilities`].
     ///
-    /// The entries of `probabilities` have to be nonzero and (logically) sum up to
-    /// `1 << PRECISION`, where `PRECISION` is a const generic parameter on the
-    /// `LeakyCategorical` distribution. Further, all probabilities have to be nonzero (which is
-    /// statically enforced by the trait bound on the iterator's items).
+    /// The items of `probabilities` have to be nonzero and smaller than `1 << PRECISION`,
+    /// where `PRECISION` is a const generic parameter on the
+    /// `ContiguousCategoricalEntropyModel`.
     ///
-    /// # Panics
-    ///
-    /// If `probabilities` is not properly normalized (including if it is empty).
+    /// If `infer_last_probability` is `false` then the items yielded by `probabilities`
+    /// have to (logically) sum up to `1 << PRECISION`. If `infer_last_probability` is
+    /// `true` then they must sum up to a value strictly smaller than `1 << PRECISION`, and
+    /// the method will add an additional symbol at the end that takes the remaining
+    /// probability mass.
     ///
     /// # Examples
     ///
-    /// The provided probabilities have to sum up to `1 << PRECISION`:
+    /// If `infer_last_probability` is `false`, the provided probabilities have to sum up to
+    /// `1 << PRECISION`:
     ///
     /// ```
-    /// use constriction::stream::models::LeakyCategorical;
+    /// use constriction::stream::models::{
+    ///     DefaultContiguousCategoricalEntropyModel, IterableEntropyModel
+    /// };
     ///
     /// let probabilities = vec![1u32 << 21, 1 << 22, 1 << 22, 1 << 22, 1 << 21];
     /// // `probabilities` sums up to `1 << PRECISION` as required:
     /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
     ///
-    /// let model = LeakyCategorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities);
-    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
-    /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
+    /// let model = DefaultContiguousCategoricalEntropyModel
+    ///     ::from_nonzero_fixed_point_probabilities(&probabilities, false).unwrap();
+    /// let symbol_table = model.floating_point_symbol_table::<f64>().collect::<Vec<_>>();
+    /// assert_eq!(
+    ///     symbol_table,
+    ///     vec![
+    ///         (0, 0.0, 0.125),
+    ///         (1, 0.125, 0.25),
+    ///         (2, 0.375, 0.25),
+    ///         (3, 0.625, 0.25),
+    ///         (4, 0.875, 0.125),
+    ///     ]
+    /// );
     /// ```
     ///
-    /// If `PRECISION` is set to the maximum value supported by the `Word` type
-    /// `Probability`, then the provided probabilities still have to *logically* sum up to
-    /// `1 << PRECISION` (i.e., the summation has to wrap around exactly once):
+    /// If `PRECISION` is set to the maximum value supported by the type `Probability`, then
+    /// the provided probabilities still have to *logically* sum up to `1 << PRECISION`
+    /// (i.e., the summation has to wrap around exactly once):
     ///
     /// ```
-    /// use constriction::stream::models::LeakyCategorical;
+    /// use constriction::stream::models::{
+    ///     ContiguousCategoricalEntropyModel, IterableEntropyModel
+    /// };
     ///
     /// let probabilities = vec![1u32 << 29, 1 << 30, 1 << 30, 1 << 30, 1 << 29];
     /// // `probabilities` sums up to `1 << 32` (logically), i.e., it wraps around once.
     /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
     ///
-    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
-    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
-    /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
+    /// let model = ContiguousCategoricalEntropyModel::<u32, Vec<u32>, 32>
+    ///     ::from_nonzero_fixed_point_probabilities(&probabilities, false).unwrap();
+    /// let symbol_table = model.floating_point_symbol_table::<f64>().collect::<Vec<_>>();
+    /// assert_eq!(
+    ///     symbol_table,
+    ///     vec![
+    ///         (0, 0.0, 0.125),
+    ///         (1, 0.125, 0.25),
+    ///         (2, 0.375, 0.25),
+    ///         (3, 0.625, 0.25),
+    ///         (4, 0.875, 0.125)
+    ///     ]
+    /// );
     /// ```
     ///
-    /// Wrapping around twice panics:
+    /// Wrapping around twice fails:
     ///
-    /// ```should_panic
-    /// use constriction::stream::models::LeakyCategorical;
+    /// ```
+    /// use constriction::stream::models::ContiguousCategoricalEntropyModel;
     /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
     /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
-    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
+    /// assert!(
+    ///     ContiguousCategoricalEntropyModel::<u32, Vec<u32>, 32>
+    ///         ::from_nonzero_fixed_point_probabilities(&probabilities, false).is_err()
+    /// );
     /// ```
     ///
     /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
     ///
-    /// ```should_panic
-    /// use constriction::stream::models::LeakyCategorical;
+    /// ```
+    /// use constriction::stream::models::ContiguousCategoricalEntropyModel;
     /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
-    /// let model = LeakyCategorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
+    /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
+    /// assert!(
+    ///     ContiguousCategoricalEntropyModel::<u32, Vec<u32>, 32>
+    ///         ::from_nonzero_fixed_point_probabilities(&probabilities, false).is_err()
+    /// );
     /// ```
     ///
+    /// [`symbol_table`]: IterableEntropyModel::symbol_table
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
     /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
     pub fn from_nonzero_fixed_point_probabilities<I>(
@@ -1739,12 +2193,10 @@ impl<Probability: BitArray, const PRECISION: usize>
 impl<Symbol, Probability: BitArray, const PRECISION: usize>
     NonContiguousCategoricalDecoderModel<Symbol, Probability, Vec<(Probability, Symbol)>, PRECISION>
 where
-    Symbol: Clone + Default,
+    Symbol: Clone,
 {
-    /// Constructs a leaky distribution whose PMF approximates given probabilities.
-    ///
-    /// The returned distribution will be defined for symbols of type `usize` from
-    /// the range `0..probabilities.len()`.
+    /// Constructs a leaky distribution over the provided `symbols` whose PMF approximates
+    /// given `probabilities`.
     ///
     /// The argument `probabilities` is a slice of floating point values (`F` is
     /// typically `f64` or `f32`). All entries must be nonnegative and at least one
@@ -1761,12 +2213,12 @@ where
     ///   This typically introduces rounding errors;
     /// - despite the possibility of rounding errors, the returned probability
     ///   distribution will be exactly normalized; and
-    /// - each symbol in the domain defined above gets assigned a strictly nonzero
-    ///   probability, even if the provided probability for the symbol is zero or
-    ///   below the threshold that can be resolved in fixed point arithmetic with
-    ///   type `Probability`. We refer to this property as the resulting distribution
-    ///   being "leaky". This probability ensures that all symbols within the domain
-    ///   can be encoded when this distribution is used as an entropy model.
+    /// - each symbol gets assigned a strictly nonzero probability, even if the provided
+    ///   probability for the symbol is zero or below the threshold that can be resolved in
+    ///   fixed point arithmetic with `PRECISION` bits. We refer to this property as the
+    ///   resulting distribution being "leaky". The leakiness guarantees that a decoder can
+    ///   in principle decode any of the provided symbols (if given appropriate compressed
+    ///   data).
     ///
     /// More precisely, the resulting probability distribution minimizes the cross
     /// entropy from the provided (floating point) to the resulting (fixed point)
@@ -1774,16 +2226,18 @@ where
     ///
     /// # Error Handling
     ///
-    /// Returns an error if the provided probability distribution cannot be
-    /// normalized, either because `probabilities` is of length zero, or because one
-    /// of its entries is negative with a nonzero magnitude, or because the sum of
-    /// its elements is zero, infinite, or NaN.
+    /// Returns an error if `symbols.len() != probabilities.len()`.
+    /// 
+    /// Also returns an error if the provided probability distribution cannot be normalized,
+    /// either because `probabilities` is of length zero, or because one of its entries is
+    /// negative with a nonzero magnitude, or because the sum of its elements is zero,
+    /// infinite, or NaN.
     ///
     /// Also returns an error if the probability distribution is degenerate, i.e.,
     /// if `probabilities` has only a single element, because degenerate probability
     /// distributions currently cannot be represented.
     ///
-    /// TODO: should also return an error if domain is too large to support leaky
+    /// TODO: should also return an error if support is too large to support leaky
     /// distribution
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
@@ -1810,70 +2264,60 @@ where
     /// Constructs a distribution with a PMF given in fixed point arithmetic.
     ///
     /// This is a low level method that allows, e.g,. reconstructing a probability
-    /// distribution previously exported with [`fixed_point_probabilities`]. The more common
-    /// way to construct a `LeakyCategorical` distribution is via
-    /// [`from_floating_point_probabilities`].
+    /// distribution previously exported with [`symbol_table`]. The more common way to
+    /// construct a `NonContiguousCategoricalDecoderModel` distribution is via
+    /// [`from_symbols_and_floating_point_probabilities`].
     ///
-    /// The entries of `probabilities` have to be nonzero and (logically) sum up to
-    /// `1 << PRECISION`, where `PRECISION` is a const generic parameter on the
-    /// `LeakyCategorical` distribution. Further, all probabilities have to be nonzero (which is
-    /// statically enforced by the trait bound on the iterator's items).
+    /// The items of `probabilities` have to be nonzero and smaller than `1 << PRECISION`,
+    /// where `PRECISION` is a const generic parameter on the
+    /// `NonContiguousCategoricalDecoderModel`.
     ///
-    /// # Panics
+    /// If `infer_last_probability` is `false` then `probabilities` must yield the same
+    /// number of items as `symbols` does and the items yielded by `probabilities` have to
+    /// to (logically) sum up to `1 << PRECISION`. If `infer_last_probability` is `true`
+    /// then `probabilities` must yield one fewer item than `symbols`, they items must sum
+    /// up to a value strictly smaller than `1 << PRECISION`, and the method will assign the
+    /// (nonzero) remaining probability to the last symbol.
     ///
-    /// If `probabilities` is not properly normalized (including if it is empty).
+    /// # Example
     ///
-    /// # Examples
-    ///
-    /// The provided probabilities have to sum up to `1 << PRECISION`:
-    ///
-    /// ```
-    /// use constriction::stream::models::LeakyCategorical;
-    ///
-    /// let probabilities = vec![1u32 << 21, 1 << 22, 1 << 22, 1 << 22, 1 << 21];
-    /// // `probabilities` sums up to `1 << PRECISION` as required:
-    /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
-    ///
-    /// let model = LeakyCategorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities);
-    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
-    /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
-    /// ```
-    ///
-    /// If `PRECISION` is set to the maximum value supported by the `Word` type
-    /// `Probability`, then the provided probabilities still have to *logically* sum up to
-    /// `1 << PRECISION` (i.e., the summation has to wrap around exactly once):
+    /// Creating a `NonContiguousCategoricalDecoderModel` with inferred probability of the
+    /// last symbol:
     ///
     /// ```
-    /// use constriction::stream::models::LeakyCategorical;
+    /// use constriction::stream::models::{
+    ///     DefaultNonContiguousCategoricalDecoderModel, IterableEntropyModel
+    /// };
     ///
-    /// let probabilities = vec![1u32 << 29, 1 << 30, 1 << 30, 1 << 30, 1 << 29];
-    /// // `probabilities` sums up to `1 << 32` (logically), i.e., it wraps around once.
-    /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
+    /// let partial_probabilities = vec![1u32 << 21, 1 << 22, 1 << 22, 1 << 22];
+    /// // `partial_probabilities` sums up to strictly less than `1 << PRECISION` as required:
+    /// assert!(partial_probabilities.iter().sum::<u32>() < 1 << 24);
     ///
-    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities);
-    /// let pmf = model.floating_point_probabilities().collect::<Vec<f64>>();
-    /// assert_eq!(pmf, vec![0.125, 0.25, 0.25, 0.25, 0.125]);
+    /// let symbols = "abcde"; // Has one more entry than `probabilities`
+    /// 
+    /// let model = DefaultNonContiguousCategoricalDecoderModel
+    ///     ::from_symbols_and_nonzero_fixed_point_probabilities(
+    ///         symbols.chars(), &partial_probabilities, true).unwrap();
+    /// let symbol_table = model.floating_point_symbol_table::<f64>().collect::<Vec<_>>();
+    /// assert_eq!(
+    ///     symbol_table,
+    ///     vec![
+    ///         ('a', 0.0, 0.125),
+    ///         ('b', 0.125, 0.25),
+    ///         ('c', 0.375, 0.25),
+    ///         ('d', 0.625, 0.25),
+    ///         ('e', 0.875, 0.125), // Inferred last probability.
+    ///     ]
+    /// );
     /// ```
     ///
-    /// Wrapping around twice panics:
+    /// For more related examples, see
+    /// [`ContiguousCategoricalEntropyModel::from_nonzero_fixed_point_probabilities`].
     ///
-    /// ```should_panic
-    /// use constriction::stream::models::LeakyCategorical;
-    /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
-    /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
-    /// let model = LeakyCategorical::<u32, 32>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
-    /// ```
-    ///
-    /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
-    ///
-    /// ```should_panic
-    /// use constriction::stream::models::LeakyCategorical;
-    /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
-    /// let model = LeakyCategorical::<u32, 24>::from_nonzero_fixed_point_probabilities(&probabilities); // PANICS.
-    /// ```
-    ///
-    /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
-    /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
+    /// [`symbol_table`]: IterableEntropyModel::symbol_table
+    /// [`fixed_point_probabilities`]: Self::fixed_point_probabilities
+    /// [`from_symbols_and_floating_point_probabilities`]:
+    ///     Self::from_symbols_and_floating_point_probabilities
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
         probabilities: P,
@@ -1895,7 +2339,10 @@ where
             },
             infer_last_probability,
         )?;
-        cdf.push((wrapping_pow2(PRECISION), Symbol::default()));
+        cdf.push((
+            wrapping_pow2(PRECISION),
+            cdf.last().expect("`symbols` is not empty").1.clone(),
+        ));
 
         if symbols.next().is_some() {
             Err(())
@@ -1907,17 +2354,28 @@ where
         }
     }
 
+    /// Creates a `NonContiguousCategoricalDecoderModel` from any entropy model that
+    /// implements [`IterableEntropyModel`].
+    ///
+    /// Calling `NonContiguousCategoricalDecoderModel::from_iterable_entropy_model(&model)`
+    /// is equivalent to calling `model.to_generic_decoder_model()`, where the latter
+    /// requires bringing [`IterableEntropyModel`] into scope.
+    ///
     /// TODO: test
     pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
     where
         M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
     {
-        let last_entry = (wrapping_pow2(PRECISION), Symbol::default());
-        let cdf = model
-            .symbol_table()
-            .map(|(symbol, left_sided_cumulative, _)| (left_sided_cumulative, symbol))
-            .chain(core::iter::once(last_entry))
-            .collect::<Vec<_>>();
+        let symbol_table = model.symbol_table();
+        let mut cdf = Vec::with_capacity(symbol_table.size_hint().0);
+        for (symbol, left_sided_cumulative, _) in symbol_table {
+            cdf.push((left_sided_cumulative, symbol));
+        }
+        cdf.push((
+            wrapping_pow2(PRECISION),
+            cdf.last().expect("`symbol_table` is not empty").1.clone(),
+        ));
+
         Self {
             cdf: NonContiguousSymbolTable(cdf),
             phantom: PhantomData,
@@ -1934,14 +2392,27 @@ where
     /// Returns the number of symbols supported by the model.
     ///
     /// The distribution is defined on the contiguous range of symbols from zero
-    /// (inclusively) to `num_symbols()` (exclusively). All symbols within this range are
+    /// (inclusively) to `support_size()` (exclusively). All symbols within this range are
     /// guaranteed to have a nonzero probability, while all symbols outside of this range
     /// have a zero probability.
     #[inline(always)]
-    pub fn num_symbols(&self) -> usize {
-        SymbolTable::<usize, Probability>::num_symbols(&self.cdf)
+    pub fn support_size(&self) -> usize {
+        SymbolTable::<usize, Probability>::support_size(&self.cdf)
     }
 
+    /// Makes a very cheap shallow copy of the model that can be used much like a shared
+    /// reference.
+    ///
+    /// The returned `ContiguousCategoricalEntropyModel` implements `Copy`, which is a
+    /// requirement for some methods, such as [`Encode::encode_iid_symbols`] or
+    /// [`Decode::decode_iid_symbols`]. These methods could also accept a shared reference
+    /// to a `ContiguousCategoricalEntropyModel` (since all references to entropy models are
+    /// also entropy models, and all shared references implement `Copy`), but passing a
+    /// *view* instead may be slightly more efficient because it avoids one level of
+    /// dereferencing.
+    ///
+    /// [`Encode::encode_iid_symbols`]: super::Encode::encode_iid_symbols
+    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
     #[inline]
     pub fn as_view(
         &self,
@@ -1952,6 +2423,26 @@ where
         }
     }
 
+    /// Creates a [`LookupDecoderModel`] for efficient decoding of i.i.d. data
+    ///
+    /// While a `ContiguousCategoricalEntropyModel` can already be used for decoding (since
+    /// it implements [`DecoderModel`]), you may prefer converting it to a
+    /// `LookupDecoderModel` first for improved efficiency. Logically, the two will be
+    /// equivalent.
+    ///
+    /// # Warning
+    ///
+    /// You should only call this method if both of the following conditions are satisfied:
+    ///
+    /// - `PRECISION` is relatively small (typically `PRECISION == 12`, as in the "Small"
+    ///   [preset]) because the memory footprint of a `LookupDecoderModel` grows
+    ///   exponentially in `PRECISION`; and
+    /// - you're about to decode a relatively large number of symbols with the resulting
+    ///   model; the conversion to a `LookupDecoderModel` bears a significant runtime and
+    ///   memory overhead, so if you're going to use the resulting model only for a single
+    ///   or a handful of symbols then you'll end up paying more than you gain.
+    /// 
+    /// [preset]: super#presets
     #[inline(always)]
     pub fn to_lookup_decoder_model(
         &self,
@@ -1977,17 +2468,24 @@ where
     Probability: BitArray,
     Table: AsRef<[(Probability, Symbol)]>,
 {
-    /// Returns the number of symbols supported by the model.
-    ///
-    /// The distribution is defined on the contiguous range of symbols from zero
-    /// (inclusively) to `num_symbols()` (exclusively). All symbols within this range are
-    /// guaranteed to have a nonzero probability, while all symbols outside of this range
-    /// have a zero probability.
+    /// Returns the number of symbols supported by the model, i.e., the number of symbols to
+    /// which the model assigns a nonzero probability.
     #[inline(always)]
-    pub fn num_symbols(&self) -> usize {
-        self.cdf.num_symbols()
+    pub fn support_size(&self) -> usize {
+        self.cdf.support_size()
     }
 
+    /// Makes a very cheap shallow copy of the model that can be used much like a shared
+    /// reference.
+    ///
+    /// The returned `NonContiguousCategoricalDecoderModel` implements `Copy`, which is a
+    /// requirement for some methods, such as [`Decode::decode_iid_symbols`]. These methods
+    /// could also accept a shared reference to a `NonContiguousCategoricalDecoderModel`
+    /// (since all references to entropy models are also entropy models, and all shared
+    /// references implement `Copy`), but passing a *view* instead may be slightly more
+    /// efficient because it avoids one level of dereferencing.
+    ///
+    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
     #[inline]
     pub fn as_view(
         &self,
@@ -2084,7 +2582,7 @@ where
 }
 
 /// `EncoderModel` is only implemented for *contiguous* generic categorical models. To
-/// decode encode symbols from a non-contiguous domain, use an
+/// decode encode symbols from a non-contiguous support, use an
 /// `NonContiguousCategoricalEncoderModel`.
 impl<Probability, Table, const PRECISION: usize> EncoderModel<PRECISION>
     for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
@@ -2105,7 +2603,7 @@ where
             // we know that `index + 1` doesn't wrap because `cdf.len()` can't be
             // `usize::max_value()` since that would mean that there's no space left even
             // for the call stack).
-            if index >= self.num_symbols() {
+            if index >= self.support_size() {
                 return None;
             }
             (
@@ -2131,7 +2629,7 @@ impl<'m, Symbol, Probability, M, const PRECISION: usize> From<&'m M>
         PRECISION,
     >
 where
-    Symbol: Clone + Default,
+    Symbol: Clone,
     Probability: BitArray,
     M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
 {
@@ -2141,6 +2639,103 @@ where
     }
 }
 
+/// An entropy model for a categorical probability distribution over arbitrary symbols, for
+/// encoding only.
+///
+/// You will usually want to use this type through one of its type aliases,
+/// [`DefaultNonContiguousCategoricalEncoderModel`] or
+/// [`SmallNonContiguousCategoricalEncoderModel`], see [discussion of
+/// presets](super#presets).
+///
+/// This type implements the trait [`EncoderModel`] but not the trait [`DecoderModel`].
+/// Thus, you can use a `NonContiguousCategoricalEncoderModel` for *encoding* with any of
+/// the stream encoders provided by the `constriction` crate, but not for decoding. If you
+/// want to decode data, use a [`NonContiguousCategoricalDecoderModel`] instead.
+///
+/// # Example
+///
+/// ```
+/// use constriction::{
+///     stream::{stack::DefaultAnsCoder, Decode},
+///     stream::models::DefaultNonContiguousCategoricalEncoderModel,
+///     stream::models::DefaultNonContiguousCategoricalDecoderModel,
+///     UnwrapInfallible,
+/// };
+///
+/// // Create a `ContiguousCategoricalEntropyModel` that approximates floating point probabilities.
+/// let alphabet = ['M', 'i', 's', 'p', '!'];
+/// let probabilities = [0.09, 0.36, 0.36, 0.18, 0.0];
+/// let encoder_model = DefaultNonContiguousCategoricalEncoderModel
+///     ::from_symbols_and_floating_point_probabilities(alphabet.iter().cloned(), &probabilities)
+///     .unwrap();
+/// assert_eq!(encoder_model.support_size(), 5); // `encoder_model` supports 4 symbols.
+///
+/// // Use `encoder_model` for entropy coding.
+/// let message = "Mississippi!";
+/// let mut ans_coder = DefaultAnsCoder::new();
+/// ans_coder.encode_iid_symbols_reverse(message.chars(), &encoder_model).unwrap();
+/// // Note that `message` contains the symbol '!', which has zero probability under our
+/// // floating-point model. However, we can still encode the symbol because the
+/// // `NonContiguousCategoricalEntropyModel` is "leaky", i.e., it assigns a nonzero
+/// // probability to all symbols that we provided to the constructor.
+///
+/// // Create a matching `decoder_model`, decode the encoded message, and verify correctness.
+/// let decoder_model = DefaultNonContiguousCategoricalDecoderModel
+///     ::from_symbols_and_floating_point_probabilities(&alphabet, &probabilities)
+///     .unwrap();
+///
+/// // We could pass `decoder_model` by reference (like we did for `encoder_model` above) but
+/// // passing `decoder_model.as_view()` is slightly more efficient.
+/// let decoded = ans_coder
+///     .decode_iid_symbols(12, decoder_model.as_view())
+///     .collect::<Result<String, _>>()
+///     .unwrap_infallible();
+/// assert_eq!(decoded, message);
+/// assert!(ans_coder.is_empty());
+///
+/// // The `encoder_model` assigns zero probability to any symbols that were not provided to its
+/// // constructor, so trying to encode a message that contains such a symbol will fail.
+/// assert!(ans_coder.encode_iid_symbols_reverse("Mix".chars(), &encoder_model).is_err())
+/// // ERROR: symbol 'x' is not in the support of `encoder_model`.
+/// ```
+///
+/// # When Should I Use This Type of Entropy Model?
+///
+/// Use a `NonContiguousCategoricalEncoderModel` for probabilistic models that can *only* be
+/// represented as an explicit probability table, and not by some more compact analytic
+/// expression. If you have a probability model that can be expressed by some analytical
+/// expression (e.g., a [`Binomial`](probability::distribution::Binomial) distribution),
+/// then use [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the
+/// same entropy model, in which case the explicitly tabulated representation of a
+/// categorical entropy model could improve runtime performance).
+///
+/// Further, if the *support* of your probabilistic model (i.e., the set of symbols to which
+/// the model assigns a non-zero probability) is a contiguous range of integers starting at
+/// zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
+/// computational efficiency and it is easier to use since it supports both encoding and
+/// decoding with a single type.
+///
+/// # Computational Efficiency
+///
+/// For a probability distribution with a support of `N` symbols, a
+/// `NonContiguousCategoricalEncoderModel` has the following asymptotic costs:
+///
+/// - creation:
+///   - runtime cost: `Θ(N)` when creating from fixed point probabilities, `Θ(N log(N))`
+///     when creating from floating point probabilities;
+///   - memory footprint: `Θ(N)`;
+///   - both are more expensive by a constant factor than for a
+///     [`ContiguousCategoricalEntropyModel`].
+/// - encoding a symbol (calling [`EncoderModel::left_cumulative_and_probability`]):
+///   - expected runtime cost: `Θ(1)` (worst case can be more expensive, uses a `HashMap`
+///     under the hood).
+///   - memory footprint: no heap allocations, constant stack space.
+/// - decoding a symbol: not supported; use a [`NonContiguousCategoricalDecoderModel`].
+///
+/// [`EntropyModel`]: trait.EntropyModel.html
+/// [`Encode`]: crate::Encode
+/// [`Decode`]: crate::Decode
+/// [`HashMap`]: std::hash::HashMap
 #[derive(Debug, Clone)]
 pub struct NonContiguousCategoricalEncoderModel<Symbol, Probability, const PRECISION: usize>
 where
@@ -2150,8 +2745,20 @@ where
     table: HashMap<Symbol, (Probability, Probability::NonZero)>,
 }
 
+/// Type alias for a typical [`NonContiguousCategoricalEncoderModel`].
+/// 
+/// See:
+/// - [`NonContiguousCategoricalEncoderModel`]
+/// - [discussion of presets](super#presets)
 pub type DefaultNonContiguousCategoricalEncoderModel<Symbol> =
     NonContiguousCategoricalEncoderModel<Symbol, u32, 24>;
+    
+/// Type alias for a [`NonContiguousCategoricalEncoderModel`] optimized for compatibility
+/// with lookup decoder models.
+///
+/// See:
+/// - [`NonContiguousCategoricalEncoderModel`]
+/// - [discussion of presets](super#presets)
 pub type SmallNonContiguousCategoricalEncoderModel<Symbol> =
     NonContiguousCategoricalEncoderModel<Symbol, u16, 12>;
 
@@ -2161,6 +2768,12 @@ where
     Symbol: Hash + Eq,
     Probability: BitArray,
 {
+    /// Constructs a leaky distribution over the provided `symbols` whose PMF approximates
+    /// given `probabilities`.
+    ///
+    /// This method operates logically identically to
+    /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities`]
+    /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: impl IntoIterator<Item = Symbol>,
         probabilities: &[F],
@@ -2179,6 +2792,11 @@ where
         )
     }
 
+    /// Constructs a distribution with a PMF given in fixed point arithmetic.
+    ///
+    /// This method operates logically identically to
+    /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_nonzero_fixed_point_probabilities`]
+    /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
         probabilities: P,
@@ -2212,6 +2830,13 @@ where
         }
     }
 
+    /// Creates a `NonContiguousCategoricalEncoderModel` from any entropy model that
+    /// implements [`IterableEntropyModel`].
+    ///
+    /// Calling `NonContiguousCategoricalEncoderModel::from_iterable_entropy_model(&model)`
+    /// is equivalent to calling `model.to_generic_encoder_model()`, where the latter
+    /// requires bringing [`IterableEntropyModel`] into scope.
+    ///
     /// TODO: test
     pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
     where
@@ -2226,13 +2851,10 @@ where
         Self { table }
     }
 
-    /// Returns the number of symbols supported by the model.
+    /// Returns the number of symbols in the support of the model.
     ///
-    /// The distribution is defined on the contiguous range of symbols from zero
-    /// (inclusively) to `num_symbols()` (exclusively). All symbols within this range are
-    /// guaranteed to have a nonzero probability, while all symbols outside of this range
-    /// have a zero probability.
-    pub fn num_symbols(&self) -> usize {
+    /// The support of the model is the set of all symbols that have nonzero probability.
+    pub fn support_size(&self) -> usize {
         self.table.len()
     }
 
@@ -2241,9 +2863,9 @@ where
     /// Similar to [`IterableEntropyModel::entropy_base2`], except that
     /// - this type doesn't implement `IterableEntropyModel` because it doesn't store
     ///   entries in a stable expected order;
-    /// - because order in which entries are stored will generally be different on each
-    ///   execution, rounding errors will be slightly different across multiple program
-    ///   executions.
+    /// - because the order in which entries are stored will generally be different on each
+    ///   program execution, rounding errors will be slightly different across multiple
+    ///   program executions.
     pub fn entropy_base2<F>(&self) -> F
     where
         F: Float + core::iter::Sum,
@@ -2474,6 +3096,11 @@ where
 
 // LOOKUP TABLE ENTROPY MODELS (FOR FAST DECODING) ================================================
 
+/// A tabularized [`DecoderModel`] that is optimized for fast decoding of i.i.d. symbols
+/// 
+/// You will usually want to use this type through one of the type aliases
+/// [`SmallContiguousLookupDecoderModel`] or [`SmallNonContiguousLookupDecoderModel`]. See
+/// these types for extended documentation and examples.
 #[derive(Debug, Clone, Copy)]
 pub struct LookupDecoderModel<Symbol, Probability, SymbolTable, LookupTable, const PRECISION: usize>
 where
@@ -2491,29 +3118,47 @@ where
     phantom: PhantomData<(Probability, Symbol)>,
 }
 
+/// Type alias for a [`LookupDecoderModel`] over arbitrary symbols.
+/// 
+/// # Examples
+/// 
+/// TODO
+/// 
+/// # See also
+///
+/// - [`SmallNonContiguousLookupDecoderModel`]
+pub type SmallNonContiguousLookupDecoderModel<
+    Symbol,
+    SymbolTable = Vec<(u16, Symbol)>,
+    LookupTable = Box<[u16]>,
+> = LookupDecoderModel<Symbol, u16, NonContiguousSymbolTable<SymbolTable>, LookupTable, 12>;
+
 /// Type alias for a [`LookupDecoderModel`] over symbols `{0, 1, ..., n-1}` with sane settings.
 ///
 /// This array lookup table can be used with a [`SmallAnsCoder`] or a [`SmallRangeDecoder`]
-/// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeDecoder`]).
+/// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeDecoder`], since you can
+/// always use a "bigger" coder on a "smaller" model).
 ///
 /// # Example
-///
-/// Let's decode the compressed bit strings we generated in the example for
-/// [`SmallEncoderArrayLookupTable`].
+/// 
+/// Decoding a sequence of symbols with a [`SmallAnsCoder`], a [`DefaultAnsCoder`], a
+/// [`SmallRangeDecoder`], and a [`DefaultRangeDecoder`], all using the same
+/// `SmallContiguousLookupDecoderModel`.
 ///
 /// ```
 /// use constriction::stream::{
-///     models::lookup::SmallDecoderIndexLookupTable,
+///     models::SmallContiguousLookupDecoderModel,
 ///     stack::{SmallAnsCoder, DefaultAnsCoder},
 ///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
 ///     Decode, Code,
 /// };
 ///
+/// // Create a `SmallContiguousLookupDecoderModel` from a probability distribution that's already 
+/// // available in fixed point representation (e.g., because it was deserialized from a file).
+/// // Alternatively, we could use `from_floating_point_probabilities_contiguous`.
 /// let probabilities = [1489, 745, 1489, 373];
-/// let decoder_model = SmallDecoderIndexLookupTable::from_probabilities(
-///     probabilities.iter().cloned()
-/// )
-/// .unwrap();
+/// let decoder_model = SmallContiguousLookupDecoderModel
+///     ::from_nonzero_fixed_point_probabilities_contiguous(&probabilities, false).unwrap();
 ///
 /// let expected = [2, 1, 3, 0, 0, 2, 0, 2, 1, 0, 2];
 ///
@@ -2544,19 +3189,12 @@ where
 ///
 /// # See also
 ///
-/// - [`SmallDecoderGenericLookupTable`]
-/// - [`SmallEncoderArrayLookupTable`]
+/// - [`SmallNonContiguousLookupDecoderModel`]
 ///
-/// [`SmallAnsCoder`]: super::super::stack::SmallAnsCoder
-/// [`SmallRangeDecoder`]: super::super::queue::SmallRangeDecoder
-/// [`DefaultAnsCoder`]: super::super::stack::DefaultAnsCoder
-/// [`DefaultRangeDecoder`]: super::super::queue::DefaultRangeDecoder
-pub type SmallNonContiguousLookupDecoderModel<
-    Symbol,
-    SymbolTable = Vec<(u16, Symbol)>,
-    LookupTable = Box<[u16]>,
-> = LookupDecoderModel<Symbol, u16, NonContiguousSymbolTable<SymbolTable>, LookupTable, 12>;
-
+/// [`SmallAnsCoder`]: super::stack::SmallAnsCoder
+/// [`SmallRangeDecoder`]: super::queue::SmallRangeDecoder
+/// [`DefaultAnsCoder`]: super::stack::DefaultAnsCoder
+/// [`DefaultRangeDecoder`]: super::queue::DefaultRangeDecoder
 pub type SmallContiguousLookupDecoderModel<SymbolTable = Vec<u16>, LookupTable = Box<[u16]>> =
     LookupDecoderModel<usize, u16, ContiguousSymbolTable<SymbolTable>, LookupTable, 12>;
 
@@ -2573,6 +3211,9 @@ where
     usize: AsPrimitive<Probability>,
     Symbol: Copy + Default,
 {
+    /// Create a `LookupDecoderModel` over arbitrary symbols.
+    /// 
+    /// TODO: example
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
         probabilities: &[F],
@@ -2595,6 +3236,9 @@ where
         )
     }
 
+    /// Create a `LookupDecoderModel` over arbitrary symbols.
+    /// 
+    /// TODO: example
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
         probabilities: P,
@@ -2679,6 +3323,9 @@ where
     usize: AsPrimitive<Probability>,
     Symbol: Copy + Default,
 {
+    /// Create a `LookupDecoderModel` over a contiguous range of symbols.
+    /// 
+    /// TODO: example
     pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: Float + core::iter::Sum<F> + Into<f64>,
@@ -2693,6 +3340,11 @@ where
         )
     }
 
+    /// Create a `LookupDecoderModel` over a contiguous range of symbols using fixed point arighmetic.
+    /// 
+    /// # Example
+    /// 
+    /// See [`SmallContiguousLookupDecoderModel`].
     pub fn from_nonzero_fixed_point_probabilities_contiguous<I>(
         probabilities: I,
         infer_last_probability: bool,
@@ -2744,6 +3396,17 @@ where
     Table: AsRef<[Probability]>,
     LookupTable: AsRef<[Probability]>,
 {
+    /// Makes a very cheap shallow copy of the model that can be used much like a shared
+    /// reference.
+    ///
+    /// The returned `LookupDecoderModel` implements `Copy`, which is a requirement for some
+    /// methods, such as [`Decode::decode_iid_symbols`]. These methods could also accept a
+    /// shared reference to a `NonContiguousCategoricalDecoderModel` (since all references
+    /// to entropy models are also entropy models, and all shared references implement
+    /// `Copy`), but passing a *view* instead may be slightly more efficient because it
+    /// avoids one level of dereferencing.
+    ///
+    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
     pub fn as_view(
         &self,
     ) -> LookupDecoderModel<
@@ -2760,6 +3423,7 @@ where
         }
     }
 
+    /// TODO: documentation
     pub fn as_contiguous_categorical(
         &self,
     ) -> ContiguousCategoricalEntropyModel<Probability, &[Probability], PRECISION> {
@@ -2769,6 +3433,7 @@ where
         }
     }
 
+    /// TODO: documentation
     pub fn into_contiguous_categorical(
         self,
     ) -> ContiguousCategoricalEntropyModel<Probability, Table, PRECISION> {
@@ -2787,6 +3452,17 @@ where
     Table: AsRef<[(Probability, Symbol)]>,
     LookupTable: AsRef<[Probability]>,
 {
+    /// Makes a very cheap shallow copy of the model that can be used much like a shared
+    /// reference.
+    ///
+    /// The returned `LookupDecoderModel` implements `Copy`, which is a requirement for some
+    /// methods, such as [`Decode::decode_iid_symbols`]. These methods could also accept a
+    /// shared reference to a `NonContiguousCategoricalDecoderModel` (since all references
+    /// to entropy models are also entropy models, and all shared references implement
+    /// `Copy`), but passing a *view* instead may be slightly more efficient because it
+    /// avoids one level of dereferencing.
+    ///
+    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
     pub fn as_view(
         &self,
     ) -> LookupDecoderModel<
@@ -3123,7 +3799,7 @@ mod tests {
 
     fn test_entropy_model<'m, D, const PRECISION: usize>(
         model: &'m D,
-        domain: impl Clone + Iterator<Item = D::Symbol>,
+        support: impl Clone + Iterator<Item = D::Symbol>,
     ) where
         D: IterableEntropyModel<'m, PRECISION, Probability = u32>
             + EncoderModel<PRECISION>
@@ -3132,7 +3808,7 @@ mod tests {
         D::Symbol: Copy + core::fmt::Debug + PartialEq,
     {
         let mut sum = 0;
-        for symbol in domain.clone() {
+        for symbol in support.clone() {
             let (left_cumulative, prob) = model.left_cumulative_and_probability(symbol).unwrap();
             assert_eq!(left_cumulative as u64, sum);
             sum += prob.get() as u64;
@@ -3147,12 +3823,12 @@ mod tests {
         }
         assert_eq!(sum, 1 << PRECISION);
 
-        test_iterable_entropy_model(model, domain);
+        test_iterable_entropy_model(model, support);
     }
 
     fn test_iterable_entropy_model<'m, D, const PRECISION: usize>(
         model: &'m D,
-        domain: impl Clone + Iterator<Item = D::Symbol>,
+        support: impl Clone + Iterator<Item = D::Symbol>,
     ) where
         D: IterableEntropyModel<'m, PRECISION, Probability = u32> + 'm,
         D::Symbol: Copy + core::fmt::Debug + PartialEq,
@@ -3160,14 +3836,14 @@ mod tests {
         let mut expected_cumulative = 0u64;
         let mut count = 0;
         for (expected_symbol, (symbol, left_sided_cumulative, probability)) in
-            domain.clone().zip(model.symbol_table())
+            support.clone().zip(model.symbol_table())
         {
             assert_eq!(symbol, expected_symbol);
             assert_eq!(left_sided_cumulative as u64, expected_cumulative);
             expected_cumulative += probability.get() as u64;
             count += 1;
         }
-        assert_eq!(count, domain.size_hint().0);
+        assert_eq!(count, support.size_hint().0);
         assert_eq!(expected_cumulative, 1 << PRECISION);
     }
 
