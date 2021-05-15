@@ -52,14 +52,14 @@ use crate::{
 /// Basic usage example:
 ///
 /// ```
-/// use constriction::stream::{model::LeakyQuantizer, stack::DefaultAnsCoder, Decode};
+/// use constriction::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
 ///
 /// // `DefaultAnsCoder` is a type alias to `AnsCoder` with sane generic parameters.
 /// let mut ans = DefaultAnsCoder::new();
 ///
 /// // Create an entropy model based on a quantized Gaussian distribution. You can use `AnsCoder`
 /// // with any entropy model defined in the `models` module.
-/// let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
+/// let quantizer = DefaultLeakyQuantizer::new(-100..=100);
 /// let entropy_model = quantizer.quantize(probability::distribution::Gaussian::new(0.0, 10.0));
 ///
 /// let symbols = vec![-10, 4, 0, 3];
@@ -1119,7 +1119,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::super::model::{
-        ContiguousCategoricalEntropyModel, IterableEntropyModel, LeakyQuantizer,
+        ContiguousCategoricalEntropyModel, DefaultLeakyQuantizer, IterableEntropyModel,
+        LeakyQuantizer,
     };
     use super::*;
     extern crate std;
@@ -1170,7 +1171,7 @@ mod tests {
         let symbols = symbols.into_iter();
 
         let mut encoder = DefaultAnsCoder::new();
-        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
+        let quantizer = DefaultLeakyQuantizer::new(-127..=127);
         let model = quantizer.quantize(Gaussian::new(3.2, 5.1));
 
         // We don't reuse the same encoder for decoding because we want to test
@@ -1352,7 +1353,7 @@ mod tests {
         const NUM_CHUNKS: usize = 100;
         const SYMBOLS_PER_CHUNK: usize = 100;
 
-        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
+        let quantizer = DefaultLeakyQuantizer::new(-100..=100);
         let model = quantizer.quantize(Gaussian::new(0.0, 10.0));
 
         let mut encoder = DefaultAnsCoder::new();

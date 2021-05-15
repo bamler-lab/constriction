@@ -13,7 +13,7 @@ efficiency. The goals of `constriction` are to three-fold:
    of more low-level primitives that allow researchers to come up with specialized variants
    of existing source coding algorithms (for example, `constriction` provides adapters for
    making custom defined probability distributions *exactly* invertible in fixed-point
-   arithmetic so that they can be used with the provided entropy coders; TODO).
+   arithmetic so that they can be used with the provided entropy coders).
 2. **to simplify the transition from research code to reliable software products** by
    exposing a superset of the exact same algorithms that the Python API provides also as a
    Rust crate; if your research lead to a successful prototype of a new compression method
@@ -77,20 +77,96 @@ scenario where the current APIs are suboptimal.
 
 ## Quick Start Guides And Examples in Python and Rust
 
-TODO: actually provide a very short example in each language, then link to API
-documentation.
+### Python
 
-See the [Python API Documentation](https://bamler-lab.github.io/constriction/apidoc/python/)
-and the [Rust API Documentation](https://bamler-lab.github.io/constriction/apidoc/rust/),
-respectively.
+The easiest way to install `constriction` for Python is via `pip` (the following command
+also installs `scipy`, which is not required but useful if you want to use `constriction`
+with custom probability distributions):
+
+```bash
+pip install constriction scipy
+```
+
+Then go ahead and use it:
+
+```python
+import constriction
+import numpy as np
+
+# Let's use a Range Coder in this example. Constriction also provides an ANS 
+# Coder, a Huffman Coder, and an experimental new "Chain Coder".
+encoder = constriction.stream.queue.RangeEncoder()
+
+# Define some data and a sequence of entropy models. We use quantized Gaussians
+# here, but you could also use other models or even provide your own.
+min_supported_symbol, max_supported_symbol = -100, 100
+symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)
+means = np.array([35.2, -1.7, 30.1, 71.2, -75.1], dtype=np.float64)
+stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
+
+# Encode the symbols and get the compressed data.
+encoder.encode_leaky_gaussian_symbols(
+    symbols, min_supported_symbol, max_supported_symbol, means, stds)
+compressed = encoder.get_compressed()
+print(compressed)
+
+# Create a decoder and recover the original symbols.
+decoder = constriction.stream.queue.RangeDecoder(compressed)
+reconstructed = decoder1.decode_leaky_gaussian_symbols(
+    min_supported_symbol, max_supported_symbol, means, stds)
+assert np.all(reconstructed == symbols)
+```
+
+There's a lot more you can do with `constriction`'s Python API. Please check out the [Python
+API Documentation](https://bamler-lab.github.io/constriction/apidoc/python/).
+
+### Rust
+
+Add this line to your `Cargo.toml`:
+
+```toml
+constriction = "0.1"
+probability = "0.17" # Not strictly required but useful for defining quantized entropy models.
+```
+
+Then go ahead and use it:
+
+```rust
+use constriction::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
+
+// Let's use an ANS Coder in this example. Constriction also provides a Range
+// Coder, a Huffman Coder, and an experimental new "Chain Coder".
+let mut coder = DefaultAnsCoder::new();
+ 
+// Define some data and a sequence of entropy models. We use quantized Gaussians here,
+// but `constriction` also provides other models and allows you to implement your own.
+let symbols = vec![23i32, -15, 78, 43, -69];
+let quantizer = DefaultLeakyQuantizer::new(-100..=100);
+let means = vec![35.2f64, -1.7, 30.1, 71.2, -75.1];
+let stds = vec![10.1f64, 25.3, 23.8, 35.4, 3.9];
+let models = means.iter().zip(&stds).map(
+    |(&mean, &std)| quantizer.quantize(probability::distribution::Gaussian::new(mean, std))
+);
+
+// Encode symbols (in *reverse* order, because ANS Coding operates as a stack).
+coder.encode_symbols_reverse(symbols.iter().zip(models.clone())).unwrap();
+
+// Obtain temporary shared access to the compressed bit string. If you want ownership of the
+// compressed bit string, call `.into_compressed()` instead of `.get_compressed()`.
+println!("Encoded into {} bits: {:?}", coder.num_bits(), &*coder.get_compressed().unwrap());
+
+// Decode the symbols and verify correctness.
+let reconstructed = coder.decode_symbols(models).collect::<Result<Vec<_>, _>>().unwrap();
+assert_eq!(reconstructed, symbols);
+```
+
+There's a lot more you can do with `constriction`'s Rust API. Please check out the [Rust API
+Documentation](https://docs.rs/constriction).
 
 ## Compiling From Source
 
 Users of `constriction` typically don't need to manually compile the library from source.
-Just install `constriction` via `pip` or `cargo` as described in the quick start guides of
-the [Python API Documentation](https://bamler-lab.github.io/constriction/apidoc/python/) or
-the [Rust API Documentation](https://bamler-lab.github.io/constriction/apidoc/rust/),
-respectively. (TODO: replace by: as shown in the above quick start guides)
+Just install `constriction` via `pip` or `cargo` as described in the above [quick start guides](#quick-start-guides-and-examples-in-python-and-rust).
 
 Contributors can compile `constriction` manually as follows:
 
@@ -99,9 +175,17 @@ Contributors can compile `constriction` manually as follows:
    - If you already have a Rust toolchain, make sure it's on version 1.51 or later. Run
      `rustc --version` to find out and `rustup update stable` if you need to update.
 2. `git clone` the repository and `cd` into it.
-3. Compile the library
-   - To compile the Rust version in development mode and run tests, type: `cargo test`
-   - To compile the Python module, TODO
+3. To compile the Rust library:
+   - compile in development mode and execute all tests: `cargo test`
+   - compile in release mode (i.e., with optimizations) and run the benchmarks: `cargo
+     bench`
+4. If you want to compile the Python module:
+   - install [poetry](https://python-poetry.org/) and
+     [maturin](https://github.com/PyO3/maturin).
+   - build the Python module: `poetry run maturin develop '--cargo-extra-args=--features
+     pybindings'`
+   - run Python unit tests: `poetry run pytest tests/python`
+   - start a Python REPL that sees the compiled Python module: `poetry run ipython`
 
 ## Contributing
 
