@@ -180,8 +180,8 @@ Contributors can compile `constriction` manually as follows:
    - compile in release mode (i.e., with optimizations) and run the benchmarks: `cargo
      bench`
 4. If you want to compile the Python module:
-   - install [poetry](https://python-poetry.org/) and
-     [maturin](https://github.com/PyO3/maturin).
+   - install [poetry](https://python-poetry.org/).
+   - install Python dependencies: `cd` into the repository and run `poetry install`
    - build the Python module: `poetry run maturin develop '--cargo-extra-args=--features
      pybindings'`
    - run Python unit tests: `poetry run pytest tests/python`

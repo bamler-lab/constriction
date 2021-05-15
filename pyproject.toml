@@ -5,15 +5,16 @@ name = "constriction"
 version = "0.1.0"
 
 [tool.poetry.dependencies]
-python = "^3.7"
+python = "^3.7,<3.10"
+numpy = "^1.20"
 
 [tool.poetry.dev-dependencies]
 autopep8 = "*"
 flake8 = "^3.5"
 maturin = "==0.9.4"
-numpy = "^1.20"
 pylint = "^2.6"
 pytest = "^6.1"
+scipy = "^1.6.3"
 pytest-runner = "*"
 wheel = "*"
 
