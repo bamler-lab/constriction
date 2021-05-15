@@ -1,4 +1,4 @@
-pub mod models;
+pub mod model;
 pub mod stack;
 
 use pyo3::{prelude::*, wrap_pymodule};
@@ -7,7 +7,7 @@ use std::prelude::v1::*;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(ans))?;
-    module.add_wrapped(wrap_pymodule!(models))?;
+    module.add_wrapped(wrap_pymodule!(model))?;
     Ok(())
 }
 
@@ -17,8 +17,8 @@ fn ans(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     stack::init_module(py, module)
 }
 
-/// Docstring of `models` module
+/// Docstring of `model` module
 #[pymodule]
-fn models(py: Python<'_>, module: &PyModule) -> PyResult<()> {
-    models::init_module(py, module)
+fn model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+    model::init_module(py, module)
 }

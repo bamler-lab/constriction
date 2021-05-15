@@ -7,13 +7,13 @@ use pyo3::prelude::*;
 
 use crate::{
     stream::{
-        models::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
+        model::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
         Decode, TryCodingError,
     },
     CoderError, DefaultEncoderFrontendError, UnwrapInfallible,
 };
 
-use super::models::CustomModel;
+use super::model::CustomModel;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<AnsCoder>()?;

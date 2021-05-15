@@ -12,7 +12,7 @@ use core::{
 use num::cast::AsPrimitive;
 
 use super::{
-    models::{DecoderModel, EncoderModel},
+    model::{DecoderModel, EncoderModel},
     Code, Decode, Encode, IntoDecoder,
 };
 use crate::{
@@ -102,9 +102,9 @@ pub type DefaultRangeEncoder<Backend = Vec<u32>> = RangeEncoder<u32, u64, Backen
 ///
 /// - [`SmallRangeDecoder`]
 ///
-/// [lookup models]: super::models::lookup
-/// [`DefaultEncoderArrayLookupTable`]: super::models::lookup::DefaultEncoderArrayLookupTable
-/// [`DefaultEncoderHashLookupTable`]: super::models::lookup::DefaultEncoderHashLookupTable
+/// [lookup models]: super::model::lookup
+/// [`DefaultEncoderArrayLookupTable`]: super::model::lookup::DefaultEncoderArrayLookupTable
+/// [`DefaultEncoderHashLookupTable`]: super::model::lookup::DefaultEncoderHashLookupTable
 pub type SmallRangeEncoder<Backend = Vec<u16>> = RangeEncoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> Code for RangeEncoder<Word, State, Backend>
@@ -396,7 +396,7 @@ where
     ///
     /// ```
     /// use constriction::stream::{
-    ///     models::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
+    ///     model::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
     /// };
     ///
     /// let mut coder = DefaultAnsCoder::new();
@@ -604,11 +604,11 @@ pub type DefaultRangeDecoder<Backend = Vec<u32>> = RangeDecoder<u32, u64, Backen
 ///
 /// - [`SmallRangeEncoder`]
 ///
-/// [lookup models]: super::models::lookup
-/// [`DefaultEncoderArrayLookupTable`]: super::models::lookup::DefaultEncoderArrayLookupTable
-/// [`DefaultEncoderHashLookupTable`]: super::models::lookup::DefaultEncoderHashLookupTable
-/// [`DefaultDecoderIndexLookupTable`]: super::models::lookup::DefaultDecoderIndexLookupTable
-/// [`DefaultDecoderGenericLookupTable`]: super::models::lookup::DefaultDecoderGenericLookupTable
+/// [lookup models]: super::model::lookup
+/// [`DefaultEncoderArrayLookupTable`]: super::model::lookup::DefaultEncoderArrayLookupTable
+/// [`DefaultEncoderHashLookupTable`]: super::model::lookup::DefaultEncoderHashLookupTable
+/// [`DefaultDecoderIndexLookupTable`]: super::model::lookup::DefaultDecoderIndexLookupTable
+/// [`DefaultDecoderGenericLookupTable`]: super::model::lookup::DefaultDecoderGenericLookupTable
 pub type SmallRangeDecoder<Backend> = RangeDecoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> RangeDecoder<Word, State, Backend>
@@ -960,7 +960,7 @@ mod tests {
     extern crate std;
     use std::dbg;
 
-    use super::super::models::{
+    use super::super::model::{
         ContiguousCategoricalEntropyModel, IterableEntropyModel, LeakyQuantizer,
     };
     use super::*;

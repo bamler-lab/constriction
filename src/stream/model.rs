@@ -294,7 +294,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::models::{
+    /// use constriction::stream::model::{
     ///     IterableEntropyModel, SmallNonContiguousCategoricalDecoderModel
     /// };
     ///
@@ -555,7 +555,7 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::models::{EncoderModel, DefaultNonContiguousCategoricalEncoderModel};
+    /// use constriction::stream::model::{EncoderModel, DefaultNonContiguousCategoricalEncoderModel};
     ///
     /// let symbols = vec!['a', 'b', 'c', 'd'];
     /// let probabilities = vec![1u32 << 21, 1 << 23, 1 << 22, 1 << 21];
@@ -765,7 +765,7 @@ where
 ///
 /// ```
 /// use constriction::{
-///     stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Encode, Decode},
+///     stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Encode, Decode},
 ///     UnwrapInfallible,
 /// };
 ///
@@ -806,7 +806,7 @@ where
 ///
 /// ```
 /// use constriction::stream::{
-///     models::DefaultLeakyQuantizer, queue::DefaultRangeEncoder, Encode, Decode
+///     model::DefaultLeakyQuantizer, queue::DefaultRangeEncoder, Encode, Decode
 /// };
 ///
 /// let distribution = probability::distribution::Binomial::new(1000, 0.1); // arguments: `n, p`
@@ -926,7 +926,7 @@ where
 /// it (or, if you use a low `PRECISION`, you may even consider calling
 /// [`to_generic_lookup_decoder_model`]). You'll have to bring the trait
 /// [`IterableEntropyModel`] into scope to call these conversion methods (`use
-/// constriction::stream::models::IterableEntropyModel`).
+/// constriction::stream::model::IterableEntropyModel`).
 ///
 /// # Requirements for Correctness
 ///
@@ -1791,7 +1791,7 @@ where
 ///
 /// ```
 /// use constriction::{
-///     stream::{stack::DefaultAnsCoder, models::DefaultContiguousCategoricalEntropyModel, Decode},
+///     stream::{stack::DefaultAnsCoder, model::DefaultContiguousCategoricalEntropyModel, Decode},
 ///     UnwrapInfallible,
 /// };
 ///
@@ -1905,7 +1905,7 @@ pub struct ContiguousCategoricalEntropyModel<Probability, Table, const PRECISION
 /// `NonContiguousCategoricalEncoderModel` by calling
 /// [`to_generic_encoder_model`](IterableEntropyModel::to_generic_encoder_model) on it
 /// (you'll have to bring the trait [`IterableEntropyModel`] into scope to do so: `use
-/// constriction::stream::models::IterableEntropyModel`).
+/// constriction::stream::model::IterableEntropyModel`).
 ///
 /// # Example
 ///
@@ -2086,7 +2086,7 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// `1 << PRECISION`:
     ///
     /// ```
-    /// use constriction::stream::models::{
+    /// use constriction::stream::model::{
     ///     DefaultContiguousCategoricalEntropyModel, IterableEntropyModel
     /// };
     ///
@@ -2114,7 +2114,7 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// (i.e., the summation has to wrap around exactly once):
     ///
     /// ```
-    /// use constriction::stream::models::{
+    /// use constriction::stream::model::{
     ///     ContiguousCategoricalEntropyModel, IterableEntropyModel
     /// };
     ///
@@ -2140,7 +2140,7 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// Wrapping around twice fails:
     ///
     /// ```
-    /// use constriction::stream::models::ContiguousCategoricalEntropyModel;
+    /// use constriction::stream::model::ContiguousCategoricalEntropyModel;
     /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
     /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
     /// assert!(
@@ -2152,7 +2152,7 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
     ///
     /// ```
-    /// use constriction::stream::models::ContiguousCategoricalEntropyModel;
+    /// use constriction::stream::model::ContiguousCategoricalEntropyModel;
     /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
     /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
     /// assert!(
@@ -2288,7 +2288,7 @@ where
     /// last symbol:
     ///
     /// ```
-    /// use constriction::stream::models::{
+    /// use constriction::stream::model::{
     ///     DefaultNonContiguousCategoricalDecoderModel, IterableEntropyModel
     /// };
     ///
@@ -2660,8 +2660,8 @@ where
 /// ```
 /// use constriction::{
 ///     stream::{stack::DefaultAnsCoder, Decode},
-///     stream::models::DefaultNonContiguousCategoricalEncoderModel,
-///     stream::models::DefaultNonContiguousCategoricalDecoderModel,
+///     stream::model::DefaultNonContiguousCategoricalEncoderModel,
+///     stream::model::DefaultNonContiguousCategoricalDecoderModel,
 ///     UnwrapInfallible,
 /// };
 ///
@@ -3150,7 +3150,7 @@ pub type SmallNonContiguousLookupDecoderModel<
 ///
 /// ```
 /// use constriction::stream::{
-///     models::SmallContiguousLookupDecoderModel,
+///     model::SmallContiguousLookupDecoderModel,
 ///     stack::{SmallAnsCoder, DefaultAnsCoder},
 ///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
 ///     Decode, Code,

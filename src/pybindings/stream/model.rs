@@ -4,7 +4,7 @@ use numpy::PyReadonlyArray1;
 use probability::distribution::{Distribution, Inverse};
 use pyo3::prelude::*;
 
-use crate::stream::models::{EntropyModel, LeakilyQuantizedDistribution, LeakyQuantizer};
+use crate::stream::model::{EntropyModel, LeakilyQuantizedDistribution, LeakyQuantizer};
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<CustomModel>()?;

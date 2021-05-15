@@ -115,7 +115,7 @@
 //!   branches and a smaller internal coder state. Empirically, our decoding benchmarks in
 //!   the file `benches/lookup.rs` run more than twice as fast with an `AnsCoder` than with
 //!   a `RangeDecoder`. However, please note that (i) these benchmarks use the highly
-//!   optimized [lookup models](models::LookupDecoderModel); if you use other entropy
+//!   optimized [lookup models](model::LookupDecoderModel); if you use other entropy
 //!   models then these will likely be the computational bottleneck, not the coder; (ii)
 //!   future versions of `constriction` may introduce further run-time optimizations; and
 //!   (iii) while *decoding* is more than two times faster with ANS, *encoding* is somewhat
@@ -280,31 +280,31 @@
 //! [`DefaultRangeEncoder`]: queue::DefaultRangeEncoder
 //! [`DefaultRangeDecoder`]: queue::DefaultRangeDecoder
 //! [`DefaultChainCoder`]: chain::DefaultChainCoder
-//! [`DefaultLeakyQuantizer`]: models::DefaultLeakyQuantizer
-//! [`DefaultContiguousCategoricalEntropyModel`]: models::DefaultContiguousCategoricalEntropyModel
-//! [`DefaultNonContiguousCategoricalEncoderModel`]: models::DefaultNonContiguousCategoricalEncoderModel
-//! [`DefaultNonContiguousCategoricalDecoderModel`]: models::DefaultNonContiguousCategoricalDecoderModel
+//! [`DefaultLeakyQuantizer`]: model::DefaultLeakyQuantizer
+//! [`DefaultContiguousCategoricalEntropyModel`]: model::DefaultContiguousCategoricalEntropyModel
+//! [`DefaultNonContiguousCategoricalEncoderModel`]: model::DefaultNonContiguousCategoricalEncoderModel
+//! [`DefaultNonContiguousCategoricalDecoderModel`]: model::DefaultNonContiguousCategoricalDecoderModel
 //! [`SmallAnsCoder`]: stack::SmallAnsCoder
 //! [`SmallRangeEncoder`]: queue::SmallRangeEncoder
 //! [`SmallRangeDecoder`]: queue::SmallRangeDecoder
 //! [`SmallChainCoder`]: chain::SmallChainCoder
-//! [`SmallLeakyQuantizer`]: models::SmallLeakyQuantizer
-//! [`SmallContiguousLookupDecoderModel`]: models::SmallContiguousLookupDecoderModel
-//! [`SmallNonContiguousLookupDecoderModel`]: models::SmallNonContiguousLookupDecoderModel
-//! [`SmallContiguousCategoricalEntropyModel`]: models::SmallContiguousCategoricalEntropyModel
-//! [`SmallNonContiguousCategoricalEncoderModel`]: models::SmallNonContiguousCategoricalEncoderModel
-//! [`SmallNonContiguousCategoricalDecoderModel`]: models::SmallNonContiguousCategoricalDecoderModel
+//! [`SmallLeakyQuantizer`]: model::SmallLeakyQuantizer
+//! [`SmallContiguousLookupDecoderModel`]: model::SmallContiguousLookupDecoderModel
+//! [`SmallNonContiguousLookupDecoderModel`]: model::SmallNonContiguousLookupDecoderModel
+//! [`SmallContiguousCategoricalEntropyModel`]: model::SmallContiguousCategoricalEntropyModel
+//! [`SmallNonContiguousCategoricalEncoderModel`]: model::SmallNonContiguousCategoricalEncoderModel
+//! [`SmallNonContiguousCategoricalDecoderModel`]: model::SmallNonContiguousCategoricalDecoderModel
 //! [`AnsCoder`]: stack::AnsCoder
 //! [`AnsCoder::from_binary`]: stack::AnsCoder::from_binary
 //! [`ChainCoder`]: chain::ChainCoder
 //! [`Cursor`]: crate::backends::Cursor
 //! [`backends`]: crate::backends
 //! [Deflate]: https://en.wikipedia.org/wiki/Deflate
-//! [`LookupDecoderModel`]: models::LookupDecoderModel
-//! [`LeakilyQuantizedDistribution`]: models::LeakilyQuantizedDistribution
+//! [`LookupDecoderModel`]: model::LookupDecoderModel
+//! [`LeakilyQuantizedDistribution`]: model::LeakilyQuantizedDistribution
 
 pub mod chain;
-pub mod models;
+pub mod model;
 pub mod queue;
 pub mod stack;
 
@@ -314,7 +314,7 @@ use core::{
 };
 
 use crate::{BitArray, CoderError};
-use models::{DecoderModel, EncoderModel, EntropyModel};
+use model::{DecoderModel, EncoderModel, EntropyModel};
 use num::cast::AsPrimitive;
 
 /// Base trait for stream encoders and decoders
@@ -476,7 +476,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Encode};
+    /// use constriction::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Encode};
     ///
     /// // Create an ANS Coder and an entropy model.
     /// let mut ans_coder = DefaultAnsCoder::new();
@@ -540,7 +540,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::DefaultLeakyQuantizer, queue::DefaultRangeEncoder, Encode};
+    /// use constriction::stream::{model::DefaultLeakyQuantizer, queue::DefaultRangeEncoder, Encode};
     ///
     /// // Define the symbols we want to encode and the parameters of our entropy models.
     /// let quantizer = DefaultLeakyQuantizer::new(-100i32..=100);
@@ -639,7 +639,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     /// accidental misuse in this regard. We provide the ability to pass the `EncoderModel`
     /// by value as an opportunity for microoptimzations when dealing with models that can
     /// be cheaply copied (see, e.g.,
-    /// [`ContiguousCategoricalEntropyModel::as_view`](models::ContiguousCategoricalEntropyModel::as_view)).
+    /// [`ContiguousCategoricalEntropyModel::as_view`](model::ContiguousCategoricalEntropyModel::as_view)).
     ///
     /// Note that this method encodes the symbols in the order in which they are yielded by
     /// the iterator. This is suitable for an encoder with "queue" semantics, like a
@@ -764,7 +764,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     ///
     /// ```
     /// use constriction::{
-    ///     stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
+    ///     stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
     ///     UnwrapInfallible,
     /// };
     ///
@@ -825,7 +825,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     ///
     /// ```
     /// use constriction::{
-    ///     stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
+    ///     stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
     ///     UnwrapInfallible,
     /// };
     ///
@@ -850,7 +850,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     ///
     /// ```
     /// # use constriction::{
-    /// #     stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
+    /// #     stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
     /// #     UnwrapInfallible,
     /// # };
     /// # let compressed = vec![0x2C63_D22E, 0x0000_0377];
@@ -923,7 +923,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     ///
     /// ```
     /// use constriction::{
-    ///     stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode, TryCodingError},
+    ///     stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode, TryCodingError},
     ///     CoderError,
     /// };
     /// use core::convert::Infallible;
@@ -993,7 +993,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// accidental misuse in this regard. We provide the ability to pass the `DecoderModel`
     /// by value as an opportunity for microoptimzations when dealing with models that can
     /// be cheaply copied (see, e.g.,
-    /// [`LookupDecoderModel::as_view`](models::LookupDecoderModel::as_view)).
+    /// [`LookupDecoderModel::as_view`](model::LookupDecoderModel::as_view)).
     ///
     /// If you want to decode each symbol with its individual entropy model, then consider
     /// calling [`decode_symbols`] instead. If you just want to decode a single symbol, then
@@ -1063,7 +1063,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 ///
 /// ```
 /// use constriction::stream::{
-///     models::{EncoderModel, DecoderModel, LeakyQuantizer},
+///     model::{EncoderModel, DecoderModel, LeakyQuantizer},
 ///     stack::DefaultAnsCoder,
 ///     Decode, Encode, IntoDecoder
 /// };
@@ -1121,7 +1121,7 @@ pub trait IntoDecoder<const PRECISION: usize>: Encode<PRECISION> {
 ///
 /// ```
 /// use constriction::stream::{
-///     models::{EncoderModel, DecoderModel, LeakyQuantizer},
+///     model::{EncoderModel, DecoderModel, LeakyQuantizer},
 ///     stack::DefaultAnsCoder,
 ///     Decode, Encode, AsDecoder
 /// };

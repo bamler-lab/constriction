@@ -92,7 +92,7 @@
 //! use constriction::{
 //!     backends::{FallibleCallbackWriteWords, FallibleIteratorReadWords},
 //!     stream::{
-//!         models::DefaultLeakyQuantizer,
+//!         model::DefaultLeakyQuantizer,
 //!         queue::{DefaultRangeDecoder, DefaultRangeEncoder},
 //!         Decode, Encode,
 //!     },
@@ -659,7 +659,7 @@ where
 ///
 /// ```
 /// use constriction::{
-///     backends::Cursor, stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
+///     backends::Cursor, stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
 ///     UnwrapInfallible,
 /// };
 ///
@@ -708,7 +708,7 @@ where
 ///
 /// ```
 /// # use constriction::{
-/// #     backends::Cursor, stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
+/// #     backends::Cursor, stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
 /// #     UnwrapInfallible,
 /// # };
 /// # let quantizer = DefaultLeakyQuantizer::new(-100..=100);
@@ -754,7 +754,7 @@ where
 ///
 /// ```
 /// # use constriction::{
-/// #     backends::Cursor, stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
+/// #     backends::Cursor, stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
 /// #     UnwrapInfallible,
 /// # };
 /// # let quantizer = DefaultLeakyQuantizer::new(-100..=100);
@@ -892,7 +892,7 @@ impl<B: Seek> Seek for Reverse<B> {
 /// ```
 /// use constriction::{
 ///     stream::{
-///         models::DefaultLeakyQuantizer, queue::{DefaultRangeEncoder, DefaultRangeDecoder},
+///         model::DefaultLeakyQuantizer, queue::{DefaultRangeEncoder, DefaultRangeDecoder},
 ///         Encode, Decode
 ///     },
 ///     UnwrapInfallible,
@@ -941,7 +941,7 @@ impl<B: Seek> Seek for Reverse<B> {
 ///
 /// ```
 /// # use constriction::{
-/// #     stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
+/// #     stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
 /// #     CoderError, UnwrapInfallible,
 /// # };
 /// #
@@ -982,7 +982,7 @@ impl<B: Seek> Seek for Reverse<B> {
 ///
 /// ```
 /// use constriction::{
-///     backends::Cursor, stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
+///     backends::Cursor, stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode},
 ///     CoderError, UnwrapInfallible,
 /// };
 ///
@@ -1818,7 +1818,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
+    use crate::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
     use probability::distribution::Gaussian;
     use std::{

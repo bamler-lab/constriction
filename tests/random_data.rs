@@ -9,7 +9,7 @@ use probability::{
 };
 
 use constriction::{
-    stream::{models::LeakyQuantizer, queue, stack, Decode, Encode, IntoDecoder},
+    stream::{model::LeakyQuantizer, queue, stack, Decode, Encode, IntoDecoder},
     BitArray,
 };
 

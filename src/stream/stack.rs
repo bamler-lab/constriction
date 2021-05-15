@@ -18,7 +18,7 @@ use core::{
 use num::cast::AsPrimitive;
 
 use super::{
-    models::{DecoderModel, EncoderModel},
+    model::{DecoderModel, EncoderModel},
     AsDecoder, Code, Decode, Encode, IntoDecoder, TryCodingError,
 };
 use crate::{
@@ -52,7 +52,7 @@ use crate::{
 /// Basic usage example:
 ///
 /// ```
-/// use constriction::stream::{models::LeakyQuantizer, stack::DefaultAnsCoder, Decode};
+/// use constriction::stream::{model::LeakyQuantizer, stack::DefaultAnsCoder, Decode};
 ///
 /// // `DefaultAnsCoder` is a type alias to `AnsCoder` with sane generic parameters.
 /// let mut ans = DefaultAnsCoder::new();
@@ -134,8 +134,8 @@ pub type DefaultAnsCoder<Backend = Vec<u32>> = AnsCoder<u32, u64, Backend>;
 ///
 /// See [`SmallContiguousLookupDecoderModel`].
 ///
-/// [`LookupDecoderModel`]: super::models::LookupDecoderModel
-/// [`SmallContiguousLookupDecoderModel`]: super::models::SmallContiguousLookupDecoderModel
+/// [`LookupDecoderModel`]: super::model::LookupDecoderModel
+/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
 pub type SmallAnsCoder<Backend = Vec<u16>> = AnsCoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> Debug for AnsCoder<Word, State, Backend>
@@ -409,7 +409,7 @@ where
     ///
     /// ```
     /// use constriction::stream::{
-    ///     models::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
+    ///     model::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
     /// };
     ///
     /// let mut ans = DefaultAnsCoder::new();
@@ -454,7 +454,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
+    /// use constriction::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
     ///
     /// // Create a stack and encode some stuff.
     /// let mut ans = DefaultAnsCoder::new();
@@ -721,7 +721,7 @@ where
     ///
     /// ```
     /// use constriction::stream::{
-    ///     models::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
+    ///     model::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
     /// };
     ///
     /// let mut ans = DefaultAnsCoder::new();
@@ -1090,7 +1090,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::models::{
+    use super::super::model::{
         ContiguousCategoricalEntropyModel, IterableEntropyModel, LeakyQuantizer,
     };
     use super::*;

@@ -31,7 +31,7 @@ def test_custom_model():
 
     # Encode and decode i.i.d. symbols
     model_py = scipy.stats.norm(1.2, 4.9)
-    model = constriction.stream.models.CustomModel(
+    model = constriction.stream.model.CustomModel(
         model_py.cdf, model_py.ppf, -100, 100)
     encoder = constriction.stream.ans.AnsCoder()
     encoder.encode_iid_custom_model_reverse(symbols, model)
@@ -49,7 +49,7 @@ def test_custom_model():
         np.array([[1.2, 4.9]], dtype=np.float64) +
         np.array([[0.0]]*len(symbols), dtype=np.float64)
     )
-    model = constriction.stream.models.CustomModel(
+    model = constriction.stream.model.CustomModel(
         lambda x, params: scipy.stats.norm.cdf(
             x, loc=params[0], scale=params[1]),
         lambda x, params: scipy.stats.norm.ppf(
@@ -68,7 +68,7 @@ def test_custom_model():
 
     # Encode and decode non-i.i.d. symbols.
     model_parameters = np.array([[i, 4.9] for i in symbols], dtype=np.float64)
-    model = constriction.stream.models.CustomModel(
+    model = constriction.stream.model.CustomModel(
         lambda x, params: scipy.stats.norm.cdf(
             x, loc=params[0], scale=params[1]),
         lambda x, params: scipy.stats.norm.ppf(

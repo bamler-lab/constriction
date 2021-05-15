@@ -4,7 +4,7 @@
 //!
 //! ```
 //! use constriction::stream::{
-//!     models::DefaultContiguousCategoricalEntropyModel,
+//!     model::DefaultContiguousCategoricalEntropyModel,
 //!     stack::DefaultAnsCoder, chain::DefaultChainCoder, Decode
 //! };
 //!
@@ -67,7 +67,7 @@ use core::{borrow::Borrow, convert::Infallible, fmt::Display};
 use num::cast::AsPrimitive;
 
 use super::{
-    models::{DecoderModel, EncoderModel},
+    model::{DecoderModel, EncoderModel},
     Code, Decode, Encode, TryCodingError,
 };
 use crate::{
@@ -102,7 +102,7 @@ use crate::{
 /// The following two examples show two variants of the above typical usage cycle.
 ///
 /// ```
-/// use constriction::stream::{models::DefaultLeakyQuantizer, Decode, chain::DefaultChainCoder};
+/// use constriction::stream::{model::DefaultLeakyQuantizer, Decode, chain::DefaultChainCoder};
 /// use probability::distribution::Gaussian;
 ///
 /// // Step 0 of the compressor: Generate some sample binary data for demonstration purpose.
@@ -159,7 +159,7 @@ use crate::{
 /// shows how this works:
 ///
 /// ```
-/// # use constriction::stream::{models::DefaultLeakyQuantizer, Decode, chain::DefaultChainCoder};
+/// # use constriction::stream::{model::DefaultLeakyQuantizer, Decode, chain::DefaultChainCoder};
 /// # use probability::distribution::Gaussian;
 /// # let original_data = (0..100u32).map(
 /// #     |i| i.wrapping_mul(0xad5f_b2ed).wrapping_add(0xed55_4892)
@@ -646,7 +646,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use constriction::stream::{models::LeakyQuantizer, Decode, chain::DefaultChainCoder};
+    /// use constriction::stream::{model::LeakyQuantizer, Decode, chain::DefaultChainCoder};
     ///
     /// // Construct two entropy models with 24 bits and 20 bits of precision, respectively.
     /// let continuous_distribution = probability::distribution::Gaussian::new(0.0, 10.0);
@@ -1127,7 +1127,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::models::LeakyQuantizer;
+    use super::super::model::LeakyQuantizer;
     use super::*;
 
     use probability::distribution::Gaussian;

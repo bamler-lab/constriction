@@ -92,7 +92,7 @@
 //! [below](#exercise).
 //!
 //! ```
-//! use constriction::stream::{stack::DefaultAnsCoder, models::DefaultLeakyQuantizer};
+//! use constriction::stream::{stack::DefaultAnsCoder, model::DefaultLeakyQuantizer};
 //! use probability::distribution::Gaussian;
 //!
 //! fn encode_sample_data() -> Vec<u32> {
@@ -127,7 +127,7 @@
 //! Now let's reconstruct the sample data from its compressed representation.
 //!
 //! ```
-//! use constriction::stream::{stack::DefaultAnsCoder, models::DefaultLeakyQuantizer, Decode};
+//! use constriction::stream::{stack::DefaultAnsCoder, model::DefaultLeakyQuantizer, Decode};
 //! use probability::distribution::Gaussian;
 //!
 //! fn decode_sample_data(compressed: Vec<u32>) -> Vec<i32> {
@@ -186,7 +186,7 @@
 //!
 //! ```
 //! use constriction::stream::{
-//!     models::DefaultLeakyQuantizer,
+//!     model::DefaultLeakyQuantizer,
 //!     queue::{DefaultRangeEncoder, DefaultRangeDecoder},
 //!     Encode, Decode,
 //! };
@@ -432,7 +432,7 @@ pub trait Pos: PosSeek {
 ///
 /// ```
 /// use constriction::stream::{
-///     models::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
+///     model::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
 /// };
 /// use constriction::{Pos, Seek};
 ///
@@ -523,7 +523,7 @@ pub trait Seek: PosSeek {
     ///
     /// ```
     /// use constriction::{
-    ///     stream::{models::LeakyQuantizer, stack::{DefaultAnsCoder, AnsCoder}, Decode},
+    ///     stream::{model::LeakyQuantizer, stack::{DefaultAnsCoder, AnsCoder}, Decode},
     ///     Pos, Seek
     /// };
     ///

@@ -2,7 +2,7 @@ use std::any::type_name;
 
 use constriction::{
     stream::{
-        models::{LookupDecoderModel, NonContiguousCategoricalEncoderModel},
+        model::{LookupDecoderModel, NonContiguousCategoricalEncoderModel},
         queue::RangeEncoder,
         stack::AnsCoder,
         Code, Decode, Encode,
