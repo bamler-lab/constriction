@@ -50,7 +50,7 @@ impl EncoderHuffmanTree {
         Self::try_from_probabilities(
             probabilities
                 .into_iter()
-                .map(|p| NonNanFloat::new(p.borrow().clone())),
+                .map(|p| NonNanFloat::new(*p.borrow())),
         )
     }
 
@@ -185,7 +185,7 @@ impl DecoderHuffmanTree {
         Self::try_from_probabilities(
             probabilities
                 .into_iter()
-                .map(|p| NonNanFloat::new(p.borrow().clone())),
+                .map(|p| NonNanFloat::new(*p.borrow())),
         )
     }
 
@@ -242,7 +242,7 @@ impl DecoderCodebook for DecoderHuffmanTree {
         while node_index >= num_symbols {
             let bit = source
                 .next()
-                .ok_or(SymbolCodeError::OutOfCompressedData.into_coder_error())??;
+                .ok_or_else(|| SymbolCodeError::OutOfCompressedData.into_coder_error())??;
             unsafe {
                 // SAFETY:
                 // - `node_index >= num_symbols` within this loop, so `node_index - num_symbols`
@@ -285,6 +285,7 @@ impl<F: Float> PartialEq for NonNanFloat<F> {
 
 impl<F: Float> Eq for NonNanFloat<F> {}
 
+#[allow(clippy::derive_ord_xor_partial_ord)]
 impl<F: Float> Ord for NonNanFloat<F> {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.inner
@@ -335,7 +336,8 @@ mod tests {
                 .map(|symbol| {
                     let mut codeword = String::new();
                     tree.encode_symbol_prefix(symbol, |bit| {
-                        Result::<_, Infallible>::Ok(codeword.push(if bit { '1' } else { '0' }))
+                        codeword.push(if bit { '1' } else { '0' });
+                        Result::<_, Infallible>::Ok(())
                     })
                     .unwrap();
                     codeword

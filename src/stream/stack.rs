@@ -110,19 +110,19 @@ where
 {
     bulk: Backend,
 
-    /// Invariant: `state >= State::one() << (State::BITS - Word::BITS)`
-    /// unless `bulk.is_empty()` or this is the `waste` part of an `stable::Coder`.
+    /// Invariant: `state >= State::one() << (State::BITS - Word::BITS)` unless
+    /// `bulk.is_empty()`.
     state: State,
 
-    /// We keep track of the `Word` type so that we can statically enforce
-    /// the invariant `Word: Into<State>`.
+    /// We keep track of the `Word` type so that we can statically enforce the invariant
+    /// `Word: Into<State>`.
     phantom: PhantomData<Word>,
 }
 
 /// Type alias for an [`AnsCoder`] with sane parameters for typical use cases.
 ///
-/// This type alias sets the generic type arguments `Word` and `State` to
-/// sane values for many typical use cases.
+/// This type alias sets the generic type arguments `Word` and `State` to sane values for
+/// many typical use cases.
 pub type DefaultAnsCoder<Backend = Vec<u32>> = AnsCoder<u32, u64, Backend>;
 
 /// Type alias for an [`AnsCoder`] for use with a [`LookupDecoderModel`]
@@ -260,6 +260,10 @@ where
         }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that `state >= State::one() << (State::BITS - Word::BITS)`
+    /// unless `bulk.is_empty()`.
     pub unsafe fn from_raw_parts(bulk: Backend, state: State) -> Self {
         Self {
             bulk,
@@ -625,6 +629,7 @@ where
     State: BitArray + AsPrimitive<Word>,
 {
     // TODO: proper error type (also for `from_compressed`)
+    #[allow(clippy::result_unit_err)]
     pub fn from_compressed_slice(compressed: &'bulk [Word]) -> Result<Self, ()> {
         Self::from_compressed(backends::Cursor::new_at_write_end(compressed)).map_err(|_| ())
     }
@@ -915,7 +920,7 @@ where
     {
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .ok_or(DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
+            .ok_or_else(|| DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
         if (self.state >> (State::BITS - PRECISION)) >= probability.get().into().into() {
             self.bulk.write(self.state.as_())?;
@@ -1058,10 +1063,8 @@ where
     ) -> Result<Self, CoderError<(), Backend::WriteError>> {
         // Append state. Will be undone in `<Self as Drop>::drop`.
         let mut chunks_rev = bit_array_to_chunks_truncated(ans.state);
-        if SEALED {
-            if chunks_rev.next() != Some(Word::one()) {
-                return Err(CoderError::Frontend(()));
-            }
+        if SEALED && chunks_rev.next() != Some(Word::one()) {
+            return Err(CoderError::Frontend(()));
         }
         for chunk in chunks_rev.rev() {
             ans.bulk.write(chunk)?
@@ -1270,7 +1273,7 @@ mod tests {
         let mut rng = Xoshiro256StarStar::seed_from_u64(
             (Word::BITS as u64).rotate_left(3 * 16)
                 ^ (State::BITS as u64).rotate_left(2 * 16)
-                ^ (Probability::BITS as u64).rotate_left(1 * 16)
+                ^ (Probability::BITS as u64).rotate_left(16)
                 ^ PRECISION as u64,
         );
 

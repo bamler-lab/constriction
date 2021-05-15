@@ -222,7 +222,7 @@ where
 
     /// Same as `Encoder::maybe_full`, but can be called on a concrete type without type
     /// annotations.
-    pub fn maybe_full<'a>(&'a self) -> bool {
+    pub fn maybe_full(&self) -> bool {
         self.bulk.maybe_full()
     }
 
@@ -230,6 +230,7 @@ where
     /// and therefore doesn't require type arguments on the caller side.
     ///
     /// TODO: there should also be a `decoder()` method that takes `&mut self`
+    #[allow(clippy::result_unit_err)]
     pub fn into_decoder(self) -> Result<RangeDecoder<Word, State, Backend::IntoReadWords>, ()>
     where
         Backend: IntoReadWords<Word, Queue>,
@@ -438,9 +439,9 @@ where
     /// decoder is dropped, which requires precise knowledge of the backend (and which is
     /// also the reason why this method takes a `&mut self`receiver). If you're using a
     /// different backend than a `Vec`, consider calling [`into_decoder`] instead.
-    pub fn decoder<'a>(
-        &'a mut self,
-    ) -> RangeDecoder<Word, State, Cursor<Word, EncoderGuard<'a, Word, State>>> {
+    pub fn decoder(
+        &mut self,
+    ) -> RangeDecoder<Word, State, Cursor<Word, EncoderGuard<'_, Word, State>>> {
         RangeDecoder::from_compressed(self.get_compressed()).unwrap_infallible()
     }
 
@@ -491,13 +492,13 @@ where
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
-            .ok_or(DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
+            .ok_or_else(|| DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
 
         let scale = self.state.range.get() >> PRECISION;
         // This cannot overflow since `scale * probability <= (range >> PRECISION) << PRECISION`
         self.state.range = (scale * probability.get().into().into())
             .into_nonzero()
-            .ok_or(DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
+            .ok_or_else(|| DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
         let new_lower = self
             .state
             .lower
@@ -550,17 +551,13 @@ where
                 // Transition from an inverted to an inverted situation (TODO: mark as unlikely branch).
                 *num_inverted = NonZeroUsize::new(num_inverted.get().wrapping_add(1))
                     .expect("Cannot encode more symbols than what's addressable with usize.");
+            } else if self.state.lower.wrapping_add(&self.state.range.get()) > self.state.lower {
+                // Transition from a normal to a normal situation (the most common case).
+                self.bulk.write(lower_word)?;
             } else {
-                if self.state.lower.wrapping_add(&self.state.range.get()) > self.state.lower {
-                    // Transition from a normal to a normal situation (the most common case).
-                    self.bulk.write(lower_word)?;
-                } else {
-                    // Transition from a normal to an inverted situation.
-                    self.situation = EncoderSituation::Inverted(
-                        NonZeroUsize::new(1).expect("1 != 0"),
-                        lower_word,
-                    );
-                }
+                // Transition from a normal to an inverted situation.
+                self.situation =
+                    EncoderSituation::Inverted(NonZeroUsize::new(1).expect("1 != 0"), lower_word);
             }
         }
 
@@ -690,6 +687,7 @@ where
             }
         }
 
+        #[allow(clippy::collapsible_if)]
         if num_read < State::BITS / Word::BITS {
             if num_read != 0 {
                 point = point << (State::BITS - num_read * Word::BITS);
@@ -703,7 +701,7 @@ where
 
     /// Same as `Decoder::maybe_exhausted`, but can be called on a concrete type without
     /// type annotations.
-    pub fn maybe_exhausted<'a>(&'a self) -> bool {
+    pub fn maybe_exhausted(&self) -> bool {
         // The maximum possible difference between `point` and `lower`, even if the
         // compressed data was concatenated with a lot of one bits.
         let max_difference =

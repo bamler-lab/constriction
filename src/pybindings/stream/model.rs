@@ -60,7 +60,7 @@ impl CustomModel {
             cdf: &self.cdf,
             approximate_inverse_cdf: &self.approximate_inverse_cdf,
             py,
-            params: params,
+            params,
         };
         self.quantizer.quantize(distribution)
     }

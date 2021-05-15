@@ -303,6 +303,8 @@
 //! [`LookupDecoderModel`]: model::LookupDecoderModel
 //! [`LeakilyQuantizedDistribution`]: model::LeakilyQuantizedDistribution
 
+#![allow(clippy::type_complexity)]
+
 pub mod chain;
 pub mod model;
 pub mod queue;
@@ -620,8 +622,7 @@ pub trait Encode<const PRECISION: usize>: Code {
         Self::Word: AsPrimitive<M::Probability>,
     {
         for symbol_and_model in symbols_and_models.into_iter() {
-            let (symbol, model) =
-                symbol_and_model.map_err(|err| TryCodingError::InvalidEntropyModel(err))?;
+            let (symbol, model) = symbol_and_model.map_err(TryCodingError::InvalidEntropyModel)?;
             self.encode_symbol(symbol, model)?;
         }
 
@@ -1002,11 +1003,11 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// [`decode_symbols`]: Self::decode_symbols
     /// [`decode_symbol`]: Self::decode_symbol
     #[inline(always)]
-    fn decode_iid_symbols<'s, M>(
-        &'s mut self,
+    fn decode_iid_symbols<M>(
+        &mut self,
         amt: usize,
         model: M,
-    ) -> DecodeIidSymbols<'s, Self, M, PRECISION>
+    ) -> DecodeIidSymbols<'_, Self, M, PRECISION>
     where
         M: DecoderModel<PRECISION> + Copy,
         M::Probability: Into<Self::Word>,
@@ -1231,7 +1232,7 @@ where
         self.models.next().map(|model| {
             Ok(self
                 .decoder
-                .decode_symbol(model.map_err(|err| TryCodingError::InvalidEntropyModel(err))?)?)
+                .decode_symbol(model.map_err(TryCodingError::InvalidEntropyModel)?)?)
         })
     }
 

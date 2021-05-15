@@ -23,7 +23,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// TODO: document
 #[pyclass]
 #[text_signature = "()"]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RangeEncoder {
     inner: crate::stream::queue::DefaultRangeEncoder,
 }

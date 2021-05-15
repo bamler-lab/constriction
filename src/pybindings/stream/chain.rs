@@ -49,18 +49,15 @@ impl ChainCoder {
                     )
                 })?
             }
+        } else if seal == Some(true) {
+            crate::stream::chain::ChainCoder::from_binary(data)
+                .map_err(|_| pyo3::exceptions::PyValueError::new_err("Too little data provided."))?
         } else {
-            if seal == Some(true) {
-                crate::stream::chain::ChainCoder::from_binary(data).map_err(|_| {
-                    pyo3::exceptions::PyValueError::new_err("Too little data provided.")
-                })?
-            } else {
-                crate::stream::chain::ChainCoder::from_compressed(data).map_err(|_| {
+            crate::stream::chain::ChainCoder::from_compressed(data).map_err(|_| {
                     pyo3::exceptions::PyValueError::new_err(
                         "Too little data provided, or provided data ends in zero word and `seal==False`.",
                     )
                 })?
-            }
         };
 
         Ok(Self { inner })

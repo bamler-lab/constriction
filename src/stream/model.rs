@@ -1586,8 +1586,15 @@ pub trait SymbolTable<Symbol, Probability: BitArray> {
 
     fn support_size(&self) -> usize;
 
+    /// # Safety
+    ///
+    /// Argument `index` must be strictly smaller than `1 << PRECISION` (for `PRECISION !=
+    /// Probability::BITS`).
     unsafe fn left_cumulative_unchecked(&self, index: usize) -> Probability;
 
+    /// # Safety
+    ///
+    /// Argument `symbol` must be in the support of the model.
     unsafe fn symbol_unchecked(&self, index: usize) -> Symbol;
 
     /// Bisects the symbol table to find the bin that contains `quantile`.
@@ -2049,6 +2056,7 @@ impl<Probability: BitArray, const PRECISION: usize>
     ///
     /// TODO: should also return an error if support is too large to support leaky
     /// distribution
+    #[allow(clippy::result_unit_err)]
     pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: Float + core::iter::Sum<F> + Into<f64>,
@@ -2164,6 +2172,7 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// [`symbol_table`]: IterableEntropyModel::symbol_table
     /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
     /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
+    #[allow(clippy::result_unit_err)]
     pub fn from_nonzero_fixed_point_probabilities<I>(
         probabilities: I,
         infer_last_probability: bool,
@@ -2242,6 +2251,7 @@ where
     ///
     /// TODO: should also return an error if support is too large to support leaky
     /// distribution
+    #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
         probabilities: &[F],
@@ -2321,6 +2331,7 @@ where
     /// [`fixed_point_probabilities`]: Self::fixed_point_probabilities
     /// [`from_symbols_and_floating_point_probabilities`]:
     ///     Self::from_symbols_and_floating_point_probabilities
+    #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
         probabilities: P,
@@ -2777,6 +2788,7 @@ where
     /// This method operates logically identically to
     /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities`]
     /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
+    #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: impl IntoIterator<Item = Symbol>,
         probabilities: &[F],
@@ -2800,6 +2812,7 @@ where
     /// This method operates logically identically to
     /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_nonzero_fixed_point_probabilities`]
     /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
+    #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
         probabilities: P,
@@ -2960,7 +2973,7 @@ where
     for probability in probabilities {
         let old_accum = accum;
         accum = accum.wrapping_add(probability.borrow());
-        laps_or_zeros = laps_or_zeros + (accum <= old_accum) as usize;
+        laps_or_zeros += (accum <= old_accum) as usize;
         let symbol = symbols.next().ok_or(())?;
         operation(symbol, old_accum, *probability.borrow())?;
     }
@@ -2974,10 +2987,8 @@ where
         let symbol = symbols.next().ok_or(())?;
         let probability = total.wrapping_sub(&accum);
         operation(symbol, accum, probability)?;
-    } else {
-        if accum != total || laps_or_zeros != (PRECISION == Probability::BITS) as usize {
-            return Err(());
-        }
+    } else if accum != total || laps_or_zeros != (PRECISION == Probability::BITS) as usize {
+        return Err(());
     }
 
     Ok(symbols)
@@ -3217,6 +3228,7 @@ where
     /// Create a `LookupDecoderModel` over arbitrary symbols.
     ///
     /// TODO: example
+    #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
         probabilities: &[F],
@@ -3242,6 +3254,7 @@ where
     /// Create a `LookupDecoderModel` over arbitrary symbols.
     ///
     /// TODO: example
+    #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
         probabilities: P,
@@ -3329,6 +3342,7 @@ where
     /// Create a `LookupDecoderModel` over a contiguous range of symbols.
     ///
     /// TODO: example
+    #[allow(clippy::result_unit_err)]
     pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: Float + core::iter::Sum<F> + Into<f64>,
@@ -3348,6 +3362,7 @@ where
     /// # Example
     ///
     /// See [`SmallContiguousLookupDecoderModel`].
+    #[allow(clippy::result_unit_err)]
     pub fn from_nonzero_fixed_point_probabilities_contiguous<I>(
         probabilities: I,
         infer_last_probability: bool,
@@ -3366,7 +3381,7 @@ where
             Vec::with_capacity(probabilities.size_hint().0 + 1 + infer_last_probability as usize);
         accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
             core::iter::repeat(()),
-            probabilities.into_iter(),
+            probabilities,
             |(), _, probability| {
                 let index = cdf.len().as_();
                 cdf.push(lookup_table.len().as_());
@@ -3751,7 +3766,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Check that sorting by weight is compatible with sorting by hist.
-        weights_and_hist.sort();
+        weights_and_hist.sort_unstable();
         // TODO: replace the following with
         // `assert!(weights_and_hist.iter().map(|&(_, x)| x).is_sorted())`
         // when `is_sorted` becomes stable.

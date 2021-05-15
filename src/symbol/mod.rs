@@ -4,6 +4,8 @@
 //!
 //! - implement `Pos` and `Seek` for `SymbolCoder` and for `QueueDecoder`.
 
+#![allow(clippy::type_complexity)]
+
 pub mod codebooks;
 
 use alloc::vec::Vec;
@@ -561,7 +563,7 @@ impl<Word: BitArray, B: WriteWords<Word>> StackCoder<Word, B> {
     /// You often don't need to call this method since a `StackCoder` is already an iterator
     /// if the backend implements `ReadWords<Word, Stack>` (as the default backend
     /// `Vec<Word>` does).
-    pub fn into_iter(
+    pub fn into_iterator(
         self,
     ) -> impl Iterator<Item = Result<bool, <B::IntoReadWords as ReadWords<Word, Stack>>::ReadError>>
     where

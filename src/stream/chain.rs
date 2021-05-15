@@ -332,7 +332,7 @@ where
         let remaining = RemainingBackend::default();
 
         Ok(Self {
-            compressed: compressed,
+            compressed,
             remaining,
             heads,
         })
@@ -411,7 +411,7 @@ where
 
         Ok(Self {
             compressed,
-            remaining: remaining,
+            remaining,
             heads,
         })
     }
@@ -560,6 +560,7 @@ where
         self.encode_iid_symbols(symbols.into_iter().rev(), model)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn increase_precision<const NEW_PRECISION: usize>(
         mut self,
     ) -> Result<
@@ -587,6 +588,7 @@ where
         })
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn decrease_precision<const NEW_PRECISION: usize>(
         mut self,
     ) -> Result<

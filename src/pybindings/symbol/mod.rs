@@ -78,7 +78,7 @@ impl StackCoder {
 
 #[pyclass]
 #[text_signature = "(compressed)"]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct QueueEncoder {
     inner: DefaultQueueEncoder,
 }

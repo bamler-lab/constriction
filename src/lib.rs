@@ -554,6 +554,7 @@ pub trait Seek: PosSeek {
     /// ```
     ///
     /// [`DefaultAnsCoder`]: stack::DefaultAnsCoder
+    #[allow(clippy::result_unit_err)]
     fn seek(&mut self, pos: Self::Position) -> Result<(), ()>;
 }
 
@@ -609,6 +610,9 @@ pub unsafe trait BitArray:
         Self::NonZero::new(self)
     }
 
+    /// # Safety
+    ///
+    /// The provided value must be nonzero.
     #[inline(always)]
     unsafe fn into_nonzero_unchecked(self) -> Self::NonZero {
         Self::NonZero::new_unchecked(self)
@@ -629,6 +633,9 @@ pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq + Hash + 'static {
 
     fn new(n: Self::Base) -> Option<Self>;
 
+    /// # Safety
+    ///
+    /// The provided value `n` must be nonzero.
     unsafe fn new_unchecked(n: Self::Base) -> Self;
 
     fn get(self) -> Self::Base;

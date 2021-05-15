@@ -1172,6 +1172,7 @@ impl<Word, Buf> Cursor<Word, Buf> {
     ///
     /// [`new_at_write_beginning`]: Self::new_at_write_beginning
     /// [`new_at_write_end`]: Self::new_at_write_end
+    #[allow(clippy::result_unit_err)]
     pub fn new_at_pos(buf: Buf, pos: usize) -> Result<Self, ()>
     where
         Buf: AsRef<[Word]>,
@@ -1194,6 +1195,7 @@ impl<Word, Buf> Cursor<Word, Buf> {
     /// implement `WriteWords`) if `Buf` implements `AsMut`.
     ///
     /// [`new_at_pos`]: Self::new_at_pos
+    #[allow(clippy::result_unit_err)]
     pub fn new_at_pos_mut(mut buf: Buf, pos: usize) -> Result<Self, ()>
     where
         Buf: AsMut<[Word]>,
@@ -1812,7 +1814,8 @@ where
     type WriteError = Infallible;
 
     fn write(&mut self, word: Word) -> Result<(), Infallible> {
-        Ok((self.write_callback)(word))
+        (self.write_callback)(word);
+        Ok(())
     }
 }
 
