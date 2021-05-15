@@ -110,7 +110,7 @@ impl QueueEncoder {
     }
 
     #[text_signature = "()"]
-    pub fn get_decoder<'p>(&mut self) -> QueueDecoder {
+    pub fn get_decoder(&mut self) -> QueueDecoder {
         let compressed = self.inner.get_compressed().to_vec();
         QueueDecoder::from_vec(compressed)
     }

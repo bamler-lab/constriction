@@ -443,7 +443,19 @@ where
     where
         Backend: ReadWords<Word, Stack> + WriteWords<Word> + Debug,
     {
-        CoderGuard::new(self)
+        CoderGuard::<'_, _, _, _, false>::new(self).map_err(|err| match err {
+            CoderError::Frontend(()) => unreachable!("Can't happen for SEALED==false."),
+            CoderError::Backend(err) => err,
+        })
+    }
+
+    pub fn get_binary<'a>(
+        &'a mut self,
+    ) -> Result<impl Deref<Target = Backend> + Debug + Drop + 'a, CoderError<(), Backend::WriteError>>
+    where
+        Backend: ReadWords<Word, Stack> + WriteWords<Word> + Debug,
+    {
+        CoderGuard::<'_, _, _, _, true>::new(self)
     }
 
     /// Iterates over the compressed data currently on the ans.
@@ -1025,7 +1037,7 @@ where
 ///
 /// [`AnsCoder`]: struct.Coder.html
 /// [`Coder::get_compressed`]: struct.Coder.html#method.get_compressed
-struct CoderGuard<'a, Word, State, Backend>
+struct CoderGuard<'a, Word, State, Backend, const SEALED: bool>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -1034,15 +1046,24 @@ where
     inner: &'a mut AnsCoder<Word, State, Backend>,
 }
 
-impl<'a, Word, State, Backend> CoderGuard<'a, Word, State, Backend>
+impl<'a, Word, State, Backend, const SEALED: bool> CoderGuard<'a, Word, State, Backend, SEALED>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
     Backend: WriteWords<Word> + ReadWords<Word, Stack>,
 {
-    fn new(ans: &'a mut AnsCoder<Word, State, Backend>) -> Result<Self, Backend::WriteError> {
+    #[inline(always)]
+    fn new(
+        ans: &'a mut AnsCoder<Word, State, Backend>,
+    ) -> Result<Self, CoderError<(), Backend::WriteError>> {
         // Append state. Will be undone in `<Self as Drop>::drop`.
-        for chunk in bit_array_to_chunks_truncated(ans.state).rev() {
+        let mut chunks_rev = bit_array_to_chunks_truncated(ans.state);
+        if SEALED {
+            if chunks_rev.next() != Some(Word::one()) {
+                return Err(CoderError::Frontend(()));
+            }
+        }
+        for chunk in chunks_rev.rev() {
             ans.bulk.write(chunk)?
         }
 
@@ -1050,7 +1071,8 @@ where
     }
 }
 
-impl<'a, Word, State, Backend> Drop for CoderGuard<'a, Word, State, Backend>
+impl<'a, Word, State, Backend, const SEALED: bool> Drop
+    for CoderGuard<'a, Word, State, Backend, SEALED>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -1058,13 +1080,18 @@ where
 {
     fn drop(&mut self) {
         // Revert what we did in `Self::new`.
-        for _ in bit_array_to_chunks_truncated::<_, Word>(self.inner.state) {
+        let mut chunks_rev = bit_array_to_chunks_truncated(self.inner.state);
+        if SEALED {
+            chunks_rev.next();
+        }
+        for _ in chunks_rev {
             core::mem::drop(self.inner.bulk.read());
         }
     }
 }
 
-impl<'a, Word, State, Backend> Deref for CoderGuard<'a, Word, State, Backend>
+impl<'a, Word, State, Backend, const SEALED: bool> Deref
+    for CoderGuard<'a, Word, State, Backend, SEALED>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -1077,7 +1104,8 @@ where
     }
 }
 
-impl<Word, State, Backend> Debug for CoderGuard<'_, Word, State, Backend>
+impl<Word, State, Backend, const SEALED: bool> Debug
+    for CoderGuard<'_, Word, State, Backend, SEALED>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,

@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 
 use crate::{
     stream::{
+        chain::{BackendError, DecoderFrontendError, EncoderFrontendError},
         model::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
         Decode,
     },
@@ -15,158 +16,54 @@ use crate::{
 use super::model::CustomModel;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
-    module.add_class::<AnsCoder>()?;
+    module.add_class::<ChainCoder>()?;
     Ok(())
 }
 
-/// An entropy coder based on [Asymmetric Numeral Systems (ANS)].
-///
-/// This is a wrapper around the Rust type [`constriction::stream::stack::DefaultAnsCoder`]
-/// with python bindings.
-///
-/// Note that this entropy coder is a stack (a "last in first out" data
-/// structure). You can push symbols on the stack using the methods
-/// `encode_leaky_gaussian_symbols_reverse` or `encode_iid_categorical_symbols_reverse`, and then pop
-/// them off *in reverse order* using the methods `decode_leaky_gaussian_symbols` or
-/// `decode_iid_categorical_symbols`, respectively.
-///
-/// To copy out the compressed data that is currently on the stack, call
-/// `get_compressed`. You would typically want write this to a binary file in some
-/// well-documented byte order. After reading it back in at a later time, you can
-/// decompress it by constructing an `constriction.AnsCoder` where you pass in the compressed
-/// data as an argument to the constructor.
-///
-/// If you're only interested in the compressed file size, calling `num_bits` will
-/// be cheaper as it won't actually copy out the compressed data.
-///
-/// # Examples
-///
-/// ## Compression:
-///
-/// ```python
-/// import sys
-/// import constriction
-/// import numpy as np
-///
-/// ans = constriction.AnsCoder()  # Creates an empty ANS coder when called with no arguments.
-///
-/// symbols = np.array([2, -1, 0, 2, 3], dtype = np.int32)
-/// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
-///
-/// ans.encode_leaky_gaussian_symbols_reverse(
-///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
-///
-/// print(f"Compressed size: {ans.num_valid_bits()} bits")
-///
-/// compressed = ans.get_compressed()
-/// if sys.byteorder == "big":
-///     # Convert native byte order to a consistent one (here: little endian).
-///     compressed.byteswap(inplace=True)
-/// compressed.tofile("compressed.bin")
-/// ```
-///
-/// ## Decompression:
-///
-/// ```python
-/// import sys
-/// import constriction
-/// import numpy as np
-///
-/// compressed = np.fromfile("compressed.bin", dtype=np.uint32)
-/// if sys.byteorder == "big":
-///     # Convert little endian byte order to native byte order.
-///     compressed.byteswap(inplace=True)
-///
-/// ans = constriction.AnsCoder(compressed)
-///
-/// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-/// means = np.array([2.3, -1.7, 0.1, 2.2], -5.1, dtype = np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
-///
-/// reconstructed = ans.decode_leaky_gaussian_symbols(
-///     min_supported_symbol, max_supported_symbol, means, stds)
-/// assert ans.is_empty()
-/// ```
-///
-/// # Constructor
-///
-/// AnsCoder(compressed)
-///
-/// Arguments:
-/// compressed (optional) -- initial compressed data, as a numpy array with
-///     dtype `uint32`.
-///
-/// [Asymmetric Numeral Systems (ANS)]: https://en.wikipedia.org/wiki/Asymmetric_numeral_systems
-/// [`constriction::stream::ans::DefaultAnsCoder`]: crate::stream::stack::DefaultAnsCoder
 #[pyclass]
-#[text_signature = "(compressed=np.array([], dtype=np.uint32), seal=False)"]
+#[text_signature = "(compressed, is_remaining=False, seal=False)"]
 #[derive(Debug)]
-pub struct AnsCoder {
-    inner: crate::stream::stack::DefaultAnsCoder,
+pub struct ChainCoder {
+    inner: crate::stream::chain::DefaultChainCoder,
 }
 
 #[pymethods]
-impl AnsCoder {
-    /// Constructs a new entropy coder, optionally passing initial compressed data.
+impl ChainCoder {
+    /// Constructs a new chain coder, optionally passing initial compressed data.
     #[new]
     pub fn new(
-        compressed: Option<PyReadonlyArray1<'_, u32>>,
+        data: PyReadonlyArray1<'_, u32>,
+        is_remaining: Option<bool>,
         seal: Option<bool>,
     ) -> PyResult<Self> {
-        if compressed.is_none() && seal.is_some() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Need compressed data to seal.",
-            ));
-        }
-        let inner = if let Some(compressed) = compressed {
-            let compressed = compressed.to_vec()?;
+        let data = data.to_vec()?;
+        let inner = if is_remaining == Some(true) {
             if seal == Some(true) {
-                crate::stream::stack::AnsCoder::from_binary(compressed).unwrap_infallible()
+                return Err(pyo3::exceptions::PyAssertionError::new_err(
+                    "Cannot seal remaining data.",
+                ));
             } else {
-                crate::stream::stack::AnsCoder::from_compressed(compressed).map_err(|_| {
+                crate::stream::chain::ChainCoder::from_remaining(data).map_err(|_| {
                     pyo3::exceptions::PyValueError::new_err(
-                        "Invalid compressed data: ANS compressed data never ends in a zero word.",
+                        "Too little data provided, or provided data ends in zero word and `is_remaining==True`.",
                     )
                 })?
             }
         } else {
-            crate::stream::stack::AnsCoder::new()
+            if seal == Some(true) {
+                crate::stream::chain::ChainCoder::from_binary(data).map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err("Too little data provided.")
+                })?
+            } else {
+                crate::stream::chain::ChainCoder::from_compressed(data).map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Too little data provided, or provided data ends in zero word and `seal==False`.",
+                    )
+                })?
+            }
         };
 
         Ok(Self { inner })
-    }
-
-    /// Resets the coder for compression.
-    ///
-    /// After calling this method, the method `is_empty` will return `True`.
-    pub fn clear(&mut self) {
-        self.inner.clear();
-    }
-
-    /// The current size of the compressed data, in `np.uint32` words.
-    pub fn num_words(&self) -> usize {
-        self.inner.num_words()
-    }
-
-    /// The current size of the compressed data, in bits, rounded up to full words.
-    pub fn num_bits(&self) -> usize {
-        self.inner.num_bits()
-    }
-
-    /// The current size of the compressed data, in bits, not rounded up to full words.
-    pub fn num_valid_bits(&self) -> usize {
-        self.inner.num_valid_bits()
-    }
-
-    /// Returns `True` iff the coder is in its default initial state.
-    ///
-    /// The default initial state is the state returned by the constructor when
-    /// called without arguments, or the state to which the coder is set when
-    /// calling `clear`.
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
     }
 
     /// Copies the compressed data to the provided numpy array.
@@ -191,16 +88,36 @@ impl AnsCoder {
     /// with open("path/to/file", "wb") as file:
     ///     compressed.tofile(file)
     /// ```
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> &'p PyArray1<u32> {
-        PyArray1::from_slice(py, &*self.inner.get_compressed().unwrap_infallible())
+    pub fn get_data<'p>(
+        &self,
+        unseal: Option<bool>,
+        py: Python<'p>,
+    ) -> PyResult<(&'p PyArray1<u32>, &'p PyArray1<u32>)> {
+        let cloned = self.inner.clone();
+        let data = if unseal == Some(true) {
+            cloned.into_binary()
+        } else {
+            cloned.into_compressed()
+        };
+        let (remaining, compressed) = data.map_err(|_| {
+            pyo3::exceptions::PyAssertionError::new_err(
+                "Fractional number of words in compressed or remaining data.",
+            )
+        })?;
+
+        let remaining = PyArray1::from_vec(py, remaining);
+        let compressed = PyArray1::from_vec(py, compressed);
+        Ok((remaining, compressed))
     }
 
-    pub fn get_binary<'p>(&mut self, py: Python<'p>) -> PyResult<&'p PyArray1<u32>> {
-        let binary = self.inner.get_binary().map_err(|_|
-            pyo3::exceptions::PyAssertionError::new_err(
-                "Compressed data doesn't fit into integer number of words. Did you create the encoder with `sealed=True`?",
-            ))?;
-        Ok(PyArray1::from_slice(py, &*binary))
+    pub fn get_remaining<'p>(
+        &self,
+        py: Python<'p>,
+    ) -> PyResult<(&'p PyArray1<u32>, &'p PyArray1<u32>)> {
+        let (compressed, remaining) = self.inner.clone().into_remaining().unwrap_infallible();
+        let remaining = PyArray1::from_vec(py, remaining);
+        let compressed = PyArray1::from_vec(py, compressed);
+        Ok((compressed, remaining))
     }
 
     /// Encodes a sequence of symbols using (leaky) Gaussian entropy models.
@@ -399,12 +316,13 @@ impl AnsCoder {
             )
         })?;
 
-        Ok(PyArray1::from_iter(
-            py,
-            self.inner.decode_iid_symbols(amt, &model).map(|symbol| {
-                (symbol.unwrap_infallible() as i32).wrapping_add(min_supported_symbol)
-            }),
-        ))
+        let symbols = self
+            .inner
+            .decode_iid_symbols(amt, &model)
+            .map(|symbol| symbol.map(|symbol| (symbol as i32).wrapping_add(min_supported_symbol)))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(PyArray1::from_vec(py, symbols))
     }
 
     #[text_signature = "(symbols, model)"]
@@ -426,12 +344,11 @@ impl AnsCoder {
         model: &CustomModel,
         py: Python<'py>,
     ) -> PyResult<&'py PyArray1<i32>> {
-        Ok(PyArray1::from_iter(
-            py,
-            self.inner
-                .decode_iid_symbols(amt, model.quantized(py))
-                .map(UnwrapInfallible::unwrap_infallible),
-        ))
+        let symbols = self
+            .inner
+            .decode_iid_symbols(amt, model.quantized(py))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(PyArray1::from_vec(py, symbols))
     }
 
     #[text_signature = "(symbols, model, model_parameters)"]
@@ -473,11 +390,44 @@ impl AnsCoder {
             model.quantized_with_parameters(py, PyArray1::from_vec(py, params.to_vec()).readonly())
         });
 
-        Ok(PyArray1::from_iter(
-            py,
-            self.inner
-                .decode_symbols(models)
-                .map(UnwrapInfallible::unwrap_infallible),
-        ))
+        let symbols = self
+            .inner
+            .decode_symbols(models)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PyArray1::from_vec(py, symbols))
+    }
+}
+
+impl From<EncoderFrontendError> for PyErr {
+    fn from(err: EncoderFrontendError) -> Self {
+        match err {
+            EncoderFrontendError::ImpossibleSymbol => {
+                pyo3::exceptions::PyKeyError::new_err(err.to_string())
+            }
+            EncoderFrontendError::OutOfRemaining => {
+                pyo3::exceptions::PyAssertionError::new_err(err.to_string())
+            }
+        }
+    }
+}
+
+impl From<DecoderFrontendError> for PyErr {
+    fn from(err: DecoderFrontendError) -> Self {
+        match err {
+            DecoderFrontendError::OutOfCompressedData => {
+                pyo3::exceptions::PyAssertionError::new_err(err.to_string())
+            }
+        }
+    }
+}
+
+impl<CompressedBackendError: Into<PyErr>, RemainingBackendError: Into<PyErr>>
+    From<BackendError<CompressedBackendError, RemainingBackendError>> for PyErr
+{
+    fn from(err: BackendError<CompressedBackendError, RemainingBackendError>) -> Self {
+        match err {
+            BackendError::Compressed(err) => err.into(),
+            BackendError::Remaining(err) => err.into(),
+        }
     }
 }

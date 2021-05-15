@@ -588,7 +588,7 @@ where
 }
 
 /// Type alias for a [`RangeDecoder`] with sane parameters for typical use cases.
-pub type DefaultRangeDecoder<Backend = Vec<u32>> = RangeDecoder<u32, u64, Backend>;
+pub type DefaultRangeDecoder<Backend = Cursor<u32, Vec<u32>>> = RangeDecoder<u32, u64, Backend>;
 
 /// Type alias for a [`RangeDecoder`] for use with [lookup models]
 ///
@@ -796,7 +796,7 @@ where
     State: BitArray + AsPrimitive<Word>,
     Backend: ReadWords<Word, Queue>,
 {
-    type FrontendError = FrontendError;
+    type FrontendError = DecoderFrontendError;
 
     type BackendError = Backend::ReadError;
 
@@ -834,7 +834,7 @@ where
             // This can only happen if both of the following conditions apply:
             // (i) we are decoding invalid compressed data; and
             // (ii) we use entropy models with varying `PRECISION`s.
-            return Err(CoderError::Frontend(FrontendError::InvalidData));
+            return Err(CoderError::Frontend(DecoderFrontendError::InvalidData));
         }
 
         let (symbol, left_sided_cumulative, probability) =
@@ -1245,7 +1245,7 @@ mod tests {
 
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum FrontendError {
+pub enum DecoderFrontendError {
     /// This can only happen if both of the following conditions apply:
     ///
     /// 1. we are decoding invalid compressed data; and
@@ -1271,7 +1271,7 @@ pub enum FrontendError {
     InvalidData,
 }
 
-impl Display for FrontendError {
+impl Display for DecoderFrontendError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidData => write!(f, "Tried to decode invalid compressed data."),
@@ -1280,4 +1280,4 @@ impl Display for FrontendError {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for FrontendError {}
+impl std::error::Error for DecoderFrontendError {}
