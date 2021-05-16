@@ -5,53 +5,58 @@ algorithms. It has APIs for both the **Python and Rust** languages and it focuse
 correctness, versatility, ease of use, compression performance, and computational
 efficiency. The goals of `constriction` are to three-fold:
 
-1. **to facilitate research on novel lossless and lossy compression methods** by bridging
-   the gap between vastly different software stacks commonly used for machine learning
-   research vs real-world compression codecs; machine learning researchers will likely want
-   to start using `constriction` through its Python/numpy API. It exposes both highly
-   optimized entropy coders that are easy to use in common cases as well as a composable set
-   of more low-level primitives that allow researchers to come up with specialized variants
-   of existing source coding algorithms (for example, `constriction` provides adapters for
-   making custom defined probability distributions *exactly* invertible in fixed-point
-   arithmetic so that they can be used with the provided entropy coders).
+1. **to facilitate research on novel lossless and lossy compression methods** by providing a
+   *composable* set of entropy coding primitives rather than a rigid implementation of a
+   single preconfigured method; in compression research, different applications put
+   different requirements on the entropy coding method. For example, you may prefer a Range
+   Coder for an autoregressive entropy model (because it preserves the order of encoded
+   symbols), but you may prefer an ANS Coder for a hierarchical entropy model (because it
+   supports bits-back coding). With many other libraries, swapping out a Range Coder for an
+   ANS Coder would mean that you not only have to find and learn how to use new library, but
+   you would also have to port the part of your code that represents probabilistic entropy
+   models so that it adheres to the rules of the new library. By contrast, the composable
+   architecture of `constriction` lets you seamlessly swap out individual components of your
+   compression pipeline (such as the core entropy coding algorithm) independently from other
+   components (such as the fixed-point representation of entropy models or the strategy for
+   dealing with zero probability symbols).
 2. **to simplify the transition from research code to reliable software products** by
-   exposing a superset of the exact same algorithms that the Python API provides also as a
-   Rust crate; if your research lead to a successful prototype of a new compression method
-   then you can use `constriction`'s Rust API to turn your Python research code into a small
-   and highly optimized standalone (statically linked) program, library, or WebAssembly
-   module that runs efficiently and that can be used by customers who don't want to deal
-   with Python's dependency hell. By default, the Rust and Python APIs are binary
-   compatible, so you can, e.g., continue to compress data with your Python research code
-   while decompressing it with your optimized Rust deployment or vice-versa. For deployments
-   with tighter resource constraints, the Rust API provides optional fine-grained control
-   over the trade-off between compression effectiveness, memory usage, and run-time
-   efficency, as well as hooks into the backing data sources and sinks, while preventing
-   accidental misuse through Rust's powerful type system.
+   exposing the exact same functionality via both a Python API (for rapid prototyping on
+   research code) and a Rust API (for turning successful prototypes into production); This
+   approach bridges the gap between two communities that have vastly different requirements
+   on their software development tools: while *data scientists and machine learning
+   researchers* need the quick iteration cycles that scripting languages like Python
+   provide, *real-world compression codecs* that are to be used outside of laboratory
+   conditions have to be implemented in a compiled language that runs fast and that doesn't
+   require setting up a complex runtime environment with lots of dependencies. With
+   `constriction`, you can seamlessly turn your Python research code into a high-performance
+   standalone binary, library, or WebAssembly module. By default, the Python and Rust API
+   are binary compatible, so you can gradually port one component at a time without breaking
+   things. On top of this, the Rust API provides optional fine-grained control over issues
+   relevant to real-world deployments such as the trade-off between compression
+   effectiveness, memory usage, and run-time efficiency, as well as hooks into the backing
+   data sources and sinks, while preventing accidental misuse through Rust's powerful type
+   system.
 3. **to serve as a teaching resource** by providing a collection of several complementary
    entropy coding algorithms within a single consistent framework, thus making the various
    algorithms easily discoverable and comparable on practical examples; [additional teaching
-   material](https://robamler.github.io/teaching/compress21) will be made publicly available
-   as a by-product of an upcoming university course on data compression with deep
+   material](https://robamler.github.io/teaching/compress21) is being made publicly
+   available as a by-product of an ongoing university course on data compression with deep
    probabilistic models.
 
 For an example of a compression codec that started as research code in Python and was then
-deployed as a dependency-free WebAssembly module using `constriction`'s Rust API, have a
-look at [The Linguistic Flux
+deployed as a fast and dependency-free WebAssembly module using `constriction`'s Rust API,
+have a look at [The Linguistic Flux
 Capacitor](https://robamler.github.io/linguistic-flux-capacitor).
 
 ## Project Status
 
 We currently provide implementations of the following entropy coding algorithms:
 
-- **Asymmetric Numeral Systems (ANS):** a highly efficient modern entropy coder with
-  near-optimal compression effectiveness; ANS Coding operates as a stack ("last in first
-  out") and is surjective, which enables advanced use cases like bits-back coding in
-  hierarchical entropy models.
-- **Range Coding:** a computationally efficent variant of Arithmetic Coding; it has
-  essentially the same compression effectiveness as ANS Coding. When highly optimized
-  entropy models are used, Range Coding can be a bit faster than ANS Coding for encoding but
-  may be considerably slower for decoding. More importantly, Range Coding operates as a
-  queue ("first in first out"), which makes it preferable for autoregressive entropy models.
+- **Asymmetric Numeral Systems (ANS):** a fast modern entropy coder with near-optimal
+  compression effectiveness that supports advanced use cases like bits-back coding;
+- **Range Coding:** a computationally efficient variant of Arithmetic Coding, that has
+  essentially the same compression effectiveness as ANS Coding but operates as a queue
+  ("first in first out"), which makes it preferable for autoregressive models.
 - **Chain Coding:** an experimental new entropy coder that combines the (net) effectiveness
   of stream codes with the locality of symbol codes; it is meant for experimental new
   compression approaches that perform joint inference, quantization, and bits-back coding in
@@ -65,7 +70,7 @@ We currently provide implementations of the following entropy coding algorithms:
 
 Further, `constriction` provides implementations of common probability distributions in
 fixed-point arithmetic, which can be used as entropy models in either of the above stream
-codes. The library also proides adapters for turning custom probability distributions into
+codes. The library also provides adapters for turning custom probability distributions into
 exactly invertible fixed-point arithmetic.
 
 The provided implementations of entropy coding algorithms and probability distributions are
