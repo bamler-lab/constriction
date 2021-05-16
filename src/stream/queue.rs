@@ -1,4 +1,35 @@
-//! TODO: mirror as much of the `stack` API as possible
+//! Near-optimal compression on a queue ("first in first out")
+//!
+//! This module provides an implementation of the Range Coding algorithm [1], an entropy
+//! coder with near-optimal compression effectiveness that operates as a *queue* data
+//! structure. Range Coding is a more computationally efficient variant of Arithmetic
+//! Coding.
+//!
+//! # Comparison to sister module `stack`
+//!
+//! Range Coding operates as a *queue*: decoding a sequence of symbols yields the symbols in
+//! the same order in which they were encoded. This is unlike the case with the [`AnsCoder`]
+//! in the sister module [`stack`], which decodes in reverse order. Therefore, Range Coding
+//! is typically the preferred method for autoregressive models. On the other hand, the
+//! provided implementation of Range Coding uses two distinct data structures,
+//! [`RangeEncoder`] and [`RangeDecoder`], for encoding and decoding, respectively. This
+//! means that, unlike the case with the `AnsCoder`, encoding and decoding operations on a
+//! Range Coder cannot be interleaved: once you've *sealed* a `RangeEncoder` (e.g., by
+//! calling [`.into_compressed()`] on it) you cannot add any more compressed data onto it.
+//! This makes Range Coding difficult to use for advanced compression techniques such as
+//! bits-back coding with hierarchical models.
+//!
+//! The parent module contains a more detailed discussion of the [differences between ANS
+//! Coding and Range Coding](super#which-stream-code-should-i-use) .
+//!
+//! # References
+//!
+//! [1] Pasco, Richard Clark. Source coding algorithms for fast data compression. Diss.
+//! Stanford University, 1976.
+//!
+//! [`AnsCoder`]: super::stack::AnsCoder
+//! [`stack`]: super::stack
+//! [`.into_compressed()`]: RangeEncoder::into_compressed
 
 use alloc::vec::Vec;
 use core::{

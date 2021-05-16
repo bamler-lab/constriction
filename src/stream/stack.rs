@@ -1,13 +1,25 @@
-//! Encoding and infallible decoding on a stack ("last in first out")
+//! Fast and Near-optimal compression on a stack ("last in first out")
 //!
 //! This module provides the [`AnsCoder`], a highly efficient entropy coder with
-//! near-optimal compression effectiveness that operates as a *stack* data structure.
-//! Encoding and decoding operate in reverse direction with respect to each other.
-//! Importantly, and unlike the coders in the sister module [`queue`], the `AnsCoder` allows
-//! you to interleave encoding and decoding operations arbitrarily, which is important for
-//! bits-back coding in hierarchical probabilistic models. See [discussion in parent
-//! module](super#which-stream-code-should-i-use) for more information on when a stack is
-//! good or a bad fit.
+//! near-optimal compression effectiveness that operates as a *stack* data structure. It
+//! implements the Asymmetric Numeral Systems (ANS) compression algorithm [1].
+//!
+//! # Comparison to sister module `queue`
+//!
+//! ANS Coding operates as a stack, which means that encoding and decoding operate in
+//! reverse direction with respect to each other. The provided implementation of ANS Coding
+//! uses a single data structure, the [`AnsCoder`], for both encoding and decoding. It
+//! allows you to interleave encoding and decoding operations arbitrarily, which is in
+//! contrast to the situation in the sister module [`queue`] and important for advanced
+//! compression techniques such as bits-back coding in hierarchical probabilistic models.
+//!
+//! The parent module contains a more detailed discussion of the [differences between ANS
+//! Coding and Range Coding](super#which-stream-code-should-i-use) .
+//! 
+//! # References
+//!
+//! [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
+//! replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 //!
 //! [`queue`]: super::queue
 

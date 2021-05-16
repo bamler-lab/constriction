@@ -278,12 +278,26 @@ use num::{
 
 // READ WRITE SEMANTICS =======================================================
 
+/// A trait for marking how reading and writing order relate to each other.
+/// 
+/// This is currently only used in the [`backends`] module. Future versions of
+/// `constriction` may expand its use to frontends.
 pub trait Semantics: Default {}
 
+/// Zero sized marker trait for last-in-first-out read/write [`Semantics`]
+/// 
+/// This type typically only comes up in advanced use cases that are generic over read/write
+/// semantics. If you are looking for an entropy coder that operates as a stack, check out
+/// the module [`stream::stack`].
 #[derive(Debug, Default)]
 pub struct Stack {}
 impl Semantics for Stack {}
 
+/// Zero sized marker trait for first-in-first-out read/write [`Semantics`]
+/// 
+/// This type typically only comes up in advanced use cases that are generic over read/write
+/// semantics. If you are looking for an entropy coder that operates as a queue, check out
+/// the module [`stream::queue`].
 #[derive(Debug, Default)]
 pub struct Queue {}
 impl Semantics for Queue {}
