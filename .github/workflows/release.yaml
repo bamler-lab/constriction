@@ -9,140 +9,140 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # rust-test:
-  #   runs-on: ${{ matrix.os }}
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       os: [ubuntu-latest, macos-latest, windows-latest]
+  rust-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
 
-  #     - name: Install latest stable Rust
-  #       uses: actions-rs/toolchain@v1
-  #       with:
-  #         toolchain: stable
-  #         override: true
-  #         components: rustfmt, clippy
+      - name: Install latest stable Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
 
-  #     - name: Lint with rustfmt
-  #       uses: actions-rs/cargo@v1
-  #       with:
-  #         command: fmt
-  #         args: -- --check
+      - name: Lint with rustfmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check
 
-  #     - name: Lint with clippy
-  #       uses: actions-rs/cargo@v1
-  #       with:
-  #         command: clippy
-  #         args: --all-targets --all-features
+      - name: Lint with clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-targets --all-features
 
-  #     - name: Test in development mode
-  #       uses: actions-rs/cargo@v1.0.1
-  #       with:
-  #         command: test
-  #         toolchain: stable
+      - name: Test in development mode
+        uses: actions-rs/cargo@v1.0.1
+        with:
+          command: test
+          toolchain: stable
 
-  #     - name: Test in release mode
-  #       uses: actions-rs/cargo@v1.0.1
-  #       with:
-  #         command: test
-  #         toolchain: stable
-  #         args: --release
+      - name: Test in release mode
+        uses: actions-rs/cargo@v1.0.1
+        with:
+          command: test
+          toolchain: stable
+          args: --release
 
-  # python-test:
-  #   runs-on: ${{ matrix.os }}
-  #   needs: rust-test
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       python-version: [3.7, 3.8, 3.9]
-  #       os: [ubuntu-latest, macos-latest, windows-latest]
+  python-test:
+    runs-on: ${{ matrix.os }}
+    needs: rust-test
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [3.7, 3.8, 3.9]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
 
-  #     - name: Set up Python ${{ matrix.python-version }}
-  #       uses: actions/setup-python@v1
-  #       with:
-  #         python-version: ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v1
+        with:
+          python-version: ${{ matrix.python-version }}
 
-  #     - name: Install dependencies
-  #       run: |
-  #         python -m pip install --upgrade pip
-  #         curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python
 
-  #     - name: Add poetry to path (unix)
-  #       if: matrix.os != 'windows-latest'
-  #       run: echo "${HOME}/.poetry/bin" >> $GITHUB_PATH
+      - name: Add poetry to path (unix)
+        if: matrix.os != 'windows-latest'
+        run: echo "${HOME}/.poetry/bin" >> $GITHUB_PATH
 
-  #     - name: Add poetry to path (windows)
-  #       if: matrix.os == 'windows-latest'
-  #       run: echo "${HOME}/.poetry/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Add poetry to path (windows)
+        if: matrix.os == 'windows-latest'
+        run: echo "${HOME}/.poetry/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-  #     - name: Install package deps
-  #       run: |
-  #         poetry install
+      - name: Install package deps
+        run: |
+          poetry install
 
-  #     - name: Install latest stable Rust
-  #       uses: actions-rs/toolchain@v1
-  #       with:
-  #         toolchain: stable
-  #         override: true
+      - name: Install latest stable Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
 
-  #     - name: Build Python package
-  #       run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings'
+      - name: Build Python package
+        run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings'
 
-  #     - name: pytest
-  #       run: poetry run pytest tests/python
+      - name: pytest
+        run: poetry run pytest tests/python
 
-  # python-doc:
-  #   needs: python-test
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v1
+  python-doc:
+    needs: python-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
 
-  #     - name: Set up Python ${{ matrix.python-version }}
-  #       uses: actions/setup-python@v1
-  #       with:
-  #         python-version: ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v1
+        with:
+          python-version: ${{ matrix.python-version }}
 
-  #     - name: Install dependencies
-  #       run: |
-  #         python -m pip install --upgrade pip
-  #         pip install poetry
-  #         poetry install
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+          poetry install
 
-  #     - name: Install latest stable Rust
-  #       uses: actions-rs/toolchain@v1
-  #       with:
-  #         toolchain: stable
-  #         override: true
+      - name: Install latest stable Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
 
-  #     - name: checkout website template
-  #       run: |
-  #         git clone https://github.com/bamler-lab/constriction.git --branch website-template --single-branch website
-  #         rm -rf website/.git
+      - name: checkout website template
+        run: |
+          git clone https://github.com/bamler-lab/constriction.git --branch website-template --single-branch website
+          rm -rf website/.git
 
-  #     - name: generate license file
-  #       run: |
-  #         cargo install cargo-about
-  #         cargo about --features=pybindings generate about.hbs > website/license.html
-  #         wc -l website/license.html
+      - name: generate license file
+        run: |
+          cargo install cargo-about
+          cargo about --features=pybindings generate about.hbs > website/license.html
+          wc -l website/license.html
 
-  #     - name: generate python documentation
-  #       run: poetry run maturin develop '--cargo-extra-args=--features pybindings' && poetry run python pythondoc.py website/apidoc/python
+      - name: generate python documentation
+        run: poetry run maturin develop '--cargo-extra-args=--features pybindings' && poetry run python pythondoc.py website/apidoc/python
 
-  #     - name: Deploy to gh-pages
-  #       id: deploy
-  #       uses: peaceiris/actions-gh-pages@v3
-  #       with:
-  #         github_token: ${{ secrets.GITHUB_TOKEN }}
-  #         publish_dir: ./website
-  #         commit_message: Deploy
+      - name: Deploy to gh-pages
+        id: deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./website
+          commit_message: Deploy
 
   # rust-publish:
   #   if: startsWith(github.ref, 'refs/tags/')
@@ -217,9 +217,6 @@ jobs:
           $FileName = [System.IO.Path]::GetFileName("LICENSE.html")
           [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "LICENSE.html", $FileName, "Optimal") | Out-Null
           $Zip.Dispose()
-          echo expanding
-          Expand-Archive "$(dir target\wheels\)" testunzip
-          dir testunzip
 
       # Note: Windows doesn't support glob
       # https://stackoverflow.com/a/52481267/270334
@@ -230,13 +227,21 @@ jobs:
       - name: Install wheels
         if: matrix.os != 'windows-latest'
         run: pip install target/wheels/constriction*.whl
-      # - name: Release
-      #   uses: softprops/action-gh-release@v1
-      #   if: startsWith(github.ref, 'refs/tags/')
-      #   with:
-      #     files: target/wheels/constriction*.whl
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: target/wheels/constriction*.whl
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: TestPyPi publish
+        if: github.event_name == 'release' && github.event.action == 'created'
+        env:
+          MATURIN_PASSWORD: ${{ secrets.TESTPYPI }}
+        run: poetry run maturin publish --username __token__ --repository-url https://test.pypi.org/legacy/
       # - name: PyPi publish
       #   if: github.event_name == 'release' && github.event.action == 'created'
       #   env:
