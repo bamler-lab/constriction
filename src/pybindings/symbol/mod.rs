@@ -9,8 +9,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 use crate::{
     backends::Cursor,
     symbol::{
-        SymbolCodeError, DefaultQueueDecoder, DefaultQueueEncoder, DefaultStackCoder,
-        ReadBitStream, WriteBitStream,
+        DefaultQueueDecoder, DefaultQueueEncoder, DefaultStackCoder, ReadBitStream,
+        SymbolCodeError, WriteBitStream,
     },
 };
 

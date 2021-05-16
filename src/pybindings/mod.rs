@@ -187,7 +187,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// # Create an empty Range Encoder:
 /// encoder = constriction.stream.queue.RangeEncoder()
-/// 
+///
 /// # Same made up data and entropy models as in the ANS Coding example above:
 /// min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
 /// symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)

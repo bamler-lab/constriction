@@ -21,7 +21,7 @@
 //! then deployed as a fast and dependency-free WebAssembly module using `constriction`'s
 //! Rust API, have a look at [The Linguistic Flux
 //! Capacitor](https://robamler.github.io/linguistic-flux-capacitor).
-//! 
+//!
 //! # Project Status
 //!
 //! We currently provide implementations of the following entropy coding algorithms:
@@ -285,13 +285,13 @@ use num::{
 // READ WRITE SEMANTICS =======================================================
 
 /// A trait for marking how reading and writing order relate to each other.
-/// 
+///
 /// This is currently only used in the [`backends`] module. Future versions of
 /// `constriction` may expand its use to frontends.
 pub trait Semantics: Default {}
 
 /// Zero sized marker trait for last-in-first-out read/write [`Semantics`]
-/// 
+///
 /// This type typically only comes up in advanced use cases that are generic over read/write
 /// semantics. If you are looking for an entropy coder that operates as a stack, check out
 /// the module [`stream::stack`].
@@ -300,7 +300,7 @@ pub struct Stack {}
 impl Semantics for Stack {}
 
 /// Zero sized marker trait for first-in-first-out read/write [`Semantics`]
-/// 
+///
 /// This type typically only comes up in advanced use cases that are generic over read/write
 /// semantics. If you are looking for an entropy coder that operates as a queue, check out
 /// the module [`stream::queue`].

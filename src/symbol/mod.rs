@@ -13,14 +13,13 @@ use alloc::vec::Vec;
 use core::{
     borrow::Borrow,
     convert::Infallible,
+    fmt::{Debug, Display},
     iter::{Repeat, Take},
     marker::PhantomData,
     ops::Deref,
-    fmt::{Debug, Display},
 };
 
 use smallvec::SmallVec;
-
 
 use crate::{
     backends::{AsReadWords, BoundedReadWords, Cursor, IntoReadWords, ReadWords, WriteWords},
@@ -796,7 +795,6 @@ impl<C: DecoderCodebook> DecoderCodebook for &C {
         (*self).decode_symbol(source)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

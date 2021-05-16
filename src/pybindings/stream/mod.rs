@@ -18,7 +18,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 }
 
 /// Entropy models for individual symbols
-/// 
+///
 /// This module provides tools to define probability distributions over symbols in fixed
 /// point arithmetic, so that the models (more precisely, the cumulative distribution
 /// functions) are *exactly* invertible without any rounding errors. Such exactly invertible
@@ -30,9 +30,9 @@ fn model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 }
 
 /// Entropy coding with queue semantics (first in first out) using a Range Coder [1].
-/// 
+///
 /// See last example in the top-level API documentation of `constriction`.
-/// 
+///
 /// ## References
 ///
 /// [1] Pasco, Richard Clark. Source coding algorithms for fast data compression. Diss.
@@ -44,9 +44,9 @@ fn queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 
 /// Entropy coding with stack semantics (last in first out) using Asymmetric Numeral Systems
 /// (ANS) [1].
-/// 
+///
 /// See first two examples in the top-level API documentation of `constriction`.
-/// 
+///
 /// ## References
 ///
 /// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate

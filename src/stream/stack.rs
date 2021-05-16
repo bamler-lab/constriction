@@ -15,7 +15,7 @@
 //!
 //! The parent module contains a more detailed discussion of the [differences between ANS
 //! Coding and Range Coding](super#which-stream-code-should-i-use) .
-//! 
+//!
 //! # References
 //!
 //! [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate

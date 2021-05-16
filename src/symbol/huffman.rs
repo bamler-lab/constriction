@@ -1,10 +1,9 @@
 //! Codebooks for Huffman Coding
-//! 
+//!
 //! # References
-//! 
+//!
 //! Huffman, David A. "A method for the construction of minimum-redundancy codes."
 //! Proceedings of the IRE 40.9 (1952): 1098-1101.
-
 
 use num::Float;
 
@@ -331,7 +330,7 @@ impl std::error::Error for NanError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        super::{WriteBitStream, SmallBitStack},
+        super::{SmallBitStack, WriteBitStream},
         *,
     };
     extern crate std;
