@@ -1,4 +1,4 @@
-name: CI
+name: test
 
 on:
   pull_request:
@@ -6,8 +6,11 @@ on:
     - master
   workflow_dispatch:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  lint:
+  quick-test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,9 +29,9 @@ jobs:
           path: |
             target
             .cargo_home
-          key: ${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-
+            ${{ runner.os }}-rust-
 
       - name: Lint with rustfmt
         uses: actions-rs/cargo@v1
@@ -48,9 +51,9 @@ jobs:
           command: test
           toolchain: stable
 
-  build:
+  matrix-test:
     runs-on: ${{ matrix.os }}
-    needs: lint
+    needs: quick-test
     strategy:
       fail-fast: false
       matrix:
@@ -95,9 +98,9 @@ jobs:
           path: |
             target
             .cargo_home
-          key: ${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-
+            ${{ runner.os }}-rust-
 
       - name: Build Python package
         run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings'
@@ -105,8 +108,5 @@ jobs:
       - name: pytest
         run: poetry run pytest tests/python
 
-      - name: rust test in release mode
-        run: cargo test --release
-
-      - name: Rust Benchmark
-        run: cargo bench
+      - name: cargo test
+        run: cargo test
