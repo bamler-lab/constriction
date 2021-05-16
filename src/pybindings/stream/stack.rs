@@ -19,7 +19,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-/// An entropy coder based on [Asymmetric Numeral Systems (ANS)].
+/// An entropy coder based on [Asymmetric Numeral Systems (ANS)] [1].
 ///
 /// This is a wrapper around the Rust type [`constriction::stream::stack::DefaultAnsCoder`]
 /// with python bindings.
@@ -39,16 +39,16 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// If you're only interested in the compressed file size, calling `num_bits` will
 /// be cheaper as it won't actually copy out the compressed data.
 ///
-/// # Examples
+/// ## Examples
 ///
-/// ## Compression:
+/// ### Compression:
 ///
 /// ```python
 /// import sys
 /// import constriction
 /// import numpy as np
 ///
-/// ans = constriction.AnsCoder()  # Creates an empty ANS coder when called with no arguments.
+/// ans = constriction.stream.stack.AnsCoder()  # No arguments => empty ANS coder
 ///
 /// symbols = np.array([2, -1, 0, 2, 3], dtype = np.int32)
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
@@ -67,7 +67,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// compressed.tofile("compressed.bin")
 /// ```
 ///
-/// ## Decompression:
+/// ### Decompression:
 ///
 /// ```python
 /// import sys
@@ -79,18 +79,19 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///     # Convert little endian byte order to native byte order.
 ///     compressed.byteswap(inplace=True)
 ///
-/// ans = constriction.AnsCoder(compressed)
+/// ans = constriction.stream.stack.AnsCoder(compressed)
 ///
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-/// means = np.array([2.3, -1.7, 0.1, 2.2], -5.1, dtype = np.float64)
+/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
 /// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
 ///
 /// reconstructed = ans.decode_leaky_gaussian_symbols(
 ///     min_supported_symbol, max_supported_symbol, means, stds)
 /// assert ans.is_empty()
+/// print(reconstructed)  # Should print [2, -1, 0, 2, 3]
 /// ```
 ///
-/// # Constructor
+/// ## Constructor
 ///
 /// AnsCoder(compressed)
 ///
@@ -100,8 +101,15 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// [Asymmetric Numeral Systems (ANS)]: https://en.wikipedia.org/wiki/Asymmetric_numeral_systems
 /// [`constriction::stream::ans::DefaultAnsCoder`]: crate::stream::stack::DefaultAnsCoder
+/// 
+/// ## References
+/// 
+/// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
+/// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
+
+
 #[pyclass]
-#[text_signature = "(compressed=np.array([], dtype=np.uint32), seal=False)"]
+#[text_signature = "([compressed], seal=False)"]
 #[derive(Debug)]
 pub struct AnsCoder {
     inner: crate::stream::stack::DefaultAnsCoder,

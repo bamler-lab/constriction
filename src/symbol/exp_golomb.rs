@@ -20,7 +20,7 @@ use crate::{CoderError, DefaultEncoderError};
 /// ```
 /// use constriction::{
 ///     symbol::{DefaultQueueEncoder, WriteBitStream, ReadBitStream},
-///     symbol::codebooks::exp_golomb::ExpGolomb,
+///     symbol::exp_golomb::ExpGolomb,
 ///     UnwrapInfallible,
 /// };
 ///
@@ -180,7 +180,7 @@ mod tests {
     use rand_xoshiro::Xoshiro256StarStar;
 
     use super::{
-        super::super::{DefaultQueueEncoder, DefaultStackCoder, ReadBitStream, WriteBitStream},
+        super::{DefaultQueueEncoder, DefaultStackCoder, ReadBitStream, WriteBitStream},
         *,
     };
     use crate::UnwrapInfallible;

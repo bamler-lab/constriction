@@ -8,49 +8,71 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// ## Entropy Coding Primitives for Research and Production
 ///
 /// The `constriction` library provides a set of composable entropy coding algorithms with a
-/// focus on ease of use, flexibility, compression performance, and computational
-/// efficiency. The goals of `constriction` are to three-fold:
+/// focus on correctness, versatility, ease of use, compression performance, and
+/// computational efficiency. The goals of `constriction` are to three-fold:
 ///
 /// 1. **to facilitate research on novel lossless and lossy compression methods** by
-///    bridging the gap between declarative tools for data modeling from the machine
-///    learning community and imperative tools for algorithm design from the source coding
-///    literature;
-/// 2. **to simplify the transition from research code to production software** by providing
-///    both an easy-to-use Python API (rapid iteration on research code) and a highly
-///    generic Rust API (for turning research code into optimized standalone binary programs
-///    or libraries with minimal dependencies); and
+///    providing a *composable* set of entropy coding primitives rather than a rigid
+///    implementation of a single preconfigured method;
+/// 2. **to simplify the transition from research code to production software** by exposing
+///    the exact same functionality via both a Python API (for rapid prototyping on research
+///    code) and a Rust API (for turning successful prototypes into production); and
 /// 3. **to serve as a teaching resource** by providing a wide range of entropy coding
 ///    algorithms within a single consistent framework, thus making the various algorithms
 ///    easily discoverable and comparable on example models and data. [Additional teaching
-///    material](https://robamler.github.io/teaching/compress21/) will be made publicly
-///    available as a by-product of an upcoming university course on data compression with
+///    material](https://robamler.github.io/teaching/compress21/) is being made publicly
+///    available as a by-product of an ongoing university course on data compression with
 ///    deep probabilistic models.
 ///
-/// ## Currently Supported Entropy Coding Algorithms
+/// For an example of a compression codec that started as research code in Python and was
+/// then deployed as a fast and dependency-free WebAssembly module using `constriction`'s
+/// Rust API, have a look at [The Linguistic Flux
+/// Capacitor](https://robamler.github.io/linguistic-flux-capacitor).
 ///
-/// The `constriction` library currently supports the following algorithms:
+/// ## Project Status
 ///
-/// - **Asymmetric Numeral Systems (ANS):** a highly efficient modern entropy coder with
-///   near-optimal compression performance that supports advanced use cases like bits-back
-///   coding;
-///   - A "split" variant of ANS coding is provided for advanced use cases in hierarchical
-///     models with cyclic dependencies.
-/// - **Range Coding:** a variant of Arithmetic Coding that is optimized for realistic
-///   computing hardware; it has similar compression performance and almost the same
-///   computational performance as ANS. The main practical difference is that Range Coding
-///   is a queue (FIFO) while ANS is a stack (LIFO).
+/// We currently provide implementations of the following entropy coding algorithms:
+///
+/// - **Asymmetric Numeral Systems (ANS):** a fast modern entropy coder with near-optimal
+///   compression effectiveness that supports advanced use cases like bits-back coding;
+/// - **Range Coding:** a computationally efficient variant of Arithmetic Coding, that has
+///   essentially the same compression effectiveness as ANS Coding but operates as a queue
+///   ("first in first out"), which makes it preferable for autoregressive models.
+/// - **Chain Coding:** an experimental new entropy coder that combines the (net)
+///   effectiveness of stream codes with the locality of symbol codes; it is meant for
+///   experimental new compression approaches that perform joint inference, quantization,
+///   and bits-back coding in an end-to-end optimization. This experimental coder is mainly
+///   provided to prove to ourselves that the API for encoding and decoding, which is shared
+///   across all stream coders, is flexible enough to express complex novel tasks.
 /// - **Huffman Coding:** a well-known symbol code, mainly provided here for teaching
-///   purpose; you'll usually want to use a stream code like ANS or Range Coding instead.
+///   purpose; you'll usually want to use a stream code like ANS or Range Coding instead
+///   since symbol codes can have a considerable overhead on the bitrate, especially in the
+///   regime of low entropy per symbol, which is common in machine-learning based
+///   compression methods.
+///
+/// Further, `constriction` provides implementations of common probability distributions in
+/// fixed-point arithmetic, which can be used as entropy models in either of the above
+/// stream codes. The library also provides adapters for turning custom probability
+/// distributions into exactly invertible fixed-point arithmetic.
+///
+/// The provided implementations of entropy coding algorithms and probability distributions
+/// are extensively tested and should be considered reliable (except for the still
+/// experimental Chain Coder). However, their APIs may change in future versions of
+/// `constriction` if more user experience reveals any shortcomings of the current APIs in
+/// terms of ergonomics. Please [file an
+/// issue](https://github.com/bamler-lab/constriction/issues) if you run into a scenario
+/// where the current APIs are suboptimal.
 ///
 /// ## Quick Start With the Python API
 ///
 /// You are currently reading the documentation of `constriction`'s Python API. If Python is
-/// not your language of choice then head over to the [Rust API Documentation](TODO). The
-/// Python API focuses on ease of use and rapid iteration for data scientists and machine
-/// learning researchers. The Rust API provides binary identical implementations of
-/// everything that's available through the Python API. Additionally, the Rust API, provides
-/// optional finer grained control over technical details (such as word size or numerical
-/// precision) using Rust's generic typesystem.
+/// not your language of choice then head over to the [Rust API
+/// Documentation](https://docs.rs/constriction). The Python API focuses on ease of use and
+/// rapid iteration and is targeted mainly towards data scientists and machine learning
+/// researchers. The Rust API provides binary identical implementations of everything that's
+/// available through the Python API. Additionally, the Rust API, provides optional finer
+/// grained control over technical details (such as word size or numerical precision) using
+/// Rust's generic type system.
 ///
 /// ### Installation
 ///
@@ -65,9 +87,9 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// Let's encode a sequence of symbols and write the compressed data to a binary file. We'll
 /// use a quantized Gaussian distribution as entropy model, with a different mean and
 /// standard deviation of the Gaussian for each symbol so that the example is not too
-/// simplistic. Further, we'll use an Asymmetric Numeral Systems (ANS) coder here for its
-/// speed and compression performance. We'll discuss how you could replace the ANS coder
-/// with a range coder or a symbol code like Huffman coding [below](#exercise).
+/// simplistic. Further, we'll use an Asymmetric Numeral Systems (ANS) Coder here for its
+/// speed and compression performance. We'll discuss how you could replace the ANS Coder
+/// with a Range Coder or a symbol code like Huffman Coding [below](#exercise).
 ///
 /// ```python
 /// import constriction
@@ -75,7 +97,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// import sys
 ///
 /// # Create an empty Asymmetric Numeral Systems (ANS) Coder:
-/// coder = constriction.stream.ans.AnsCoder()
+/// coder = constriction.stream.stack.AnsCoder()
 ///
 /// # Some made up data and entropy models for demonstration purpose:
 /// min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
@@ -112,7 +134,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///     compressed.byteswap(inplace=True)
 ///
 /// # Initialize an ANS coder from the compressed bit string:
-/// coder = constriction.stream.ans.AnsCoder(compressed)
+/// coder = constriction.stream.stack.AnsCoder(compressed)
 ///
 /// # Use the same entropy models that we used for encoding:
 /// min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
@@ -134,8 +156,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// **In the encoder,**
 ///
-/// - replace `constriction.stream.ans.AnsCoder` with
-///   `constriction.stream.range.RangeEncoder`; and
+/// - replace `constriction.stream.stack.AnsCoder` with
+///   `constriction.stream.queue.RangeEncoder`; and
 /// - replace `coder.encode_leaky_gaussian_symbols_reverse` with
 ///   `coder.encode_leaky_gaussian_symbols` (we no longer need to encode symbols in reverse
 ///   order since Range Coding is a queue, i.e., first-in-first-out; we only had to reverse
@@ -143,8 +165,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// **In the decoder,**
 ///
-/// - replace `constriction.stream.ans.AnsCoder` with
-///   `constriction.stream.range.RangeDecoder` (note that Range Coding distinguishes between
+/// - replace `constriction.stream.stack.AnsCoder` with
+///   `constriction.stream.queue.RangeDecoder` (note that Range Coding distinguishes between
 ///   an encoder and a decoder type since the encoder writes to the back while the decoder
 ///   reads from the front; by contrast, ANS Coding is a stack, i.e., it reads and writes at
 ///   the same position and allows interleaving reads and writes).
@@ -164,8 +186,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// import sys
 ///
 /// # Create an empty Range Encoder:
-/// encoder = constriction.stream.range.RangeEncoder()
-///
+/// encoder = constriction.stream.queue.RangeEncoder()
+/// 
 /// # Same made up data and entropy models as in the ANS Coding example above:
 /// min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
 /// symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)
@@ -177,7 +199,6 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
 ///
 /// print(f"Compressed size: {encoder.num_bits()} bits")
-/// print(f"(without sealing up to full words: {encoder.num_valid_bits()} bits)")
 ///
 /// # Get the compressed bit string (sealed up to full words):
 /// compressed = encoder.get_compressed()
@@ -185,12 +206,12 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// # ... writing and reading from file same as above (skipped here) ...
 ///
 /// # Initialize a Range Decoder from the compressed bit string:
-/// decoder = constriction.stream.range.RangeDecoder(compressed)
+/// decoder = constriction.stream.queue.RangeDecoder(compressed)
 ///
 /// # Decode the data and verify it's correct:
 /// reconstructed = decoder.decode_leaky_gaussian_symbols(
 ///     min_supported_symbol, max_supported_symbol, means, stds)
-/// assert decoder.is_empty()
+/// assert decoder.maybe_exhausted()
 /// assert np.all(reconstructed == symbols)
 /// ```
 #[pymodule(constriction)]

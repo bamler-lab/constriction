@@ -1,53 +1,58 @@
 //! Entropy Coding Primitives for Research and Production
 //!
 //! The `constriction` crate provides a set of composable entropy coding algorithms with a
-//! focus on ease of use, flexibility, compression performance, and computational
-//! efficiency. The goals of `constriction` are to three-fold:
+//! focus on correctness, versatility, ease of use, compression performance, and
+//! computational efficiency. The goals of `constriction` are to three-fold:
 //!
 //! 1. **to facilitate research on novel lossless and lossy compression methods** by
-//!    bridging the gap between declarative tools for data modeling from the machine
-//!    learning community and imperative tools for algorithm design from the source coding
-//!    literature;
-//! 2. **to simplify the transition from research code to production software** by providing
-//!    both an easy-to-use Python API (for rapid iteration on research code) and a highly
-//!    generic Rust API (for turning research code into optimized standalone binary programs
-//!    or libraries with minimal dependencies); and
+//!    providing a *composable* set of entropy coding primitives rather than a rigid
+//!    implementation of a single preconfigured method;
+//! 2. **to simplify the transition from research code to production software** by exposing
+//!    the exact same functionality via both a Python API (for rapid prototyping on research
+//!    code) and a Rust API (for turning successful prototypes into production); and
 //! 3. **to serve as a teaching resource** by providing a wide range of entropy coding
 //!    algorithms within a single consistent framework, thus making the various algorithms
 //!    easily discoverable and comparable on example models and data. [Additional teaching
-//!    material](https://robamler.github.io/teaching/compress21/) will be made publicly
-//!    available as a by-product of an upcoming university course on data compression with
+//!    material](https://robamler.github.io/teaching/compress21/) is being made publicly
+//!    available as a by-product of an ongoing university course on data compression with
 //!    deep probabilistic models.
 //!
-//! # Crate Status
+//! For an example of a compression codec that started as research code in Python and was
+//! then deployed as a fast and dependency-free WebAssembly module using `constriction`'s
+//! Rust API, have a look at [The Linguistic Flux
+//! Capacitor](https://robamler.github.io/linguistic-flux-capacitor).
+//! 
+//! # Project Status
 //!
-//! The `constriction` crate currently provides solid implementations of the following
-//! entropy coding algorithms:
+//! We currently provide implementations of the following entropy coding algorithms:
 //!
-//! - **Asymmetric Numeral Systems (ANS):** a highly efficient modern entropy coder with
-//!   near-optimal compression performance that supports advanced use cases like bits-back
-//!   coding;
-//!   - A "split" variant of ANS coding is provided for advanced use cases in hierarchical
-//!     models with cyclic dependencies.
-//! - **Range Coding:** a variant of Arithmetic Coding that is optimized for realistic
-//!   computing hardware; it has similar compression performance and almost the same
-//!   computational performance as ANS Coding. The main practical difference is that Range
-//!   Coding is a queue (first-in-first-out) while ANS Coding is a stack
-//!   (last-in-first-out), which makes Range Coding preferable for autoregressive models and
-//!   ANS Coding preferable for hierarchical models (since bits-back coding is easier on a
-//!   stack).
+//! - **Asymmetric Numeral Systems (ANS):** a fast modern entropy coder with near-optimal
+//!   compression effectiveness that supports advanced use cases like bits-back coding;
+//! - **Range Coding:** a computationally efficient variant of Arithmetic Coding, that has
+//!   essentially the same compression effectiveness as ANS Coding but operates as a queue
+//!   ("first in first out"), which makes it preferable for autoregressive models.
+//! - **Chain Coding:** an experimental new entropy coder that combines the (net)
+//!   effectiveness of stream codes with the locality of symbol codes; it is meant for
+//!   experimental new compression approaches that perform joint inference, quantization,
+//!   and bits-back coding in an end-to-end optimization. This experimental coder is mainly
+//!   provided to prove to ourselves that the API for encoding and decoding, which is shared
+//!   across all stream coders, is flexible enough to express complex novel tasks.
 //! - **Huffman Coding:** a well-known symbol code, mainly provided here for teaching
 //!   purpose; you'll usually want to use a stream code like ANS or Range Coding instead
-//!   since they have better compression performance and are at least as fast.
+//!   since symbol codes can have a considerable overhead on the bitrate, especially in the
+//!   regime of low entropy per symbol, which is common in machine-learning based
+//!   compression methods.
 //!
 //! Further, `constriction` provides implementations of common probability distributions in
-//! fixed-point arithmetic, which can be used as entropy models for all of the above entropy
-//! coding algorithms.
+//! fixed-point arithmetic, which can be used as entropy models in either of the above
+//! stream codes. The crate also provides adapters for turning custom probability
+//! distributions into exactly invertible fixed-point arithmetic.
 //!
 //! The provided implementations of entropy coding algorithms and probability distributions
-//! are extensively tested and should be considered reliable. However, their APIs may change
-//! in future versions of `constriction` if more user experience reveals any unnecessary
-//! restrictions or repetitiveness of the current APIs. Please [file an
+//! are extensively tested and should be considered reliable (except for the still
+//! experimental Chain Coder). However, their APIs may change in future versions of
+//! `constriction` if more user experience reveals any shortcomings of the current APIs in
+//! terms of ergonomics. Please [file an
 //! issue](https://github.com/bamler-lab/constriction/issues) if you run into a scenario
 //! where the current APIs are suboptimal.
 //!
@@ -78,17 +83,18 @@
 //! ## Encoding Example
 //!
 //! In this example, we'll encode some symbols using a quantized Gaussian distribution as
-//! entropy model, with a different mean and standard deviation of the Gaussian for each
-//! symbol so that the example is not too simplistic. We'll use the `probability` crate for
-//! the Gaussian distributions, so also add the following dependency to your `Cargo.toml`:
+//! entropy model. Each symbol will be modeled by a quantized Gaussian  with a different
+//! mean and standard deviation (so that the example is not too simplistic). We'll use the
+//! `probability` crate for the Gaussian distributions, so also add the following dependency
+//! to your `Cargo.toml`:
 //!
 //! ```toml
 //! probability = "0.17"
 //! ```
 //!
 //! Now, let's encode (i.e., compress) some symbols. We'll use an Asymmetric Numeral Systems
-//! (ANS) coder here for its speed and compression performance. We'll discuss how you could
-//! replace the ANS coder with a range coder or a symbol code like Huffman coding
+//! (ANS) Coder here for its speed and compression performance. We'll discuss how you could
+//! replace the ANS Coder with a Range Coder or a symbol code like Huffman Coding
 //! [below](#exercise).
 //!
 //! ```
@@ -124,7 +130,7 @@
 //!
 //! ## Decoding Example
 //!
-//! Now let's reconstruct the sample data from its compressed representation.
+//! Now, let's reconstruct the sample data from its compressed representation.
 //!
 //! ```
 //! use constriction::stream::{stack::DefaultAnsCoder, model::DefaultLeakyQuantizer, Decode};
@@ -154,8 +160,8 @@
 //! ## Exercise
 //!
 //! Try out the above examples and verify that decoding reconstructs the original data. Then
-//! see how easy `constriction` makes it to replace the ANS coder with a range coder by
-//! making the following substitutions.
+//! see how easy `constriction` makes it to replace the ANS Coder with a Range Coder by
+//! making the following substitutions:
 //!
 //! **In the encoder,**
 //!
@@ -164,8 +170,8 @@
 //! - replace `coder.encode_symbols_reverse` with `coder.encode_symbols` (you no longer need
 //!   to encode symbols in reverse order since Range Coding operates as a queue, i.e.,
 //!   first-in-first-out). You'll also have to add the line
-//!   `use constriction::stream::Encode;` to bring the trait method `encode_symbols` into
-//!   scope.
+//!   `use constriction::stream::Encode;` to the top of the file to bring the trait method
+//!   `encode_symbols` into scope.
 //!
 //! **In the decoder,**
 //!
@@ -175,12 +181,12 @@
 //!   back while the decoder reads from the front; by contrast, ANS Coding is a stack, i.e.,
 //!   it reads and writes at the same position and allows interleaving reads and writes).
 //!
-//! You could also use a symbol code like Huffman Coding (see module [`symbol`]) but that
-//! would have considerably worse compression performance, especially on large files, since
-//! symbol codes always emit an integer number of bits per compressed symbol, even if the
-//! information content of the symbol is a fractional number (stream codes like ANS and
-//! Range Coding *effectively* emit a fractional number of bits per symbol since they
-//! amortize over several symbols).
+//! *Remark:* You could also use a symbol code like Huffman Coding (see module [`symbol`])
+//! but that would have considerably worse compression performance, especially on large
+//! files, since symbol codes always emit an integer number of bits per compressed symbol,
+//! even if the information content of the symbol is a fractional number (stream codes like
+//! ANS and Range Coding *effectively* emit a fractional number of bits per symbol since
+//! they amortize over several symbols).
 //!
 //! The above replacements should lead you to something like this:
 //!
@@ -246,7 +252,7 @@
 //! module.
 //!
 //! If you're still new to the concept of entropy coding then check out the [teaching
-//! material (TBD)](https://robamler.github.io/teaching/compress21/).
+//! material](https://robamler.github.io/teaching/compress21/).
 
 #![no_std]
 #![warn(rust_2018_idioms, missing_debug_implementations)]

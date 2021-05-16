@@ -9,7 +9,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 use crate::{
     backends::Cursor,
     symbol::{
-        codebooks::SymbolCodeError, DefaultQueueDecoder, DefaultQueueEncoder, DefaultStackCoder,
+        SymbolCodeError, DefaultQueueDecoder, DefaultQueueEncoder, DefaultStackCoder,
         ReadBitStream, WriteBitStream,
     },
 };
@@ -22,7 +22,12 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-/// Docstring of huffman module
+/// Codebooks for Huffman coding.
+///
+/// ## References
+///
+/// Huffman, David A. "A method for the construction of minimum-redundancy codes."
+/// Proceedings of the IRE 40.9 (1952): 1098-1101.
 #[pymodule]
 fn huffman(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     huffman::init_module(py, module)

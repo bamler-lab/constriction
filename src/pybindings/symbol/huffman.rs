@@ -3,7 +3,7 @@ use std::{prelude::v1::*, vec};
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 
-use crate::symbol::codebooks::huffman::{self, NanError};
+use crate::symbol::huffman::{self, NanError};
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<EncoderHuffmanTree>()?;
