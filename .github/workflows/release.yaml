@@ -240,9 +240,9 @@ jobs:
       - name: TestPyPi publish
         env:
           MATURIN_PASSWORD: ${{ secrets.TESTPYPI }}
-        run: poetry run maturin publish --username __token__ '--cargo-extra-args=--features pybindings' --repository-url https://test.pypi.org/legacy/
+        run: poetry run maturin publish --username __token__ --no-sdist --interpreter python${{matrix.python_version}} '--cargo-extra-args=--features pybindings' --repository-url https://test.pypi.org/legacy/
       # - name: PyPi publish
       #   if: github.event_name == 'release' && github.event.action == 'created'
       #   env:
       #     MATURIN_PASSWORD: ${{ secrets.PYPI }}
-      #   run: poetry run maturin publish --username __token__ '--cargo-extra-args=--features pybindings'
+      #   run: poetry run maturin publish --username __token__ --no-sdist --interpreter python${{matrix.python_version}} '--cargo-extra-args=--features pybindings'
