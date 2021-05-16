@@ -28,15 +28,20 @@ jobs:
           override: true
           components: rustfmt, clippy
 
+      - name: Get rust version
+        id: versions
+        run: |
+          echo "::set-output name=rustc::`rustc --version | awk '{print $2}'`"
+
       - name: Cache Rust dependencies
         uses: actions/cache@v2
         with:
           path: |
             target
             .cargo_home
-          key: ${{ runner.os }}-rust-no_pybindings-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-no_pybindings-rust-${{ steps.versions.outputs.rustc }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-no_pybindings-
+            ${{ runner.os }}-no_pybindings-rust-${{ steps.versions.outputs.rustc }}-
 
       - name: Lint with rustfmt
         uses: actions-rs/cargo@v1
@@ -86,11 +91,11 @@ jobs:
           python -m pip install --upgrade pip
           curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python
 
-      - name: Add poetry to path
+      - name: Add poetry to path (unix)
         if:  matrix.os != 'windows-latest'
         run: echo "${HOME}/.poetry/bin" >> $GITHUB_PATH
       
-      - name: Add poetry to path
+      - name: Add poetry to path (windows)
         if:  matrix.os == 'windows-latest'
         run: echo "${HOME}/.poetry/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
@@ -104,15 +109,20 @@ jobs:
           toolchain: stable
           override: true
 
+      - name: Get rust version
+        id: versions
+        run: |
+          echo "::set-output name=rustc::`rustc --version | awk '{print $2}'`"
+
       - name: Cache Rust dependencies
         uses: actions/cache@v2
         with:
           path: |
             target
             .cargo_home
-          key: ${{ runner.os }}-rust-pybindings-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-pybindings-rust-${{ steps.versions.outputs.rustc }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-pybindings-
+            ${{ runner.os }}-pybindings-rust-${{ steps.versions.outputs.rustc }}-
 
       - name: Build Python package
         run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings'
