@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="69.57mm"
+   height="44.855003mm"
+   version="1.1"
+   viewBox="0 0 69.57 44.855004"
+   id="svg25"
+   sodipodi:docname="logo.svg"
+   inkscape:version="1.0.2 (1.0.2+r75+1)">
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1544"
+     inkscape:window-height="873"
+     id="namedview27"
+     showgrid="false"
+     fit-margin-top="0"
+     fit-margin-left="0"
+     fit-margin-right="0"
+     fit-margin-bottom="0"
+     inkscape:zoom="1.9738836"
+     inkscape:cx="129.67514"
+     inkscape:cy="95.89417"
+     inkscape:window-x="56"
+     inkscape:window-y="27"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="g23" />
+  <defs
+     id="defs5">
+    <clipPath
+       id="a">
+      <path
+         d="m 113.41,59.292 c -13.216,0 -18.615,1.8264 -22.713,5.9245 -4.6763,4.6763 -6.2029,11.675 -12.072,11.675 -5.8691,0 -7.3953,-6.9982 -12.072,-11.675 C 62.4549,61.1184 57.0558,59.292 43.84,59.292 v 42.39 c 13.216,0 18.615,-1.8264 22.713,-5.9245 4.6763,-4.6763 6.2029,-11.675 12.072,-11.675 5.8691,0 7.3953,6.9982 12.072,11.675 4.0981,4.0981 9.4972,5.9245 22.713,5.9245 z"
+         fill="#c49c77"
+         id="path2" />
+    </clipPath>
+  </defs>
+  <metadata
+     id="metadata7">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title></dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g
+     transform="translate(-43.84,-58.0595)"
+     id="g23">
+    <path
+       d="m 113.41,59.292 c -13.216,0 -18.615,1.8264 -22.713,5.9245 -4.6763,4.6763 -6.2029,11.675 -12.072,11.675 -5.8691,0 -7.3953,-6.9982 -12.072,-11.675 C 62.4549,61.1184 57.0558,59.292 43.84,59.292 v 42.39 c 13.216,0 18.615,-1.8264 22.713,-5.9245 4.6763,-4.6763 6.2029,-11.675 12.072,-11.675 5.8691,0 7.3953,6.9982 12.072,11.675 4.0981,4.0981 9.4972,5.9245 22.713,5.9245 z"
+       fill="#c49c77"
+       id="path9" />
+    <g
+       clip-path="url(#a)"
+       fill="#dfba96"
+       id="g19">
+      <ellipse
+         transform="matrix(0.85632,0.51644,0.68523,-0.72832,0,0)"
+         cx="104.28"
+         cy="-51.228001"
+         rx="15.158"
+         ry="7.2065001"
+         id="ellipse11" />
+      <ellipse
+         transform="matrix(0.93959,0.34232,-0.32186,0.94679,0,0)"
+         cx="130.48"
+         cy="29.048"
+         rx="10.135"
+         ry="6.2494001"
+         id="ellipse13" />
+      <ellipse
+         transform="matrix(0.99132,-0.13148,0.12345,0.99235,0,0)"
+         cx="81.453003"
+         cy="102.96"
+         rx="11.305"
+         ry="7.2265"
+         id="ellipse15" />
+      <ellipse
+         transform="matrix(0.86416,-0.50322,-0.60447,-0.79663,0,0)"
+         cx="10.234"
+         cy="-90.372002"
+         rx="11.609"
+         ry="7.3291998"
+         id="ellipse17" />
+    </g>
+    <path
+       d="m 113.41,59.292 c -13.216,0 -18.615,1.8264 -22.713,5.9245 -4.6763,4.6763 -6.2029,11.675 -12.072,11.675 -5.8691,0 -7.3953,-6.9982 -12.072,-11.675 C 62.4549,61.1184 57.0558,59.292 43.84,59.292 m 0,42.39 c 13.216,0 18.615,-1.8264 22.713,-5.9245 4.6763,-4.6763 6.2029,-11.675 12.072,-11.675 5.8691,0 7.3953,6.9982 12.072,11.675 4.0981,4.0981 9.4972,5.9245 22.713,5.9245"
+       fill="none"
+       stroke="#302125"
+       stroke-width="2.465"
+       id="path21" />
+  </g>
+</svg>

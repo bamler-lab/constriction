@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
+<meta name="generator" content="pdoc 0.9.2" />
+<title>constriction.stream.stack API documentation</title>
+<meta name="description" content="Entropy coding with stack semantics (last in first out) using Asymmetric Numeral Systems
+(ANS) [1] …" />
+<link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
+<link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
+<link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/styles/github.min.css" crossorigin>
+<style>:root{--highlight-color:#fe9}.flex{display:flex !important}body{line-height:1.5em}#content{padding:20px}#sidebar{padding:30px;overflow:hidden}#sidebar > *:last-child{margin-bottom:2cm}.http-server-breadcrumbs{font-size:130%;margin:0 0 15px 0}#footer{font-size:.75em;padding:5px 30px;border-top:1px solid #ddd;text-align:right}#footer p{margin:0 0 0 1em;display:inline-block}#footer p:last-child{margin-right:30px}h1,h2,h3,h4,h5{font-weight:300}h1{font-size:2.5em;line-height:1.1em}h2{font-size:1.75em;margin:1em 0 .50em 0}h3{font-size:1.4em;margin:25px 0 10px 0}h4{margin:0;font-size:105%}h1:target,h2:target,h3:target,h4:target,h5:target,h6:target{background:var(--highlight-color);padding:.2em 0}a{color:#058;text-decoration:none;transition:color .3s ease-in-out}a:hover{color:#e82}.title code{font-weight:bold}h2[id^="header-"]{margin-top:2em}.ident{color:#900}pre code{background:#f8f8f8;font-size:.8em;line-height:1.4em}code{background:#f2f2f1;padding:1px 4px;overflow-wrap:break-word}h1 code{background:transparent}pre{background:#f8f8f8;border:0;border-top:1px solid #ccc;border-bottom:1px solid #ccc;margin:1em 0;padding:1ex}#http-server-module-list{display:flex;flex-flow:column}#http-server-module-list div{display:flex}#http-server-module-list dt{min-width:10%}#http-server-module-list p{margin-top:0}.toc ul,#index{list-style-type:none;margin:0;padding:0}#index code{background:transparent}#index h3{border-bottom:1px solid #ddd}#index ul{padding:0}#index h4{margin-top:.6em;font-weight:bold}@media (min-width:200ex){#index .two-column{column-count:2}}@media (min-width:300ex){#index .two-column{column-count:3}}dl{margin-bottom:2em}dl dl:last-child{margin-bottom:4em}dd{margin:0 0 1em 3em}#header-classes + dl > dd{margin-bottom:3em}dd dd{margin-left:2em}dd p{margin:10px 0}.name{background:#eee;font-weight:bold;font-size:.85em;padding:5px 10px;display:inline-block;min-width:40%}.name:hover{background:#e0e0e0}dt:target .name{background:var(--highlight-color)}.name > span:first-child{white-space:nowrap}.name.class > span:nth-child(2){margin-left:.4em}.inherited{color:#999;border-left:5px solid #eee;padding-left:1em}.inheritance em{font-style:normal;font-weight:bold}.desc h2{font-weight:400;font-size:1.25em}.desc h3{font-size:1em}.desc dt code{background:inherit}.source summary,.git-link-div{color:#666;text-align:right;font-weight:400;font-size:.8em;text-transform:uppercase}.source summary > *{white-space:nowrap;cursor:pointer}.git-link{color:inherit;margin-left:1em}.source pre{max-height:500px;overflow:auto;margin:0}.source pre code{font-size:12px;overflow:visible}.hlist{list-style:none}.hlist li{display:inline}.hlist li:after{content:',\2002'}.hlist li:last-child:after{content:none}.hlist .hlist{display:inline;padding-left:1em}img{max-width:100%}td{padding:0 .5em}.admonition{padding:.1em .5em;margin-bottom:1em}.admonition-title{font-weight:bold}.admonition.note,.admonition.info,.admonition.important{background:#aef}.admonition.todo,.admonition.versionadded,.admonition.tip,.admonition.hint{background:#dfd}.admonition.warning,.admonition.versionchanged,.admonition.deprecated{background:#fd4}.admonition.error,.admonition.danger,.admonition.caution{background:lightpink}</style>
+<style media="screen and (min-width: 700px)">@media screen and (min-width:700px){#sidebar{width:30%;height:100vh;overflow:auto;position:sticky;top:0}#content{width:70%;max-width:100ch;padding:3em 4em;border-left:1px solid #ddd}pre code{font-size:1em}.item .name{font-size:1em}main{display:flex;flex-direction:row-reverse;justify-content:flex-end}.toc ul ul,#index ul{padding-left:1.5em}.toc > ul > li{margin-top:.5em}}</style>
+<style media="print">@media print{#sidebar h1{page-break-before:always}.source{display:none}}@media print{*{background:transparent !important;color:#000 !important;box-shadow:none !important;text-shadow:none !important}a[href]:after{content:" (" attr(href) ")";font-size:90%}a[href][title]:after{content:none}abbr[title]:after{content:" (" attr(title) ")"}.ir a:after,a[href^="javascript:"]:after,a[href^="#"]:after{content:""}pre,blockquote{border:1px solid #999;page-break-inside:avoid}thead{display:table-header-group}tr,img{page-break-inside:avoid}img{max-width:100% !important}@page{margin:0.5cm}p,h2,h3{orphans:3;widows:3}h1,h2,h3,h4,h5,h6{page-break-after:avoid}}</style>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/highlight.min.js" integrity="sha256-Uv3H6lx7dJmRfRvH8TH6kJD1TSK1aFcwgx+mdg3epi8=" crossorigin></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.initHighlighting())</script>
+</head>
+<body>
+<main>
+<article id="content">
+<header>
+<h1 class="title">Module <code>constriction.stream.stack</code></h1>
+</header>
+<section id="section-intro">
+<p>Entropy coding with stack semantics (last in first out) using Asymmetric Numeral Systems
+(ANS) [1].</p>
+<p>See first two examples in the top-level API documentation of <code><a title="constriction" href="../../constriction.html">constriction</a></code>.</p>
+<h2 id="references">References</h2>
+<p>[1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
+replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.</p>
+</section>
+<section>
+</section>
+<section>
+</section>
+<section>
+</section>
+<section>
+<h2 class="section-title" id="header-classes">Classes</h2>
+<dl>
+<dt id="constriction.stream.stack.AnsCoder"><code class="flex name class">
+<span>class <span class="ident">AnsCoder</span></span>
+<span>(</span><span>compressed)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>An entropy coder based on <a href="https://en.wikipedia.org/wiki/Asymmetric_numeral_systems">Asymmetric Numeral Systems (ANS)</a> [1].</p>
+<p>This is a wrapper around the Rust type [<code>constriction::stream::stack::DefaultAnsCoder</code>]
+with python bindings.</p>
+<p>Note that this entropy coder is a stack (a "last in first out" data
+structure). You can push symbols on the stack using the methods
+<code>encode_leaky_gaussian_symbols_reverse</code> or <code>encode_iid_categorical_symbols_reverse</code>, and then pop
+them off <em>in reverse order</em> using the methods <code>decode_leaky_gaussian_symbols</code> or
+<code>decode_iid_categorical_symbols</code>, respectively.</p>
+<p>To copy out the compressed data that is currently on the stack, call
+<code>get_compressed</code>. You would typically want write this to a binary file in some
+well-documented byte order. After reading it back in at a later time, you can
+decompress it by constructing an <code>constriction.AnsCoder</code> where you pass in the compressed
+data as an argument to the constructor.</p>
+<p>If you're only interested in the compressed file size, calling <code>num_bits</code> will
+be cheaper as it won't actually copy out the compressed data.</p>
+<h2 id="examples">Examples</h2>
+<h3 id="compression">Compression:</h3>
+<pre><code class="language-python">import sys
+import constriction
+import numpy as np
+
+ans = constriction.stream.stack.AnsCoder()  # No arguments =&gt; empty ANS coder
+
+symbols = np.array([2, -1, 0, 2, 3], dtype = np.int32)
+min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
+means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
+stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
+
+ans.encode_leaky_gaussian_symbols_reverse(
+    symbols, min_supported_symbol, max_supported_symbol, means, stds)
+
+print(f&quot;Compressed size: {ans.num_valid_bits()} bits&quot;)
+
+compressed = ans.get_compressed()
+if sys.byteorder == &quot;big&quot;:
+    # Convert native byte order to a consistent one (here: little endian).
+    compressed.byteswap(inplace=True)
+compressed.tofile(&quot;compressed.bin&quot;)
+</code></pre>
+<h3 id="decompression">Decompression:</h3>
+<pre><code class="language-python">import sys
+import constriction
+import numpy as np
+
+compressed = np.fromfile(&quot;compressed.bin&quot;, dtype=np.uint32)
+if sys.byteorder == &quot;big&quot;:
+    # Convert little endian byte order to native byte order.
+    compressed.byteswap(inplace=True)
+
+ans = constriction.stream.stack.
+
+min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
+means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
+stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
+
+reconstructed = ans.decode_leaky_gaussian_symbols(
+    min_supported_symbol, max_supported_symbol, means, stds)
+assert ans.is_empty()
+print(reconstructed)  # Should print [2, -1, 0, 2, 3]
+</code></pre>
+<h2 id="constructor">Constructor</h2>
+<p>Arguments:
+compressed (optional) &ndash; initial compressed data, as a numpy array with
+dtype <code>uint32</code>.</p>
+<h2 id="references">References</h2>
+<p>[1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
+replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.</p></div>
+<h3>Methods</h3>
+<dl>
+<dt id="constriction.stream.stack.AnsCoder.clear"><code class="name flex">
+<span>def <span class="ident">clear</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Resets the coder for compression.</p>
+<p>After calling this method, the method <code>is_empty</code> will return <code>True</code>.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.decode_custom_model"><code class="name flex">
+<span>def <span class="ident">decode_custom_model</span></span>(<span>model, model_parameters)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.decode_iid_categorical_symbols"><code class="name flex">
+<span>def <span class="ident">decode_iid_categorical_symbols</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Decodes a sequence of categorically distributed symbols <em>in reverse order</em>.</p>
+<p>This method is analogous to the method <code>decode_leaky_gaussian_symbols</code> except that
+- all symbols are decoded with the same entropy model; and
+- the entropy model is a categorical rather than a Gaussian model.</p>
+<p>See documentation of <code>encode_iid_categorical_symbols_reverse</code> for details of the
+categorical entropy model. See documentation of <code>decode_leaky_gaussian_symbols</code> for a
+discussion of the reverse order of decoding, and for a related usage
+example.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.decode_iid_custom_model"><code class="name flex">
+<span>def <span class="ident">decode_iid_custom_model</span></span>(<span>amt, model)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.decode_leaky_gaussian_symbols"><code class="name flex">
+<span>def <span class="ident">decode_leaky_gaussian_symbols</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Decodes a sequence of symbols <em>in reverse order</em> using (leaky) Gaussian entropy
+models.</p>
+<p>The provided numpy arrays <code>means</code>, <code>stds</code>, and <code>symbols_out</code> must all have
+the same size. The provided <code>means</code>, <code>stds</code>, <code>min_supported_symbol</code>,
+<code>max_supported_symbol</code>, and <code>leaky</code> must be the exact same values that were
+used for encoding. Even a tiny modification of these arguments can cause the
+coder to decode <em>completely</em> different symbols.</p>
+<p>The symbols will be popped off the stack and written to the target array in
+reverseorder so as to simplify usage, e.g.:</p>
+<pre><code class="language-python">coder = constriction.AnsCoder()
+symbols = np.array([2, 8, -5], dtype=np.int32)
+decoded = np.empty((3,), dtype=np.int32)
+means = np.array([0.1, 10.3, -3.2], dtype=np.float64)
+stds = np.array([3.2, 1.3, 1.9], dtype=np.float64)
+
+# Push symbols on the stack:
+coder.encode_leaky_gaussian_symbols_reverse(symbols, -10, 10, means, stds, True)
+
+# Pop symbols off the stack in reverse order:
+coder.decode_leaky_gaussian_symbols(-10, 10, means, stds, decoded, True)
+
+# Verify that the decoded symbols match the encoded ones.
+assert np.all(symbols == decoded)
+assert coder.is_empty()
+</code></pre>
+<p>Arguments:
+min_supported_symbol &ndash; lower bound of the domain supported by the entropy
+model (inclusively). Must be the same value that was used for encoding.
+max_supported_symbol &ndash; upper bound of the domain supported by the entropy
+model (inclusively). Must be the same value that was used for encoding.
+means &ndash; the mean values of the Gaussian entropy models for each symbol.
+Must be a contiguous one-dimensional numpy array with dtype <code>float64</code>
+and with the exact same length as the argument <code>symbols_out</code>.
+stds &ndash; the standard deviations of the Gaussian entropy models for each
+symbol. Must be a contiguous one-dimensional numpy array with dtype
+<code>float64</code> and with the exact same length as the argument <code>symbols_out</code>.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.encode_custom_model_reverse"><code class="name flex">
+<span>def <span class="ident">encode_custom_model_reverse</span></span>(<span>symbols, model, model_parameters)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.encode_iid_categorical_symbols_reverse"><code class="name flex">
+<span>def <span class="ident">encode_iid_categorical_symbols_reverse</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Encodes a sequence of symbols using a fixed categorical entropy model.</p>
+<p>This method is analogous to the method <code>encode_leaky_gaussian_symbols_reverse</code> except that
+- all symbols are encoded with the same entropy model; and
+- the entropy model is a categorical rather than a Gaussian distribution.</p>
+<p>In detail, the categorical entropy model is constructed as follows:
+- each symbol from <code>min_supported_symbol</code> to <code>max_supported_symbol</code>
+(inclusively) gets assigned at least the smallest nonzero probability
+that is representable within the internally used precision.
+- the remaining probability mass is distributed among the symbols from
+<code>min_provided_symbol</code> to <code>min_provided_symbol + len(probabilities) - 1</code>
+(inclusively), in the proportions specified by the provided probabilities
+(as far as this is possible within the internally used fixed point
+accuracy). The provided probabilities do not need to be normalized (i.e.,
+the do not need to add up to one) but they must all be nonnegative.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.encode_iid_custom_model_reverse"><code class="name flex">
+<span>def <span class="ident">encode_iid_custom_model_reverse</span></span>(<span>symbols, model)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.encode_leaky_gaussian_symbols_reverse"><code class="name flex">
+<span>def <span class="ident">encode_leaky_gaussian_symbols_reverse</span></span>(<span>symbols, min_supported_symbol, max_supported_symbol, means, stds)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Encodes a sequence of symbols using (leaky) Gaussian entropy models.</p>
+<p>The provided numpy arrays <code>symbols</code>, <code>means</code>, and <code>stds</code> must all have the
+same size.</p>
+<p>See method <code>decode_leaky_gaussian_symbols</code> for a usage example.</p>
+<p>Arguments:
+min_supported_symbol &ndash; lower bound of the domain for argument <code>symbols</code>
+(inclusively).
+max_supported_symbol &ndash; upper bound of the domain for argument <code>symbols</code>
+(inclusively).
+symbols &ndash; the symbols to be encoded. Must be a contiguous one-dimensional
+numpy array (call <code>.copy()</code> on it if it is not contiguous) with dtype
+<code>np.int32</code>. Each value in the array must be no smaller than
+<code>min_supported_symbol</code> and no larger than <code>max_supported_symbol</code>.
+means &ndash; the mean values of the Gaussian entropy models for each symbol.
+Must be a contiguous one-dimensional numpy array with dtype <code>np.float64</code>
+and with the exact same length as the argument <code>symbols</code>.
+stds &ndash; the standard deviations of the Gaussian entropy models for each
+symbol. Must be a contiguous one-dimensional numpy array with dtype
+<code>np.float64</code> and with the exact same length as the argument <code>symbols</code>.
+All entries must be strictly positive (i.e., nonzero and nonnegative)
+and finite.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.get_binary"><code class="name flex">
+<span>def <span class="ident">get_binary</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.get_compressed"><code class="name flex">
+<span>def <span class="ident">get_compressed</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Copies the compressed data to the provided numpy array.</p>
+<p>The argument <code>destination</code> must by a one-dimensional numpy array with
+dtype <code>uint32</code> and with the exact correct size. Use the method <code>num_words</code>
+to find out the correct size.</p>
+<p>Example:</p>
+<pre><code class="language-python">coder = constriction.AnsCoder()
+# ... push some symbols on coder ...
+compressed_len = coder.num_words()
+compressed = np.empty((compressed_len,), dtype=np.uint32)
+coder.copy_compressed(compressed)
+
+# Optional: write the compressed data to a file in
+#           platform-independent byte ordering.
+if sys.byteorder == &quot;big&quot;:
+    compressed.byteswap()
+with open(&quot;path/to/file&quot;, &quot;wb&quot;) as file:
+    compressed.tofile(file)
+</code></pre></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.is_empty"><code class="name flex">
+<span>def <span class="ident">is_empty</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Returns <code>True</code> iff the coder is in its default initial state.</p>
+<p>The default initial state is the state returned by the constructor when
+called without arguments, or the state to which the coder is set when
+calling <code>clear</code>.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.num_bits"><code class="name flex">
+<span>def <span class="ident">num_bits</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>The current size of the compressed data, in bits, rounded up to full words.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.num_valid_bits"><code class="name flex">
+<span>def <span class="ident">num_valid_bits</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>The current size of the compressed data, in bits, not rounded up to full words.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.num_words"><code class="name flex">
+<span>def <span class="ident">num_words</span></span>(<span>...)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>The current size of the compressed data, in <code>np.uint32</code> words.</p></div>
+</dd>
+</dl>
+</dd>
+</dl>
+</section>
+</article>
+<nav id="sidebar">
+<h1>Index</h1>
+<div class="toc">
+<ul>
+<li><a href="#references">References</a></li>
+</ul>
+</div>
+<ul id="index">
+<li><h3>Super-module</h3>
+<ul>
+<li><code><a title="constriction.stream" href="../stream.html">constriction.stream</a></code></li>
+</ul>
+</li>
+<li><h3><a href="#header-classes">Classes</a></h3>
+<ul>
+<li>
+<h4><code><a title="constriction.stream.stack.AnsCoder" href="#constriction.stream.stack.AnsCoder">AnsCoder</a></code></h4>
+<ul class="">
+<li><code><a title="constriction.stream.stack.AnsCoder.clear" href="#constriction.stream.stack.AnsCoder.clear">clear</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.decode_custom_model" href="#constriction.stream.stack.AnsCoder.decode_custom_model">decode_custom_model</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.decode_iid_categorical_symbols" href="#constriction.stream.stack.AnsCoder.decode_iid_categorical_symbols">decode_iid_categorical_symbols</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.decode_iid_custom_model" href="#constriction.stream.stack.AnsCoder.decode_iid_custom_model">decode_iid_custom_model</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.decode_leaky_gaussian_symbols" href="#constriction.stream.stack.AnsCoder.decode_leaky_gaussian_symbols">decode_leaky_gaussian_symbols</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.encode_custom_model_reverse" href="#constriction.stream.stack.AnsCoder.encode_custom_model_reverse">encode_custom_model_reverse</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.encode_iid_categorical_symbols_reverse" href="#constriction.stream.stack.AnsCoder.encode_iid_categorical_symbols_reverse">encode_iid_categorical_symbols_reverse</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.encode_iid_custom_model_reverse" href="#constriction.stream.stack.AnsCoder.encode_iid_custom_model_reverse">encode_iid_custom_model_reverse</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.encode_leaky_gaussian_symbols_reverse" href="#constriction.stream.stack.AnsCoder.encode_leaky_gaussian_symbols_reverse">encode_leaky_gaussian_symbols_reverse</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.get_binary" href="#constriction.stream.stack.AnsCoder.get_binary">get_binary</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.get_compressed" href="#constriction.stream.stack.AnsCoder.get_compressed">get_compressed</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.is_empty" href="#constriction.stream.stack.AnsCoder.is_empty">is_empty</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.num_bits" href="#constriction.stream.stack.AnsCoder.num_bits">num_bits</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.num_valid_bits" href="#constriction.stream.stack.AnsCoder.num_valid_bits">num_valid_bits</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.num_words" href="#constriction.stream.stack.AnsCoder.num_words">num_words</a></code></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+</main>
+<footer id="footer">
+<p>Generated by <a href="https://pdoc3.github.io/pdoc"><cite>pdoc</cite> 0.9.2</a>.</p>
+</footer>
+</body>
+</html>
