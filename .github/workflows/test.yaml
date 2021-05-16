@@ -10,8 +10,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  quick-test:
-    runs-on: ubuntu-latest
+  rust-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
     steps:
       - name: Checkout
         uses: actions/checkout@v1
@@ -29,9 +34,9 @@ jobs:
           path: |
             target
             .cargo_home
-          key: ${{ runner.os }}-rust-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-no_pybindings-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-
+            ${{ runner.os }}-rust-no_pybindings-
 
       - name: Lint with rustfmt
         uses: actions-rs/cargo@v1
@@ -45,15 +50,22 @@ jobs:
           command: clippy
           args: --all-targets --all-features
 
-      - name: Test with cargo
+      - name: Test in development mode
         uses: actions-rs/cargo@v1.0.1
         with:
           command: test
           toolchain: stable
 
-  matrix-test:
+      - name: Test in release mode
+        uses: actions-rs/cargo@v1.0.1
+        with:
+          command: test
+          toolchain: stable
+          args: --release
+
+  python-test:
     runs-on: ${{ matrix.os }}
-    needs: quick-test
+    needs: rust-test
     strategy:
       fail-fast: false
       matrix:
@@ -98,15 +110,12 @@ jobs:
           path: |
             target
             .cargo_home
-          key: ${{ runner.os }}-rust-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-pybindings-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-
+            ${{ runner.os }}-rust-pybindings-
 
       - name: Build Python package
         run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings'
 
       - name: pytest
         run: poetry run pytest tests/python
-
-      - name: cargo test
-        run: cargo test
