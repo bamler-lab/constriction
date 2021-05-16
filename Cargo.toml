@@ -1,10 +1,10 @@
 [package]
-authors = ["Robert Bamler <robert.bamler@gmail.com>"]
+authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
 categories = ["compression", "science", "no-std"]
 description = "Composable entropy coding primitives for research and production (Python and Rust)."
 documentation = "https://rust.rs/constriction/"
 edition = "2018"
-homepage = "https://github.com/bamler-lab/constriction/"
+homepage = "https://bamler-lab.github.io/constriction/"
 keywords = ["compression", "machine-learning", "entropy-coding", "range-coding", "ANS"]
 license = "MIT OR Apache-2.0 OR BSL-1.0"
 name = "constriction"
@@ -56,5 +56,5 @@ classifiers = [
   "Intended Audience :: Science/Research",
 ]
 maintainer = "Robert Bamler"
-maintainer-email = "robert.bamler@gmail.com"
+maintainer-email = "robert.bamler@uni-tuebingen.de"
 project-url."Source repository" = "https://github.com/bamler-lab/constriction/"

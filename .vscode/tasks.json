@@ -80,7 +80,7 @@
 		{
 			"label": "Build Python module documentation",
 			"type": "shell",
-			"command": "poetry run maturin develop '--cargo-extra-args=--features pybindings' && poetry run python pythondoc.py",
+			"command": "poetry run maturin develop '--cargo-extra-args=--features pybindings' && poetry run python pythondoc.py html",
 			"group": "build",
 			"problemMatcher": [],
 			"presentation": {
