@@ -79,7 +79,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// The easiest and recommended way to install `constriction` for Python is via `pip`:
 ///
 /// ```bash
-/// pip install constriction
+/// pip install constriction numpy
 /// ```
 ///
 /// ### Example

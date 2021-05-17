@@ -1,4 +1,4 @@
-# Entropy Coding Primitives for Research and Production
+# Composable Entropy Coding Primitives for Research and Production
 
 The `constriction` library provides a set of composable implementations of entropy coding
 algorithms. It has APIs for both the **Python and Rust** languages and it focuses on
@@ -89,7 +89,7 @@ also installs `scipy`, which is not required but useful if you want to use `cons
 with custom probability distributions):
 
 ```bash
-pip install constriction scipy
+pip install constriction numpy scipy
 ```
 
 Then go ahead and use it:
