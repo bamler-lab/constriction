@@ -53,7 +53,7 @@ Capacitor](https://robamler.github.io/linguistic-flux-capacitor).
 We currently provide implementations of the following entropy coding algorithms:
 
 - **Asymmetric Numeral Systems (ANS):** a fast modern entropy coder with near-optimal
-  compression effectiveness that supports advanced use cases like bits-back coding;
+  compression effectiveness that supports advanced use cases like bits-back coding.
 - **Range Coding:** a computationally efficient variant of Arithmetic Coding, that has
   essentially the same compression effectiveness as ANS Coding but operates as a queue
   ("first in first out"), which makes it preferable for autoregressive models.
@@ -117,7 +117,7 @@ print(compressed)
 
 # Create a decoder and recover the original symbols.
 decoder = constriction.stream.queue.RangeDecoder(compressed)
-reconstructed = decoder1.decode_leaky_gaussian_symbols(
+reconstructed = decoder.decode_leaky_gaussian_symbols(
     min_supported_symbol, max_supported_symbol, means, stds)
 assert np.all(reconstructed == symbols)
 ```
