@@ -211,7 +211,7 @@ jobs:
 
       # Note: Windows doesn't support glob
       # https://stackoverflow.com/a/52481267/270334
-      - name: Install wheel and test upload (windows)
+      - name: Install wheel and upload (windows)
         if: matrix.os == 'windows-latest'
         env:
           TWINE_USERNAME: __token__
