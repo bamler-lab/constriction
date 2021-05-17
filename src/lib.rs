@@ -67,10 +67,13 @@
 //! the most common use cases of these entropy coding primitives to an environment that
 //! feels more natural to many data scientists.
 //!
+//! ## Setup
+//!
 //! To use `constriction` in your Rust project, just add the following line to the
 //! `[dependencies]` section of your `Cargo.toml`:
 //!
 //! ```toml
+//! [dependencies]
 //! constriction = "0.2"
 //! ```
 //!

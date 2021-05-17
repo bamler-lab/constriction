@@ -136,7 +136,38 @@ use num::{
     traits::{WrappingAdd, WrappingSub},
     Float, One, PrimInt, Zero,
 };
+
+#[cfg(feature = "probability")]
 use probability::distribution::{Distribution, Inverse};
+
+/// Mock replacement for [`probability::distribution::Distribution`] in a no-std context
+///
+/// This trait is only exported if `constriction` is used in a no-std context (i.e., with
+/// `default-features = false`). In this case, we can't use the `probability` crate because
+/// it doesn't seems to be incompatible with no-std. However, for most things, we really
+/// only need the trait definitions for `Distribution` and for [`Inverse`], so we copy them
+/// here.
+#[cfg(not(feature = "probability"))]
+pub trait Distribution {
+    /// The type of outcomes.
+    type Value;
+
+    /// Compute the cumulative distribution function.
+    fn distribution(&self, x: f64) -> f64;
+}
+
+/// Mock replacement for [`probability::distribution::Distribution`] in a no-std context
+///
+/// This trait is only exported if `constriction` is used in a no-std context (i.e., with
+/// `default-features = false`). In this case, we can't use the `probability` crate because
+/// it doesn't seems to be incompatible with no-std. However, for most things, we really
+/// only need the trait definitions for [`Distribution`] and for `Inverse`, so we copy them
+/// here.
+#[cfg(not(feature = "probability"))]
+pub trait Inverse: Distribution {
+    /// Compute the inverse of the cumulative distribution function.
+    fn inverse(&self, p: f64) -> Self::Value;
+}
 
 use crate::{wrapping_pow2, BitArray, NonZeroBitArray};
 
@@ -1199,7 +1230,7 @@ where
     // This whole `mask` business is only relevant if `Symbol` is a signed type smaller than
     // `Probability`, which should be very uncommon. In all other cases, this whole stuff
     // will be optimized away.
-    let mask = wrapping_pow2::<Probability>(8 * std::mem::size_of::<Symbol>())
+    let mask = wrapping_pow2::<Probability>(8 * core::mem::size_of::<Symbol>())
         .wrapping_sub(&Probability::one());
     symbol.borrow().wrapping_sub(&min_symbol_inclusive).as_() & mask
 }

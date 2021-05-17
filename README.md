@@ -130,8 +130,17 @@ API Documentation](https://bamler-lab.github.io/constriction/apidoc/python/).
 Add this line to your `Cargo.toml`:
 
 ```toml
-constriction = "0.1"
-probability = "0.17" # Not strictly required but useful for defining quantized entropy models.
+[dependencies]
+constriction = "0.1.2"
+probability = "0.17" # Not strictly required but used in many code examples.
+```
+
+If you compile in `no_std` mode then you have to deactivate `constriction`'s default
+features (and you can't use the `probability` crate):
+
+```toml
+[dependencies]
+constriction = {version = "0.1.2", default-features = false} # for `no_std` mode
 ```
 
 Then go ahead and use it:
