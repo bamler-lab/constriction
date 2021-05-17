@@ -152,7 +152,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// Try out the above example and verify that decoding reconstructs the original data. Then
 /// see how easy `constriction` makes it to replace the ANS coder with a range coder by
-/// making the following substitutions (TODO: verify that this is actually correct)
+/// making the following substitutions:
 ///
 /// **In the encoder,**
 ///
