@@ -48,7 +48,7 @@ Capacitor</a>.</p>
 <p>We currently provide implementations of the following entropy coding algorithms:</p>
 <ul>
 <li><strong>Asymmetric Numeral Systems (ANS):</strong> a fast modern entropy coder with near-optimal
-compression effectiveness that supports advanced use cases like bits-back coding;</li>
+compression effectiveness that supports advanced use cases like bits-back coding.</li>
 <li><strong>Range Coding:</strong> a computationally efficient variant of Arithmetic Coding, that has
 essentially the same compression effectiveness as ANS Coding but operates as a queue
 ("first in first out"), which makes it preferable for autoregressive models.</li>
@@ -150,7 +150,7 @@ print(reconstructed)  # Should print [23, -15, 78, 43, -69].
 <h3 id="exercise">Exercise</h3>
 <p>Try out the above example and verify that decoding reconstructs the original data. Then
 see how easy <code><a title="constriction" href="#constriction">constriction</a></code> makes it to replace the ANS coder with a range coder by
-making the following substitutions (TODO: verify that this is actually correct)</p>
+making the following substitutions:</p>
 <p><strong>In the encoder,</strong></p>
 <ul>
 <li>replace <code>constriction.stream.stack.AnsCoder</code> with
