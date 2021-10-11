@@ -56,9 +56,11 @@ Stanford University, 1976.</p>
 </code></dt>
 <dd>
 <div class="desc"><p>Decodes a sequence of categorically distributed symbols <em>in reverse order</em>.</p>
-<p>This method is analogous to the method <code>decode_leaky_gaussian_symbols</code> except that
-- all symbols are decoded with the same entropy model; and
-- the entropy model is a categorical rather than a Gaussian model.</p>
+<p>This method is analogous to the method <code>decode_leaky_gaussian_symbols</code> except that</p>
+<ul>
+<li>all symbols are decoded with the same entropy model; and</li>
+<li>the entropy model is a categorical rather than a Gaussian model.</li>
+</ul>
 <p>See documentation of <code>encode_iid_categorical_symbols_reverse</code> for details of the
 categorical entropy model. See documentation of <code>decode_leaky_gaussian_symbols</code> for a
 discussion of the reverse order of decoding, and for a related usage
@@ -109,19 +111,23 @@ example.</p></div>
 </code></dt>
 <dd>
 <div class="desc"><p>Encodes a sequence of symbols using a fixed categorical entropy model.</p>
-<p>This method is analogous to the method <code>encode_leaky_gaussian_symbols_reverse</code> except that
-- all symbols are encoded with the same entropy model; and
-- the entropy model is a categorical rather than a Gaussian distribution.</p>
-<p>In detail, the categorical entropy model is constructed as follows:
-- each symbol from <code>min_supported_symbol</code> to <code>max_supported_symbol</code>
+<p>This method is analogous to the method <code>encode_leaky_gaussian_symbols_reverse</code> except that</p>
+<ul>
+<li>all symbols are encoded with the same entropy model; and</li>
+<li>the entropy model is a categorical rather than a Gaussian distribution.</li>
+</ul>
+<p>In detail, the categorical entropy model is constructed as follows:</p>
+<ul>
+<li>each symbol from <code>min_supported_symbol</code> to <code>max_supported_symbol</code>
 (inclusively) gets assigned at least the smallest nonzero probability
-that is representable within the internally used precision.
-- the remaining probability mass is distributed among the symbols from
+that is representable within the internally used precision.</li>
+<li>the remaining probability mass is distributed among the symbols from
 <code>min_provided_symbol</code> to <code>min_provided_symbol + len(probabilities) - 1</code>
 (inclusively), in the proportions specified by the provided probabilities
 (as far as this is possible within the internally used fixed point
 accuracy). The provided probabilities do not need to be normalized (i.e.,
-the do not need to add up to one) but they must all be nonnegative.</p></div>
+the do not need to add up to one) but they must all be nonnegative.</li>
+</ul></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.encode_iid_custom_model"><code class="name flex">
 <span>def <span class="ident">encode_iid_custom_model</span></span>(<span>symbols, model)</span>
@@ -159,24 +165,7 @@ and finite.</p></div>
 <span>def <span class="ident">get_compressed</span></span>(<span>...)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Copies the compressed data to the provided numpy array.</p>
-<p>The argument <code>destination</code> must by a one-dimensional numpy array with
-dtype <code>uint32</code> and with the exact correct size. Use the method <code>num_words</code>
-to find out the correct size.</p>
-<p>Example:</p>
-<pre><code class="language-python">coder = constriction.AnsCoder()
-# ... push some symbols on coder ...
-compressed_len = coder.num_words()
-compressed = np.empty((compressed_len,), dtype=np.uint32)
-coder.copy_compressed(compressed)
-
-# Optional: write the compressed data to a file in
-#           platform-independent byte ordering.
-if sys.byteorder == &quot;big&quot;:
-    compressed.byteswap()
-with open(&quot;path/to/file&quot;, &quot;wb&quot;) as file:
-    compressed.tofile(file)
-</code></pre></div>
+<div class="desc"><p>Returns a copy of the compressed data.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.get_decoder"><code class="name flex">
 <span>def <span class="ident">get_decoder</span></span>(<span>)</span>
