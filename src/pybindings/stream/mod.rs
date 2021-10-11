@@ -56,7 +56,85 @@ fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     stack::init_module(py, module)
 }
 
-/// Experimental new entropy coder for joint inference, quantization, and bits-back coding.
+/// Experimental entropy coding algorithm for advanced variants of bitsback coding.
+///
+/// This module provides the `ChainCoder`, an experimental entropy coder that is similar
+/// to an `AnsCoder` in that it operates as a stack (i.e., a last-in-first-out data
+/// structure). However, different to an `AnsCoder`, a `ChainCoder` treats each symbol
+/// independently. Thus, when decoding some bit string into a sequence of symbols, any
+/// modification to the entropy model for one symbol does not affect decoding for any other
+/// symbol (by contrast, when decoding with an `AnsCoder` then changing the entropy model
+/// for one symbol can affect *all* subsequently decoded symbols too, see
+/// [Motivation](#motivation) below).
+///
+/// This property of treating symbols independently upon decoding can be useful for advanced
+/// compression methods that combine inference, quantization, and bits-back coding.
+///
+/// # Motivation
+///
+/// The following example illustrates how decoding differs between an `AnsCoder` and a
+/// `ChainCoder`. We decode the same bitstring `data` twice with each coder: once with a
+/// sequence of toy entropy models, and then a second time with slightly different sequence
+/// of entropy models. Importantly, only the entropy model for the first decoded symbol
+/// differs between the two applications of each coder. We then observe that
+///
+/// - with the `AnsCoder`, changing the first entropy model affects not only the first
+///   decoded symbol but also has a ripple effect that can affect subsequently decoded
+///   symbols; while
+/// - with the `ChainCoder`, changing the first entropy model affects only the first decoded
+///   symbol; all subsequently decoded symbols remain unchanged.
+///
+/// ```python
+/// # Some sample binary data and sample probabilities for our entropy models
+/// data = np.array(
+///     [0x80d1_4131, 0xdda9_7c6c, 0x5017_a640, 0x0117_0a3d], np.uint32)
+/// probs = np.array([
+///     [0.1, 0.7, 0.1, 0.1],
+///     [0.2, 0.2, 0.1, 0.5],
+///     [0.2, 0.1, 0.4, 0.3],
+/// ])
+///
+/// # Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 1]`.
+/// ansCoder = constriction.stream.stack.AnsCoder(data, True)
+/// assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[0, :]) == [0]
+/// assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[1, :]) == [0]
+/// assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [1]
+///
+/// # Even if we change only the first entropy model (slightly), *all* decoded
+/// # symbols can change:
+/// probs[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
+/// ansCoder = constriction.stream.stack.AnsCoder(data, True)
+/// assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[0, :]) == [1]
+/// assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[1, :]) == [0]
+/// assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [3]
+/// # It's no surprise that the first symbol changed since we changed its entropy
+/// # model. But note that the third symbol changed too even though we hadn't
+/// # changed its entropy model.
+/// # --> Changes to entropy models have a *global* effect.
+///
+/// # Let's try the same with a `ChainCoder`:
+/// probs[0, :] = np.array([0.1, 0.7, 0.1, 0.1]) # Restore original model.
+/// chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
+/// assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[0, :]) == [0]
+/// assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[1, :]) == [3]
+/// assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [3]
+
+/// # We obtain different symbols than for the `AnsCoder`, of course, but that's
+/// # not the point here.
+///
+/// probs[0, :] = np.array([0.09, 0.71, 0.1, 0.1]) # Change the first model again.
+/// chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
+/// assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[0, :]) == [1]
+/// assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[1, :]) == [3]
+/// assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [3]
+/// # The only symbol that changed was the one whose entropy model we had changed.
+/// # --> In a `ChainCoder`, changes to entropy models (and also to compressed
+/// #     bits) only have a *local* effect on the decompressed symbols.
+/// ```
+///
+/// # How does this work?
+///
+/// TODO
 #[pymodule]
 fn chain(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     chain::init_module(py, module)

@@ -109,6 +109,51 @@ def test_chain_gaussian():
     assert np.all(recovered_suffix3 == original_data)
 
 
+def test_chain_independence():
+    data = np.array([0x80d1_4131, 0xdda9_7c6c,
+                    0x5017_a640, 0x0117_0a3d], np.uint32)
+    probabilities = np.array([
+        [0.1, 0.7, 0.1, 0.1],
+        [0.2, 0.2, 0.1, 0.5],
+        [0.2, 0.1, 0.4, 0.3],
+    ])
+
+    ansCoder = constriction.stream.stack.AnsCoder(data, True)
+    assert ansCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[0, :]) == [0]
+    assert ansCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[1, :]) == [0]
+    assert ansCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[2, :]) == [1]
+
+    probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
+    ansCoder = constriction.stream.stack.AnsCoder(data, True)
+    assert ansCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[0, :]) == [1]
+    assert ansCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[1, :]) == [0]
+    assert ansCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[2, :]) == [3]
+
+    probabilities[0, :] = np.array([0.1, 0.7, 0.1, 0.1])
+    chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
+    assert chainCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[0, :]) == [0]
+    assert chainCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[1, :]) == [3]
+    assert chainCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[2, :]) == [3]
+
+    probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
+    chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
+    assert chainCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[0, :]) == [1]
+    assert chainCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[1, :]) == [3]
+    assert chainCoder.decode_iid_categorical_symbols(
+        1, 0, probabilities[2, :]) == [3]
+
+
 def test_custom_model():
     symbols = np.array([3, 2, 6, -51, -19, 5, 87], dtype=np.int32)
 

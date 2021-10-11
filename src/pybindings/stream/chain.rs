@@ -63,28 +63,7 @@ impl ChainCoder {
         Ok(Self { inner })
     }
 
-    /// Copies the compressed data to the provided numpy array.
-    ///
-    /// The argument `destination` must by a one-dimensional numpy array with
-    /// dtype `uint32` and with the exact correct size. Use the method `num_words`
-    /// to find out the correct size.
-    ///
-    /// Example:
-    ///
-    /// ```python
-    /// coder = constriction.AnsCoder()
-    /// # ... push some symbols on coder ...
-    /// compressed_len = coder.num_words()
-    /// compressed = np.empty((compressed_len,), dtype=np.uint32)
-    /// coder.copy_compressed(compressed)
-    ///
-    /// # Optional: write the compressed data to a file in
-    /// #           platform-independent byte ordering.
-    /// if sys.byteorder == "big":
-    ///     compressed.byteswap()
-    /// with open("path/to/file", "wb") as file:
-    ///     compressed.tofile(file)
-    /// ```
+    /// Returns a copy of the compressed data and the remainders.
     pub fn get_data<'p>(
         &self,
         unseal: Option<bool>,
@@ -185,7 +164,7 @@ impl ChainCoder {
     /// coder to decode *completely* different symbols.
     ///
     /// The symbols will be popped off the stack and written to the target array in
-    /// reverseorder so as to simplify usage, e.g.:
+    /// reverse order so as to simplify usage.
     ///
     /// ```python
     /// coder = constriction.AnsCoder()
@@ -248,10 +227,12 @@ impl ChainCoder {
     /// Encodes a sequence of symbols using a fixed categorical entropy model.
     ///
     /// This method is analogous to the method `encode_leaky_gaussian_symbols_reverse` except that
+    ///
     /// - all symbols are encoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian distribution.
     ///
     /// In detail, the categorical entropy model is constructed as follows:
+    ///
     /// - each symbol from `min_supported_symbol` to `max_supported_symbol`
     ///   (inclusively) gets assigned at least the smallest nonzero probability
     ///   that is representable within the internally used precision.
@@ -290,6 +271,7 @@ impl ChainCoder {
     /// Decodes a sequence of categorically distributed symbols *in reverse order*.
     ///
     /// This method is analogous to the method `decode_leaky_gaussian_symbols` except that
+    ///
     /// - all symbols are decoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian model.
     ///

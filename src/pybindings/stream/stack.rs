@@ -176,28 +176,7 @@ impl AnsCoder {
         self.inner.is_empty()
     }
 
-    /// Copies the compressed data to the provided numpy array.
-    ///
-    /// The argument `destination` must by a one-dimensional numpy array with
-    /// dtype `uint32` and with the exact correct size. Use the method `num_words`
-    /// to find out the correct size.
-    ///
-    /// Example:
-    ///
-    /// ```python
-    /// coder = constriction.AnsCoder()
-    /// # ... push some symbols on coder ...
-    /// compressed_len = coder.num_words()
-    /// compressed = np.empty((compressed_len,), dtype=np.uint32)
-    /// coder.copy_compressed(compressed)
-    ///
-    /// # Optional: write the compressed data to a file in
-    /// #           platform-independent byte ordering.
-    /// if sys.byteorder == "big":
-    ///     compressed.byteswap()
-    /// with open("path/to/file", "wb") as file:
-    ///     compressed.tofile(file)
-    /// ```
+    /// Returns a copy of the compressed data.
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> &'p PyArray1<u32> {
         PyArray1::from_slice(py, &*self.inner.get_compressed().unwrap_infallible())
     }
@@ -277,13 +256,12 @@ impl AnsCoder {
     /// used for encoding. Even a tiny modification of these arguments can cause the
     /// coder to decode *completely* different symbols.
     ///
-    /// The symbols will be popped off the stack and written to the target array in
-    /// reverseorder so as to simplify usage, e.g.:
+    /// The symbols will be popped off the stack and returned in reverse order so as to
+    /// simplify usage, e.g.:
     ///
     /// ```python
     /// coder = constriction.AnsCoder()
     /// symbols = np.array([2, 8, -5], dtype=np.int32)
-    /// decoded = np.empty((3,), dtype=np.int32)
     /// means = np.array([0.1, 10.3, -3.2], dtype=np.float64)
     /// stds = np.array([3.2, 1.3, 1.9], dtype=np.float64)
     ///
@@ -291,7 +269,7 @@ impl AnsCoder {
     /// coder.encode_leaky_gaussian_symbols_reverse(symbols, -10, 10, means, stds, True)
     ///
     /// # Pop symbols off the stack in reverse order:
-    /// coder.decode_leaky_gaussian_symbols(-10, 10, means, stds, decoded, True)
+    /// decoded = coder.decode_leaky_gaussian_symbols(-10, 10, means, stds, True)
     ///
     /// # Verify that the decoded symbols match the encoded ones.
     /// assert np.all(symbols == decoded)
@@ -341,10 +319,12 @@ impl AnsCoder {
     /// Encodes a sequence of symbols using a fixed categorical entropy model.
     ///
     /// This method is analogous to the method `encode_leaky_gaussian_symbols_reverse` except that
+    ///
     /// - all symbols are encoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian distribution.
     ///
     /// In detail, the categorical entropy model is constructed as follows:
+    ///
     /// - each symbol from `min_supported_symbol` to `max_supported_symbol`
     ///   (inclusively) gets assigned at least the smallest nonzero probability
     ///   that is representable within the internally used precision.
@@ -383,6 +363,7 @@ impl AnsCoder {
     /// Decodes a sequence of categorically distributed symbols *in reverse order*.
     ///
     /// This method is analogous to the method `decode_leaky_gaussian_symbols` except that
+    ///
     /// - all symbols are decoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian model.
     ///
