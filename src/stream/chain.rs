@@ -1,6 +1,29 @@
+//! Experimental entropy coding algorithm for advanced variants of bitsback coding.
+//!
+//! This module provides the [`ChainCoder`], an experimental entropy coder that is similar
+//! to an [`AnsCoder`] in that it operates as a stack (i.e., a last-in-first-out data
+//! structure). However, different to an `AnsCoder`, a `ChainCoder` treats each symbol
+//! independently. Thus, when decoding some bit string into a sequence of symbols, any
+//! modification to the entropy model for one symbol does not affect decoding for any other
+//! symbol (by contrast, when decoding with an `AnsCoder` then changing the entropy model
+//! for one symbol can affect *all* subsequently decoded symbols too, see
+//! [Motivation](#motivation) below).
+//!
+//! This property of treating symbols independently upon decoding can be useful for advanced
+//! compression methods that combine inference, quantization, and bits-back coding.
+//!
 //! # Motivation
 //!
-//! TODO: explain
+//! The following example illustrates how decoding differs between an [`AnsCoder`] and a
+//! [`ChainCoder`]. We decode the same bitstring `data` twice with each coder: once with a
+//! sequence of toy entropy models, and then a second time with slightly different sequence
+//! of entropy models. Importantly, only the entropy model for the first decoded symbol
+//! differs between the two applications of each coder. We then observe that
+//! - with the `AnsCoder`, changing the first entropy model affects not only the first
+//!   decoded symbol but also has a ripple effect that can affect subsequently decoded
+//!   symbols; while
+//! - with the `ChainCoder`, changing the first entropy model affects only the first decoded
+//!   symbol; all subsequently decoded symbols remain unchanged.
 //!
 //! ```
 //! use constriction::stream::{
@@ -23,7 +46,7 @@
 //! }
 //!
 //! // Let's define some sample binary data and some probabilities for our entropy models
-//! let data = vec![0x80d1_4131, 0xdda9_7c6c, 0x5017_a640, 0x01170a3d];
+//! let data = vec![0x80d1_4131, 0xdda9_7c6c, 0x5017_a640, 0x0117_0a3d];
 //! let mut probabilities = [
 //!     [0.1, 0.7, 0.1, 0.1], // Probabilities for the entropy model of the first decoded symbol.
 //!     [0.2, 0.2, 0.1, 0.5], // Probabilities for the entropy model of the second decoded symbol.
@@ -59,6 +82,12 @@
 //! // --> In a `ChainCoder`, changes to entropy models (and also to compressed bits)
 //! //     only have a *local* effect on the decompressed symbols.
 //! ```
+//!
+//! # How does this work?
+//!
+//! TODO
+//!
+//! [`AnsCoder`]: super::stack::AnsCoder
 
 use alloc::vec::Vec;
 
@@ -75,7 +104,12 @@ use crate::{
     BitArray, CoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack,
 };
 
-/// # Intended Usage
+/// Experimental entropy coder for advanced variants of bitsback coding.
+///
+/// See [module level documentation](super) for motivation and explanation of the
+/// implemented entropy coding algorithm.
+///
+///  # Intended Usage
 ///
 /// A typical usage cycle goes along the following steps:
 ///
@@ -95,11 +129,11 @@ use crate::{
 /// 2. Encode the symbols you obtained in Step 2 above back onto the new chain coder (in
 ///    reverse order) using the same entropy models.
 /// 3. Recover the original binary data from Step 0 above by calling [`.into_binary()`] or
-///    [`.into_compressed()`] (using the analogous choice as in Step 1 above).
+///    [`.into_compressed()`] (using the `analogous choice as in Step 1 above).
 ///
 /// # Examples
 ///
-/// The following two examples show two variants of the above typical usage cycle.
+/// The following two examples show two variants of the typical usage cycle described above.
 ///
 /// ```
 /// use constriction::stream::{model::DefaultLeakyQuantizer, Decode, chain::DefaultChainCoder};
@@ -151,7 +185,7 @@ use crate::{
 ///
 /// If we were to write out `remaining_prefix` and `remaining_suffix` to a file then it
 /// would be tedious to keep track of where the prefix ends and where the suffix begins.
-/// Luckly, we don't have to do this. We can just as well concatenate `remaining_prefix`
+/// Luckily, we don't have to do this. We can just as well concatenate `remaining_prefix`
 /// and `remaining_suffix` right away. The only additional change this will cause is that
 /// the call to `.into_binary()` in Step 3 of the decompressor will then return a non-empty
 /// `recovered_prefix` because the second `ChainCoder` will then also have some superflous
