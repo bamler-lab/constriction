@@ -834,7 +834,7 @@ mod tests {
         }
 
         for remaining in queue_iter {
-            assert_eq!(remaining.unwrap_infallible(), false);
+            assert!(!remaining.unwrap_infallible());
         }
     }
 

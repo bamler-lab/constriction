@@ -1055,7 +1055,7 @@ where
         // place all probability mass on a single symbol).
         assert!(support.end() > support.start());
 
-        let support_size_minus_one = support.end().wrapping_sub(&support.start()).as_();
+        let support_size_minus_one = support.end().wrapping_sub(support.start()).as_();
         let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
         let free_weight = max_probability
             .checked_sub(&support_size_minus_one)
@@ -1364,9 +1364,9 @@ where
 
         // SAFETY: We have to ensure that all paths lead to a state where
         // `right_sided_cumulative != left_sided_cumulative`.
+        let mut step = Self::Symbol::one(); // `diff` will always be a power of 2.
         let right_sided_cumulative = if left_sided_cumulative > quantile {
             // Our initial guess for `symbol` was too high. Reduce it until we're good.
-            let mut step = Self::Symbol::one(); // `diff` will always be a power of 2.
             symbol = symbol - step;
             let mut found_lower_bound = false;
 
@@ -1433,7 +1433,6 @@ where
             // Our initial guess for `symbol` was either exactly right or too low.
             // Check validity of the right sided cumulative. If it isn't valid,
             // keep increasing `symbol` until it is.
-            let mut step = Self::Symbol::one(); // `diff` will always be a power of 2.
             let mut found_upper_bound = false;
 
             loop {
