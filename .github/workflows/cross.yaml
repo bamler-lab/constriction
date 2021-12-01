@@ -11,7 +11,7 @@ jobs:
 
     env:
       CIBW_BUILD_VERBOSITY: 1
-      CIBW_BEFORE_ALL_LINUX: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && rustup target add aarch64-apple-darwin && echo python: $(which python)"
+      CIBW_BEFORE_ALL_LINUX: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && echo python: $(which python) && ls /tmp/cibw_bin/python && ls /tmp/cibw_bin/python/*/"
       CIBW_ARCHS_LINUX: "auto aarch64"
       CIBW_ARCHS_MACOS: "arm64"
       # CIBW_ARCHS_MACOS: "x86_64 universal2"
