@@ -12,9 +12,10 @@ jobs:
     env:
       CIBW_BUILD_VERBOSITY: 1
       CIBW_BEFORE_ALL_LINUX: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && echo python: $(which python) && ls /tmp/cibw_bin/python && ls /tmp/cibw_bin/python/*/"
+      CIBW_BEFORE_ALL_MACOS: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && echo python: $(which python) && ls /tmp/cibw_bin/python && ls /tmp/cibw_bin/python/*/"
       CIBW_ARCHS_LINUX: "auto aarch64"
-      CIBW_ARCHS_MACOS: "arm64"
-      # CIBW_ARCHS_MACOS: "x86_64 universal2"
+      # CIBW_ARCHS_MACOS: "arm64"
+      CIBW_ARCHS_MACOS: "x86_64 universal2"
       CIBW_ENVIRONMENT: 'PATH="$PATH:$HOME/.cargo/bin" PYO3_CROSS_LIB_DIR=/opt/python/cp38-cp38/lib'
       CIBW_SKIP: "cp27-* cp34-* cp35-* pp* *-win32"
 
@@ -51,3 +52,11 @@ jobs:
       #     echo "SDKROOT: $SDKROOT"
       #     echo "MACOSX_DEPLOYMENT_TARGET: $MACOSX_DEPLOYMENT_TARGET"
       #     cargo build --target=aarch64-apple-darwin
+
+      - name: Upload to Dropbox
+        uses: deka0106/upload-to-dropbox@v2
+        with:
+          dropbox_access_token: ${{ secrets.DROPBOX_ACCESS_TOKEN }}
+          src: wheelhouse/**
+          dest: /temporary/wheels/
+          multiple: true
