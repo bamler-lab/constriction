@@ -11,11 +11,11 @@ jobs:
 
     env:
       CIBW_BUILD_VERBOSITY: 1
-      CIBW_BEFORE_ALL_LINUX: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && rustup target add aarch64-apple-darwin"
+      CIBW_BEFORE_ALL_LINUX: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && rustup target add aarch64-apple-darwin && echo python: $(which python)"
       CIBW_ARCHS_LINUX: "auto aarch64"
-      CIBW_ARCHS_MACOS: "universal2"
+      CIBW_ARCHS_MACOS: "arm64"
       # CIBW_ARCHS_MACOS: "x86_64 universal2"
-      CIBW_ENVIRONMENT: 'PATH="$PATH:$HOME/.cargo/bin"'
+      CIBW_ENVIRONMENT: 'PATH="$PATH:$HOME/.cargo/bin" PYO3_CROSS_LIB_DIR=/opt/python/cp38-cp38/lib'
       CIBW_SKIP: "cp27-* cp34-* cp35-* pp* *-win32"
 
     steps:
