@@ -6,49 +6,38 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust-test:
-    runs-on: macos-latest
+  cross-compile:
+    runs-on: macos-10.15
+
+    env:
+      CIBW_BUILD_VERBOSITY: 1
+      CIBW_BEFORE_ALL_LINUX: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && rustup target add aarch64-apple-darwin"
+      CIBW_ARCHS_LINUX: "auto aarch64"
+      CIBW_ARCHS_MACOS: "x86_64 universal2"
+      CIBW_ENVIRONMENT: 'PATH="$PATH:$HOME/.cargo/bin"'
+      CIBW_SKIP: "cp27-* cp34-* cp35-* pp* *-win32"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v1
 
-      - name: Install latest stable Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
+      # - name: Xcode Select
+      #   uses: devbotsxyz/xcode-select@v1.1.0
+      #   with:
+      #     # Version to use (like '11.7', '12' or simply 'latest')
+      #     version: # optional, default is latest
+      #     # Whether to select a beta release or not. Beta releases may not always be available.
+      #     beta: # optional, default is false
 
-      - name: Add target aarch64-apple-darwin
-        run: |
-          rustup target add aarch64-apple-darwin
-
-      - name: Set environment variables
-        id: set-env
-        run: |
-          echo "::set-output name=sdkroot::$(xcrun -sdk macosx11.0 --show-sdk-path)"
-          echo "::set-output name=macosx_deployment_target::$(xcrun -sdk macosx11.0 --show-sdk-platform-version)"
-
-      - name: Cross compile
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.3.0
         env:
-          SDKROOT: ${{ steps.set-env.outputs.sdkroot }}
-          MACOSX_DEPLOYMENT_TARGET: ${{ steps.set-env.outputs.macosx_deployment_target }}
-        run: |
-          echo "SDKROOT: $SDKROOT"
-          echo "MACOSX_DEPLOYMENT_TARGET: $MACOSX_DEPLOYMENT_TARGET"
-          cargo build --target=aarch64-apple-darwin
+          CIBW_ARCHS_MACOS: x86_64 universal2
 
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v1
-        with:
-          python-version: 3.9
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install poetry
-          poetry install
-
-      - name: Build Python package
-        run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings --target=aarch64-apple-darwin'
+      # - name: Cross compile
+      #   run: |
+      #     export SDKROOT=$(xcrun -sdk macosx11.0 --show-sdk-path)
+      #     export MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx11.0 --show-sdk-platform-version)
+      #     echo "SDKROOT: $SDKROOT"
+      #     echo "MACOSX_DEPLOYMENT_TARGET: $MACOSX_DEPLOYMENT_TARGET"
+      #     cargo build --target=aarch64-apple-darwin
