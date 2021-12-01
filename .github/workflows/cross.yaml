@@ -1,0 +1,54 @@
+name: cross
+
+on: push
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-test:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Install latest stable Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - name: Add target aarch64-apple-darwin
+        run: |
+          rustup target add aarch64-apple-darwin
+
+      - name: Set environment variables
+        id: set-env
+        run: |
+          echo "::set-output name=sdkroot::$(xcrun -sdk macosx11.0 --show-sdk-path)"
+          echo "::set-output name=macosx_deployment_target::$(xcrun -sdk macosx11.0 --show-sdk-platform-version)"
+
+      - name: Cross compile
+        env:
+          SDKROOT: ${{ steps.set-env.outputs.sdkroot }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ steps.set-env.outputs.macosx_deployment_target }}
+        run: |
+          echo "SDKROOT: $SDKROOT"
+          echo "MACOSX_DEPLOYMENT_TARGET: $MACOSX_DEPLOYMENT_TARGET"
+          cargo build --target=aarch64-apple-darwin
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v1
+        with:
+          python-version: 3.9
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+          poetry install
+
+      - name: Build Python package
+        run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings --target=aarch64-apple-darwin'
