@@ -651,7 +651,7 @@ fn wrapping_pow2<T: BitArray>(exponent: usize) -> T {
     }
 }
 
-pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq + Hash + 'static {
+pub trait NonZeroBitArray: Copy + Display + Debug + Eq + Hash + 'static {
     type Base: BitArray<NonZero = Self>;
 
     fn new(n: Self::Base) -> Option<Self>;
@@ -686,7 +686,7 @@ macro_rules! unsafe_impl_bit_array {
                 type NonZero = $non_zero;
             }
 
-            unsafe impl NonZeroBitArray for $non_zero {
+            impl NonZeroBitArray for $non_zero {
                 type Base = $base;
 
                 #[inline(always)]
