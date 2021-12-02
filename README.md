@@ -1,5 +1,7 @@
 # Composable Entropy Coding Primitives for Research and Production
 
+![test status](https://github.com/bamler-lab/constriction/workflows/test/badge.svg?branch=main)
+
 The `constriction` library provides a set of composable implementations of entropy coding
 algorithms. It has APIs for both the **Python and Rust** languages and it focuses on
 correctness, versatility, ease of use, compression performance, and computational
