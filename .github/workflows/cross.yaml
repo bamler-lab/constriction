@@ -12,7 +12,7 @@ jobs:
     env:
       CIBW_BUILD_VERBOSITY: 1
       CIBW_BEFORE_ALL_LINUX: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && rustup target add aarch64-apple-darwin && echo python: $(which python) && echo robamler1 && locate libpython"
-      CIBW_BEFORE_ALL_MACOS: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && rustup target add aarch64-apple-darwin && echo python: $(which python) && echo robamler2 && sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.locate.plist && locate libpython"
+      CIBW_BEFORE_ALL_MACOS: "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y && rustup target add aarch64-apple-darwin && echo python: $(which python) && echo robamler2 && python syspaths.py"
       CIBW_ARCHS_LINUX: "auto aarch64"
       # CIBW_ARCHS_MACOS: "arm64"
       CIBW_ARCHS_MACOS: "x86_64 universal2"
