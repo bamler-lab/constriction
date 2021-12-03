@@ -42,6 +42,7 @@ jobs:
           path: |
             target
             .cargo_home
+            .cargo
           key: ${{ runner.os }}-no_pybindings-rust-${{ steps.versions.outputs.rustc }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-no_pybindings-rust-${{ steps.versions.outputs.rustc }}-
@@ -54,18 +55,24 @@ jobs:
 
       - name: Lint with clippy
         uses: actions-rs/cargo@v1
+        env:
+          RUSTFLAGS: "-D warnings"
         with:
           command: clippy
           args: --all-targets --all-features
 
       - name: Test in development mode
         uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
         with:
           command: test
           toolchain: stable
 
       - name: Test in release mode
         uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
         with:
           command: test
           toolchain: stable
@@ -123,6 +130,7 @@ jobs:
           path: |
             target
             .cargo_home
+            .cargo
           key: ${{ runner.os }}-pybindings-rust-${{ steps.versions.outputs.rustc }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-pybindings-rust-${{ steps.versions.outputs.rustc }}-

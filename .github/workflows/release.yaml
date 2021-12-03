@@ -34,18 +34,24 @@ jobs:
 
       - name: Lint with clippy
         uses: actions-rs/cargo@v1
+        env:
+          RUSTFLAGS: "-D warnings"
         with:
           command: clippy
           args: --all-targets --all-features
 
       - name: Test in development mode
         uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
         with:
           command: test
           toolchain: stable
 
       - name: Test in release mode
         uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
         with:
           command: test
           toolchain: stable
