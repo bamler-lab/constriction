@@ -651,7 +651,13 @@ fn wrapping_pow2<T: BitArray>(exponent: usize) -> T {
     }
 }
 
-pub trait NonZeroBitArray: Copy + Display + Debug + Eq + Hash + 'static {
+/// A trait for bit strings like [`BitArray`] but with guaranteed nonzero values
+///
+/// # Safety
+///
+/// Must guarantee that the value is indeed nonzero. Failing to do so could, e.g., cause a
+/// division by zero in entropy coders, which is undefined behavior.
+pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq + Hash + 'static {
     type Base: BitArray<NonZero = Self>;
 
     fn new(n: Self::Base) -> Option<Self>;
@@ -686,7 +692,7 @@ macro_rules! unsafe_impl_bit_array {
                 type NonZero = $non_zero;
             }
 
-            impl NonZeroBitArray for $non_zero {
+            unsafe impl NonZeroBitArray for $non_zero {
                 type Base = $base;
 
                 #[inline(always)]
