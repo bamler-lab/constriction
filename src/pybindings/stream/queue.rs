@@ -131,7 +131,7 @@ impl RangeEncoder {
 
     /// Encodes a sequence of symbols using a fixed categorical entropy model.
     ///
-    /// This method is analogous to the method `encode_leaky_gaussian_symbols_reverse` except that
+    /// This method is analogous to the method `encode_leaky_gaussian_symbols` except that
     ///
     /// - all symbols are encoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian distribution.
@@ -173,6 +173,13 @@ impl RangeEncoder {
         Ok(())
     }
 
+    /// Encodes a sequence of symbols with identical custom models.
+    ///
+    /// - For usage examples, see
+    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    /// - If the model parameters are different for each symbol then you'll want to use
+    ///   [`encode_custom_model`](#constriction.stream.queue.RangeEncoder.encode_custom_model)
+    ///   instead.
     #[text_signature = "(symbols, model)"]
     pub fn encode_iid_custom_model<'py>(
         &mut self,
@@ -185,6 +192,14 @@ impl RangeEncoder {
         Ok(())
     }
 
+    /// Encodes a sequence of symbols with parameterized custom models.
+    ///
+    /// - For usage examples, see
+    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    /// - If all symbols use the same entropy model (with identical model parameters) then
+    ///   you'll want to use
+    ///   [`encode_iid_custom_model`](#constriction.stream.queue.RangeEncoder.encode_iid_custom_model)
+    ///   instead.
     #[text_signature = "(symbols, model, model_parameters)"]
     pub fn encode_custom_model<'py>(
         &mut self,
@@ -262,17 +277,15 @@ impl RangeDecoder {
         Ok(PyArray1::from_vec(py, symbols))
     }
 
-    /// Decodes a sequence of categorically distributed symbols *in reverse order*.
+    /// Decodes a sequence of categorically distributed symbols
     ///
     /// This method is analogous to the method `decode_leaky_gaussian_symbols` except that
     ///
     /// - all symbols are decoded with the same entropy model; and
     /// - the entropy model is a categorical rather than a Gaussian model.
     ///
-    /// See documentation of `encode_iid_categorical_symbols_reverse` for details of the
-    /// categorical entropy model. See documentation of `decode_leaky_gaussian_symbols` for a
-    /// discussion of the reverse order of decoding, and for a related usage
-    /// example.
+    /// See documentation of `encode_iid_categorical_symbols` for details of the
+    /// categorical entropy model.
     pub fn decode_iid_categorical_symbols<'py>(
         &mut self,
         amt: usize,
@@ -298,6 +311,13 @@ impl RangeDecoder {
         ))
     }
 
+    /// Decodes a sequence of symbols with identical custom models.
+    ///
+    /// - For usage examples, see
+    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    /// - If the model parameters are different for each symbol then you'll want to use
+    ///   [`decode_custom_model`](#constriction.stream.queue.RangeDecoder.decode_custom_model)
+    ///   instead.
     #[text_signature = "(amt, model)"]
     pub fn decode_iid_custom_model<'py>(
         &mut self,
@@ -313,6 +333,14 @@ impl RangeDecoder {
         ))
     }
 
+    /// Decodes a sequence of symbols with parameterized custom models.
+    ///
+    /// - For usage examples, see
+    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    /// - If all symbols use the same entropy model (with identical model parameters) then
+    ///   you'll want to use
+    ///   [`decode_iid_custom_model`](#constriction.stream.queue.RangeDecoder.decode_iid_custom_model)
+    ///   instead.
     #[text_signature = "(model, model_parameters)"]
     pub fn decode_custom_model<'py>(
         &mut self,

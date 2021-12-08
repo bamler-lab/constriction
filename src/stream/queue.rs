@@ -209,6 +209,16 @@ where
     }
 }
 
+impl<Word, State> From<RangeEncoder<Word, State>> for Vec<Word>
+where
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
+{
+    fn from(val: RangeEncoder<Word, State>) -> Self {
+        val.into_compressed().unwrap_infallible()
+    }
+}
+
 impl<Word, State, Backend> RangeEncoder<Word, State, Backend>
 where
     Word: BitArray + Into<State>,

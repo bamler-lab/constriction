@@ -395,6 +395,13 @@ impl AnsCoder {
         ))
     }
 
+    /// Encodes a sequence of symbols with identical custom models.
+    ///
+    /// - For usage examples, see
+    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    /// - If the model parameters are different for each symbol then you'll want to use
+    ///   [`encode_custom_model_reverse`](#constriction.stream.stack.AnsCoder.encode_custom_model_reverse)
+    ///   instead.
     #[text_signature = "(symbols, model)"]
     pub fn encode_iid_custom_model_reverse<'py>(
         &mut self,
@@ -407,6 +414,13 @@ impl AnsCoder {
         Ok(())
     }
 
+    /// Decodes a sequence of symbols with identical custom models.
+    ///
+    /// - For usage examples, see
+    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    /// - If the model parameters are different for each symbol then you'll want to use
+    ///   [`decode_custom_model`](#constriction.stream.stack.AnsCoder.decode_custom_model)
+    ///   instead.
     #[text_signature = "(amt, model)"]
     pub fn decode_iid_custom_model<'py>(
         &mut self,
@@ -422,6 +436,14 @@ impl AnsCoder {
         ))
     }
 
+    /// Encodes a sequence of symbols with parameterized custom models.
+    ///
+    /// - For usage examples, see
+    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    /// - If all symbols use the same entropy model (with identical model parameters) then
+    ///   you'll want to use
+    ///   [`encode_iid_custom_model_reverse`](#constriction.stream.stack.AnsCoder.encode_iid_custom_model_reverse)
+    ///   instead.
     #[text_signature = "(symbols, model, model_parameters)"]
     pub fn encode_custom_model_reverse<'py>(
         &mut self,
@@ -448,6 +470,14 @@ impl AnsCoder {
         Ok(())
     }
 
+    /// Decodes a sequence of symbols with parameterized custom models.
+    ///
+    /// - For usage examples, see
+    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    /// - If all symbols use the same entropy model (with identical model parameters) then
+    ///   you'll want to use
+    ///   [`decode_iid_custom_model`](#constriction.stream.stack.AnsCoder.decode_iid_custom_model)
+    ///   instead.
     #[text_signature = "(model, model_parameters)"]
     pub fn decode_custom_model<'py>(
         &mut self,

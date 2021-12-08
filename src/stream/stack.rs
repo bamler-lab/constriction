@@ -209,6 +209,16 @@ where
     }
 }
 
+impl<Word, State> From<AnsCoder<Word, State, Vec<Word>>> for Vec<Word>
+where
+    Word: BitArray + Into<State>,
+    State: BitArray + AsPrimitive<Word>,
+{
+    fn from(val: AnsCoder<Word, State, Vec<Word>>) -> Self {
+        val.into_compressed().unwrap_infallible()
+    }
+}
+
 impl<Word, State> AnsCoder<Word, State, Vec<Word>>
 where
     Word: BitArray + Into<State>,
