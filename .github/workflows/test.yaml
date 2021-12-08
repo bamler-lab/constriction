@@ -140,3 +140,11 @@ jobs:
 
       - name: pytest
         run: poetry run pytest tests/python
+
+  testall:
+    runs-on: ubuntu-latest
+    name: Meta job for all tests
+    needs: [rust-test, python-test]
+    steps:
+      - name: Done
+        run: echo "All tests successful."
