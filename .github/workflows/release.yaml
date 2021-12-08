@@ -124,7 +124,7 @@ jobs:
       - name: generate license file
         run: |
           cargo install cargo-about
-          cargo about --features=pybindings generate about.hbs > website/license.html
+          cargo about generate --features=pybindings about.hbs > website/license.html
           wc -l website/license.html
 
       - name: generate python documentation
@@ -188,6 +188,21 @@ jobs:
       - name: Build Python package
         run: poetry run maturin build --release --no-sdist --strip --interpreter python '--cargo-extra-args=--features pybindings'
 
+      - name: Cross-build for Apple Silicon
+        if: matrix.os == 'macos-latest'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "10.9"
+        run: |
+          rustup target add aarch64-apple-darwin
+          export PYO3_CROSS_LIB_DIR=/Users/runner/hostedtoolcache/Python/$(python -V | cut -d' ' -f2)/x64/lib
+          echo "PYO3_CROSS_LIB_DIR: $PYO3_CROSS_LIB_DIR"
+          ls -l $PYO3_CROSS_LIB_DIR
+          echo grandparent:
+          ls -l $PYO3_CROSS_LIB_DIR/../..
+          echo "file $PYO3_CROSS_LIB_DIR/*.dylib:"
+          file $PYO3_CROSS_LIB_DIR/*.dylib
+          poetry run maturin build --release --universal2 --no-sdist --strip --interpreter python '--cargo-extra-args=--features pybindings'
+
       - name: List wheels (unix)
         if: matrix.os != 'windows-latest'
         run: find ./target/wheels/
@@ -199,7 +214,7 @@ jobs:
       - name: generate license file
         run: |
           cargo install cargo-about
-          cargo about --features=pybindings generate about.hbs > LICENSE.html
+          cargo about generate --features=pybindings about.hbs > LICENSE.html
           wc -l LICENSE.html
 
       - name: Add LICENSE.html to wheel (unix)
@@ -225,6 +240,7 @@ jobs:
         run: |
           echo "Running: pip install $(dir target\wheels\)"
           pip install "$(dir target\wheels\)"
+          python -c 'import constriction; print(constriction.__file__)'
           twine upload "$(dir target\wheels\)"
 
       - name: Install wheel and upload (unix)
@@ -233,8 +249,13 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI }}
         run: |
-          echo "Running: pip install --find-links=target/wheels/constriction*.whl"
-          pip install target/wheels/constriction*.whl
+          for i in target/wheels/constriction*.whl; do
+            echo "Running: pip install $i"
+            pip install "$i"
+            python -c 'import constriction; print(constriction.__file__)'
+            echo "Running: pip uninstall -y $i"
+            pip uninstall -y constriction
+          done
           twine upload target/wheels/constriction*.whl
 
       - name: Github Release
