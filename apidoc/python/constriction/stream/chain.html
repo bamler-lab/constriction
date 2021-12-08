@@ -115,7 +115,15 @@ assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [3]
 <span>def <span class="ident">decode_custom_model</span></span>(<span>model, model_parameters)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Decodes a sequence of symbols with parameterized custom models.</p>
+<ul>
+<li>For usage examples, see
+<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
+<li>If all symbols use the same entropy model (with identical model parameters) then
+you'll want to use
+<a href="#constriction.stream.chain.ChainCoder.decode_iid_custom_model"><code>decode_iid_custom_model</code></a>
+instead.</li>
+</ul></div>
 </dd>
 <dt id="constriction.stream.chain.ChainCoder.decode_iid_categorical_symbols"><code class="name flex">
 <span>def <span class="ident">decode_iid_categorical_symbols</span></span>(<span>...)</span>
@@ -136,7 +144,14 @@ example.</p></div>
 <span>def <span class="ident">decode_iid_custom_model</span></span>(<span>amt, model)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Decodes a sequence of symbols with identical custom models.</p>
+<ul>
+<li>For usage examples, see
+<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
+<li>If the model parameters are different for each symbol then you'll want to use
+<a href="#constriction.stream.chain.ChainCoder.decode_custom_model"><code>decode_custom_model</code></a>
+instead.</li>
+</ul></div>
 </dd>
 <dt id="constriction.stream.chain.ChainCoder.decode_leaky_gaussian_symbols"><code class="name flex">
 <span>def <span class="ident">decode_leaky_gaussian_symbols</span></span>(<span>...)</span>
@@ -183,7 +198,15 @@ symbol. Must be a contiguous one-dimensional numpy array with dtype
 <span>def <span class="ident">encode_custom_model_reverse</span></span>(<span>symbols, model, model_parameters)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Encodes a sequence of symbols with parameterized custom models.</p>
+<ul>
+<li>For usage examples, see
+<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
+<li>If all symbols use the same entropy model (with identical model parameters) then
+you'll want to use
+<a href="#constriction.stream.chain.ChainCoder.encode_iid_custom_model_reverse"><code>encode_iid_custom_model_reverse</code></a>
+instead.</li>
+</ul></div>
 </dd>
 <dt id="constriction.stream.chain.ChainCoder.encode_iid_categorical_symbols_reverse"><code class="name flex">
 <span>def <span class="ident">encode_iid_categorical_symbols_reverse</span></span>(<span>...)</span>
@@ -212,7 +235,14 @@ the do not need to add up to one) but they must all be nonnegative.</li>
 <span>def <span class="ident">encode_iid_custom_model_reverse</span></span>(<span>symbols, model)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Encodes a sequence of symbols with identical custom models.</p>
+<ul>
+<li>For usage examples, see
+<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
+<li>If the model parameters are different for each symbol then you'll want to use
+<a href="#constriction.stream.chain.ChainCoder.encode_custom_model_reverse"><code>encode_custom_model_reverse</code></a>
+instead.</li>
+</ul></div>
 </dd>
 <dt id="constriction.stream.chain.ChainCoder.encode_leaky_gaussian_symbols_reverse"><code class="name flex">
 <span>def <span class="ident">encode_leaky_gaussian_symbols_reverse</span></span>(<span>symbols, min_supported_symbol, max_supported_symbol, means, stds)</span>

@@ -43,7 +43,104 @@ models are used by all entropy coders in the sister modules <code><a title="cons
 <span>(</span><span>cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Wrapper for a user defined (and possibly parameterized) entropy model.</p>
+<p>The entropy coders in the sister modules provide optimized encoding and decoding methods
+for a few common families of entropy models (currently: quantized Gaussian distributions
+and categorical distributions). If you want to encode data with a different
+distribution, you have to define it as a <code><a title="constriction.stream.model.CustomModel" href="#constriction.stream.model.CustomModel">CustomModel</a></code> and supply it as the <code><a title="constriction.stream.model" href="#constriction.stream.model">constriction.stream.model</a></code>
+argument to one of the the methods <code>{en,de}code_custom_model[_reverse]</code> or
+<code>{en,de}code_iid_custom_model[_reverse]</code>, see examples below.</p>
+<h2 id="arguments">Arguments</h2>
+<ul>
+<li><code>cdf</code> &mdash; the cumulative distribution function: a function (or closure) that maps a
+scalar <code>x</code> to the probability to draw a symbol smaller than <code>x</code>; may (but does not
+have to) accept a second argument that supplies model parameters as a 1-d numpy array
+(see examples below).</li>
+<li><code>approximate_inverse_cdf</code> &mdash; the inverse of the cumulative distribution function, aka
+quantile function or percent point function (PPF); may (but does not have to) accept a
+second argument that supplies model parameters as a 1-d numpy array (see examples
+below). This function is only used as a hint to speed the search for the correct
+symbol during decoding. It therefore does not have to be a very precise inverse of
+<code>cdf</code>. If <code>cdf</code> and <code>approximate_inverse_cdf</code> disagree then <code>cdf</code> will be considered
+the source of truth.</li>
+<li><code>min_symbol_inclusive</code> and <code>max_symbol_inclusive</code> &mdash; two integers that specify the
+range of supported symbols. The <code><a title="constriction.stream.model.CustomModel" href="#constriction.stream.model.CustomModel">CustomModel</a></code> will implicitly quantize the interval
+<code>[min_symbol_inclusive - 0.5, max_symbol_inclusive + 0.5]</code> into bins of size one.</li>
+</ul>
+<h2 id="examples">Examples</h2>
+<h3 id="fixed-model-parameters">Fixed Model Parameters</h3>
+<p>The simplest use case of <code><a title="constriction.stream.model.CustomModel" href="#constriction.stream.model.CustomModel">CustomModel</a></code> is when you encode a sequence of symbols that all
+use the exact same entropy model. The following example encodes four symbols modeled by
+a quantized Cauchy distribution with scale 5.8 around mean 10.3.</p>
+<pre><code class="language-python">import numpy as np
+import constriction
+import scipy.stats
+
+model_scipy = scipy.stats.cauchy(loc=10.3, scale=5.8)
+# Wrap the scipy-model in a `CustomModel`, which will implicitly
+# quantize it to integers in the given range from -100 to 100 (both
+# ends inclusively).
+model = constriction.stream.model.CustomModel(
+    model_scipy.cdf, model_scipy.ppf, -100, 100)
+
+symbols = np.array([5, 14, -1, 21], dtype=np.int32)
+coder = constriction.stream.stack.AnsCoder() # `RangeEncoder` also works.
+coder.encode_iid_custom_model_reverse(symbols, model)
+assert np.all(coder.decode_iid_custom_model(4, model) == symbols)
+</code></pre>
+<h3 id="symbol-dependent-model-parameters">Symbol-Dependent Model Parameters</h3>
+<p>It is very common to encode and decode a sequence of symbols where the entropy models of
+all symbols are from the same family of probability distribution, but each symbol's
+entropy model has different model parameters. The following example encodes a sequence
+of four symbols where each symbol is modeled by a quantized Cauchy distribution, where
+the location and scale of the Cauchy distribution is different for each symbol.</p>
+<pre><code class="language-python">import numpy as np
+import constriction
+import scipy.stats
+
+# The optional argument `params` will receive a 1-d python array when
+# the model is used for encoding or decoding.
+model = constriction.stream.model.CustomModel(
+    lambda x, params: scipy.stats.cauchy.cdf(
+        x, loc=params[0], scale=params[1]),
+    lambda x, params: scipy.stats.cauchy.ppf(
+        x, loc=params[0], scale=params[1]),
+    -100, 100)
+
+model_parameters = np.array([
+    (7.3, 3.9),  # Location and scale of entropy model for 1st symbol.
+    (11.5, 5.2), # Location and scale of entropy model for 2nd symbol.
+    (-3.2, 4.9), # and so on ...
+    (25.9, 7.1),
+])
+
+symbols = np.array([5, 14, -1, 21], dtype=np.int32)
+coder = constriction.stream.stack.AnsCoder() # `RangeEncoder` also works.
+coder.encode_custom_model_reverse(symbols, model, model_parameters)
+assert np.all(
+    coder.decode_custom_model(model, model_parameters) == symbols)
+</code></pre>
+<h3 id="discrete-probability-distributions">Discrete Probability Distributions</h3>
+<p>You can naturally use <code><a title="constriction.stream.model.CustomModel" href="#constriction.stream.model.CustomModel">CustomModel</a></code> for discrete probability distributions. The
+following example encodes a sequence of symbols from Binomial distributions (with
+symbol-dependent success probability p).</p>
+<pre><code class="language-python">import numpy as np
+import constriction
+import scipy.stats
+
+model = constriction.stream.model.CustomModel(
+    lambda x, params: scipy.stats.binom.cdf(x, n=10, p=params[0]),
+    lambda x, params: scipy.stats.binom.ppf(x, n=10, p=params[0]),
+    0, 10)
+
+success_probabilities = np.array([(0.3,), (0.7,), (0.2,), (0.6,)])
+
+symbols = np.array([4, 8, 1, 5], dtype=np.int32)
+coder = constriction.stream.stack.AnsCoder() # `RangeEncoder` also works.
+coder.encode_custom_model_reverse(symbols, model, success_probabilities)
+assert np.all(
+    coder.decode_custom_model(model, success_probabilities) == symbols)
+</code></pre></div>
 </dd>
 </dl>
 </section>
