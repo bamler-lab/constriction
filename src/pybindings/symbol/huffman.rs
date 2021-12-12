@@ -1,4 +1,4 @@
-use std::{prelude::v1::*, vec};
+use std::prelude::v1::*;
 
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
@@ -12,7 +12,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 }
 
 #[pyclass]
-#[text_signature = "(probabilities)"]
+#[pyo3(text_signature = "(probabilities)")]
 #[derive(Debug)]
 pub struct EncoderHuffmanTree {
     pub(crate) inner: huffman::EncoderHuffmanTree,
@@ -31,7 +31,7 @@ impl EncoderHuffmanTree {
 }
 
 #[pyclass]
-#[text_signature = "(probabilities)"]
+#[pyo3(text_signature = "(probabilities)")]
 #[derive(Debug)]
 pub struct DecoderHuffmanTree {
     pub(crate) inner: huffman::DecoderHuffmanTree,

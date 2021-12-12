@@ -1,4 +1,4 @@
-use std::{prelude::v1::*, vec};
+use std::prelude::v1::*;
 
 use numpy::PyReadonlyArray1;
 use probability::distribution::{Distribution, Inverse};
@@ -124,7 +124,9 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///     coder.decode_custom_model(model, success_probabilities) == symbols)
 /// ```
 #[pyclass]
-#[text_signature = "(cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)"]
+#[pyo3(
+    text_signature = "(cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)"
+)]
 #[derive(Debug)]
 pub struct CustomModel {
     cdf: PyObject,
