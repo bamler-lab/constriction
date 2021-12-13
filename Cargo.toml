@@ -36,8 +36,8 @@ smallvec = "1.6.1"
 probability = {version = "0.17", optional = true}
 
 ndarray = {version = "0.15", optional = true}
-numpy = {version = "0.13", optional = true}
-pyo3 = {version = "0.13", features = ["extension-module"], optional = true}
+numpy = {version = "0.15", optional = true}
+pyo3 = {version = "0.15.1", features = ["extension-module"], optional = true}
 
 [dev-dependencies]
 byteorder = "1.4.2"

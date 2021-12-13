@@ -1,4 +1,4 @@
-use std::{prelude::v1::*, vec};
+use std::prelude::v1::*;
 
 use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
 use probability::distribution::Gaussian;
@@ -21,7 +21,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 }
 
 #[pyclass]
-#[text_signature = "(compressed, is_remaining=False, seal=False)"]
+#[pyo3(text_signature = "(compressed, is_remaining=False, seal=False)")]
 #[derive(Debug)]
 pub struct ChainCoder {
     inner: crate::stream::chain::DefaultChainCoder,
@@ -120,7 +120,7 @@ impl ChainCoder {
     ///     `np.float64` and with the exact same length as the argument `symbols`.
     ///     All entries must be strictly positive (i.e., nonzero and nonnegative)
     ///     and finite.
-    #[text_signature = "(symbols, min_supported_symbol, max_supported_symbol, means, stds)"]
+    #[pyo3(text_signature = "(symbols, min_supported_symbol, max_supported_symbol, means, stds)")]
     pub fn encode_leaky_gaussian_symbols_reverse(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -311,7 +311,7 @@ impl ChainCoder {
     /// - If the model parameters are different for each symbol then you'll want to use
     ///   [`encode_custom_model_reverse`](#constriction.stream.chain.ChainCoder.encode_custom_model_reverse)
     ///   instead.
-    #[text_signature = "(symbols, model)"]
+    #[pyo3(text_signature = "(symbols, model)")]
     pub fn encode_iid_custom_model_reverse<'py>(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -330,7 +330,7 @@ impl ChainCoder {
     /// - If the model parameters are different for each symbol then you'll want to use
     ///   [`decode_custom_model`](#constriction.stream.chain.ChainCoder.decode_custom_model)
     ///   instead.
-    #[text_signature = "(amt, model)"]
+    #[pyo3(text_signature = "(amt, model)")]
     pub fn decode_iid_custom_model<'py>(
         &mut self,
         amt: usize,
@@ -352,7 +352,7 @@ impl ChainCoder {
     ///   you'll want to use
     ///   [`encode_iid_custom_model_reverse`](#constriction.stream.chain.ChainCoder.encode_iid_custom_model_reverse)
     ///   instead.
-    #[text_signature = "(symbols, model, model_parameters)"]
+    #[pyo3(text_signature = "(symbols, model, model_parameters)")]
     pub fn encode_custom_model_reverse<'py>(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -386,7 +386,7 @@ impl ChainCoder {
     ///   you'll want to use
     ///   [`decode_iid_custom_model`](#constriction.stream.chain.ChainCoder.decode_iid_custom_model)
     ///   instead.
-    #[text_signature = "(model, model_parameters)"]
+    #[pyo3(text_signature = "(model, model_parameters)")]
     pub fn decode_custom_model<'py>(
         &mut self,
         model: &CustomModel,

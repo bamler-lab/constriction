@@ -1,4 +1,4 @@
-use std::{prelude::v1::*, vec};
+use std::prelude::v1::*;
 
 use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
 use probability::distribution::Gaussian;
@@ -108,7 +108,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 
 #[pyclass]
-#[text_signature = "([compressed], seal=False)"]
+#[pyo3(text_signature = "([compressed], seal=False)")]
 #[derive(Debug)]
 pub struct AnsCoder {
     inner: crate::stream::stack::DefaultAnsCoder,
@@ -213,7 +213,7 @@ impl AnsCoder {
     ///     `np.float64` and with the exact same length as the argument `symbols`.
     ///     All entries must be strictly positive (i.e., nonzero and nonnegative)
     ///     and finite.
-    #[text_signature = "(symbols, min_supported_symbol, max_supported_symbol, means, stds)"]
+    #[pyo3(text_signature = "(symbols, min_supported_symbol, max_supported_symbol, means, stds)")]
     pub fn encode_leaky_gaussian_symbols_reverse(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -402,7 +402,7 @@ impl AnsCoder {
     /// - If the model parameters are different for each symbol then you'll want to use
     ///   [`encode_custom_model_reverse`](#constriction.stream.stack.AnsCoder.encode_custom_model_reverse)
     ///   instead.
-    #[text_signature = "(symbols, model)"]
+    #[pyo3(text_signature = "(symbols, model)")]
     pub fn encode_iid_custom_model_reverse<'py>(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -421,7 +421,7 @@ impl AnsCoder {
     /// - If the model parameters are different for each symbol then you'll want to use
     ///   [`decode_custom_model`](#constriction.stream.stack.AnsCoder.decode_custom_model)
     ///   instead.
-    #[text_signature = "(amt, model)"]
+    #[pyo3(text_signature = "(amt, model)")]
     pub fn decode_iid_custom_model<'py>(
         &mut self,
         amt: usize,
@@ -444,7 +444,7 @@ impl AnsCoder {
     ///   you'll want to use
     ///   [`encode_iid_custom_model_reverse`](#constriction.stream.stack.AnsCoder.encode_iid_custom_model_reverse)
     ///   instead.
-    #[text_signature = "(symbols, model, model_parameters)"]
+    #[pyo3(text_signature = "(symbols, model, model_parameters)")]
     pub fn encode_custom_model_reverse<'py>(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -478,7 +478,7 @@ impl AnsCoder {
     ///   you'll want to use
     ///   [`decode_iid_custom_model`](#constriction.stream.stack.AnsCoder.decode_iid_custom_model)
     ///   instead.
-    #[text_signature = "(model, model_parameters)"]
+    #[pyo3(text_signature = "(model, model_parameters)")]
     pub fn decode_custom_model<'py>(
         &mut self,
         model: &CustomModel,

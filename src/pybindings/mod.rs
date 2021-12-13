@@ -214,7 +214,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// assert decoder.maybe_exhausted()
 /// assert np.all(reconstructed == symbols)
 /// ```
-#[pymodule(constriction)]
+#[pymodule]
+#[pyo3(name = "constriction")]
 fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(stream))?;
     module.add_wrapped(wrap_pymodule!(symbol))?;

@@ -1,7 +1,7 @@
 pub mod huffman;
 
 use core::convert::Infallible;
-use std::{prelude::v1::*, vec};
+use std::prelude::v1::*;
 
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{prelude::*, wrap_pymodule};
@@ -34,7 +34,7 @@ fn huffman(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 }
 
 #[pyclass]
-#[text_signature = "(compressed)"]
+#[pyo3(text_signature = "(compressed)")]
 #[derive(Debug)]
 pub struct StackCoder {
     inner: DefaultStackCoder,
@@ -58,7 +58,7 @@ impl StackCoder {
         Ok(Self { inner })
     }
 
-    #[text_signature = "(symbol, codebook)"]
+    #[pyo3(text_signature = "(symbol, codebook)")]
     pub fn encode_symbol(
         &mut self,
         symbol: usize,
@@ -67,14 +67,14 @@ impl StackCoder {
         Ok(self.inner.encode_symbol(symbol, &codebook.inner)?)
     }
 
-    #[text_signature = "(codebook)"]
+    #[pyo3(text_signature = "(codebook)")]
     pub fn decode_symbol(&mut self, codebook: &huffman::DecoderHuffmanTree) -> PyResult<usize> {
         Ok(self.inner.decode_symbol(&codebook.inner)?)
     }
 
     /// Returns a tuple of the compressed data (filled with zero bits to a multiple of 32
     /// bits) and the number of valid bits.
-    #[text_signature = "()"]
+    #[pyo3(text_signature = "()")]
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
         let len = self.inner.len();
         (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
@@ -82,7 +82,7 @@ impl StackCoder {
 }
 
 #[pyclass]
-#[text_signature = "(compressed)"]
+#[pyo3(text_signature = "(compressed)")]
 #[derive(Debug, Default)]
 pub struct QueueEncoder {
     inner: DefaultQueueEncoder,
@@ -97,7 +97,7 @@ impl QueueEncoder {
         }
     }
 
-    #[text_signature = "(symbol, codebook)"]
+    #[pyo3(text_signature = "(symbol, codebook)")]
     pub fn encode_symbol(
         &mut self,
         symbol: usize,
@@ -108,13 +108,13 @@ impl QueueEncoder {
 
     /// Returns a tuple of the compressed data (filled with zero bits to a multiple of 32
     /// bits) and the number of valid bits.
-    #[text_signature = "()"]
+    #[pyo3(text_signature = "()")]
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
         let len = self.inner.len();
         (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
     }
 
-    #[text_signature = "()"]
+    #[pyo3(text_signature = "()")]
     pub fn get_decoder(&mut self) -> QueueDecoder {
         let compressed = self.inner.get_compressed().to_vec();
         QueueDecoder::from_vec(compressed)
@@ -122,7 +122,7 @@ impl QueueEncoder {
 }
 
 #[pyclass]
-#[text_signature = "(compressed)"]
+#[pyo3(text_signature = "(compressed)")]
 #[derive(Debug)]
 pub struct QueueDecoder {
     inner: DefaultQueueDecoder,
@@ -135,7 +135,7 @@ impl QueueDecoder {
         Ok(Self::from_vec(compressed.to_vec()?))
     }
 
-    #[text_signature = "(codebook)"]
+    #[pyo3(text_signature = "(codebook)")]
     pub fn decode_symbol(&mut self, codebook: &huffman::DecoderHuffmanTree) -> PyResult<usize> {
         Ok(self.inner.decode_symbol(&codebook.inner)?)
     }

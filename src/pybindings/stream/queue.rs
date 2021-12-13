@@ -1,4 +1,4 @@
-use std::{prelude::v1::*, vec};
+use std::prelude::v1::*;
 
 use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
 use probability::distribution::Gaussian;
@@ -22,7 +22,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 
 /// TODO: document
 #[pyclass]
-#[text_signature = "()"]
+#[pyo3(text_signature = "()")]
 #[derive(Debug, Default)]
 pub struct RangeEncoder {
     inner: crate::stream::queue::DefaultRangeEncoder,
@@ -68,7 +68,7 @@ impl RangeEncoder {
         PyArray1::from_slice(py, &*self.inner.get_compressed())
     }
 
-    #[text_signature = "()"]
+    #[pyo3(text_signature = "()")]
     pub fn get_decoder(&mut self) -> RangeDecoder {
         let compressed = self.inner.get_compressed().to_vec();
         RangeDecoder::from_vec(compressed)
@@ -98,7 +98,7 @@ impl RangeEncoder {
     ///     `np.float64` and with the exact same length as the argument `symbols`.
     ///     All entries must be strictly positive (i.e., nonzero and nonnegative)
     ///     and finite.
-    #[text_signature = "(symbols, min_supported_symbol, max_supported_symbol, means, stds)"]
+    #[pyo3(text_signature = "(symbols, min_supported_symbol, max_supported_symbol, means, stds)")]
     pub fn encode_leaky_gaussian_symbols(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -180,7 +180,7 @@ impl RangeEncoder {
     /// - If the model parameters are different for each symbol then you'll want to use
     ///   [`encode_custom_model`](#constriction.stream.queue.RangeEncoder.encode_custom_model)
     ///   instead.
-    #[text_signature = "(symbols, model)"]
+    #[pyo3(text_signature = "(symbols, model)")]
     pub fn encode_iid_custom_model<'py>(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -200,7 +200,7 @@ impl RangeEncoder {
     ///   you'll want to use
     ///   [`encode_iid_custom_model`](#constriction.stream.queue.RangeEncoder.encode_iid_custom_model)
     ///   instead.
-    #[text_signature = "(symbols, model, model_parameters)"]
+    #[pyo3(text_signature = "(symbols, model, model_parameters)")]
     pub fn encode_custom_model<'py>(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -229,7 +229,7 @@ impl RangeEncoder {
 
 /// TODO: document
 #[pyclass]
-#[text_signature = "(compressed)"]
+#[pyo3(text_signature = "(compressed)")]
 #[derive(Debug)]
 pub struct RangeDecoder {
     inner: crate::stream::queue::DefaultRangeDecoder,
@@ -318,7 +318,7 @@ impl RangeDecoder {
     /// - If the model parameters are different for each symbol then you'll want to use
     ///   [`decode_custom_model`](#constriction.stream.queue.RangeDecoder.decode_custom_model)
     ///   instead.
-    #[text_signature = "(amt, model)"]
+    #[pyo3(text_signature = "(amt, model)")]
     pub fn decode_iid_custom_model<'py>(
         &mut self,
         amt: usize,
@@ -341,7 +341,7 @@ impl RangeDecoder {
     ///   you'll want to use
     ///   [`decode_iid_custom_model`](#constriction.stream.queue.RangeDecoder.decode_iid_custom_model)
     ///   instead.
-    #[text_signature = "(model, model_parameters)"]
+    #[pyo3(text_signature = "(model, model_parameters)")]
     pub fn decode_custom_model<'py>(
         &mut self,
         model: &CustomModel,
