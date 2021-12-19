@@ -1830,6 +1830,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn decode_on_the_fly_stack() {
         fn encode_to_file(amt: u32) {
             let quantizer = DefaultLeakyQuantizer::new(-256..=255);

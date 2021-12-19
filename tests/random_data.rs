@@ -130,6 +130,7 @@ fn compare(
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn grid() {
     let amts = [
         10,

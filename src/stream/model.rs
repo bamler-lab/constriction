@@ -3697,6 +3697,7 @@ mod tests {
     use probability::distribution::{Binomial, Gaussian};
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn leakily_quantized_normal() {
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
         for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
@@ -3708,6 +3709,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn leakily_quantized_binomial() {
         for &n in &[1, 2, 10, 100, 1000, 10_000] {
             for &p in &[1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9] {
@@ -3723,6 +3725,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn entropy() {
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-1000..=1000);
         for &std_dev in &[100., 200., 300.] {
@@ -3739,6 +3742,7 @@ mod tests {
     /// Test that `optimal_weights` reproduces the same distribution when fed with an
     /// already quantized model.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn trivial_optimal_weights() {
         let hist = [
             56319u32, 134860032, 47755520, 60775168, 75699200, 92529920, 111023616, 130420736,
@@ -3764,6 +3768,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn nontrivial_optimal_weights() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -3808,6 +3813,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -3825,6 +3831,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn non_contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,

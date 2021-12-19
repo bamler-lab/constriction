@@ -9,7 +9,7 @@ use constriction::{
     },
     BitArray, Pos, Seek,
 };
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, Criterion};
 use num::cast::AsPrimitive;
 use rand::{RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
@@ -22,7 +22,11 @@ criterion_group!(
     round_trip_u16_u32_u16_8,
     round_trip_u16_u32_u16_12
 );
-criterion_main!(benches);
+
+#[cfg(not(miri))]
+criterion::criterion_main!(benches);
+#[cfg(miri)]
+fn main() {} // All benchmarks currently use FFI and therefore can't be tested in miri.
 
 fn round_trip_u32_u64_u16_12(c: &mut Criterion) {
     round_trip::<u32, u64, u16, 12>(c);
