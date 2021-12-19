@@ -1169,21 +1169,25 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_one() {
         generic_compress_few(core::iter::once(5), 1)
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_two() {
         generic_compress_few([2, 8].iter().cloned(), 1)
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_ten() {
         generic_compress_few(0..10, 2)
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_twenty() {
         generic_compress_few(-10..10, 4)
     }
@@ -1213,66 +1217,79 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u32_u64_32() {
         generic_compress_many::<u32, u64, u32, 32>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u32_u64_24() {
         generic_compress_many::<u32, u64, u32, 24>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u32_u64_16() {
         generic_compress_many::<u32, u64, u16, 16>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u32_u64_8() {
         generic_compress_many::<u32, u64, u8, 8>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u64_16() {
         generic_compress_many::<u16, u64, u16, 16>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u64_12() {
         generic_compress_many::<u16, u64, u16, 12>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u64_8() {
         generic_compress_many::<u16, u64, u8, 8>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u8_u64_8() {
         generic_compress_many::<u8, u64, u8, 8>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u32_16() {
         generic_compress_many::<u16, u32, u16, 16>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u32_12() {
         generic_compress_many::<u16, u32, u16, 12>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u32_8() {
         generic_compress_many::<u16, u32, u8, 8>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u8_u32_8() {
         generic_compress_many::<u8, u32, u8, 8>();
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn compress_many_u8_u16_8() {
         generic_compress_many::<u8, u16, u8, 8>();
     }
@@ -1374,6 +1391,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn seek() {
         const NUM_CHUNKS: usize = 100;
         const SYMBOLS_PER_CHUNK: usize = 100;
