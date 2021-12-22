@@ -3,6 +3,7 @@ name: release
 on:
   release:
     types: [created]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,12 +17,17 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
+      - name: Print event name
+        run: |
+          echo "GITHUB_EVENT_NAME: $GITHUB_EVENT_NAME"
+
       - name: Checkout
         uses: actions/checkout@v1
 
       - name: Install latest stable Rust
         uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
           toolchain: stable
           override: true
           components: rustfmt, clippy
@@ -74,17 +80,6 @@ jobs:
         run: |
           echo "::set-output name=rustc::nightly-$(curl -s https://rust-lang.github.io/rustup-components-history/x86_64-unknown-linux-gnu/miri)"
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v2
-        with:
-          path: |
-            target
-            .cargo_home
-            .cargo
-          key: ${{ runner.os }}-no_pybindings-miri-${{ steps.versions.outputs.rustc }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-no_pybindings-miri-${{ steps.versions.outputs.rustc }}-
-
       - name: Install rust ${{ steps.versions.outputs.rustc }}
         uses: actions-rs/toolchain@v1
         with:
@@ -127,11 +122,12 @@ jobs:
       - name: Install latest stable Rust
         uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
           toolchain: stable
           override: true
 
       - name: Build Python package
-        run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings'
+        run: poetry run maturin develop --release --cargo-extra-args=--features=pybindings
 
       - name: pytest
         run: poetry run pytest tests/python
@@ -164,6 +160,7 @@ jobs:
       - name: Install latest stable Rust
         uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
           toolchain: stable
           override: true
 
@@ -171,6 +168,9 @@ jobs:
         run: |
           git clone https://github.com/bamler-lab/constriction.git --branch website-template --single-branch website
           rm -rf website/.git
+          CONSTRICTION_VERSION=`poetry run python get_version.py`
+          echo "Found constriction version $CONSTRICTION_VERSION."
+          sed -i "s/<\!-- CONSTRICTION_VERSION -->/$CONSTRICTION_VERSION/g" website/index.html
 
       - name: generate license file
         run: |
@@ -178,13 +178,19 @@ jobs:
           cargo about generate --features=pybindings about.hbs > website/license.html
           wc -l website/license.html
 
-      - name: generate python documentation
+      - name: generate python API reference
         run: |
-          poetry run maturin develop '--cargo-extra-args=--features pybindings'
+          poetry run maturin develop --cargo-extra-args=--features=pybindings
           poetry run python pythondoc.py website/apidoc/python
 
-      - name: Deploy to gh-pages
-        id: deploy
+      - name: Save artifact with website
+        uses: actions/upload-artifact@v2
+        with:
+          name: website
+          path: ./website
+
+      - name: Deploy website to gh-pages branch
+        if: env.GITHUB_EVENT_NAME == 'release'
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -192,7 +198,6 @@ jobs:
           commit_message: Deploy
 
   rust-publish:
-    if: startsWith(github.ref, 'refs/tags/')
     needs: testall
     runs-on: ubuntu-latest
     steps:
@@ -200,10 +205,12 @@ jobs:
 
       - uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
           toolchain: stable
           override: true
 
       - name: Publish on crates.io
+        if: env.GITHUB_EVENT_NAME == 'release'
         run: |
           cargo login ${{ secrets.CARGO }}
           cargo publish
@@ -214,7 +221,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.7", "3.8", "3.9", "3.10"]
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v1
@@ -222,41 +228,69 @@ jobs:
       - name: Install latest stable Rust
         uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
           toolchain: stable
           override: true
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.7
         uses: actions/setup-python@v2
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: 3.7
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install poetry twine
-          poetry install
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
 
-      - name: Build Python package
-        run: poetry run maturin build --release --no-sdist --strip --interpreter python '--cargo-extra-args=--features pybindings'
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
 
-      - name: Cross-build for Apple Silicon
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v2
+        with:
+          python-version: "3.10"
+
+      - name: Build wheels for linux
+        if: matrix.os == 'ubuntu-latest'
+        uses: messense/maturin-action@v1
+        with:
+          command: build
+          manylinux: 2014
+          args: --release --no-sdist --strip --cargo-extra-args=--features=pybindings
+
+      # For some reason, manyliniux builds create wheels owned by the root user,
+      # which breaks our attempts to add the license file below.
+      - name: Fix wheel ownership on linux
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo chown -R runner:docker target
+
+      - name: Build wheels for ${{ matrix.os }}
+        if: matrix.os != 'ubuntu-latest'
+        uses: messense/maturin-action@v1
+        with:
+          command: build
+          args: --release --no-sdist --strip --cargo-extra-args=--features=pybindings
+
+      - name: Cross-build wheels for Apple Silicon
         if: matrix.os == 'macos-latest'
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "10.9"
-        run: |
-          rustup target add aarch64-apple-darwin
-          export PYO3_CROSS_LIB_DIR=/Users/runner/hostedtoolcache/Python/$(python -V | cut -d' ' -f2)/x64/lib
-          echo "PYO3_CROSS_LIB_DIR: $PYO3_CROSS_LIB_DIR"
-          ls -l $PYO3_CROSS_LIB_DIR
-          echo grandparent:
-          ls -l $PYO3_CROSS_LIB_DIR/../..
-          echo "file $PYO3_CROSS_LIB_DIR/*.dylib:"
-          file $PYO3_CROSS_LIB_DIR/*.dylib
-          poetry run maturin build --release --universal2 --no-sdist --strip --interpreter python '--cargo-extra-args=--features pybindings'
+        uses: messense/maturin-action@v1
+        with:
+          target: aarch64-apple-darwin
+          command: build
+          args: --release --no-sdist --strip --cargo-extra-args=--features=pybindings
+
+      - name: Build universal2 wheels
+        if: matrix.os == 'macos-latest'
+        uses: messense/maturin-action@v1
+        with:
+          command: build
+          args: --release --no-sdist --strip --cargo-extra-args=--features=pybindings --universal2
 
       - name: List wheels (unix)
         if: matrix.os != 'windows-latest'
-        run: find ./target/wheels/
+        run: ls -l ./target/wheels/
 
       - name: List wheels (windows)
         if: matrix.os == 'windows-latest'
@@ -266,53 +300,97 @@ jobs:
         run: |
           cargo install cargo-about
           cargo about generate --features=pybindings about.hbs > LICENSE.html
+          ls -l LICENSE.html
           wc -l LICENSE.html
 
-      - name: Add LICENSE.html to wheel (unix)
+      - name: Add LICENSE.html to all wheels (unix)
         if: matrix.os != 'windows-latest'
-        run: for i in target/wheels/*.whl; do zip -ur $i LICENSE.html; done
+        run: |
+          for wheel in target/wheels/*.whl; do
+            zip -ur $wheel LICENSE.html
+          done
 
-      - name: Add LICENSE.html to wheel (windows)
+      - name: Add LICENSE.html to all wheels (windows)
         if: matrix.os == 'windows-latest'
         run: |
           [Reflection.Assembly]::LoadWithPartialName('System.IO.Compression.FileSystem') | Out-Null
-          $zip = [System.IO.Compression.ZipFile]::Open("$(dir target\wheels\)", "Update")
-          $FileName = [System.IO.Path]::GetFileName("LICENSE.html")
-          [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "LICENSE.html", $FileName, "Optimal") | Out-Null
-          $Zip.Dispose()
+          Get-ChildItem "target\wheels\" -Filter *.whl |
+          Foreach-Object {
+            $zip = [System.IO.Compression.ZipFile]::Open($_.FullName, "Update")
+            $licenseFile = [System.IO.Path]::GetFileName("LICENSE.html")
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "LICENSE.html", $licenseFile, "Optimal") | Out-Null
+            $zip.Dispose()
+          }
 
-      # Note: Windows doesn't support glob
-      # https://stackoverflow.com/a/52481267/270334
-      - name: Install wheel and upload (windows)
-        if: matrix.os == 'windows-latest'
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI }}
-        run: |
-          echo "Running: pip install $(dir target\wheels\)"
-          pip install "$(dir target\wheels\)"
-          python -c 'import constriction; print(constriction.__file__)'
-          twine upload "$(dir target\wheels\)"
+      - name: Save artifact with wheels for ${{ matrix.os }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: wheels-${{ matrix.os }}
+          path: ./target/wheels/
 
-      - name: Install wheel and upload (unix)
+      - name: Test install wheels (unix)
         if: matrix.os != 'windows-latest'
+        run: |
+          for i in target/wheels/*.whl; do
+            echo "Running: pip install $i ..."
+            pip install "$i" || echo "WARNING: unable to install $i"
+
+            echo "Testing if we can import constriction and numpy ..."
+            python -c 'import constriction; import numpy; print(constriction.__file__)' || echo "WARNING: unable to import constriction or numpy ($i)"
+
+            echo "Running: pip uninstall -y constriction numpy"
+            pip uninstall -y constriction numpy
+            echo
+          done
+
+      - name: Test install wheels (windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          $wheels = Get-ChildItem "target\wheels\"
+          foreach ($wheel in $wheels){
+            echo "Running: pip install $($wheel.FullName) ..."
+            try {
+              pip install "$($wheel.FullName)"
+            } catch {
+              echo "WARNING: unable to install $($wheel.FullName)"
+            }
+
+            echo "Testing if we can import constriction and numpy ..."
+            try {
+              python -c 'import constriction; import numpy; print(constriction.__file__)'
+            } catch {
+              echo "WARNING: unable to import constriction or numpy ($($wheel.FullName))"
+            }
+
+            echo "Running: pip uninstall -y constriction numpy ..."
+            pip uninstall -y constriction numpy
+            echo ""
+          }
+
+      - name: Publish wheels (unix)
+        if: env.GITHUB_EVENT_NAME == 'release'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI }}
         run: |
-          for i in target/wheels/constriction*.whl; do
-            echo "Running: pip install $i"
-            pip install "$i"
-            python -c 'import constriction; print(constriction.__file__)'
-            echo "Running: pip uninstall -y $i"
-            pip uninstall -y constriction
-          done
           twine upload target/wheels/constriction*.whl
 
-      - name: Github Release
+      - name: Publish wheels (windows)
+        if: env.GITHUB_EVENT_NAME == 'release'
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI }}
+        run: |
+          $wheels = Get-ChildItem "target\wheels\"
+          foreach ($wheel in $wheels){
+            echo "Uploading $($wheel.FullName)"
+            twine upload "$($wheel.FullName)"
+          }
+
+      - name: Add wheels to Github release
+        if: env.GITHUB_EVENT_NAME == 'release'
         uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: target/wheels/constriction*.whl
+          files: target/wheels/*.whl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

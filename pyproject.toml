@@ -1,3 +1,10 @@
+[project]
+dependencies = [
+  "numpy~=1.20",
+]
+name = "constriction"
+requires-python = ">=3.7,<3.11"
+
 [tool.poetry]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
 classifiers = [
@@ -27,8 +34,14 @@ pylint = "^2.6"
 pytest = "^6.1"
 pytest-runner = "*"
 scipy = "^1.6.3"
+toml = "0.10.2"
 wheel = "*"
 
 [build-system]
-build-backend = "poetry.core.masonry.api"
-requires = ["poetry_core>=1.0.0"]
+build-backend = "maturin"
+classifiers = [
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+requires = ["maturin>=0.12,<0.13"]
