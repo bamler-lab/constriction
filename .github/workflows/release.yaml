@@ -372,7 +372,7 @@ jobs:
           poetry install
 
       - name: Publish wheels (unix)
-        if: github.event_name == 'release'
+        if: matrix.os != 'windows-latest' && github.event_name == 'release'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI }}
@@ -380,7 +380,7 @@ jobs:
           poetry run twine upload target/wheels/*.whl
 
       - name: Publish wheels (windows)
-        if: github.event_name == 'release'
+        if: matrix.os == 'windows-latest' && github.event_name == 'release'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI }}
