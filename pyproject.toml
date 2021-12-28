@@ -19,7 +19,7 @@ license = "MIT OR Apache-2.0 OR BSL-1.0"
 name = "constriction"
 readme = "README.md"
 repository = "https://github.com/bamler-lab/constriction/"
-version = "0.1.4"
+version = "0.1.5"
 
 [tool.poetry.dependencies]
 numpy = "^1.20"
