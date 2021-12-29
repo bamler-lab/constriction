@@ -180,6 +180,8 @@ jobs:
         run: |
           poetry run maturin develop --cargo-extra-args=--features=pybindings
           poetry run python pythondoc.py website/apidoc/python
+          mv website/apidoc/python/constriction/* website/apidoc/python/
+          rmdir website/apidoc/python/constriction
 
       - name: Save artifact with website
         uses: actions/upload-artifact@v2

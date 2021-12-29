@@ -1,9 +1,11 @@
+import sys
+from types import ModuleType
 import pdoc
 import pdoc.cli
 import constriction
 
-from types import ModuleType
-import sys
+constriction.__all__ = constriction.constriction.__all__
+del constriction.constriction
 
 context = pdoc.Context()
 
@@ -28,4 +30,6 @@ def pdocify(mod, prefix=''):
 if __name__ == '__main__':
     pdoc.cli.args.output_dir = sys.argv[1]
     pdoc.cli.args.force = True
-    pdoc.cli.recursive_write_files(pdocify(constriction), '.html')
+    constriction_mod = pdocify(constriction)
+    del constriction_mod.doc['constriction']
+    pdoc.cli.recursive_write_files(constriction_mod, '.html')
