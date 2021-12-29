@@ -19,7 +19,7 @@
 <main>
 <article id="content">
 <header>
-<h1 class="title">Module <code>constriction</code></h1>
+<h1 class="title">Package <code>constriction</code></h1>
 </header>
 <section id="section-intro">
 <h2 id="entropy-coding-primitives-for-research-and-production">Entropy Coding Primitives for Research and Production</h2>
@@ -168,7 +168,7 @@ an encoder and a decoder type since the encoder writes to the back while the dec
 reads from the front; by contrast, ANS Coding is a stack, i.e., it reads and writes at
 the same position and allows interleaving reads and writes).</li>
 </ul>
-<p>You could also use a symbol code like Huffman Coding (see submodule <code><a title="constriction.symbol" href="constriction/symbol.html">constriction.symbol</a></code>) but that
+<p>You could also use a symbol code like Huffman Coding (see submodule <code><a title="constriction.symbol" href="symbol.html">constriction.symbol</a></code>) but that
 would have considerably worse compression performance, especially on large files, since
 symbol codes always emit an integer number of bits per compressed symbol, even if the
 information content of the symbol is a fractional number (stream codes like ANS and
@@ -208,15 +208,23 @@ reconstructed = decoder.decode_leaky_gaussian_symbols(
 assert decoder.maybe_exhausted()
 assert np.all(reconstructed == symbols)
 </code></pre>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">from .constriction import *
+
+__doc__ = constriction.__doc__</code></pre>
+</details>
 </section>
 <section>
 <h2 class="section-title" id="header-submodules">Sub-modules</h2>
 <dl>
-<dt><code class="name"><a title="constriction.stream" href="constriction/stream.html">constriction.stream</a></code></dt>
+<dt><code class="name"><a title="constriction.stream" href="stream.html">constriction.stream</a></code></dt>
 <dd>
 <div class="desc"><p>Stream codes, i.e., entropy codes that amortize compressed bits over several symbols.</p></div>
 </dd>
-<dt><code class="name"><a title="constriction.symbol" href="constriction/symbol.html">constriction.symbol</a></code></dt>
+<dt><code class="name"><a title="constriction.symbol" href="symbol.html">constriction.symbol</a></code></dt>
 <dd>
 <div class="desc"><p>Symbol codes. Mainly provided for teaching purpose. You probably want to use a <a href="stream.html">stream
 code</a> instead.</p></div>
@@ -247,8 +255,8 @@ code</a> instead.</p></div>
 <ul id="index">
 <li><h3><a href="#header-submodules">Sub-modules</a></h3>
 <ul>
-<li><code><a title="constriction.stream" href="constriction/stream.html">constriction.stream</a></code></li>
-<li><code><a title="constriction.symbol" href="constriction/symbol.html">constriction.symbol</a></code></li>
+<li><code><a title="constriction.stream" href="stream.html">constriction.stream</a></code></li>
+<li><code><a title="constriction.symbol" href="symbol.html">constriction.symbol</a></code></li>
 </ul>
 </li>
 </ul>
