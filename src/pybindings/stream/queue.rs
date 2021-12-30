@@ -1,8 +1,10 @@
 use std::prelude::v1::*;
 
+use alloc::sync::Arc;
+use core::borrow::Borrow;
 use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
 use probability::distribution::Gaussian;
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
     stream::{
@@ -12,7 +14,7 @@ use crate::{
     UnwrapInfallible,
 };
 
-use super::model::CustomModel;
+use super::model::{internals::EncoderDecoderModel, Model};
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<RangeEncoder>()?;
@@ -180,51 +182,83 @@ impl RangeEncoder {
     /// - If the model parameters are different for each symbol then you'll want to use
     ///   [`encode_custom_model`](#constriction.stream.queue.RangeEncoder.encode_custom_model)
     ///   instead.
-    #[pyo3(text_signature = "(symbols, model)")]
-    pub fn encode_iid_custom_model<'py>(
+    #[pyo3(text_signature = "(symbols, model, [model_params...])")]
+    #[args(symbols, model, params = "*")]
+    pub fn encode<'py>(
         &mut self,
-        symbols: PyReadonlyArray1<'_, i32>,
-        model: &CustomModel,
         py: Python<'py>,
-    ) -> PyResult<()> {
-        self.inner
-            .encode_iid_symbols(symbols.as_slice()?, model.quantized(py))?;
-        Ok(())
-    }
-
-    /// Encodes a sequence of symbols with parameterized custom models.
-    ///
-    /// - For usage examples, see
-    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
-    /// - If all symbols use the same entropy model (with identical model parameters) then
-    ///   you'll want to use
-    ///   [`encode_iid_custom_model`](#constriction.stream.queue.RangeEncoder.encode_iid_custom_model)
-    ///   instead.
-    #[pyo3(text_signature = "(symbols, model, model_parameters)")]
-    pub fn encode_custom_model<'py>(
-        &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
-        model: &CustomModel,
-        model_parameters: PyReadonlyArray2<'_, f64>,
-        py: Python<'py>,
+        model: &Model,
+        params: &PyTuple,
     ) -> PyResult<()> {
-        let dims = model_parameters.dims();
-        let num_symbols = dims[0];
-        let num_parameters = dims[1];
-        if symbols.len() != num_symbols {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(
-                "`len(symbols)` must match first dimension of `model_parameters`.",
-            ));
+        let params = params.as_slice();
+        match params.len() {
+            0 => {
+                let model = Arc::clone(&model.0).specialize0(py)?;
+                let model = EncoderDecoderModel(&*model);
+                // let model: dyn super::model::internals::DefaultEntropyModel = Arc::borrow(&model);
+                for symbol in symbols.as_slice()? {
+                    self.inner.encode_symbol(symbol, model)?;
+                }
+            }
+            2 => {
+                let symbols = symbols.as_slice()?.iter();
+                let p0 = params[0].downcast::<PyArray1<f64>>()?.readonly();
+                let p0 = p0.as_slice()?.iter();
+                let p1 = params[1].downcast::<PyArray1<f64>>()?.readonly();
+                let p1 = p1.as_slice()?.iter();
+                for ((&symbol, &p0), &p1) in symbols.zip(p0).zip(p1) {
+                    let model = Arc::clone(&model.0).specialize2(py, p0, p1).expect("TODO");
+                    let model = EncoderDecoderModel(&*model);
+                    self.inner.encode_symbol(symbol, model)?
+                }
+                // self.inner.encode_symbols(symbols.zip(p0).zip(p1).map(
+                //     |((&symbol, &p0), &p1)| {
+                //         let model = model.0.specialize2(py, p0, p1).expect("TODO");
+                //         (symbol, &*model)
+                //     },
+                // ))?;
+            }
+            _ => {
+                todo!()
+            }
         }
-
-        let model_parameters = model_parameters.as_slice()?.chunks_exact(num_parameters);
-        let models = model_parameters.map(|params| {
-            model.quantized_with_parameters(py, PyArray1::from_vec(py, params.to_vec()).readonly())
-        });
-        self.inner
-            .encode_symbols(symbols.as_slice()?.iter().zip(models))?;
         Ok(())
     }
+
+    // /// Encodes a sequence of symbols with parameterized custom models.
+    // ///
+    // /// - For usage examples, see
+    // ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    // /// - If all symbols use the same entropy model (with identical model parameters) then
+    // ///   you'll want to use
+    // ///   [`encode_iid_custom_model`](#constriction.stream.queue.RangeEncoder.encode_iid_custom_model)
+    // ///   instead.
+    // #[pyo3(text_signature = "(symbols, model, model_parameters)")]
+    // pub fn encode_custom_model<'py>(
+    //     &mut self,
+    //     symbols: PyReadonlyArray1<'_, i32>,
+    //     model: &CustomModel,
+    //     model_parameters: PyReadonlyArray2<'_, f64>,
+    //     py: Python<'py>,
+    // ) -> PyResult<()> {
+    //     let dims = model_parameters.dims();
+    //     let num_symbols = dims[0];
+    //     let num_parameters = dims[1];
+    //     if symbols.len() != num_symbols {
+    //         return Err(pyo3::exceptions::PyAttributeError::new_err(
+    //             "`len(symbols)` must match first dimension of `model_parameters`.",
+    //         ));
+    //     }
+
+    //     let model_parameters = model_parameters.as_slice()?.chunks_exact(num_parameters);
+    //     let models = model_parameters.map(|params| {
+    //         model.quantized_with_parameters(py, PyArray1::from_vec(py, params.to_vec()).readonly())
+    //     });
+    //     self.inner
+    //         .encode_symbols(symbols.as_slice()?.iter().zip(models))?;
+    //     Ok(())
+    // }
 }
 
 /// TODO: document
@@ -311,57 +345,113 @@ impl RangeDecoder {
         ))
     }
 
-    /// Decodes a sequence of symbols with identical custom models.
-    ///
-    /// - For usage examples, see
-    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
-    /// - If the model parameters are different for each symbol then you'll want to use
-    ///   [`decode_custom_model`](#constriction.stream.queue.RangeDecoder.decode_custom_model)
-    ///   instead.
-    #[pyo3(text_signature = "(amt, model)")]
-    pub fn decode_iid_custom_model<'py>(
+    // /// Decodes a sequence of symbols with identical custom models.
+    // ///
+    // /// - For usage examples, see
+    // ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    // /// - If the model parameters are different for each symbol then you'll want to use
+    // ///   [`decode_custom_model`](#constriction.stream.queue.RangeDecoder.decode_custom_model)
+    // ///   instead.
+    // #[pyo3(text_signature = "(amt, model)")]
+    // pub fn decode_iid_custom_model<'py>(
+    //     &mut self,
+    //     amt: usize,
+    //     model: &CustomModel,
+    //     py: Python<'py>,
+    // ) -> PyResult<&'py PyArray1<i32>> {
+    //     Ok(PyArray1::from_iter(
+    //         py,
+    //         self.inner
+    //             .decode_iid_symbols(amt, model.quantized(py))
+    //             .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32),
+    //     ))
+    // }
+
+    #[pyo3(text_signature = "(model, model_params...])")]
+    #[args(symbols, model, params = "*")]
+    pub fn decode<'py>(
         &mut self,
-        amt: usize,
-        model: &CustomModel,
         py: Python<'py>,
+        model: &Model,
+        params: &PyTuple,
     ) -> PyResult<&'py PyArray1<i32>> {
-        Ok(PyArray1::from_iter(
-            py,
-            self.inner
-                .decode_iid_symbols(amt, model.quantized(py))
-                .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32),
-        ))
+        let params = params.as_slice();
+        match params.len() {
+            0 => {
+                todo!()
+                // // TODO: accept a single `amt` argument instead of the model params (defaults to 1)
+                // let model = Arc::clone(&model.0).specialize0(py)?;
+                // let model = EncoderDecoderModel(&*model);
+                // // let model: dyn super::model::internals::DefaultEntropyModel = Arc::borrow(&model);
+                // let symbol = self.inner.decode_symbol(model).expect("TODO");
+                // let x = symbol.into_py(py);
+                // Ok(x.as_ref(py))
+            }
+            1 => {
+                if let Ok(amt) = usize::extract(params[0]) {
+                    let model = Arc::clone(&model.0).specialize0(py)?;
+                    let model = EncoderDecoderModel(&*model);
+                    let symbols = self
+                        .inner
+                        .decode_iid_symbols(amt, model)
+                        .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32);
+                    let symbols = PyArray1::from_iter(py, symbols);
+                    Ok(symbols)
+                } else {
+                    todo!()
+                }
+            }
+            2 => {
+                let p0 = params[0].downcast::<PyArray1<f64>>()?.readonly();
+                let p0 = p0.as_slice()?.iter();
+                let p1 = params[1].downcast::<PyArray1<f64>>()?.readonly();
+                let p1 = p1.as_slice()?.iter();
+                let symbols = self
+                    .inner
+                    .decode_symbols(p0.zip(p1).map(|(&p0, &p1)| {
+                        let model = Arc::clone(&model.0).specialize2(py, p0, p1).expect("TODO");
+                        let model = EncoderDecoderModel(model);
+                        model
+                    }))
+                    .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32);
+                let symbols = PyArray1::from_iter(py, symbols);
+                Ok(symbols)
+            }
+            _ => {
+                todo!()
+            }
+        }
     }
 
-    /// Decodes a sequence of symbols with parameterized custom models.
-    ///
-    /// - For usage examples, see
-    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
-    /// - If all symbols use the same entropy model (with identical model parameters) then
-    ///   you'll want to use
-    ///   [`decode_iid_custom_model`](#constriction.stream.queue.RangeDecoder.decode_iid_custom_model)
-    ///   instead.
-    #[pyo3(text_signature = "(model, model_parameters)")]
-    pub fn decode_custom_model<'py>(
-        &mut self,
-        model: &CustomModel,
-        model_parameters: PyReadonlyArray2<'_, f64>,
-        py: Python<'py>,
-    ) -> PyResult<&'py PyArray1<i32>> {
-        let num_parameters = model_parameters.dims()[1];
-        let model_parameters = model_parameters.as_slice()?.chunks_exact(num_parameters);
-        let models = model_parameters.map(|params| {
-            model.quantized_with_parameters(py, PyArray1::from_vec(py, params.to_vec()).readonly())
-        });
+    // /// Decodes a sequence of symbols with parameterized custom models.
+    // ///
+    // /// - For usage examples, see
+    // ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
+    // /// - If all symbols use the same entropy model (with identical model parameters) then
+    // ///   you'll want to use
+    // ///   [`decode_iid_custom_model`](#constriction.stream.queue.RangeDecoder.decode_iid_custom_model)
+    // ///   instead.
+    // #[pyo3(text_signature = "(model, model_parameters)")]
+    // pub fn decode_custom_model<'py>(
+    //     &mut self,
+    //     model: &CustomModel,
+    //     model_parameters: PyReadonlyArray2<'_, f64>,
+    //     py: Python<'py>,
+    // ) -> PyResult<&'py PyArray1<i32>> {
+    //     let num_parameters = model_parameters.dims()[1];
+    //     let model_parameters = model_parameters.as_slice()?.chunks_exact(num_parameters);
+    //     let models = model_parameters.map(|params| {
+    //         model.quantized_with_parameters(py, PyArray1::from_vec(py, params.to_vec()).readonly())
+    //     });
 
-        let symbols = self
-            .inner
-            .decode_symbols(models)
-            .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32)
-            .collect::<Vec<_>>();
+    //     let symbols = self
+    //         .inner
+    //         .decode_symbols(models)
+    //         .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32)
+    //         .collect::<Vec<_>>();
 
-        Ok(PyArray1::from_vec(py, symbols))
-    }
+    //     Ok(PyArray1::from_vec(py, symbols))
+    // }
 }
 
 impl RangeDecoder {

@@ -1,7 +1,7 @@
-pub mod chain;
-pub mod model;
-pub mod queue;
-pub mod stack;
+// mod chain;
+mod model;
+mod queue;
+// mod stack;
 
 use pyo3::{prelude::*, wrap_pymodule};
 
@@ -12,8 +12,8 @@ use crate::{stream::TryCodingError, CoderError, DefaultEncoderFrontendError};
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(model))?;
     module.add_wrapped(wrap_pymodule!(queue))?;
-    module.add_wrapped(wrap_pymodule!(stack))?;
-    module.add_wrapped(wrap_pymodule!(chain))?;
+    // module.add_wrapped(wrap_pymodule!(stack))?;
+    // module.add_wrapped(wrap_pymodule!(chain))?;
     Ok(())
 }
 
@@ -51,10 +51,10 @@ fn queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
-#[pymodule]
-fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
-    stack::init_module(py, module)
-}
+// #[pymodule]
+// fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+//     stack::init_module(py, module)
+// }
 
 /// Experimental entropy coding algorithm for advanced variants of bitsback coding.
 ///
@@ -135,10 +135,10 @@ fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// # How does this work?
 ///
 /// TODO
-#[pymodule]
-fn chain(py: Python<'_>, module: &PyModule) -> PyResult<()> {
-    chain::init_module(py, module)
-}
+// #[pymodule]
+// fn chain(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+//     chain::init_module(py, module)
+// }
 
 impl<CodingError: Into<PyErr>, ModelError> From<TryCodingError<CodingError, ModelError>> for PyErr {
     fn from(err: TryCodingError<CodingError, ModelError>) -> Self {

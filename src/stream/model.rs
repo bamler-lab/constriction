@@ -187,7 +187,7 @@ use crate::{wrapping_pow2, BitArray, NonZeroBitArray};
 /// ```ignore
 /// impl<M, const PRECISION: usize> EntropyModel<PRECISION> for &M
 /// where
-///     M: EntropyModel<PRECISION>
+///     M: EntropyModel<PRECISION> + ?Sized
 /// { ... }
 /// ```
 ///
@@ -528,7 +528,7 @@ where
 /// ```ignore
 /// impl<M, const PRECISION: usize> EncoderModel<PRECISION> for &M
 /// where
-///     M: EncoderModel<PRECISION>
+///     M: EncoderModel<PRECISION> + ?Sized
 /// { ... }
 /// ```
 ///
@@ -642,7 +642,7 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
 /// ```ignore
 /// impl<M, const PRECISION: usize> DecoderModel<PRECISION> for &M
 /// where
-///     M: DecoderModel<PRECISION>
+///     M: DecoderModel<PRECISION> + ?Sized
 /// { ... }
 /// ```
 ///
@@ -704,7 +704,7 @@ pub trait DecoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
 
 impl<M, const PRECISION: usize> EntropyModel<PRECISION> for &M
 where
-    M: EntropyModel<PRECISION>,
+    M: EntropyModel<PRECISION> + ?Sized,
 {
     type Probability = M::Probability;
     type Symbol = M::Symbol;
@@ -756,7 +756,7 @@ where
 
 impl<M, const PRECISION: usize> EncoderModel<PRECISION> for &M
 where
-    M: EncoderModel<PRECISION>,
+    M: EncoderModel<PRECISION> + ?Sized,
 {
     #[inline(always)]
     fn left_cumulative_and_probability(
@@ -769,7 +769,7 @@ where
 
 impl<M, const PRECISION: usize> DecoderModel<PRECISION> for &M
 where
-    M: DecoderModel<PRECISION>,
+    M: DecoderModel<PRECISION> + ?Sized,
 {
     #[inline(always)]
     fn quantile_function(
@@ -992,7 +992,7 @@ where
 /// [`to_generic_decoder_model`]: IterableEntropyModel::to_generic_decoder_model
 /// [`to_generic_lookup_decoder_model`]: IterableEntropyModel::to_generic_lookup_decoder_model
 /// [`IterableEntropyModel`]: IterableEntropyModel
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
     min_symbol_inclusive: Symbol,
     max_symbol_inclusive: Symbol,
@@ -1076,10 +1076,11 @@ where
     ///
     /// Note that this method takes `self` only by reference, i.e., you can reuse
     /// the same `Quantizer` to quantize arbitrarily many distributions.
+    #[inline]
     pub fn quantize<D: Distribution>(
-        &self,
+        self,
         distribution: D,
-    ) -> LeakilyQuantizedDistribution<'_, F, Symbol, Probability, D, PRECISION> {
+    ) -> LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION> {
         LeakilyQuantizedDistribution {
             inner: distribution,
             quantizer: self,
@@ -1139,13 +1140,13 @@ where
 /// [`Binomial`]: probability::distribution::Binomial
 /// [`Categorical`]: probability::distribution::Categorical
 #[derive(Debug, Clone, Copy)]
-pub struct LeakilyQuantizedDistribution<'q, F, Symbol, Probability, D, const PRECISION: usize> {
+pub struct LeakilyQuantizedDistribution<F, Symbol, Probability, D, const PRECISION: usize> {
     inner: D,
-    quantizer: &'q LeakyQuantizer<F, Symbol, Probability, PRECISION>,
+    quantizer: LeakyQuantizer<F, Symbol, Probability, PRECISION>,
 }
 
 impl<'q, F, Symbol, Probability, D, const PRECISION: usize>
-    LeakilyQuantizedDistribution<'q, F, Symbol, Probability, D, PRECISION>
+    LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION>
 where
     Probability: BitArray + Into<F>,
     Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
@@ -1155,7 +1156,7 @@ where
     ///
     /// You may want to reuse this quantizer to quantize further probability distributions.
     #[inline]
-    pub fn quantizer(&self) -> &'q LeakyQuantizer<F, Symbol, Probability, PRECISION> {
+    pub fn quantizer(self) -> LeakyQuantizer<F, Symbol, Probability, PRECISION> {
         self.quantizer
     }
 
@@ -1236,7 +1237,7 @@ where
 }
 
 impl<'q, F, Symbol, Probability, D, const PRECISION: usize> EntropyModel<PRECISION>
-    for LeakilyQuantizedDistribution<'q, F, Symbol, Probability, D, PRECISION>
+    for LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION>
 where
     Probability: BitArray,
 {
@@ -1245,7 +1246,7 @@ where
 }
 
 impl<'q, Symbol, Probability, D, const PRECISION: usize> EncoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, D, PRECISION>
+    for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
 where
     f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub,
@@ -1318,7 +1319,7 @@ where
 }
 
 impl<'q, Symbol, Probability, D, const PRECISION: usize> DecoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, D, PRECISION>
+    for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
 where
     f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub + WrappingAdd,
@@ -1520,7 +1521,7 @@ where
 }
 
 impl<'m, 'q: 'm, Symbol, Probability, D, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
-    for LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, D, PRECISION>
+    for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
 where
     f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + AsPrimitive<usize> + Into<f64> + WrappingSub,
@@ -1556,7 +1557,7 @@ impl<'m, 'q, Symbol, Probability, D, const PRECISION: usize> Iterator
     for LeakilyQuantizedDistributionIter<
         Symbol,
         Probability,
-        &'m LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, D, PRECISION>,
+        &'m LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>,
         PRECISION,
     >
 where

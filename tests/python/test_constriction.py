@@ -155,6 +155,44 @@ def test_chain_independence():
 
 
 def test_custom_model():
+    #### Begin sketch new test --------------------------------------
+    import constriction
+    import numpy as np
+    import scipy.stats
+
+    # Encode non-iid symbols:
+    model_py = scipy.stats.norm
+    model = constriction.stream.model.ScipyModel(-100, 100, model_py)
+
+    symbols = np.array([-10, 3, 12], dtype=np.int32)
+    means = np.array([-5.2, 5.4, 10], dtype=np.float64)
+    stds = np.array([3.2, 5.3, 9.4], dtype=np.float64)
+
+    encoder = constriction.stream.queue.RangeEncoder()
+    encoder.encode(symbols, model, means, stds)
+    compressed = encoder.get_compressed()
+
+    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    decoded = decoder.decode(model, means, stds)
+    print(decoded)
+    assert np.all(decoded == symbols)
+
+    # Encode iid symbols:
+    model_py = scipy.stats.norm(10.3, 30.5)
+    model = constriction.stream.model.ScipyModel(-100, 100, model_py)
+
+    symbols = np.array([-15, 33, 22], dtype=np.int32)
+
+    encoder = constriction.stream.queue.RangeEncoder()
+    encoder.encode(symbols, model)
+    compressed = encoder.get_compressed()
+
+    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    decoded = decoder.decode(model, 3)
+    print(decoded)
+    assert np.all(decoded == symbols)
+    #### End sketch new test ----------------------------------------
+
     symbols = np.array([3, 2, 6, -51, -19, 5, 87], dtype=np.int32)
 
     model_py = scipy.stats.norm(1.2, 4.9)
