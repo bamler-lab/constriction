@@ -90,7 +90,7 @@ impl Gaussian {
         let model = match (mean, std) {
             (None, None) => {
                 let model = internals::UnspecializedRustModel::new(
-                    |(mean, std)| probability::distribution::Gaussian::new(mean, std),
+                    |[mean, std]| probability::distribution::Gaussian::new(mean, std),
                     min_symbol_inclusive,
                     max_symbol_inclusive,
                 );

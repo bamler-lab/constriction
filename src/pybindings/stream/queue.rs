@@ -194,7 +194,7 @@ impl RangeEncoder {
         let params = params.as_slice();
         match params.len() {
             0 => {
-                let model = Arc::clone(&model.0).specialize0(py)?;
+                let model = Arc::clone(&model.0).specialize0(py, [])?;
                 let model = EncoderDecoderModel(&*model);
                 // let model: dyn super::model::internals::DefaultEntropyModel = Arc::borrow(&model);
                 for symbol in symbols.as_slice()? {
@@ -208,7 +208,9 @@ impl RangeEncoder {
                 let p1 = params[1].downcast::<PyArray1<f64>>()?.readonly();
                 let p1 = p1.as_slice()?.iter();
                 for ((&symbol, &p0), &p1) in symbols.zip(p0).zip(p1) {
-                    let model = Arc::clone(&model.0).specialize2(py, p0, p1).expect("TODO");
+                    let model = Arc::clone(&model.0)
+                        .specialize2(py, [p0, p1])
+                        .expect("TODO");
                     let model = EncoderDecoderModel(&*model);
                     self.inner.encode_symbol(symbol, model)?
                 }
@@ -389,7 +391,7 @@ impl RangeDecoder {
             }
             1 => {
                 if let Ok(amt) = usize::extract(params[0]) {
-                    let model = Arc::clone(&model.0).specialize0(py)?;
+                    let model = Arc::clone(&model.0).specialize0(py, [])?;
                     let model = EncoderDecoderModel(&*model);
                     let symbols = self
                         .inner
@@ -409,7 +411,9 @@ impl RangeDecoder {
                 let symbols = self
                     .inner
                     .decode_symbols(p0.zip(p1).map(|(&p0, &p1)| {
-                        let model = Arc::clone(&model.0).specialize2(py, p0, p1).expect("TODO");
+                        let model = Arc::clone(&model.0)
+                            .specialize2(py, [p0, p1])
+                            .expect("TODO");
                         let model = EncoderDecoderModel(model);
                         model
                     }))
