@@ -358,10 +358,18 @@ impl RangeDecoder {
         py: Python<'py>,
         model: &Model,
         params: &PyTuple,
-    ) -> PyResult<&'py PyArray1<i32>> {
+    ) -> PyResult<PyObject> {
         match params.len() {
             0 => {
-                todo!()
+                let mut symbol = 0;
+                model.0.as_parameterized(py, &mut |model| {
+                    symbol = self
+                        .inner
+                        .decode_symbol(EncoderDecoderModel(model))
+                        .expect("We use constant `PRECISION`.");
+                    Ok(())
+                })?;
+                return Ok(symbol.to_object(py));
             }
             1 => {
                 if let Ok(amt) = usize::extract(params.as_slice()[0]) {
@@ -376,7 +384,7 @@ impl RangeDecoder {
                         }
                         Ok(())
                     })?;
-                    return Ok(PyArray1::from_iter(py, symbols));
+                    return Ok(PyArray1::from_iter(py, symbols).to_object(py));
                 }
             }
             _ => {} // Fall through to code below
@@ -392,7 +400,7 @@ impl RangeDecoder {
             Ok(())
         })?;
 
-        Ok(PyArray1::from_vec(py, symbols))
+        Ok(PyArray1::from_vec(py, symbols).to_object(py))
     }
 
     // /// Decodes a sequence of symbols with parameterized custom models.
