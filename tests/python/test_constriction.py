@@ -197,6 +197,19 @@ def test_custom_model():
     symbols = np.array([-15, 33, 22], dtype=np.int32)
 
     encoder = constriction.stream.queue.RangeEncoder()
+    encoder.encode(symbols, model, means, stds)
+    compressed = encoder.get_compressed()
+
+    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    decoded = decoder.decode(model, means, stds)
+    print(decoded)
+    assert np.all(decoded == symbols)
+
+    # Encode iid symbols with native model:
+    model = constriction.stream.model.Gaussian(-100, 100, 2.1, 3.5)
+    symbols = np.array([-15, 33, 22], dtype=np.int32)
+
+    encoder = constriction.stream.queue.RangeEncoder()
     encoder.encode(symbols, model)
     compressed = encoder.get_compressed()
 
@@ -205,9 +218,34 @@ def test_custom_model():
     print(decoded)
     assert np.all(decoded == symbols)
 
+    # Encode non-iid symbols with native model:
+    symbols = np.array([15, 33, 22], dtype=np.int32)
+    ns = np.array([20, 53, 42], dtype=np.int32)
+    ps = np.array([0.6, 0.7, 0.5], dtype=np.float64)
+
+    model = constriction.stream.model.Binomial()
+    encoder = constriction.stream.queue.RangeEncoder()
+    encoder.encode(symbols, model, ns, ps)
+    compressed = encoder.get_compressed()
+
+    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    decoded = decoder.decode(model, ns, ps)
+    print(decoded)
+    assert np.all(decoded == symbols)
+
+    # Encode non-iid symbols with native model:
+    model = constriction.stream.model.Binomial(100)
+    encoder = constriction.stream.queue.RangeEncoder()
+    encoder.encode(symbols, model, ps)
+    compressed = encoder.get_compressed()
+
+    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    decoded = decoder.decode(model, ps)
+    print(decoded)
+    assert np.all(decoded == symbols)
+
     # Encode iid symbols with native model:
-    model = constriction.stream.model.Gaussian(-100, 100, 2.1, 3.5)
-    symbols = np.array([-15, 33, 22], dtype=np.int32)
+    model = constriction.stream.model.Binomial(40, 0.5)
 
     encoder = constriction.stream.queue.RangeEncoder()
     encoder.encode(symbols, model)

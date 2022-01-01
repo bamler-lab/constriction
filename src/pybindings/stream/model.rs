@@ -12,56 +12,13 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<CustomModel>()?;
     module.add_class::<ScipyModel>()?;
     module.add_class::<Gaussian>()?;
+    module.add_class::<Binomial>()?;
     Ok(())
 }
 
 #[pyclass(subclass)]
 #[allow(missing_debug_implementations)]
 pub struct Model(pub Arc<dyn internals::Model>);
-
-#[pyclass(extends=Model)]
-#[pyo3(text_signature = "(min_symbol_inclusive, max_symbol_inclusive, [mean, std])")]
-#[derive(Debug)]
-struct Gaussian;
-
-#[pymethods]
-impl Gaussian {
-    #[new]
-    pub fn new(
-        min_symbol_inclusive: i32,
-        max_symbol_inclusive: i32,
-        mean: Option<f64>,
-        std: Option<f64>,
-    ) -> PyResult<(Self, Model)> {
-        let model = match (mean, std) {
-            (None, None) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
-                let model = internals::ParameterizableModel::new(move |(mean, std): (f64, f64)| {
-                    let distribution = probability::distribution::Gaussian::new(mean, std);
-                    quantizer.quantize(distribution)
-                });
-
-                Arc::new(model)
-            }
-            (Some(mean), Some(std)) => {
-                let distribution = probability::distribution::Gaussian::new(mean, std);
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
-                Arc::new(quantizer.quantize(distribution)) as Arc<dyn internals::Model>
-            }
-            _ => {
-                return Err(pyo3::exceptions::PyAttributeError::new_err(
-                    "Either none or both of `mean` and `std` must be specified.",
-                ));
-            }
-        };
-
-        Ok((Self, Model(model)))
-    }
-}
 
 #[pyclass(extends=Model, subclass)]
 #[pyo3(
@@ -110,5 +67,88 @@ impl ScipyModel {
             max_symbol_inclusive,
         );
         Ok(PyClassInitializer::from(custom_model).add_subclass(ScipyModel))
+    }
+}
+
+#[pyclass(extends=Model)]
+#[pyo3(text_signature = "(min_symbol_inclusive, max_symbol_inclusive, [mean, std])")]
+#[derive(Debug)]
+struct Gaussian;
+
+#[pymethods]
+impl Gaussian {
+    #[new]
+    pub fn new(
+        min_symbol_inclusive: i32,
+        max_symbol_inclusive: i32,
+        mean: Option<f64>,
+        std: Option<f64>,
+    ) -> PyResult<(Self, Model)> {
+        let model = match (mean, std) {
+            (None, None) => {
+                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
+                    min_symbol_inclusive..=max_symbol_inclusive,
+                );
+                let model = internals::ParameterizableModel::new(move |(mean, std): (f64, f64)| {
+                    let distribution = probability::distribution::Gaussian::new(mean, std);
+                    quantizer.quantize(distribution)
+                });
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+            (Some(mean), Some(std)) => {
+                let distribution = probability::distribution::Gaussian::new(mean, std);
+                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
+                    min_symbol_inclusive..=max_symbol_inclusive,
+                );
+                Arc::new(quantizer.quantize(distribution)) as Arc<dyn internals::Model>
+            }
+            _ => {
+                return Err(pyo3::exceptions::PyAttributeError::new_err(
+                    "Either none or both of `mean` and `std` must be specified.",
+                ));
+            }
+        };
+
+        Ok((Self, Model(model)))
+    }
+}
+
+#[pyclass(extends=Model)]
+#[pyo3(text_signature = "([n, [p]])")]
+#[derive(Debug)]
+struct Binomial;
+
+#[pymethods]
+impl Binomial {
+    #[new]
+    pub fn new(n: Option<i32>, p: Option<f64>) -> PyResult<(Self, Model)> {
+        let model = match (n, p) {
+            (None, None) => {
+                let model = internals::ParameterizableModel::new(move |(n, p): (i32, f64)| {
+                    let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(0..=n);
+                    let distribution = probability::distribution::Binomial::new(n as usize, p);
+                    quantizer.quantize(distribution)
+                });
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+            (Some(n), None) => {
+                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(0..=n);
+                let model = internals::ParameterizableModel::new(move |(p,): (f64,)| {
+                    let distribution = probability::distribution::Binomial::new(n as usize, p);
+                    quantizer.quantize(distribution)
+                });
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+            (Some(n), Some(p)) => {
+                let distribution = probability::distribution::Binomial::new(n as usize, p);
+                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(0..=n);
+                Arc::new(quantizer.quantize(distribution)) as Arc<dyn internals::Model>
+            }
+            _ => {
+                panic!("Should be unreachable.")
+            }
+        };
+
+        Ok((Self, Model(model)))
     }
 }

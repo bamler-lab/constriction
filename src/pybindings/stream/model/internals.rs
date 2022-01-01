@@ -219,6 +219,50 @@ where
     }
 }
 
+impl<M, F> Model for ParameterizableModel<(i32, f64), M, F>
+where
+    M: DefaultEntropyModel,
+    F: Fn((i32, f64)) -> M + Send + Sync,
+{
+    fn parameterize(
+        &self,
+        _py: Python<'_>,
+        params: &PyTuple,
+        callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
+    ) -> PyResult<()> {
+        if params.len() != 2 {
+            return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                "Wrong number of model parameters: expected 2, got {}.",
+                params.len()
+            )));
+        }
+
+        let p0 = params[0].downcast::<PyArray1<i32>>()?.readonly();
+        let p0 = p0.as_slice()?;
+        let len = p0.len();
+        let p0 = p0.iter();
+
+        let p1 = params[1].downcast::<PyArray1<f64>>()?.readonly();
+        let p1 = p1.as_slice()?;
+        if p1.len() != len {
+            return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                "Model parameters have unequal size",
+            )));
+        }
+        let p1 = p1.iter();
+
+        for (&p0, &p1) in p0.zip(p1) {
+            callback(&(self.build_model)((p0, p1)))?;
+        }
+
+        Ok(())
+    }
+
+    fn len(&self, param0: &PyAny) -> PyResult<usize> {
+        Ok(param0.downcast::<PyArray1<f64>>()?.len())
+    }
+}
+
 #[derive(Debug)]
 pub struct UnspecializedPythonModel {
     cdf: PyObject,
