@@ -185,10 +185,34 @@ impl RangeEncoder {
     pub fn encode(
         &mut self,
         py: Python<'_>,
-        symbols: PyReadonlyArray1<'_, i32>,
+        symbols: &PyAny,
         model: &Model,
         params: &PyTuple,
     ) -> PyResult<()> {
+        // TODO: also allow encoding and decoding with model type instead of instance for
+        // models that take no range.
+        if let Ok(symbol) = symbols.extract::<i32>() {
+            if !params.is_empty() {
+                return Err(pyo3::exceptions::PyAttributeError::new_err(
+                    "To encode a single symbol, use a concrete model, i.e., pass the\n\
+                    model parameters directly to the constructor of the model and not to the\n\
+                    `encode` method of the entropy coder. Delaying the specification of model\n\
+                    parameters until calling `encode` is only useful if you want to encode several\n\
+                    symbols in a row with individual model parameters for each symbol. If this is\n\
+                    what you're trying to do then the `symbols` argument should be a numpy array,\n\
+                    not a scalar.",
+                ));
+            }
+            return model.0.as_parameterized(py, &mut |model| {
+                self.inner
+                    .encode_symbol(symbol, EncoderDecoderModel(model))?;
+                Ok(())
+            });
+        }
+
+        // Don't use an `else` branch here because, if the following `extract` fails, the returned
+        // error message is actually pretty user friendly.
+        let symbols = symbols.extract::<PyReadonlyArray1<'_, i32>>()?;
         let symbols = symbols.as_slice()?;
 
         if params.is_empty() {
@@ -351,7 +375,7 @@ impl RangeDecoder {
     //     ))
     // }
 
-    #[pyo3(text_signature = "(model, model_params...])")]
+    #[pyo3(text_signature = "(model, [size or model_params...])")]
     #[args(symbols, model, params = "*")]
     pub fn decode<'py>(
         &mut self,
@@ -387,7 +411,7 @@ impl RangeDecoder {
                     return Ok(PyArray1::from_iter(py, symbols).to_object(py));
                 }
             }
-            _ => {} // Fall through to code below
+            _ => {} // Fall through to code below.
         };
 
         let mut symbols = Vec::with_capacity(model.0.len(&params[0])?);

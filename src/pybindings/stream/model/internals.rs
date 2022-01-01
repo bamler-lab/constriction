@@ -2,7 +2,7 @@ use core::{cell::RefCell, marker::PhantomData, num::NonZeroU32};
 use std::prelude::v1::*;
 
 use alloc::vec;
-use numpy::PyArray1;
+use numpy::PyReadonlyArray1;
 use probability::distribution::{Distribution, Inverse};
 use pyo3::{prelude::*, types::PyTuple};
 
@@ -159,8 +159,7 @@ where
                 params.len()
             )));
         }
-        let p0 = params[0].downcast::<PyArray1<f64>>()?.readonly();
-        // TODO: check that arrays are rank 1.
+        let p0 = params[0].extract::<PyReadonlyArray1<'_, f64>>()?;
         let p0 = p0.as_slice()?.iter();
 
         for &p0 in p0 {
@@ -171,7 +170,7 @@ where
     }
 
     fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.downcast::<PyArray1<f64>>()?.len())
+        Ok(param0.extract::<PyReadonlyArray1<'_, f64>>()?.len())
     }
 }
 
@@ -193,12 +192,12 @@ where
             )));
         }
 
-        let p0 = params[0].downcast::<PyArray1<f64>>()?.readonly();
+        let p0 = params[0].extract::<PyReadonlyArray1<'_, f64>>()?;
         let p0 = p0.as_slice()?;
         let len = p0.len();
         let p0 = p0.iter();
 
-        let p1 = params[1].downcast::<PyArray1<f64>>()?.readonly();
+        let p1 = params[1].extract::<PyReadonlyArray1<'_, f64>>()?;
         let p1 = p1.as_slice()?;
         if p1.len() != len {
             return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
@@ -215,7 +214,7 @@ where
     }
 
     fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.downcast::<PyArray1<f64>>()?.len())
+        Ok(param0.extract::<PyReadonlyArray1<'_, f64>>()?.len())
     }
 }
 
@@ -237,12 +236,12 @@ where
             )));
         }
 
-        let p0 = params[0].downcast::<PyArray1<i32>>()?.readonly();
+        let p0 = params[0].extract::<PyReadonlyArray1<'_, i32>>()?;
         let p0 = p0.as_slice()?;
         let len = p0.len();
         let p0 = p0.iter();
 
-        let p1 = params[1].downcast::<PyArray1<f64>>()?.readonly();
+        let p1 = params[1].extract::<PyReadonlyArray1<'_, f64>>()?;
         let p1 = p1.as_slice()?;
         if p1.len() != len {
             return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
@@ -259,7 +258,7 @@ where
     }
 
     fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.downcast::<PyArray1<f64>>()?.len())
+        Ok(param0.extract::<PyReadonlyArray1<'_, f64>>()?.len())
     }
 }
 
@@ -309,7 +308,7 @@ impl Model for UnspecializedPythonModel {
     ) -> PyResult<()> {
         let params = params.as_slice();
 
-        let p0 = params[0].downcast::<PyArray1<f64>>()?.readonly();
+        let p0 = params[0].extract::<PyReadonlyArray1<'_, f64>>()?;
         let p0 = p0.as_slice()?;
         let len = p0.len();
         let p0iter = p0.iter();
@@ -317,7 +316,7 @@ impl Model for UnspecializedPythonModel {
         let mut param_iters = params[1..]
             .iter()
             .map(|&param| {
-                let param = param.downcast::<PyArray1<f64>>()?.readonly();
+                let param = param.extract::<PyReadonlyArray1<'_, f64>>()?;
                 if param.len() != len {
                     return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
                         "Model parameters have unequal lengths.",
@@ -350,7 +349,7 @@ impl Model for UnspecializedPythonModel {
     }
 
     fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.downcast::<PyArray1<f64>>()?.len())
+        Ok(param0.extract::<PyReadonlyArray1<'_, f64>>()?.len())
     }
 }
 
