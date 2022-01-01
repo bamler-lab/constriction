@@ -2,11 +2,14 @@ use core::{cell::RefCell, marker::PhantomData, num::NonZeroU32};
 use std::prelude::v1::*;
 
 use alloc::vec;
-use numpy::PyReadonlyArray1;
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use probability::distribution::{Distribution, Inverse};
 use pyo3::{prelude::*, types::PyTuple};
 
-use crate::stream::model::{DecoderModel, EncoderModel, EntropyModel, LeakyQuantizer};
+use crate::stream::model::{
+    DecoderModel, DefaultContiguousCategoricalEntropyModel, EncoderModel, EntropyModel,
+    LeakyQuantizer,
+};
 
 /// Workaround for the fact that rust for some reason cannot create
 /// joint vtables for `dyn Trait1 + Trait2`.
@@ -142,125 +145,66 @@ where
     }
 }
 
-impl<M, F> Model for ParameterizableModel<(f64,), M, F>
-where
-    M: DefaultEntropyModel + Send + Sync,
-    F: Fn((f64,)) -> M + Send + Sync,
-{
-    fn parameterize(
-        &self,
-        _py: Python<'_>,
-        params: &PyTuple,
-        callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
-    ) -> PyResult<()> {
-        if params.len() != 1 {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
-                "Wrong number of model parameters: expected 1, got {}.",
-                params.len()
-            )));
+macro_rules! impl_model_for_parameterizable_model {
+    {$p0:ident: $ty0:tt $(, $ps:ident: $tys:tt)* $(,)?} => {
+        impl<$ty0, $($tys,)* M, F> Model for ParameterizableModel<($ty0, $($tys,)*), M, F>
+        where
+            $ty0: numpy::Element + Copy + Send + Sync,
+            $($tys: numpy::Element + Copy + Send + Sync,)*
+            M: DefaultEntropyModel,
+            F: Fn(($ty0, $($tys,)*)) -> M + Send + Sync,
+        {
+            fn parameterize(
+                &self,
+                _py: Python<'_>,
+                params: &PyTuple,
+                callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
+            ) -> PyResult<()> {
+                if params.len() != 2 {
+                    return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                        "Wrong number of model parameters: expected 2, got {}.",
+                        params.len()
+                    )));
+                }
+
+                let $p0 = params[0].extract::<PyReadonlyArray1<'_, $ty0>>()?;
+                let $p0 = $p0.as_slice()?;
+
+                #[allow(unused_variables)] // (`len` remains unused when macro is invoked with only one parameter.)
+                let len = $p0.len();
+
+                let $p0 = $p0.iter();
+
+                $(
+                    let $ps = params[1].extract::<PyReadonlyArray1<'_, $tys>>()?;
+                    let $ps = $ps.as_slice()?;
+                    if $ps.len() != len {
+                        return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                            "Model parameters have unequal shape",
+                        )));
+                    }
+                    let mut $ps = $ps.iter();
+                )*
+
+                for &$p0 in $p0 {
+                    $(
+                        let $ps = *$ps.next().expect("We checked that all params have same length.");
+                    )*
+                    callback(&(self.build_model)(($p0, $($ps,)*)))?;
+                }
+
+                Ok(())
+            }
+
+            fn len(&self, $p0: &PyAny) -> PyResult<usize> {
+                Ok($p0.extract::<PyReadonlyArray1<'_, $ty0>>()?.len())
+            }
         }
-        let p0 = params[0].extract::<PyReadonlyArray1<'_, f64>>()?;
-        let p0 = p0.as_slice()?.iter();
-
-        for &p0 in p0 {
-            callback(&(self.build_model)((p0,)))?
-        }
-
-        Ok(())
-    }
-
-    fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.extract::<PyReadonlyArray1<'_, f64>>()?.len())
-    }
-}
-
-impl<M, F> Model for ParameterizableModel<(f64, f64), M, F>
-where
-    M: DefaultEntropyModel,
-    F: Fn((f64, f64)) -> M + Send + Sync,
-{
-    fn parameterize(
-        &self,
-        _py: Python<'_>,
-        params: &PyTuple,
-        callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
-    ) -> PyResult<()> {
-        if params.len() != 2 {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
-                "Wrong number of model parameters: expected 2, got {}.",
-                params.len()
-            )));
-        }
-
-        let p0 = params[0].extract::<PyReadonlyArray1<'_, f64>>()?;
-        let p0 = p0.as_slice()?;
-        let len = p0.len();
-        let p0 = p0.iter();
-
-        let p1 = params[1].extract::<PyReadonlyArray1<'_, f64>>()?;
-        let p1 = p1.as_slice()?;
-        if p1.len() != len {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
-                "Model parameters have unequal size",
-            )));
-        }
-        let p1 = p1.iter();
-
-        for (&p0, &p1) in p0.zip(p1) {
-            callback(&(self.build_model)((p0, p1)))?;
-        }
-
-        Ok(())
-    }
-
-    fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.extract::<PyReadonlyArray1<'_, f64>>()?.len())
     }
 }
 
-impl<M, F> Model for ParameterizableModel<(i32, f64), M, F>
-where
-    M: DefaultEntropyModel,
-    F: Fn((i32, f64)) -> M + Send + Sync,
-{
-    fn parameterize(
-        &self,
-        _py: Python<'_>,
-        params: &PyTuple,
-        callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
-    ) -> PyResult<()> {
-        if params.len() != 2 {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
-                "Wrong number of model parameters: expected 2, got {}.",
-                params.len()
-            )));
-        }
-
-        let p0 = params[0].extract::<PyReadonlyArray1<'_, i32>>()?;
-        let p0 = p0.as_slice()?;
-        let len = p0.len();
-        let p0 = p0.iter();
-
-        let p1 = params[1].extract::<PyReadonlyArray1<'_, f64>>()?;
-        let p1 = p1.as_slice()?;
-        if p1.len() != len {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
-                "Model parameters have unequal size",
-            )));
-        }
-        let p1 = p1.iter();
-
-        for (&p0, &p1) in p0.zip(p1) {
-            callback(&(self.build_model)((p0, p1)))?;
-        }
-
-        Ok(())
-    }
-
-    fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.extract::<PyReadonlyArray1<'_, f64>>()?.len())
-    }
-}
+impl_model_for_parameterizable_model! {p0: P0}
+impl_model_for_parameterizable_model! {p0: P0, p1: P1}
 
 #[derive(Debug)]
 pub struct UnspecializedPythonModel {
@@ -387,5 +331,67 @@ impl<'py, 'p> Inverse for SpecializedPythonDistribution<'py, 'p> {
             .expect("TODO")
             .extract::<f64>(self.py)
             .expect("TODO")
+    }
+}
+
+pub struct UnparameterizedCategoricalDistribution;
+
+impl Model for UnparameterizedCategoricalDistribution {
+    fn parameterize(
+        &self,
+        _py: Python<'_>,
+        params: &PyTuple,
+        callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
+    ) -> PyResult<()> {
+        if params.len() != 1 {
+            return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                "Wrong number of model parameters: expected 1, got {}. To use a\n\
+                categorical distribution, either provide a rank-1 numpy array of probabilities\n\
+                to the constructor of the model and no model parameters to the entropy coder's
+                `encode` or `decode` method; or, if you want to encode several symbols in a row\n\
+                with an individual categorical probability distribution for each symbol, provide
+                no model parameters to the constructor and then provide a single rank-2 numpy\n\
+                array to the entropy coder's `encode` or `decode` method.",
+                params.len()
+            )));
+        }
+
+        let probabilities = params[0].extract::<PyReadonlyArray2<'_, f64>>()?;
+        let range = probabilities.shape()[1];
+        let probabilities = probabilities.as_slice()?;
+
+        for probabilities in probabilities.chunks_exact(range) {
+            let model =
+                DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                    probabilities,
+                )
+                .map_err(|()| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Probability distribution not normalizable (the array of probabilities\n\
+                        might be empty, contain negative values or NaNs, or sum to infinity).",
+                    )
+                })?;
+            callback(&model)?;
+        }
+
+        Ok(())
+    }
+
+    fn len(&self, param0: &PyAny) -> PyResult<usize> {
+        Ok(param0.extract::<PyReadonlyArray2<'_, f64>>()?.shape()[0])
+    }
+}
+
+impl DefaultEntropyModel for DefaultContiguousCategoricalEntropyModel {
+    #[inline]
+    fn left_cumulative_and_probability(&self, symbol: i32) -> Option<(u32, NonZeroU32)> {
+        EncoderModel::left_cumulative_and_probability(self, symbol as usize)
+    }
+
+    #[inline]
+    fn quantile_function(&self, quantile: u32) -> (i32, u32, NonZeroU32) {
+        let (symbol, left_cumulative, probability) =
+            DecoderModel::quantile_function(self, quantile);
+        (symbol as i32, left_cumulative, probability)
     }
 }
