@@ -191,6 +191,32 @@ def test_custom_model():
     decoded = decoder.decode(model, 3)
     print(decoded)
     assert np.all(decoded == symbols)
+
+    # Encode non-iid symbols with native model:
+    model = constriction.stream.model.Gaussian(-100, 100)
+    symbols = np.array([-15, 33, 22], dtype=np.int32)
+
+    encoder = constriction.stream.queue.RangeEncoder()
+    encoder.encode(symbols, model)
+    compressed = encoder.get_compressed()
+
+    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    decoded = decoder.decode(model, 3)
+    print(decoded)
+    assert np.all(decoded == symbols)
+
+    # Encode iid symbols with native model:
+    model = constriction.stream.model.Gaussian(-100, 100, 2.1, 3.5)
+    symbols = np.array([-15, 33, 22], dtype=np.int32)
+
+    encoder = constriction.stream.queue.RangeEncoder()
+    encoder.encode(symbols, model)
+    compressed = encoder.get_compressed()
+
+    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    decoded = decoder.decode(model, 3)
+    print(decoded)
+    assert np.all(decoded == symbols)
     #### End sketch new test ----------------------------------------
 
     symbols = np.array([3, 2, 6, -51, -19, 5, 87], dtype=np.int32)

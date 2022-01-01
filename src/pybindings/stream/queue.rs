@@ -1,8 +1,6 @@
 use std::prelude::v1::*;
 
-use alloc::sync::Arc;
-use core::borrow::Borrow;
-use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyArray1, PyReadonlyArray1};
 use probability::distribution::Gaussian;
 use pyo3::{prelude::*, types::PyTuple};
 
@@ -184,47 +182,31 @@ impl RangeEncoder {
     ///   instead.
     #[pyo3(text_signature = "(symbols, model, [model_params...])")]
     #[args(symbols, model, params = "*")]
-    pub fn encode<'py>(
+    pub fn encode(
         &mut self,
-        py: Python<'py>,
+        py: Python<'_>,
         symbols: PyReadonlyArray1<'_, i32>,
         model: &Model,
         params: &PyTuple,
     ) -> PyResult<()> {
-        let params = params.as_slice();
-        match params.len() {
-            0 => {
-                let model = Arc::clone(&model.0).specialize0(py, [])?;
-                let model = EncoderDecoderModel(&*model);
-                // let model: dyn super::model::internals::DefaultEntropyModel = Arc::borrow(&model);
-                for symbol in symbols.as_slice()? {
-                    self.inner.encode_symbol(symbol, model)?;
-                }
-            }
-            2 => {
-                let symbols = symbols.as_slice()?.iter();
-                let p0 = params[0].downcast::<PyArray1<f64>>()?.readonly();
-                let p0 = p0.as_slice()?.iter();
-                let p1 = params[1].downcast::<PyArray1<f64>>()?.readonly();
-                let p1 = p1.as_slice()?.iter();
-                for ((&symbol, &p0), &p1) in symbols.zip(p0).zip(p1) {
-                    let model = Arc::clone(&model.0)
-                        .specialize2(py, [p0, p1])
-                        .expect("TODO");
-                    let model = EncoderDecoderModel(&*model);
-                    self.inner.encode_symbol(symbol, model)?
-                }
-                // self.inner.encode_symbols(symbols.zip(p0).zip(p1).map(
-                //     |((&symbol, &p0), &p1)| {
-                //         let model = model.0.specialize2(py, p0, p1).expect("TODO");
-                //         (symbol, &*model)
-                //     },
-                // ))?;
-            }
-            _ => {
-                todo!()
-            }
+        let symbols = symbols.as_slice()?;
+
+        if params.is_empty() {
+            model.0.as_parameterized(py, &mut |model| {
+                self.inner
+                    .encode_iid_symbols(symbols, EncoderDecoderModel(model))?;
+                Ok(())
+            })?;
+        } else {
+            let mut symbol_iter = symbols.iter();
+            model.0.parameterize(py, params, &mut |model| {
+                let symbol = symbol_iter.next().expect("TODO");
+                self.inner
+                    .encode_symbol(*symbol, EncoderDecoderModel(model))?;
+                Ok(())
+            })?;
         }
+
         Ok(())
     }
 
@@ -377,54 +359,40 @@ impl RangeDecoder {
         model: &Model,
         params: &PyTuple,
     ) -> PyResult<&'py PyArray1<i32>> {
-        let params = params.as_slice();
         match params.len() {
             0 => {
                 todo!()
-                // // TODO: accept a single `amt` argument instead of the model params (defaults to 1)
-                // let model = Arc::clone(&model.0).specialize0(py)?;
-                // let model = EncoderDecoderModel(&*model);
-                // // let model: dyn super::model::internals::DefaultEntropyModel = Arc::borrow(&model);
-                // let symbol = self.inner.decode_symbol(model).expect("TODO");
-                // let x = symbol.into_py(py);
-                // Ok(x.as_ref(py))
             }
             1 => {
-                if let Ok(amt) = usize::extract(params[0]) {
-                    let model = Arc::clone(&model.0).specialize0(py, [])?;
-                    let model = EncoderDecoderModel(&*model);
-                    let symbols = self
-                        .inner
-                        .decode_iid_symbols(amt, model)
-                        .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32);
-                    let symbols = PyArray1::from_iter(py, symbols);
-                    Ok(symbols)
-                } else {
-                    todo!()
+                if let Ok(amt) = usize::extract(params.as_slice()[0]) {
+                    let mut symbols = Vec::with_capacity(amt);
+                    model.0.as_parameterized(py, &mut |model| {
+                        for symbol in self
+                            .inner
+                            .decode_iid_symbols(amt, EncoderDecoderModel(model))
+                        {
+                            let symbol = symbol.expect("We use constant `PRECISION`.");
+                            symbols.push(symbol);
+                        }
+                        Ok(())
+                    })?;
+                    return Ok(PyArray1::from_iter(py, symbols));
                 }
             }
-            2 => {
-                let p0 = params[0].downcast::<PyArray1<f64>>()?.readonly();
-                let p0 = p0.as_slice()?.iter();
-                let p1 = params[1].downcast::<PyArray1<f64>>()?.readonly();
-                let p1 = p1.as_slice()?.iter();
-                let symbols = self
-                    .inner
-                    .decode_symbols(p0.zip(p1).map(|(&p0, &p1)| {
-                        let model = Arc::clone(&model.0)
-                            .specialize2(py, [p0, p1])
-                            .expect("TODO");
-                        let model = EncoderDecoderModel(model);
-                        model
-                    }))
-                    .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32);
-                let symbols = PyArray1::from_iter(py, symbols);
-                Ok(symbols)
-            }
-            _ => {
-                todo!()
-            }
-        }
+            _ => {} // Fall through to code below
+        };
+
+        let mut symbols = Vec::with_capacity(model.0.len(&params[0])?);
+        model.0.parameterize(py, params, &mut |model| {
+            let symbol = self
+                .inner
+                .decode_symbol(EncoderDecoderModel(model))
+                .expect("We use constant `PRECISION`.");
+            symbols.push(symbol);
+            Ok(())
+        })?;
+
+        Ok(PyArray1::from_vec(py, symbols))
     }
 
     // /// Decodes a sequence of symbols with parameterized custom models.

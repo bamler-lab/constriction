@@ -1,7 +1,10 @@
 {
     "cSpell.words": [
+        "gaussian",
+        "parameterizable",
         "quantizer",
         "scipy",
+        "Unparameterized",
         "unquantized"
     ]
 }
