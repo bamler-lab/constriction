@@ -20,7 +20,21 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-/// TODO: document
+/// An encoder that uses the range coding algorithm.
+///
+/// To encode data with a `RangeEncoder`, call its method
+/// [`encode`](#constriction.stream.queue.RangeEncoder.encode) one or more times. A `RangeEncoder`
+/// has an internal buffer of compressed data, and each `encode` operation appends to this internal
+/// buffer. You can copy out the contents of the internal buffer by calling the method
+/// [`get_compressed`](#constriction.stream.queue.RangeEncoder.get_compressed). This will return a
+/// rank-1 numpy array with `dtype=np.uint32` that you can pass to the constructor of a
+/// `RangeDecoder` or write to a file for decoding at some later time (see example in the
+/// documentation of the method
+/// [`get_compressed`](#constriction.stream.queue.RangeEncoder.get_compressed)).
+///
+/// ## Example
+///
+/// See [module level example](#example).
 #[pyclass]
 #[pyo3(text_signature = "()")]
 #[derive(Debug, Default)]
@@ -37,19 +51,30 @@ impl RangeEncoder {
         Self { inner }
     }
 
-    /// Resets the coder for compression.
+    /// Resets the encoder to an empty state (as if you created a new encoder).
     ///
-    /// After calling this method, the method `is_empty` will return `True`.
+    /// If you call `clear` and then immediately call
+    /// [`is_empty`](#constriction.stream.queue.RangeEncoder.is_empty),
+    /// the latter will return `True`.
+    #[pyo3(text_signature = "()")]
     pub fn clear(&mut self) {
         self.inner.clear();
     }
 
-    /// The current size of the compressed data, in `np.uint32` words.
+    /// Returns the current size of the encapsulated compressed data, in `np.uint32` words.
+    ///
+    /// Thus, the number returned by this method is the length of the array that you would get if
+    /// you called [`get_compressed`](#constriction.stream.queue.RangeEncoder.get_compressed).
+    #[pyo3(text_signature = "()")]
     pub fn num_words(&self) -> usize {
         self.inner.num_words()
     }
 
-    /// The current size of the compressed data, in bits, rounded up to full words.
+    /// Returns the current size of the compressed data, in bits, rounded up to full words.
+    ///
+    /// This is 32 times the result of what [`num_words`](#constriction.stream.queue.RangeEncoder.num_words)
+    /// would return.
+    #[pyo3(text_signature = "()")]
     pub fn num_bits(&self) -> usize {
         self.inner.num_bits()
     }
@@ -63,42 +88,116 @@ impl RangeEncoder {
         self.inner.is_empty()
     }
 
-    /// Returns a copy of the compressed data.
+    /// Returns a copy of the compressed data accumulated so far, as a rank-1 numpy array of
+    /// `dtype=np.uint32`.
+    ///
+    /// You will typically only want to call this method at the very end of your encoding task,
+    /// i.e., once you've encoded the *entire* message. There is usually no need to call this method
+    /// after encoding each symbol or other portion of your message. The encoders in `constriction`
+    /// *accumulate* compressed data in an internal buffer, and encoding (semantically) *appends* to
+    /// this buffer.
+    ///
+    /// That said, calling `get_compressed` has no side effects, so you *can* call `get_compressed`,
+    /// then continue to encode more symbols, and then call `get_compressed` again. The first call
+    /// of `get_compressed` will have no effect on the return value of the second call of
+    /// `get_compressed`.
+    ///
+    /// The return value is a rank-1 numpy array of `dtype=np.uint32`. You can write it to a file by
+    /// calling `to_file` on it, but we recommend to convert it into an architecture-independent
+    /// byte order first:
+    ///
+    /// ```python
+    /// import sys
+    ///
+    /// encoder = constriction.stream.queue.RangeEncoder()
+    /// # ... encode some message (skipped here) ...
+    /// compressed = encoder.get_compressed() # returns a numpy array.
+    /// if sys.byteorder != 'little':
+    ///     # Let's save data in little-endian byte order by convention.
+    ///     compressed.byteswap(inplace=True)
+    /// compressed.tofile('compressed-file.bin')
+    ///
+    /// # At a later point, you might want to read and decode the file:
+    /// compressed = np.fromfile('compressed-file.bin', dtype=np.uint32)
+    /// if sys.byteorder != 'little':
+    ///     # Restore native byte order before passing it to `constriction`.
+    ///     compressed.byteswap(inplace=True)
+    /// decoder = constriction.stream.stack.RangeDecoder(compressed)
+    /// # ... decode the message (skipped here) ...
+    /// ```
+    #[pyo3(text_signature = "()")]
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> &'p PyArray1<u32> {
         PyArray1::from_slice(py, &*self.inner.get_compressed())
     }
 
+    /// Returns a `RangeDecoder` that is initialized with a copy of the compressed data currently on
+    /// this `RangeEncoder`.
+    ///
+    /// If `encoder` is a `RangeEncoder`, then
+    ///
+    /// ```python
+    /// decoder = encoder.get_decoder()
+    /// ```
+    ///
+    /// is equivalent to:
+    ///
+    /// ```python
+    /// compressed = encoder.get_compressed()
+    /// decoder = constriction.stream.stack.RangeDecoder(compressed)
+    /// ```
+    ///
+    /// Calling `get_decoder` is more efficient since it copies the compressed data only once
+    /// whereas the longhand version copies the data twice.
     #[pyo3(text_signature = "()")]
     pub fn get_decoder(&mut self) -> RangeDecoder {
         let compressed = self.inner.get_compressed().to_vec();
         RangeDecoder::from_vec(compressed)
     }
 
-    /// Encodes a sequence of symbols using (leaky) Gaussian entropy models.
+    /// .. deprecated:: 0.1.6
+    ///    This method has been superseded by the new and more powerful generic
+    ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
+    ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
     ///
-    /// The provided numpy arrays `symbols`, `means`, and `stds` must all have the
-    /// same size.
+    ///    To encode an array of symbols with an individual quantized Gaussian distribution for each
+    ///    symbol, do the following now:
     ///
-    /// See method `decode_leaky_gaussian_symbols` for a usage example.
+    ///    ```python
+    ///    # Define a generic quantized Gaussian distribution for all integers
+    ///    # in the range from -100 to 100 (both ends inclusive):
+    ///    model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
     ///
-    /// Arguments:
-    /// min_supported_symbol -- lower bound of the domain for argument `symbols`
-    ///     (inclusively).
-    /// max_supported_symbol -- upper bound of the domain for argument `symbols`
-    ///     (inclusively).
-    /// symbols -- the symbols to be encoded. Must be a contiguous one-dimensional
-    ///     numpy array (call `.copy()` on it if it is not contiguous) with dtype
-    ///     `np.int32`. Each value in the array must be no smaller than
-    ///     `min_supported_symbol` and no larger than `max_supported_symbol`.
-    /// means -- the mean values of the Gaussian entropy models for each symbol.
-    ///     Must be a contiguous one-dimensional numpy array with dtype `np.float64`
-    ///     and with the exact same length as the argument `symbols`.
-    /// stds -- the standard deviations of the Gaussian entropy models for each
-    ///     symbol. Must be a contiguous one-dimensional numpy array with dtype
-    ///     `np.float64` and with the exact same length as the argument `symbols`.
-    ///     All entries must be strictly positive (i.e., nonzero and nonnegative)
-    ///     and finite.
-    #[pyo3(text_signature = "(symbols, min_supported_symbol, max_supported_symbol, means, stds)")]
+    ///    # Specify the model parameters for each symbol:
+    ///    means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
+    ///    stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
+    ///
+    ///    # Encode an example message:
+    ///    # (needs `len(symbols) == len(means) == len(stds)`)
+    ///    symbols = np.array([12, -13, 25], dtype=np.int32)
+    ///    encoder = constriction.stream.queue.RangeEncoder()
+    ///    encoder.encode(symbols, model_family, means, stds)
+    ///    print(encoder.get_compressed()) # (prints: [2655472005])
+    ///    ```
+    ///
+    ///    If all symbols have the same entropy model (i.e., the same mean and standard deviation),
+    ///    then you can use the following shortcut, which is also more computationally efficient:
+    ///
+    ///    ```python
+    ///    # Define a *concrete* quantized Gaussian distribution for all
+    ///    # integers in the range from -100 to 100 (both ends inclusive),
+    ///    # with a fixed mean of 16.7 and a fixed standard deviation of 9.3:
+    ///    model = constriction.stream.model.QuantizedGaussian(
+    ///        -100, 100, 16.7, 9.3)
+    ///
+    ///    # Encode an example message using the above `model` for all symbols:
+    ///    symbols = np.array([18, 43, 25, 20, 8, 11], dtype=np.int32)
+    ///    encoder = constriction.stream.queue.RangeEncoder()
+    ///    encoder.encode(symbols, model)
+    ///    print(encoder.get_compressed()) # (prints: [2476672014, 4070442963])
+    ///    ```
+    ///
+    ///    For more information, see [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian).
+    #[pyo3(text_signature = "(DEPRECATED)")]
     pub fn encode_leaky_gaussian_symbols(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -129,24 +228,44 @@ impl RangeEncoder {
         Ok(())
     }
 
-    /// Encodes a sequence of symbols using a fixed categorical entropy model.
+    /// .. deprecated:: 0.1.6
+    ///    This method has been superseded by the new and more powerful generic
+    ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
+    ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
     ///
-    /// This method is analogous to the method `encode_leaky_gaussian_symbols` except that
+    ///    To encode an array of i.i.d. symbols with a fixed categorical entropy model, do the
+    ///    following now:
     ///
-    /// - all symbols are encoded with the same entropy model; and
-    /// - the entropy model is a categorical rather than a Gaussian distribution.
+    ///    ```python
+    ///    # Define a categorical model over the (implied) alphabet {0, 1, 2}:
+    ///    probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+    ///    model = constriction.stream.model.Categorical(probabilities)
     ///
-    /// In detail, the categorical entropy model is constructed as follows:
+    ///    # Encode an example message using the above `model` for all symbols:
+    ///    symbols = np.array([0, 2, 1, 2, 0, 2, 0, 2, 1], dtype=np.int32)
+    ///    encoder = constriction.stream.queue.RangeEncoder()
+    ///    encoder.encode(symbols, model)
+    ///    print(encoder.get_compressed()) # (prints: [369323576])
+    ///    ```
     ///
-    /// - each symbol from `min_supported_symbol` to `max_supported_symbol`
-    ///   (inclusively) gets assigned at least the smallest nonzero probability
-    ///   that is representable within the internally used precision.
-    /// - the remaining probability mass is distributed among the symbols from
-    ///   `min_provided_symbol` to `min_provided_symbol + len(probabilities) - 1`
-    ///   (inclusively), in the proportions specified by the provided probabilities
-    ///   (as far as this is possible within the internally used fixed point
-    ///   accuracy). The provided probabilities do not need to be normalized (i.e.,
-    ///   the do not need to add up to one) but they must all be nonnegative.
+    ///    This new API also allows you to use an *individual* entropy model for each encoded symbol
+    ///    (although this is less computationally efficient):
+    ///
+    ///    ```python
+    ///    # Define 2 categorical models over the alphabet {0, 1, 2, 3, 4}:
+    ///    probabilities = np.array(
+    ///        [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first encoded symbol)
+    ///         [0.3, 0.2, 0.2, 0.2, 0.1]], # (for second encoded symbol)
+    ///        dtype=np.float64)
+    ///    model_family = constriction.stream.model.Categorical()
+    ///
+    ///    # Encode 2 symbols (needs `len(symbols) == probabilities.shape[0]`):
+    ///    symbols = np.array([3, 1], dtype=np.int32)
+    ///    encoder = constriction.stream.queue.RangeEncoder()
+    ///    encoder.encode(symbols, model_family, probabilities)
+    ///    print(encoder.get_compressed()) # (prints: [2705829535])
+    ///    ```
+    #[pyo3(text_signature = "(DEPRECATED)")]
     pub fn encode_iid_categorical_symbols(
         &mut self,
         symbols: PyReadonlyArray1<'_, i32>,
@@ -173,14 +292,97 @@ impl RangeEncoder {
         Ok(())
     }
 
-    /// Encodes a sequence of symbols with identical custom models.
+    /// Encodes one or more symbols, appending them to the encapsulated compressed data.
     ///
-    /// - For usage examples, see
-    ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
-    /// - If the model parameters are different for each symbol then you'll want to use
-    ///   [`encode_custom_model`](#constriction.stream.queue.RangeEncoder.encode_custom_model)
-    ///   instead.
-    #[pyo3(text_signature = "(symbols, model, [model_params...])")]
+    /// This method can be called in 3 different ways:
+    ///
+    /// ## Option 1: encode(symbol, model)
+    ///
+    /// Encodes a *single* symbol with a concrete (i.e., fully parameterized) entropy model; (for
+    /// optimal computational efficiency, don't use this option in a loop if you can instead use one
+    /// of the two alternative options below.)
+    ///
+    /// For example:
+    ///
+    /// ```python
+    /// # Define a concrete categorical entropy model over the (implied)
+    /// # alphabet {0, 1, 2}:
+    /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+    /// model = constriction.stream.model.Categorical(probabilities)
+    ///
+    /// # Encode a single symbol with this entropy model:
+    /// encoder = constriction.stream.queue.RangeEncoder()
+    /// encoder.encode(2, model) # Encodes the symbol `2`.
+    /// # ... then encode some more symbols ...
+    /// ```
+    ///
+    /// ## Option 2: encode(symbols, model)
+    ///
+    /// Encodes multiple i.i.d. symbols, i.e., all symbols in the rank-1 array `symbols` will be
+    /// encoded with the same concrete (i.e., fully parameterized) entropy model.
+    ///
+    /// For example:
+    ///
+    /// ```python
+    /// # Use the same concrete entropy model as in the previous example:
+    /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+    /// model = constriction.stream.model.Categorical(probabilities)
+    ///
+    /// # Encode an example message using the above `model` for all symbols:
+    /// symbols = np.array([0, 2, 1, 2, 0, 2, 0, 2, 1], dtype=np.int32)
+    /// encoder = constriction.stream.queue.RangeEncoder()
+    /// encoder.encode(symbols, model)
+    /// print(encoder.get_compressed()) # (prints: [369323576])
+    /// ```
+    ///
+    /// ## Option 3: encode(symbols, model_family, params1, params2, ...)
+    ///
+    /// Encodes multiple symbols, using the same *family* of entropy models (e.g., categorical or
+    /// quantized Gaussian) for all symbols, but with different model parameters for each symbol;
+    /// here, each `paramsX` argument is an array of the same length as `symbols`. The number of
+    /// required `paramsX` arguments and their shapes and `dtype`s depend on the model family.
+    ///
+    /// For example, the
+    /// [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model family
+    /// expects two rank-1 model parameters of dtype `np.float64`, which specify the mean and
+    /// standard deviation for each entropy model:
+    ///
+    /// ```python
+    /// # Define a generic quantized Gaussian distribution for all integers
+    /// # in the range from -100 to 100 (both ends inclusive):
+    /// model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
+    ///    
+    /// # Specify the model parameters for each symbol:
+    /// means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
+    /// stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
+    ///    
+    /// # Encode an example message:
+    /// # (needs `len(symbols) == len(means) == len(stds)`)
+    /// symbols = np.array([12, -13, 25], dtype=np.int32)
+    /// encoder = constriction.stream.queue.RangeEncoder()
+    /// encoder.encode(symbols, model_family, means, stds)
+    /// print(encoder.get_compressed()) # (prints: [2655472005])
+    /// ```
+    ///
+    /// By contrast, the [`Categorical`](model.html#constriction.stream.model.Categorical) model
+    /// family expects a single rank-2 model parameter where the i'th row lists the
+    /// probabilities for each possible value of the i'th symbol:
+    ///
+    /// ```python
+    /// # Define 2 categorical models over the alphabet {0, 1, 2, 3, 4}:
+    /// probabilities = np.array(
+    ///     [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first encoded symbol)
+    ///      [0.3, 0.2, 0.2, 0.2, 0.1]], # (for second encoded symbol)
+    ///     dtype=np.float64)
+    /// model_family = constriction.stream.model.Categorical()
+    ///
+    /// # Encode 2 symbols (needs `len(symbols) == probabilities.shape[0]`):
+    /// symbols = np.array([3, 1], dtype=np.int32)
+    /// encoder = constriction.stream.queue.RangeEncoder()
+    /// encoder.encode(symbols,_family model, probabilities)
+    /// print(encoder.get_compressed()) # (prints: [2705829535])
+    /// ```
+    #[pyo3(text_signature = "(symbols, model, optional_model_params)")]
     #[args(symbols, model, params = "*")]
     pub fn encode(
         &mut self,
@@ -269,7 +471,21 @@ impl RangeEncoder {
     // }
 }
 
-/// TODO: document
+/// A decoder of data that was previously encoded with a `RangeEncoder`.
+///
+/// The constructor expects a single argument `compressed`, which has to be a rank-1 numpy array
+/// with `dtype=np.uint32` that contains the compressed data (as returned by the method
+/// [`get_compressed`](#constriction.stream.queue.RangeEncoder.get_compressed) of a `RangeEncoder`).
+/// The provided compressed data gets *copied* in to an internal buffer of the `RangeDecoder`.
+///
+/// To decode data with a `RangeDecoder`, call its method
+/// [`decode`](#constriction.stream.queue.RangeDecoder.decode) one or more times. Each decoding
+/// operation consumes some portion of the compressed data from the `RangeDecoder`'s internal
+/// buffer.
+///
+/// ## Example
+///
+/// See [module level example](#example).
 #[pyclass]
 #[pyo3(text_signature = "(compressed)")]
 #[derive(Debug)]
@@ -279,16 +495,68 @@ pub struct RangeDecoder {
 
 #[pymethods]
 impl RangeDecoder {
-    /// Constructs a new (empty) range encoder.
     #[new]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
         Ok(Self::from_vec(compressed.to_vec()?))
     }
 
+    /// Returns `True` if all compressed data *may* have already been decoded and `False` if there
+    /// is definitely still some more data available to decode.
+    ///
+    /// A return value of `True` does not necessarily mean that there is no data left on the
+    /// decoder because `constriction`'s range coding implementation--by design--cannot detect end-
+    /// of-stream in all cases. If you need ot be able to decode variable-length messages then you
+    /// can introduce an "end of stream" sentinel symbol, which you append to all messages before
+    /// encoding them.
+    #[pyo3(text_signature = "()")]
     pub fn maybe_exhausted(&self) -> bool {
         self.inner.maybe_exhausted()
     }
 
+    /// .. deprecated:: 0.1.6
+    ///    This method has been superseded by the new and more powerful generic
+    ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
+    ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
+    ///
+    ///    To decode an array of symbols with an individual quantized Gaussian distribution for each
+    ///    symbol, do the following now:
+    ///
+    ///    ```python
+    ///    # Define a generic quantized Gaussian distribution for all integers
+    ///    # in the range from -100 to 100 (both ends inclusive):
+    ///    model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
+    ///
+    ///    # Specify the model parameters for each symbol:
+    ///    means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
+    ///    stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
+    ///
+    ///    # Decode a message from some example compressed data:
+    ///    # (needs `len(symbols) == len(means) == len(stds)`)
+    ///    compressed = np.array([2655472005], dtype=np.uint32)
+    ///    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    ///    symbols = decoder.decode(model_family, means, stds)
+    ///    print(symbols) # (prints: [12, -13, 25])
+    ///    ```
+    ///
+    ///    If all symbols have the same entropy model (i.e., the same mean and standard deviation),
+    ///    then you can use the following shortcut, which is also more computationally efficient:
+    ///
+    ///    ```python
+    ///    # Define a *concrete* quantized Gaussian distribution for all
+    ///    # integers in the range from -100 to 100 (both ends inclusive),
+    ///    # with a fixed mean of 16.7 and a fixed standard deviation of 9.3:
+    ///    model = constriction.stream.model.QuantizedGaussian(
+    ///        -100, 100, 16.7, 9.3)
+    ///
+    ///    # Decode a message from some example compressed data:
+    ///    compressed = np.array([2476672014, 4070442963], dtype=np.uint32)
+    ///    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    ///    symbols = decoder.decode(model, 6) # (decodes 6 symbols)
+    ///    print(symbols) # (prints: [18, 43, 25, 20, 8, 11])
+    ///    ```
+    ///
+    ///    For more information, see [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian).
+    #[pyo3(text_signature = "(DEPRECATED)")]
     pub fn decode_leaky_gaussian_symbols<'p>(
         &mut self,
         min_supported_symbol: i32,
@@ -319,15 +587,45 @@ impl RangeDecoder {
         Ok(PyArray1::from_vec(py, symbols))
     }
 
-    /// Decodes a sequence of categorically distributed symbols
+    /// .. deprecated:: 0.1.6
+    ///    This method has been superseded by the new and more powerful generic
+    ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
+    ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
     ///
-    /// This method is analogous to the method `decode_leaky_gaussian_symbols` except that
+    ///    To decode an array of i.i.d. symbols with a fixed categorical entropy model, do the
+    ///    following now:
     ///
-    /// - all symbols are decoded with the same entropy model; and
-    /// - the entropy model is a categorical rather than a Gaussian model.
+    ///    ```python
+    ///    # Define a categorical model over the (implied) alphabet {0, 1, 2}:
+    ///    probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+    ///    model = constriction.stream.model.Categorical(probabilities)
     ///
-    /// See documentation of `encode_iid_categorical_symbols` for details of the
-    /// categorical entropy model.
+    ///    # Decode 9 symbols from some example compressed data, using the
+    ///    # same (fixed) entropy model defined above for all symbols:
+    ///    compressed = np.array([369323576], dtype=np.uint32)
+    ///    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    ///    symbols = decoder.decode(model, 9) # (decodes 9 symbols)
+    ///    print(symbols) # (prints: [0, 2, 1, 2, 0, 2, 0, 2, 1])
+    ///    ```
+    ///
+    ///    This new API also allows you to use an *individual* entropy model for each decoded symbol
+    ///    (although this is less computationally efficient):
+    ///
+    ///    ```python
+    ///    # Define 2 categorical models over the alphabet {0, 1, 2, 3, 4}:
+    ///    probabilities = np.array(
+    ///        [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first decoded symbol)
+    ///         [0.3, 0.2, 0.2, 0.2, 0.1]], # (for second decoded symbol)
+    ///        dtype=np.float64)
+    ///    model_family = constriction.stream.model.Categorical()
+    ///
+    ///    # Decode 2 symbols:
+    ///    compressed = np.array([2705829535], dtype=np.uint32)
+    ///    decoder = constriction.stream.queue.RangeDecoder(compressed)
+    ///    symbols = decoder.decode(model_family, probabilities)
+    ///    print(symbols) # (prints: [3, 1])
+    ///    ```
+    #[pyo3(text_signature = "(DEPRECATED)")]
     pub fn decode_iid_categorical_symbols<'py>(
         &mut self,
         amt: usize,
@@ -353,29 +651,103 @@ impl RangeDecoder {
         ))
     }
 
-    // /// Decodes a sequence of symbols with identical custom models.
-    // ///
-    // /// - For usage examples, see
-    // ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
-    // /// - If the model parameters are different for each symbol then you'll want to use
-    // ///   [`decode_custom_model`](#constriction.stream.queue.RangeDecoder.decode_custom_model)
-    // ///   instead.
-    // #[pyo3(text_signature = "(amt, model)")]
-    // pub fn decode_iid_custom_model<'py>(
-    //     &mut self,
-    //     amt: usize,
-    //     model: &CustomModel,
-    //     py: Python<'py>,
-    // ) -> PyResult<&'py PyArray1<i32>> {
-    //     Ok(PyArray1::from_iter(
-    //         py,
-    //         self.inner
-    //             .decode_iid_symbols(amt, model.quantized(py))
-    //             .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32),
-    //     ))
-    // }
-
-    #[pyo3(text_signature = "(model, [size or model_params...])")]
+    /// Decodes one or more symbols, consuming them from the encapsulated compressed data.
+    ///
+    /// This method can be called in 3 different ways:
+    ///
+    /// ## Option 1: decode(model)
+    ///
+    /// Decodes a *single* symbol with a concrete (i.e., fully parameterized) entropy model and
+    /// returns the decoded symbol; (for optimal computational efficiency, don't use this option in
+    /// a loop if you can instead use one of the two alternative options below.)
+    ///
+    /// For example:
+    ///
+    /// ```python
+    /// # Define a concrete categorical entropy model over the (implied)
+    /// # alphabet {0, 1, 2}:
+    /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+    /// model = constriction.stream.model.Categorical(probabilities)
+    ///
+    /// # Decode a single symbol from some example compressed data:
+    /// compressed = np.array([3089773345, 6189162893], dtype=np.uint32)
+    /// decoder = constriction.stream.queue.RangeDecoder(compressed)
+    /// symbol = decoder.decode(model)
+    /// print(symbol) # (prints: 2)
+    /// # ... then decode some more symbols ...
+    /// ```
+    ///
+    /// ## Option 2: decode(model, amt) [where `amt` is an integer]
+    ///
+    /// Decodes `amt` i.i.d. symbols using the same concrete (i.e., fully parametrized) entropy
+    /// model for each symbol, and returns the decoded symbols as a rank-1 numpy array with
+    /// `dtype=np.int32` and length `amt`;
+    ///
+    /// For example:
+    ///
+    /// ```python
+    /// # Use the same concrete entropy model as in the previous example:
+    /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+    /// model = constriction.stream.model.Categorical(probabilities)
+    ///
+    /// # Decode 9 symbols from some example compressed data, using the
+    /// # same (fixed) entropy model defined above for all symbols:
+    /// compressed = np.array([369323576], dtype=np.uint32)
+    /// decoder = constriction.stream.queue.RangeDecoder(compressed)
+    /// symbols = decoder.decode(model, 9)
+    /// print(symbols) # (prints: [0, 2, 1, 2, 0, 2, 0, 2, 1])
+    /// ```
+    ///
+    /// ## Option 3: decode(model_family, params1, params2, ...)
+    ///
+    /// Decodes multiple symbols, using the same *family* of entropy models (e.g., categorical or
+    /// quantized Gaussian) for all symbols, but with different model parameters for each symbol,
+    /// and returns the decoded symbols as a rank-1 numpy array with `dtype=np.int32`; here, all
+    /// `paramsX` arguments are arrays of equal length (the number of symbols to be decoded). The
+    /// number of required `paramsX` arguments and their shapes and `dtype`s depend on the model
+    /// family.
+    ///
+    /// For example, the
+    /// [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model family
+    /// expects two rank-1 model parameters of dtype `np.float64`, which specify the mean and
+    /// standard deviation for each entropy model:
+    ///
+    /// ```python
+    /// # Define a generic quantized Gaussian distribution for all integers
+    /// # in the range from -100 to 100 (both ends inclusive):
+    /// model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
+    ///
+    /// # Specify the model parameters for each symbol:
+    /// means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
+    /// stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
+    ///
+    /// # Decode a message from some example compressed data:
+    /// # (needs `len(symbols) == len(means) == len(stds)`)
+    /// compressed = np.array([2655472005], dtype=np.uint32)
+    /// decoder = constriction.stream.queue.RangeDecoder(compressed)
+    /// symbols = decoder.decode(model_family, means, stds)
+    /// print(symbols) # (prints: [12, -13, 25])
+    /// ```
+    ///
+    /// By contrast, the [`Categorical`](model.html#constriction.stream.model.Categorical) model
+    /// family expects a single rank-2 model parameter where the i'th row lists the
+    /// probabilities for each possible value of the i'th symbol:
+    ///
+    /// ```python
+    /// # Define 2 categorical models over the alphabet {0, 1, 2, 3, 4}:
+    /// probabilities = np.array(
+    ///     [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first decoded symbol)
+    ///      [0.3, 0.2, 0.2, 0.2, 0.1]], # (for second decoded symbol)
+    ///     dtype=np.float64)
+    /// model_family = constriction.stream.model.Categorical()
+    ///
+    /// # Decode 2 symbols:
+    /// compressed = np.array([2705829535], dtype=np.uint32)
+    /// decoder = constriction.stream.queue.RangeDecoder(compressed)
+    /// symbols = decoder.decode(model_family, probabilities)
+    /// print(symbols) # (prints: [3, 1])
+    /// ```
+    #[pyo3(text_signature = "(model, optional_amt_or_model_params)")]
     #[args(symbols, model, params = "*")]
     pub fn decode<'py>(
         &mut self,
