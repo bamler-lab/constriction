@@ -154,7 +154,7 @@ impl RangeEncoder {
         RangeDecoder::from_vec(compressed)
     }
 
-    /// .. deprecated:: 0.2.0
+    /// .. deprecated:: 1.0.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -237,7 +237,7 @@ impl RangeEncoder {
         Ok(())
     }
 
-    /// .. deprecated:: 0.2.0
+    /// .. deprecated:: 1.0.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
@@ -454,7 +454,7 @@ impl RangeEncoder {
         Ok(())
     }
 
-    /// .. deprecated:: 0.2.0
+    /// .. deprecated:: 1.0.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
     ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
@@ -568,7 +568,7 @@ impl RangeDecoder {
         self.inner.maybe_exhausted()
     }
 
-    /// .. deprecated:: 0.2.0
+    /// .. deprecated:: 1.0.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -650,7 +650,7 @@ impl RangeDecoder {
         Ok(PyArray1::from_vec(py, symbols))
     }
 
-    /// .. deprecated:: 0.2.0
+    /// .. deprecated:: 1.0.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
