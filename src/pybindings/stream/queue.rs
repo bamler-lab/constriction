@@ -154,7 +154,7 @@ impl RangeEncoder {
         RangeDecoder::from_vec(compressed)
     }
 
-    /// .. deprecated:: 0.1.6
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -209,8 +209,8 @@ impl RangeEncoder {
     ) -> PyResult<()> {
         let _ = py.run(
             "print('WARNING: the method `encode_leaky_gaussian_symbols` is deprecated. Use method\\n\
-            \x20        `encode` instead. For more information and usage examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode')",
+            \x20        `encode` instead. For transition instructions with code examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode_leaky_gaussian_symbols')",
             None,
             None
         );
@@ -237,7 +237,7 @@ impl RangeEncoder {
         Ok(())
     }
 
-    /// .. deprecated:: 0.1.6
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
@@ -284,8 +284,8 @@ impl RangeEncoder {
     ) -> PyResult<()> {
         let _ = py.run(
             "print('WARNING: the method `encode_iid_categorical_symbols` is deprecated. Use method\\n\
-            \x20        `encode` instead. For more information and usage examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode')",
+            \x20        `encode` instead. For transition instructions with code examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode_iid_categorical_symbols')",
             None,
             None
         );
@@ -454,39 +454,76 @@ impl RangeEncoder {
         Ok(())
     }
 
-    // /// Encodes a sequence of symbols with parameterized custom models.
-    // ///
-    // /// - For usage examples, see
-    // ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
-    // /// - If all symbols use the same entropy model (with identical model parameters) then
-    // ///   you'll want to use
-    // ///   [`encode_iid_custom_model`](#constriction.stream.queue.RangeEncoder.encode_iid_custom_model)
-    // ///   instead.
-    // #[pyo3(text_signature = "(symbols, model, model_parameters)")]
-    // pub fn encode_custom_model<'py>(
-    //     &mut self,
-    //     symbols: PyReadonlyArray1<'_, i32>,
-    //     model: &CustomModel,
-    //     model_parameters: PyReadonlyArray2<'_, f64>,
-    //     py: Python<'py>,
-    // ) -> PyResult<()> {
-    //     let dims = model_parameters.dims();
-    //     let num_symbols = dims[0];
-    //     let num_parameters = dims[1];
-    //     if symbols.len() != num_symbols {
-    //         return Err(pyo3::exceptions::PyAttributeError::new_err(
-    //             "`len(symbols)` must match first dimension of `model_parameters`.",
-    //         ));
-    //     }
+    /// .. deprecated:: 0.2.0
+    ///    This method has been superseded by the new and more powerful generic
+    ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
+    ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
+    ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel) model class.
+    ///
+    ///    To encode an array of symbols with a custom entropy model, do the following now:
+    ///
+    ///    ```python
+    ///    # Define the cumulative distribution function (CDF) and (approximate)
+    ///    # inverse of it (sometimes called the percent point function or PPF):
+    ///    def cdf(x, model_param1, model_param2):
+    ///        # TODO (note: you may also leave out the `model_param`s)
+    ///    def ppf(xi, model_param1, model_param2):
+    ///        # TODO
+    ///
+    ///    # Wrap them in a `CustomModel`:
+    ///    model = constriction.stream.model.CustomModel(cdf, ppf, -100, 100)
+    ///
+    ///    # Encode an example message using the above `model` for all symbols:
+    ///    message      = np.array([... TODO ...], dtype=np.int32)
+    ///    model_prams1 = np.array([... TODO ...], dtype=np.float64)
+    ///    model_prams2 = np.array([... TODO ...], dtype=np.float64)
+    ///    encoder = constriction.stream.queue.RangeEncoder()
+    ///    encoder.encode(message, model, model_params1, model_params2)
+    ///    ```
+    ///
+    ///    **Hint:** the `scipy` python package provides a number of predefined models, and
+    ///    `constriction` offers a convenient wrapper around `scipy` models:
+    ///
+    ///    ```python
+    ///    import scipy.stats
+    ///
+    ///    encoder = constriction.stream.queue.RangeEncoder()
+    ///
+    ///    # Encode an example message with an i.i.d. entropy model from scipy:
+    ///    scipy_model = scipy.stats.cauchy(10.2, 16.8)
+    ///    constriction_model = constriction.stream.model.ScipyModel(
+    ///        scipy_model, -100, 100)
+    ///    message_part1 = np.array([-4, 41, 30, 23, -15, 32], dtype=np.int32)
+    ///    encoder.encode(message_part1, constriction_model)
+    ///
+    ///    # Append some more symbols with per-symbol model parameters:
+    ///    scipy_model_family = scipy.stats.cauchy
+    ///    model_family = constriction.stream.model.ScipyModel(
+    ///        scipy_model_family, -100, 100)
+    ///    message_part2 = np.array([11,    2,   -18,   16  ], dtype=np.int32)
+    ///    means         = np.array([13.2, -5.7, -21.2, 14.2], dtype=np.float64)
+    ///    scales        = np.array([ 4.6, 13.4,   5.7,  3.9], dtype=np.float64)
+    ///    encoder.encode(message_part2, model_family, means, scales)
+    ///
+    ///    print(encoder.get_compressed()) # (prints: [1204741195, 2891990943])
+    ///    ```
+    #[pyo3(text_signature = "(DEPRECATED)")]
+    pub fn encode_iid_custom_model<'py>(
+        &mut self,
+        py: Python<'py>,
+        symbols: PyReadonlyArray1<'_, i32>,
+        model: &Model,
+    ) -> PyResult<()> {
+        let _ = py.run(
+            "print('WARNING: the method `encode_iid_custom_model` is deprecated. Use method\\n\
+            \x20        `encode` instead. For transition instructions with code examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode_iid_custom_model')",
+            None,
+            None
+        );
 
-    //     let model_parameters = model_parameters.as_slice()?.chunks_exact(num_parameters);
-    //     let models = model_parameters.map(|params| {
-    //         model.quantized_with_parameters(py, PyArray1::from_vec(py, params.to_vec()).readonly())
-    //     });
-    //     self.inner
-    //         .encode_symbols(symbols.as_slice()?.iter().zip(models))?;
-    //     Ok(())
-    // }
+        self.encode(py, &symbols, model, PyTuple::empty(py))
+    }
 }
 
 /// A decoder of data that was previously encoded with a `RangeEncoder`.
@@ -531,7 +568,7 @@ impl RangeDecoder {
         self.inner.maybe_exhausted()
     }
 
-    /// .. deprecated:: 0.1.6
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -585,8 +622,8 @@ impl RangeDecoder {
     ) -> PyResult<&'p PyArray1<i32>> {
         let _ = py.run(
             "print('WARNING: the method `decode_leaky_gaussian_symbols` is deprecated. Use method\\n\
-            \x20        `decode` instead. For more information and usage examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeDecoder.decode')",
+            \x20        `decode` instead. For transition instructions with code examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeDecoder.decode_leaky_gaussian_symbols')",
             None,
             None
         );
@@ -613,7 +650,7 @@ impl RangeDecoder {
         Ok(PyArray1::from_vec(py, symbols))
     }
 
-    /// .. deprecated:: 0.1.6
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
@@ -661,8 +698,8 @@ impl RangeDecoder {
     ) -> PyResult<&'py PyArray1<i32>> {
         let _ = py.run(
             "print('WARNING: the method `decode_iid_categorical_symbols` is deprecated. Use method\\n\
-            \x20        `decode` instead. For more information and usage examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeDecoder.decode')",
+            \x20        `decode` instead. For transition instructions with code examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeDecoder.decode_iid_categorical_symbols')",
             None,
             None
         );

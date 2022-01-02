@@ -29,7 +29,7 @@ pub struct Model(pub Arc<dyn internals::Model>);
 
 #[pyclass(extends=Model, subclass)]
 #[pyo3(
-    text_signature = "(min_symbol_inclusive, max_symbol_inclusive, cdf, approximate_inverse_cdf)"
+    text_signature = "(cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)"
 )]
 #[derive(Debug)]
 pub struct CustomModel;
@@ -54,7 +54,7 @@ impl CustomModel {
 }
 
 #[pyclass(extends=CustomModel)]
-#[pyo3(text_signature = "(min_symbol_inclusive, max_symbol_inclusive, scipy_model)")]
+#[pyo3(text_signature = "(scipy_model, min_symbol_inclusive, max_symbol_inclusive)")]
 #[derive(Debug)]
 pub struct ScipyModel;
 
@@ -63,9 +63,9 @@ impl ScipyModel {
     #[new]
     pub fn new(
         py: Python<'_>,
+        model: PyObject,
         min_symbol_inclusive: i32,
         max_symbol_inclusive: i32,
-        model: PyObject,
     ) -> PyResult<PyClassInitializer<Self>> {
         let custom_model = CustomModel::new(
             model.getattr(py, "cdf")?,

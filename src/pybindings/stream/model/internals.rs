@@ -168,22 +168,20 @@ macro_rules! impl_model_for_parameterizable_model {
                 }
 
                 let $p0 = params[0].extract::<PyReadonlyArray1<'_, $ty0>>()?;
-                let $p0 = $p0.as_slice()?;
 
                 #[allow(unused_variables)] // (`len` remains unused when macro is invoked with only one parameter.)
                 let len = $p0.len();
 
-                let $p0 = $p0.iter();
+                let $p0 = $p0.iter()?;
 
                 $(
                     let $ps = params[1].extract::<PyReadonlyArray1<'_, $tys>>()?;
-                    let $ps = $ps.as_slice()?;
                     if $ps.len() != len {
                         return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
                             "Model parameters have unequal shape",
                         )));
                     }
-                    let mut $ps = $ps.iter();
+                    let mut $ps = $ps.iter()?;
                 )*
 
                 for &$p0 in $p0 {
@@ -253,9 +251,8 @@ impl Model for UnspecializedPythonModel {
         let params = params.as_slice();
 
         let p0 = params[0].extract::<PyReadonlyArray1<'_, f64>>()?;
-        let p0 = p0.as_slice()?;
         let len = p0.len();
-        let p0iter = p0.iter();
+        let p0iter = p0.iter()?;
 
         let mut param_iters = params[1..]
             .iter()
