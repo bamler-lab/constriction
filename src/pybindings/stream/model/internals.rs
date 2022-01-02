@@ -2,7 +2,7 @@ use core::{cell::RefCell, marker::PhantomData, num::NonZeroU32};
 use std::prelude::v1::*;
 
 use alloc::vec;
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
 use probability::distribution::{Distribution, Inverse};
 use pyo3::{prelude::*, types::PyTuple};
 
@@ -96,6 +96,7 @@ pub trait Model: Send + Sync {
         &self,
         _py: Python<'_>,
         _params: &PyTuple,
+        _reverse: bool,
         _callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
         Err(pyo3::exceptions::PyAttributeError::new_err(
@@ -158,6 +159,7 @@ macro_rules! impl_model_for_parameterizable_model {
                 &self,
                 _py: Python<'_>,
                 params: &PyTuple,
+                reverse: bool,
                 callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
             ) -> PyResult<()> {
                 if params.len() != 2 {
@@ -171,9 +173,6 @@ macro_rules! impl_model_for_parameterizable_model {
 
                 #[allow(unused_variables)] // (`len` remains unused when macro is invoked with only one parameter.)
                 let len = $p0.len();
-
-                let $p0 = $p0.iter()?;
-
                 $(
                     let $ps = params[1].extract::<PyReadonlyArray1<'_, $tys>>()?;
                     if $ps.len() != len {
@@ -181,14 +180,28 @@ macro_rules! impl_model_for_parameterizable_model {
                             "Model parameters have unequal shape",
                         )));
                     }
-                    let mut $ps = $ps.iter()?;
                 )*
 
-                for &$p0 in $p0 {
+                if reverse{
                     $(
-                        let $ps = *$ps.next().expect("We checked that all params have same length.");
+                        let mut $ps = $ps.as_slice()?.iter().rev();
                     )*
-                    callback(&(self.build_model)(($p0, $($ps,)*)))?;
+                    for &$p0 in $p0.as_slice()?.iter().rev() {
+                        $(
+                            let $ps = *$ps.next().expect("We checked that all params have same length.");
+                        )*
+                        callback(&(self.build_model)(($p0, $($ps,)*)))?;
+                    }
+                } else {
+                    $(
+                        let mut $ps = $ps.iter()?;
+                    )*
+                    for &$p0 in $p0.iter()? {
+                        $(
+                            let $ps = *$ps.next().expect("We checked that all params have same length.");
+                        )*
+                        callback(&(self.build_model)(($p0, $($ps,)*)))?;
+                    }
                 }
 
                 Ok(())
@@ -242,48 +255,85 @@ impl Model for UnspecializedPythonModel {
         (callback)(&self.quantizer.quantize(distribution))
     }
 
-    fn parameterize(
+    fn parameterize<'py>(
         &self,
-        py: Python<'_>,
+        py: Python<'py>,
         params: &PyTuple,
+        reverse: bool,
         callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
         let params = params.as_slice();
-
         let p0 = params[0].extract::<PyReadonlyArray1<'_, f64>>()?;
         let len = p0.len();
-        let p0iter = p0.iter()?;
-
-        let mut param_iters = params[1..]
-            .iter()
-            .map(|&param| {
-                let param = param.extract::<PyReadonlyArray1<'_, f64>>()?;
-                if param.len() != len {
-                    return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
-                        "Model parameters have unequal lengths.",
-                    )));
-                };
-                param.iter()
-            })
-            .collect::<PyResult<Vec<_>>>()?;
 
         let mut value_and_params = vec![0.0f64; params.len() + 1];
-        for &p0 in p0iter {
-            value_and_params[1] = p0;
-            for (src, dst) in param_iters.iter_mut().zip(&mut value_and_params[2..]) {
-                *dst = *src
-                    .next()
-                    .expect("We checked that all arrays have the same size.");
+        if reverse {
+            let mut remaining_params = params[1..]
+                .iter()
+                .map(|&param| {
+                    let param = param.extract::<&PyArray1<f64>>()?;
+                    if param.len() != len {
+                        return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                            "Model parameters have unequal lengths.",
+                        )));
+                    };
+                    Ok(param
+                        .as_cell_slice()
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
+                        .iter()
+                        .rev())
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+
+            for &p0 in p0.as_slice()?.iter().rev() {
+                value_and_params[1] = p0;
+                for (src, dst) in remaining_params.iter_mut().zip(&mut value_and_params[2..]) {
+                    *dst = src
+                        .next()
+                        .expect("We checked that all arrays have the same size.")
+                        .get();
+                }
+
+                let distribution = SpecializedPythonDistribution {
+                    cdf: &self.cdf,
+                    approximate_inverse_cdf: &self.approximate_inverse_cdf,
+                    value_and_params: RefCell::new(&mut value_and_params),
+                    py,
+                };
+
+                (callback)(&self.quantizer.quantize(distribution))?;
             }
+        } else {
+            let mut remaining_params = params[1..]
+                .iter()
+                .map(|&param| {
+                    let param = param.extract::<PyReadonlyArray1<'_, f64>>()?;
+                    if param.len() != len {
+                        return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                            "Model parameters have unequal lengths.",
+                        )));
+                    };
+                    param.iter()
+                })
+                .collect::<PyResult<Vec<_>>>()?;
 
-            let distribution = SpecializedPythonDistribution {
-                cdf: &self.cdf,
-                approximate_inverse_cdf: &self.approximate_inverse_cdf,
-                value_and_params: RefCell::new(&mut value_and_params),
-                py,
-            };
+            for &p0 in p0.iter()? {
+                value_and_params[1] = p0;
+                for (src, dst) in remaining_params.iter_mut().zip(&mut value_and_params[2..]) {
+                    *dst = *src
+                        .next()
+                        .expect("We checked that all arrays have the same size.");
+                }
 
-            (callback)(&self.quantizer.quantize(distribution))?;
+                let distribution = SpecializedPythonDistribution {
+                    cdf: &self.cdf,
+                    approximate_inverse_cdf: &self.approximate_inverse_cdf,
+                    value_and_params: RefCell::new(&mut value_and_params),
+                    py,
+                };
+
+                (callback)(&self.quantizer.quantize(distribution))?;
+            }
         }
 
         Ok(())
@@ -338,6 +388,7 @@ impl Model for UnparameterizedCategoricalDistribution {
         &self,
         _py: Python<'_>,
         params: &PyTuple,
+        reverse: bool,
         callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
         if params.len() != 1 {
@@ -357,18 +408,34 @@ impl Model for UnparameterizedCategoricalDistribution {
         let range = probabilities.shape()[1];
         let probabilities = probabilities.as_slice()?;
 
-        for probabilities in probabilities.chunks_exact(range) {
-            let model =
-                DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-                    probabilities,
-                )
-                .map_err(|()| {
-                    pyo3::exceptions::PyValueError::new_err(
+        if reverse {
+            for probabilities in probabilities.chunks_exact(range).rev() {
+                let model =
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                        probabilities,
+                    )
+                    .map_err(|()| {
+                        pyo3::exceptions::PyValueError::new_err(
                         "Probability distribution not normalizable (the array of probabilities\n\
                         might be empty, contain negative values or NaNs, or sum to infinity).",
                     )
-                })?;
-            callback(&model)?;
+                    })?;
+                callback(&model)?;
+            }
+        } else {
+            for probabilities in probabilities.chunks_exact(range) {
+                let model =
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                        probabilities,
+                    )
+                    .map_err(|()| {
+                        pyo3::exceptions::PyValueError::new_err(
+                        "Probability distribution not normalizable (the array of probabilities\n\
+                        might be empty, contain negative values or NaNs, or sum to infinity).",
+                    )
+                    })?;
+                callback(&model)?;
+            }
         }
 
         Ok(())

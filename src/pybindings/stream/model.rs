@@ -96,9 +96,9 @@ impl Categorical {
                     )
                     .map_err(|()| {
                         pyo3::exceptions::PyValueError::new_err(
-                        "Probability distribution not normalizable (the array of probabilities\n\
-                        might be empty, contain negative values or NaNs, or sum to infinity).",
-                    )
+                            "Probability distribution not normalizable (the array of probabilities\n\
+                            might be empty, contain negative values or NaNs, or sum to infinity).",
+                        )
                     })?;
                 Arc::new(model) as Arc<dyn internals::Model>
             }

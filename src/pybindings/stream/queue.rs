@@ -84,6 +84,7 @@ impl RangeEncoder {
     /// The default initial state is the state returned by the constructor when
     /// called without arguments, or the state to which the coder is set when
     /// calling `clear`.
+    #[pyo3(text_signature = "()")]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
@@ -122,7 +123,7 @@ impl RangeEncoder {
     /// if sys.byteorder != 'little':
     ///     # Restore native byte order before passing it to `constriction`.
     ///     compressed.byteswap(inplace=True)
-    /// decoder = constriction.stream.stack.RangeDecoder(compressed)
+    /// decoder = constriction.stream.queue.RangeDecoder(compressed)
     /// # ... decode the message (skipped here) ...
     /// ```
     #[pyo3(text_signature = "()")]
@@ -397,7 +398,7 @@ impl RangeEncoder {
     /// # Encode 2 symbols (needs `len(symbols) == probabilities.shape[0]`):
     /// symbols = np.array([3, 1], dtype=np.int32)
     /// encoder = constriction.stream.queue.RangeEncoder()
-    /// encoder.encode(symbols,_family model, probabilities)
+    /// encoder.encode(symbols, model_family, probabilities)
     /// print(encoder.get_compressed()) # (prints: [2705829535])
     /// ```
     #[pyo3(text_signature = "(symbols, model, optional_model_params)")]
@@ -443,7 +444,7 @@ impl RangeEncoder {
             })?;
         } else {
             let mut symbol_iter = symbols.iter();
-            model.0.parameterize(py, params, &mut |model| {
+            model.0.parameterize(py, params, false, &mut |model| {
                 let symbol = symbol_iter.next().expect("TODO");
                 self.inner
                     .encode_symbol(*symbol, EncoderDecoderModel(model))?;
@@ -858,7 +859,7 @@ impl RangeDecoder {
         };
 
         let mut symbols = Vec::with_capacity(model.0.len(&params[0])?);
-        model.0.parameterize(py, params, &mut |model| {
+        model.0.parameterize(py, params, false, &mut |model| {
             let symbol = self
                 .inner
                 .decode_symbol(EncoderDecoderModel(model))
@@ -870,35 +871,58 @@ impl RangeDecoder {
         Ok(PyArray1::from_vec(py, symbols).to_object(py))
     }
 
-    // /// Decodes a sequence of symbols with parameterized custom models.
-    // ///
-    // /// - For usage examples, see
-    // ///   [`CustomModel`](model.html#constriction.stream.model.CustomModel).
-    // /// - If all symbols use the same entropy model (with identical model parameters) then
-    // ///   you'll want to use
-    // ///   [`decode_iid_custom_model`](#constriction.stream.queue.RangeDecoder.decode_iid_custom_model)
-    // ///   instead.
-    // #[pyo3(text_signature = "(model, model_parameters)")]
-    // pub fn decode_custom_model<'py>(
-    //     &mut self,
-    //     model: &CustomModel,
-    //     model_parameters: PyReadonlyArray2<'_, f64>,
-    //     py: Python<'py>,
-    // ) -> PyResult<&'py PyArray1<i32>> {
-    //     let num_parameters = model_parameters.dims()[1];
-    //     let model_parameters = model_parameters.as_slice()?.chunks_exact(num_parameters);
-    //     let models = model_parameters.map(|params| {
-    //         model.quantized_with_parameters(py, PyArray1::from_vec(py, params.to_vec()).readonly())
-    //     });
+    /// .. deprecated:: 1.0.0
+    ///    This method has been superseded by the new and more powerful generic
+    ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
+    ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
+    ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel) model class.
+    ///
+    ///    Note that the new API expects the parameters in opposite order. So, to transition,
+    ///    replace
+    ///
+    ///    ```python
+    ///    decoder.decode_iid_custom_model(amt, model) # DEPRECATED
+    ///    ```
+    ///
+    ///    with
+    ///
+    ///    ```python
+    ///    decoder.decode(model, amt) # new API
+    ///    ```
+    ///
+    ///    The new API also allows you to provide additional per-symbol model parameters to the
+    ///    `decode` method (instead of an `amt` parameter):
+    ///
+    ///    ```python
+    ///    decoder.decode(model, params1, params2, ...) # new API
+    ///    ```
+    ///
+    ///    Here, the `paramsX` arguments must be rank-1 numpy arrays with `dtype=np.float64`. The
+    ///    parameters will be passed to your custom model's CDF and PPF as individual additional
+    ///    scalar arguments. (This is a breaking change to the pre-1.0 method `decode_custom_model`,
+    ///    which served the same purpose but passed additional model parameters to the CDF and PPF
+    ///    as a single numpy array, which turned out to be cumbersome to deal with.)
+    ///
+    ///    For more information and code examples, see
+    ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) and
+    ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel).
+    #[pyo3(text_signature = "(DEPRECATED)")]
+    pub fn decode_iid_custom_model<'py>(
+        &mut self,
+        py: Python<'py>,
+        amt: usize,
+        model: &Model,
+    ) -> PyResult<PyObject> {
+        let _ = py.run(
+            "print('WARNING: the method `encode_iid_custom_model` is deprecated. Use method\\n\
+            \x20        `encode` instead. For transition instructions with code examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode_iid_custom_model')",
+            None,
+            None
+        );
 
-    //     let symbols = self
-    //         .inner
-    //         .decode_symbols(models)
-    //         .map(|symbol| symbol.expect("We use constant `PRECISION`.") as i32)
-    //         .collect::<Vec<_>>();
-
-    //     Ok(PyArray1::from_vec(py, symbols))
-    // }
+        self.decode(py, model, PyTuple::new(py, [amt]))
+    }
 }
 
 impl RangeDecoder {
