@@ -6,7 +6,9 @@ use alloc::sync::Arc;
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 
-use crate::stream::model::{DefaultContiguousCategoricalEntropyModel, LeakyQuantizer};
+use crate::stream::model::{
+    DefaultContiguousCategoricalEntropyModel, LeakyQuantizer, UniformModel,
+};
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<Model>()?;
@@ -115,27 +117,14 @@ struct Uniform;
 impl Uniform {
     #[new]
     pub fn new(range: Option<i32>) -> PyResult<(Self, Model)> {
-        let make_model = |(range,): (i32,)| {
-            assert!(range >= 2 && range <= (1 << 24));
-            let total_probability = 1 << 24;
-            let prob_per_symbol = (total_probability / range) as u32;
-            let remainder = (total_probability % range) as usize;
-            let probabilities = core::iter::repeat(prob_per_symbol + 1)
-                .take(remainder)
-                .chain(core::iter::repeat(prob_per_symbol).take(range as usize - remainder));
-            DefaultContiguousCategoricalEntropyModel::from_nonzero_fixed_point_probabilities(
-                probabilities,
-                false,
-            )
-            .expect("Trivially correct model.")
-        };
-
         let model = match range {
             None => {
-                let model = internals::ParameterizableModel::new(make_model);
+                let model = internals::ParameterizableModel::new(|(range,): (i32,)| {
+                    UniformModel::new(range as u32)
+                });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
-            Some(range) => Arc::new((make_model)((range,))) as Arc<dyn internals::Model>,
+            Some(range) => Arc::new(UniformModel::new(range as u32)) as Arc<dyn internals::Model>,
         };
 
         Ok((Self, Model(model)))

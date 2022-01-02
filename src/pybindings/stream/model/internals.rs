@@ -8,7 +8,7 @@ use pyo3::{prelude::*, types::PyTuple};
 
 use crate::stream::model::{
     DecoderModel, DefaultContiguousCategoricalEntropyModel, EncoderModel, EntropyModel,
-    LeakyQuantizer,
+    LeakyQuantizer, UniformModel,
 };
 
 /// Workaround for the fact that rust for some reason cannot create
@@ -386,6 +386,20 @@ impl DefaultEntropyModel for DefaultContiguousCategoricalEntropyModel {
     #[inline]
     fn left_cumulative_and_probability(&self, symbol: i32) -> Option<(u32, NonZeroU32)> {
         EncoderModel::left_cumulative_and_probability(self, symbol as usize)
+    }
+
+    #[inline]
+    fn quantile_function(&self, quantile: u32) -> (i32, u32, NonZeroU32) {
+        let (symbol, left_cumulative, probability) =
+            DecoderModel::quantile_function(self, quantile);
+        (symbol as i32, left_cumulative, probability)
+    }
+}
+
+impl DefaultEntropyModel for UniformModel<u32, 24> {
+    #[inline]
+    fn left_cumulative_and_probability(&self, symbol: i32) -> Option<(u32, NonZeroU32)> {
+        EncoderModel::left_cumulative_and_probability(self, symbol as u32)
     }
 
     #[inline]
