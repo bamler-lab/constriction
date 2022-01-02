@@ -200,12 +200,21 @@ impl RangeEncoder {
     #[pyo3(text_signature = "(DEPRECATED)")]
     pub fn encode_leaky_gaussian_symbols(
         &mut self,
+        py: Python<'_>,
         symbols: PyReadonlyArray1<'_, i32>,
         min_supported_symbol: i32,
         max_supported_symbol: i32,
         means: PyReadonlyArray1<'_, f64>,
         stds: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
+        let _ = py.run(
+            "print('WARNING: the method `encode_leaky_gaussian_symbols` is deprecated. Use method\\n\
+            \x20        `encode` instead. For more information and usage examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode')",
+            None,
+            None
+        );
+
         let (symbols, means, stds) = (symbols.as_slice()?, means.as_slice()?, stds.as_slice()?);
         if symbols.len() != means.len() || symbols.len() != stds.len() {
             return Err(pyo3::exceptions::PyAttributeError::new_err(
@@ -268,10 +277,19 @@ impl RangeEncoder {
     #[pyo3(text_signature = "(DEPRECATED)")]
     pub fn encode_iid_categorical_symbols(
         &mut self,
+        py: Python<'_>,
         symbols: PyReadonlyArray1<'_, i32>,
         min_supported_symbol: i32,
         probabilities: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
+        let _ = py.run(
+            "print('WARNING: the method `encode_iid_categorical_symbols` is deprecated. Use method\\n\
+            \x20        `encode` instead. For more information and usage examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode')",
+            None,
+            None
+        );
+
         let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
             probabilities.as_slice()?,
         )
@@ -565,6 +583,14 @@ impl RangeDecoder {
         stds: PyReadonlyArray1<'_, f64>,
         py: Python<'p>,
     ) -> PyResult<&'p PyArray1<i32>> {
+        let _ = py.run(
+            "print('WARNING: the method `decode_leaky_gaussian_symbols` is deprecated. Use method\\n\
+            \x20        `decode` instead. For more information and usage examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeDecoder.decode')",
+            None,
+            None
+        );
+
         if means.len() != stds.len() {
             return Err(pyo3::exceptions::PyAttributeError::new_err(
                 "`means`, and `stds` must have the same length.",
@@ -633,6 +659,14 @@ impl RangeDecoder {
         probabilities: PyReadonlyArray1<'_, f64>,
         py: Python<'py>,
     ) -> PyResult<&'py PyArray1<i32>> {
+        let _ = py.run(
+            "print('WARNING: the method `decode_iid_categorical_symbols` is deprecated. Use method\\n\
+            \x20        `decode` instead. For more information and usage examples, see:\\n\
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeDecoder.decode')",
+            None,
+            None
+        );
+
         let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
             probabilities.as_slice()?,
         )
