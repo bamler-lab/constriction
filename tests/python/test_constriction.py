@@ -73,25 +73,25 @@ def test_chain_gaussian():
     symbols = decoder.decode_leaky_gaussian_symbols(
         min_supported_symbol, max_supported_symbol, means, stds)
 
-    remaining_prefix, remaining_suffix = decoder.get_remaining()
-    print(len(remaining_prefix), len(remaining_suffix), len(original_data))
-    assert len(remaining_prefix) + len(remaining_suffix) < len(original_data)
+    remainders_prefix, remainders_suffix = decoder.get_remainders()
+    print(len(remainders_prefix), len(remainders_suffix), len(original_data))
+    assert len(remainders_prefix) + len(remainders_suffix) < len(original_data)
 
-    # Variant 1: treat `remaining_prefix` and `remaining_suffix` separately
+    # Variant 1: treat `remainders_prefix` and `remainders_suffix` separately
     encoder1 = constriction.stream.chain.ChainCoder(
-        remaining_suffix, is_remaining=True)
+        remainders_suffix, is_remainders=True)
     encoder1.encode_leaky_gaussian_symbols_reverse(
         symbols, min_supported_symbol, max_supported_symbol, means, stds)
     recovered_prefix1, recovered_suffix1 = encoder1.get_data(unseal=True)
     print(len(recovered_prefix1), len(recovered_suffix1), len(original_data))
     assert len(recovered_prefix1) == 0
-    recovered1 = np.concatenate((remaining_prefix, recovered_suffix1))
+    recovered1 = np.concatenate((remainders_prefix, recovered_suffix1))
     assert np.all(recovered1 == original_data)
 
-    # Variant 2: concatenate `remaining_prefix` and `remaining_suffix`
-    remaining = np.concatenate((remaining_prefix, remaining_suffix))
+    # Variant 2: concatenate `remainders_prefix` and `remainders_suffix`
+    remainders = np.concatenate((remainders_prefix, remainders_suffix))
     encoder2 = constriction.stream.chain.ChainCoder(
-        remaining, is_remaining=True)
+        remainders, is_remainders=True)
     encoder2.encode_leaky_gaussian_symbols_reverse(
         symbols, min_supported_symbol, max_supported_symbol, means, stds)
     recovered_prefix2, recovered_suffix2 = encoder2.get_data(unseal=True)
@@ -162,7 +162,7 @@ def test_custom_model():
 
     # Encode non-iid symbols:
     model_py = scipy.stats.norm
-    model = constriction.stream.model.ScipyModel(-100, 100, model_py)
+    model = constriction.stream.model.ScipyModel(model_py, -100, 100)
 
     symbols = np.array([-10, 3, 12], dtype=np.int32)
     means = np.array([-5.2, 5.4, 10], dtype=np.float64)
@@ -179,7 +179,7 @@ def test_custom_model():
 
     # Encode iid symbols:
     model_py = scipy.stats.norm(10.3, 30.5)
-    model = constriction.stream.model.ScipyModel(-100, 100, model_py)
+    model = constriction.stream.model.ScipyModel(model_py, -100, 100)
 
     symbols = np.array([-15, 33, 22], dtype=np.int32)
 
@@ -193,7 +193,7 @@ def test_custom_model():
     assert np.all(decoded == symbols)
 
     # Encode non-iid symbols with native model:
-    model = constriction.stream.model.Gaussian(-100, 100)
+    model = constriction.stream.model.QuantizedGaussian(-100, 100)
     symbols = np.array([-15, 33, 22], dtype=np.int32)
 
     encoder = constriction.stream.queue.RangeEncoder()
@@ -206,7 +206,7 @@ def test_custom_model():
     assert np.all(decoded == symbols)
 
     # Encode iid symbols with native model:
-    model = constriction.stream.model.Gaussian(-100, 100, 2.1, 3.5)
+    model = constriction.stream.model.QuantizedGaussian(-100, 100, 2.1, 3.5)
     symbols = np.array([-15, 33, 22], dtype=np.int32)
 
     encoder = constriction.stream.queue.RangeEncoder()
@@ -263,16 +263,13 @@ def test_custom_model():
     model_iid = constriction.stream.model.CustomModel(
         model_py.cdf, model_py.ppf, -100, 100)
 
-    model_parameters_iid = (
-        np.array([[1.2, 4.9]], dtype=np.float64) +
-        np.array([[0.0]]*len(symbols), dtype=np.float64)
-    )
-    model_parameters = np.array([[i, 4.9] for i in symbols], dtype=np.float64)
+    model_parameters_iid1 = np.array([1.2]*len(symbols), dtype=np.float64)
+    model_parameters_iid2 = np.array([4.9]*len(symbols), dtype=np.float64)
+    model_parameters1 = np.array([s for s in symbols], dtype=np.float64)
+    model_parameters2 = np.array([4.9]*len(symbols), dtype=np.float64)
     model = constriction.stream.model.CustomModel(
-        lambda x, params: scipy.stats.norm.cdf(
-            x, loc=params[0], scale=params[1]),
-        lambda x, params: scipy.stats.norm.ppf(
-            x, loc=params[0], scale=params[1]),
+        lambda x, loc, scale: scipy.stats.norm.cdf(x, loc, scale),
+        scipy.stats.norm.ppf, # (try providing member function as callback.)
         -100, 100)
 
     def test_coder(Encoder, Decoder, encode_iid, encode, expected_compressed_iid, expected_compressed):
@@ -293,23 +290,23 @@ def test_custom_model():
 
         # Encode and decode i.i.d. symbols, but with parameterized custom model.
         encoder = Encoder()
-        encode(encoder, symbols, model, model_parameters_iid)
+        encode(encoder, symbols, model, model_parameters_iid1, model_parameters_iid2)
         compressed = encoder.get_compressed()
         print(compressed)
         assert np.all(compressed == expected_compressed_iid)
         decoder = Decoder(compressed)
-        reconstructed = decoder.decode_custom_model(
-            model, model_parameters_iid)
+        reconstructed = decoder.decode(
+            model, model_parameters_iid1, model_parameters_iid2)
         assert np.all(reconstructed == symbols)
 
         # Encode and decode non-i.i.d. symbols.
         encoder = Encoder()
-        encode(encoder, symbols, model, model_parameters)
+        encode(encoder, symbols, model, model_parameters1, model_parameters2)
         compressed = encoder.get_compressed()
         print(compressed)
         assert np.all(compressed == expected_compressed)
         decoder = Decoder(compressed)
-        reconstructed = decoder.decode_custom_model(model, model_parameters)
+        reconstructed = decoder.decode(model, model_parameters1, model_parameters2)
         assert np.all(reconstructed == symbols)
 
     test_coder(
@@ -317,8 +314,8 @@ def test_custom_model():
         constriction.stream.stack.AnsCoder,
         lambda encoder, symbols, model: encoder.encode_iid_custom_model_reverse(
             symbols, model),
-        lambda encoder, symbols, model, params: encoder.encode_custom_model_reverse(
-            symbols, model, params),
+        lambda encoder, symbols, model, params1, params2: encoder.encode_reverse(
+            symbols, model, params1, params2),
         [3187671595, 2410106987,  48580], [3397926478, 6042])
 
     test_coder(
@@ -326,8 +323,8 @@ def test_custom_model():
         constriction.stream.queue.RangeDecoder,
         lambda encoder, symbols, model: encoder.encode_iid_custom_model(
             symbols, model),
-        lambda encoder, symbols, model, params: encoder.encode_custom_model(
-            symbols, model, params),
+        lambda encoder, symbols, model, params1, params2: encoder.encode(
+            symbols, model, params1, params2),
         [2789142295, 3128556965, 414280666], [2147484271])
 
 
