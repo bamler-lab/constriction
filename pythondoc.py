@@ -11,18 +11,28 @@ context = pdoc.Context()
 
 pdoc.link_inheritance(context)
 
-
 def pdocify(mod, prefix=''):
     pdoc_mod = pdoc.Module(mod)
     prefix = prefix + pdoc_mod.name + '.'
+
+    # Remove documentation of deprecated methods.
+    for child_name in pdoc_mod.doc:
+        child = pdoc_mod.doc[child_name]
+        grandchild_names = list(child.doc.keys()) # so we can modify the dictionary while iterating over it.
+        for grandchild_name in grandchild_names:
+            grandchild = child.doc[grandchild_name]
+            grandchild_doc = grandchild.docstring
+            if grandchild_doc is not None and grandchild_doc[:16] == '.. deprecated:: ':
+                del child.doc[grandchild_name]
+
     if hasattr(mod, '__all__'):
-        for submod_name in mod.__all__:
-            submod = getattr(mod, submod_name)
-            if isinstance(submod, ModuleType):
-                child = pdocify(submod, prefix=prefix)
+        for child_name in mod.__all__:
+            child = getattr(mod, child_name)
+            if isinstance(child, ModuleType):
+                child = pdocify(child, prefix=prefix)
                 child.supermodule = pdoc_mod
-                child.name = prefix + submod_name
-                pdoc_mod.doc[prefix + submod_name] = child
+                child.name = prefix + child_name
+                pdoc_mod.doc[prefix + child_name] = child
 
     return pdoc_mod
 
