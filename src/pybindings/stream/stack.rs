@@ -184,8 +184,9 @@ impl AnsCoder {
     /// returned by the method [`pos`](#constriction.stream.stack
     ///
     /// **Note:** in an ANS coder, both decoding and seeking *consume* compressed data. The Python
-    /// API of `constriction`'s ANS coder currently does not support seeking backward (seeking
-    /// backward is supported for Range Coding, and for both ANS and Range Coding in the Rust API).
+    /// API of `constriction`'s ANS coder currently supports only seeking forward but not backward
+    /// (seeking backward is supported for Range Coding, and for both ANS and Range Coding in
+    /// `constriction`'s Rust API).
     ///
     /// ## Example
     ///
@@ -219,7 +220,7 @@ impl AnsCoder {
             pyo3::exceptions::PyAttributeError::new_err(
                 "Tried to seek past end of stream. Note: in an ANS coder,\n\
                 both decoding and seeking *consume* compressed data. The Python API of\n\
-                `constriction`'s ANS coder currently does not support seeking backward."
+                `constriction`'s ANS coder currently does not support seeking backward.",
             )
         })
     }
