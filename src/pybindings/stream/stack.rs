@@ -106,7 +106,6 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
-
 #[pyclass]
 #[pyo3(text_signature = "([compressed], seal=False)")]
 #[derive(Debug)]

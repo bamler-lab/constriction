@@ -17,13 +17,75 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-/// Entropy models and model families.
+/// Entropy models and model families for use with any of the provided stream codes.
 ///
 /// This module provides tools to define probability distributions over symbols in fixed
 /// point arithmetic, so that the models (more precisely, the cumulative distribution
 /// functions) are *exactly* invertible without any rounding errors. Such exactly invertible
-/// models are used by all entropy coders in the sister modules `stack`, `queue`, and
-/// `chain`.
+/// models are used by all entropy coders in the sister modules [`stack`](stack.html),
+/// [`queue`](queue.html), and [`chain`](chain.html).
+///
+/// ## Concrete Models vs. Model Families
+///
+/// The entropy models in this module can be instantiated in two different ways:
+///
+/// - (a) As *concrete* models that are fully parameterized models. Simply provide all model
+///   parameters to the constructor of the model (e.g., the mean and standard deviation of a
+///   [`QuantizedGaussian`](#constriction.stream.model.QuantizedGaussian), or the domain of a
+///   [`Uniform`](#constriction.stream.model.Uniform) model. You can then use the resulting
+///   model to either encode or decode single symbols, or to efficiently encode or decode a whole
+///   array of *i.i.d.* symbols (i.e., using the same model for each symbol in the array).
+/// - (b) As model *families*, i.e., models that still have some free parameters (again, like the
+///   mean and standard deviation, or the range of a uniform distribution). Simply leave out any
+///   optional model parameters when calling the model constructor. When you then use the resulting
+///   model family to encode or decode an array of symbols, then you can provide arrays of model
+///   parameters to the encode and decode methods of the employed entropy coder. This will allow you
+///   to use individual model parameters for each symbol in a sequence (and it is more efficient
+///   constructing a new concrete model for each symbol)
+///
+/// ## Examples
+///
+/// Constructing and using a *concrete* [`QuantizedGaussian`](#constriction.stream.model.QuantizedGaussian)
+/// model with mean 12.6 and standard deviation 7.3, and which is quantized to integers on the domain
+/// {-100, ..., 100}:
+///
+/// ```python
+/// model = constriction.stream.model.QuantizedGaussian(-100, 100, 12.6, 7.3)
+///
+/// # Encode and decode an example message:
+/// symbols = np.array([12, 15, 4, -2, 18, 5], dtype=np.int32)
+/// coder = constriction.stream.stack.AnsCoder() # (`RangeEncoder` also works)
+/// coder.encode_reverse(symbols, model)
+/// print(coder.get_compressed()) # (prints: [745994372, 25704])
+///
+/// reconstructed = coder.decode(model, 6) # (decodes 6 i.i.d. symbols)
+/// assert np.all(reconstructed == symbols) # (verify correctness)
+/// ```
+///
+/// We can generalize the above example and use model-specific means and standard deviations by 
+/// constructing and using a model *family* instead of a concrete model, and by providing arrays:
+/// of model parameters to the encode and decode methods:
+///
+/// ```python
+/// model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
+/// # Note: we omitted the mean and standard deviation, but the quantization range
+/// #       {-100, ..., 100} must always be specified when constructing the model.
+///
+/// # Define arrays of model parameters (means and standard deviations):
+/// symbols = np.array([12,   15,   4,   -2,   18,   5  ], dtype=np.int32)
+/// means   = np.array([13.2, 17.9, 7.3, -4.2, 25.1, 3.2], dtype=np.float64)
+/// stds    = np.array([ 3.2,  4.7, 5.2,  3.1,  6.3, 2.9], dtype=np.float64)
+///
+/// # Encode and decode an example message:
+/// coder = constriction.stream.stack.AnsCoder() # (`RangeEncoder` also works)
+/// coder.encode_reverse(symbols, model_family, means, stds)
+/// print(coder.get_compressed()) # (prints: [2051958011, 1549])
+///
+/// reconstructed = coder.decode(model_family, means, stds)
+/// assert np.all(reconstructed == symbols) # (verify correctness)
+/// ```
+///
+///
 #[pymodule]
 fn model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     model::init_module(py, module)
