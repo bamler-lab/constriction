@@ -69,6 +69,7 @@ pub struct RangeCoderState<Word, State: BitArray> {
 }
 
 impl<Word: BitArray, State: BitArray> RangeCoderState<Word, State> {
+    #[allow(clippy::result_unit_err)]
     pub fn new(lower: State, range: State) -> Result<Self, ()> {
         if range >> (State::BITS - Word::BITS) == State::zero() {
             Err(())
