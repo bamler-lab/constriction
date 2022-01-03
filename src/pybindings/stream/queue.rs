@@ -7,9 +7,10 @@ use pyo3::{prelude::*, types::PyTuple};
 use crate::{
     stream::{
         model::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
+        queue::RangeCoderState,
         Decode, Encode,
     },
-    UnwrapInfallible,
+    Pos, Seek, UnwrapInfallible,
 };
 
 use super::model::{internals::EncoderDecoderModel, Model};
@@ -51,14 +52,34 @@ impl RangeEncoder {
         Self { inner }
     }
 
-    /// Resets the encoder to an empty state (as if you created a new encoder).
+    /// Resets the encoder to an empty state.
     ///
-    /// If you call `clear` and then immediately call
-    /// [`is_empty`](#constriction.stream.queue.RangeEncoder.is_empty),
-    /// the latter will return `True`.
+    /// This removes any existing compressed data on the coder. It is equivalent to replacing the
+    /// coder with a new one but slightly more efficient.
     #[pyo3(text_signature = "()")]
     pub fn clear(&mut self) {
         self.inner.clear();
+    }
+
+    /// Records a checkpoint to which you can jump during decoding using
+    /// [`seek`](#constriction.stream.queue.RangeDecoder.seek).
+    ///
+    /// Returns a tuple `(position, state)` where `position` is an integer that specifies how many
+    /// 32-bit words of compressed data have been produced so far, and `state` is a tuple of two
+    /// integers that define the `RangeEncoder`'s internal state (so that it can be restored upon
+    /// [`seek`ing](#constriction.stream.queue.RangeDecoder.seek).
+    ///
+    /// **Note:** Don't call `pos` if you just want to find out how much compressed data has been
+    /// produced so far. Call [`num_words`](#constriction.stream.queue.RangeEncoder.num_words)
+    /// instead.
+    ///
+    /// ## Example
+    ///
+    /// See [`seek`](#constriction.stream.queue.RangeDecoder.seek).
+    #[pyo3(text_signature = "()")]
+    pub fn pos(&mut self) -> (usize, (u64, u64)) {
+        let (pos, state) = self.inner.pos();
+        (pos, (state.lower(), state.range().get()))
     }
 
     /// Returns the current size of the encapsulated compressed data, in `np.uint32` words.
@@ -554,6 +575,47 @@ impl RangeDecoder {
     #[new]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
         Ok(Self::from_vec(compressed.to_vec()?))
+    }
+
+    /// Jumps to a checkpoint recorded with method
+    /// [`pos`](#constriction.stream.queue.RangeEncoder.pos) during encoding.
+    ///
+    /// This allows random-access decoding. The arguments `position` and `state` are the two values
+    /// returned by the `RangeEncoder`'s method [`pos`](#constriction.stream.queue.RangeEncoder.pos).
+    ///
+    /// ## Example
+    ///
+    /// ```python
+    /// probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
+    /// model         = constriction.stream.model.Categorical(probabilities)
+    /// message_part1 = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
+    /// message_part2 = np.array([2, 2, 0, 1, 3], dtype=np.int32)
+    ///
+    /// # Encode both parts of the message and record a checkpoint in-between:
+    /// encoder = constriction.stream.queue.RangeEncoder()
+    /// encoder.encode(message_part1, model)
+    /// (position, state) = encoder.pos() # Records a checkpoint.
+    /// encoder.encode(message_part2, model)
+    ///
+    /// compressed = encoder.get_compressed()
+    /// decoder = constriction.stream.queue.RangeDecoder(compressed)
+    ///
+    /// # Decode first symbol:
+    /// print(decoder.decode(model)) # (prints: 1)
+    ///
+    /// # Jump to part 2 and decode it:
+    /// decoder.seek(position, state)
+    /// decoded_part2 = decoder.decode(model, 5)
+    /// assert np.all(decoded_part2 == message_part2)
+    /// ```
+    #[pyo3(text_signature = "(position, state)")]
+    pub fn seek(&mut self, position: usize, state: (u64, u64)) -> PyResult<()> {
+        let (lower, range) = state;
+        let state = RangeCoderState::new(lower, range)
+            .map_err(|()| pyo3::exceptions::PyAttributeError::new_err("Invalid coder state."))?;
+        self.inner.seek((position, state)).map_err(|()| {
+            pyo3::exceptions::PyAttributeError::new_err("Tried to seek past end of stream.")
+        })
     }
 
     /// Returns `True` if all compressed data *may* have already been decoded and `False` if there

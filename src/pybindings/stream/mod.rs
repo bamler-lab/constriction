@@ -62,7 +62,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// assert np.all(reconstructed == symbols) # (verify correctness)
 /// ```
 ///
-/// We can generalize the above example and use model-specific means and standard deviations by 
+/// We can generalize the above example and use model-specific means and standard deviations by
 /// constructing and using a model *family* instead of a concrete model, and by providing arrays:
 /// of model parameters to the encode and decode methods:
 ///
@@ -98,27 +98,36 @@ fn model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// ## Example
 ///
-/// The following example shows a full round trip that encodes some message, prints the compressed
+/// The following example shows a full round trip that encodes a message, prints its compressed
 /// representation, and then decodes the message again. The message is a sequence of 11 integers
-/// (symbols) and comprised of two parts: the first 7 symbols are encoded with an i.i.d. entropy
-/// model, i.e., using the same categorical distribution for each symbol; and the remaining 4
-/// symbols are each encoded with a different entropy model, but all of these 4 models are from the
-/// same family of [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian)s,
-/// just with different model parameters for each of the 4 symbols.
+/// (referred to as "symbols") and comprised of two parts: the first 7 symbols are encoded with an
+/// i.i.d. entropy model, i.e., using the same distribution for each symbol, which happens to be a
+/// [`Categorical`](model.html#constriction.stream.model.Categorical) distribution; and the remaining
+/// 4 symbols are each encoded with a different entropy model, but all of these 4 models are from
+/// the same family of [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian)s,
+/// just with different model parameters (means and standard deviations) for each of the 4 symbols.
 ///
 /// ```python
 /// import constriction
 /// import numpy as np
 ///
-/// # Define the two parts of the message and their respective entropy models.
+/// # Define the two parts of the message and their respective entropy models:
 /// message_part1       = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
-/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.2], dtype=np.float64)
+/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
 /// model_part1       = constriction.stream.model.Categorical(probabilities_part1)
+/// # `model_part1` is a categorical distribution over the (implied) alphabet
+/// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4,  P(X=2) = 0.1, and P(X=3) = 0.3;
+/// # we will use it below to encode each of the 7 symbols in `message_part1`.
 ///
 /// message_part2       = np.array([6,   10,   -4,    2  ], dtype=np.int32)
 /// means_part2         = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float64)
 /// stds_part2          = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float64)
 /// model_family_part2  = constriction.stream.model.QuantizedGaussian(-100, 100)
+/// # `model_part2` is a *family* of Gaussian distributions that are quantized
+/// # to bins of with 1 centered at the integers -100, -99, ..., 100. We could
+/// # have provided a fixed mean and standard deviation to the constructor of
+/// # `QuantizedGaussian` but we'll instead provide individual means and standard
+/// # deviations for each symbol when we encode and decode `message_part2` below.
 ///
 /// print(f"Original message: {np.concatenate([message_part1, message_part2])}")
 ///
@@ -131,6 +140,9 @@ fn model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// compressed = encoder.get_compressed()
 /// print(f"compressed representation: {compressed}")
 /// print(f"(in binary: {[bin(word) for word in compressed]})")
+///
+/// # You could save `compressed` to a file using `compressed.tofile("filename")`
+/// # and read it back in: `compressed = np.fromfile("filename", dtype=np.uint32).
 ///
 /// # Decode the message:
 /// decoder = constriction.stream.queue.RangeDecoder(compressed)
@@ -163,47 +175,58 @@ fn queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// The ANS entropy coding algorithm is a popular choice for bits-back coding with latent variable
 /// models. It uses only a single data structure, `AnsCoder`, which operates as both encoder and
 /// decoder. This allows you to easily switch back and forth between encoding and decoding
-/// operations. Further, `constrictions` ANS implementation (unlike its Range Coding implementation
-/// in the sister module `queue`) is *surjective*. This means that you can decode symbols from any
-/// bitstring, regardless of its origin, and then re-encode the symbols to exactly reconstruct the
-/// original bitstring.
+/// operations. A further, more subtle property that distinguishes `constrictions` ANS
+/// implementation from its Range Coding implementation in the sister module `queue`) is that
+/// encoding with an `AnsCoder` is *surjective* and therefore decoding is injective. This means that
+/// you can decode some symbols from any bitstring, regardless of its origin, and then re-encode the
+/// symbols to exactly reconstruct the original bitstring (e.g., for bits-back coding).
 ///
 /// ## Stack Semantics
 ///
 /// ANS operates as a *stack*: encoding *pushes* (i.e., appends) data onto the top of the stack and
-/// decoding *pops* (i.e., consumes) data from the top of the stack. This means that encoding and
-/// decoding operate in opposite directions to each other. When using an `AnsCoder`, we recommend to
-/// encode sequences of symbols in reverse order so that you can later decode them in their original
-/// order. The method `encode_reverse` does this automatically when given an array of symbols. If
-/// you call `encode_reverse` several times to encode several slices of a message, then start with
-/// the last slice of your message, as in the example below.
+/// decoding *pops*  data from the top of the stack (i.e., it consumes data from the *same* end).
+/// This means that encoding and  decoding operate in opposite directions to each other. When using
+/// an `AnsCoder`, we recommend to encode sequences of symbols in reverse order so that you can
+/// later decode them in their original order. The method `encode_reverse` does this automatically
+/// when given an array of symbols. If you call `encode_reverse` several times to encode several
+/// parts of a message, then start with the last part of your message and work your way back, as in
+/// the example below.
 ///
 /// ## Example
 ///
-/// The following example shows a full round trip that encodes some message, prints the compressed
+/// The following example shows a full round trip that encodes a message, prints its compressed
 /// representation, and then decodes the message again. The message is a sequence of 11 integers
-/// (symbols) and comprised of two parts: the first 7 symbols are encoded with an i.i.d. entropy
-/// model, i.e., using the same categorical distribution for each symbol; and the remaining 4
-/// symbols are each encoded with a different entropy model, but all of these 4 models are from the
-/// same family of [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian)s,
-/// just with different model parameters for each of the 4 symbols.
+/// (referred to as "symbols") and comprised of two parts: the first 7 symbols are encoded with an
+/// i.i.d. entropy model, i.e., using the same distribution for each symbol, which happens to be a
+/// [`Categorical`](model.html#constriction.stream.model.Categorical) distribution; and the remaining
+/// 4 symbols are each encoded with a different entropy model, but all of these 4 models are from
+/// the same family of [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian)s,
+/// just with different model parameters (means and standard deviations) for each of the 4 symbols.
 ///
 /// Notice that we encode part 2 before part 1, but when we decode, we first obtain part 1 and then
-/// part 2.
+/// part 2. This is because of the `AnsCoder`'s [stack semantics](#stack-semantics).
 ///
 /// ```python
 /// import constriction
 /// import numpy as np
 ///
-/// # Define the two parts of the message and their respective entropy models.
+/// # Define the two parts of the message and their respective entropy models:
 /// message_part1       = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
-/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.2], dtype=np.float64)
+/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
 /// model_part1       = constriction.stream.model.Categorical(probabilities_part1)
+/// # `model_part1` is a categorical distribution over the (implied) alphabet
+/// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4,  P(X=2) = 0.1, and P(X=3) = 0.3;
+/// # we will use it below to encode each of the 7 symbols in `message_part1`.
 ///
 /// message_part2       = np.array([6,   10,   -4,    2  ], dtype=np.int32)
 /// means_part2         = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float64)
 /// stds_part2          = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float64)
 /// model_family_part2  = constriction.stream.model.QuantizedGaussian(-100, 100)
+/// # `model_part2` is a *family* of Gaussian distributions that are quantized
+/// # to bins of with 1 centered at the integers -100, -99, ..., 100. We could
+/// # have provided a fixed mean and standard deviation to the constructor of
+/// # `QuantizedGaussian` but we'll instead provide individual means and standard
+/// # deviations for each symbol when we encode and decode `message_part2` below.
 ///
 /// print(f"Original message: {np.concatenate([message_part1, message_part2])}")
 ///
@@ -218,11 +241,9 @@ fn queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// print(f"compressed representation: {compressed}")
 /// print(f"(in binary: {[bin(word) for word in compressed]})")
 ///
-/// # Below, we'll decode the message directly from `coder` for simplicity.
-/// # If decoding happens at a later time than encoding, then you can safe
-/// # `compressed` to a file (using `compressed.tofile("filename")`), read the
-/// # file back later (using `compressed = np.fromfile("filename")) and re-create
-/// # the coder using `coder = constriction.stream.stack.AnsCoder(compressed)`.
+/// # You could save `compressed` to a file using `compressed.tofile("filename")`,
+/// # read it back in: `compressed = np.fromfile("filename", dtype=np.uint32) and
+/// # then re-create `coder = constriction.stream.stack.AnsCoder(compressed)`.
 ///
 /// # Decode the message:
 /// decoded_part1 = coder.decode(model_part1, 7) # (decodes 7 symbols)

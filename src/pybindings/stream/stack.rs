@@ -9,7 +9,7 @@ use crate::{
         model::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
         Decode, Encode,
     },
-    UnwrapInfallible,
+    Pos, Seek, UnwrapInfallible,
 };
 
 use super::model::{internals::EncoderDecoderModel, Model};
@@ -157,12 +157,77 @@ impl AnsCoder {
         Ok(Self { inner })
     }
 
-    /// Resets the coder to an empty state (as if you created a new coder without passing any
-    /// arguments to the constructor).
+    /// Records a checkpoint to which you can jump during decoding using
+    /// [`seek`](#constriction.stream.stack.AnsCoder.seek).
     ///
-    /// If you call `clear` and then immediately call
-    /// [`is_empty`](#constriction.stream.stack.AnsCoder.is_empty),
-    /// the latter will return `True`.
+    /// Returns a tuple `(position, state)` where `position` is an integer that specifies how many
+    /// 32-bit words of compressed data have been produced so far, and `state` is an integer that
+    /// defines the `RangeEncoder`'s internal state (so that it can be restored upon
+    /// [`seek`ing](#constriction.stream.stack.AnsCoder.seek).
+    ///
+    /// **Note:** Don't call `pos` if you just want to find out how much compressed data has been
+    /// produced so far. Call [`num_words`](#constriction.stream.stack.AnsCoder.num_words)
+    /// instead.
+    ///
+    /// ## Example
+    ///
+    /// See [`seek`](#constriction.stream.stack.AnsCoder.seek).
+    #[pyo3(text_signature = "()")]
+    pub fn pos(&mut self) -> (usize, u64) {
+        self.inner.pos()
+    }
+
+    /// Jumps to a checkpoint recorded with method
+    /// [`pos`](#constriction.stream.stack.AnsCoder.pos) during encoding.
+    ///
+    /// This allows random-access decoding. The arguments `position` and `state` are the two values
+    /// returned by the method [`pos`](#constriction.stream.stack
+    ///
+    /// **Note:** in an ANS coder, both decoding and seeking *consume* compressed data. The Python
+    /// API of `constriction`'s ANS coder currently does not support seeking backward (seeking
+    /// backward is supported for Range Coding, and for both ANS and Range Coding in the Rust API).
+    ///
+    /// ## Example
+    ///
+    /// ```python
+    /// probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
+    /// model         = constriction.stream.model.Categorical(probabilities)
+    /// message_part1 = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
+    /// message_part2 = np.array([2, 2, 0, 1, 3], dtype=np.int32)
+    ///
+    /// # Encode both parts of the message (in reverse order, because ANS
+    /// # operates as a stack) and record a checkpoint in-between:
+    /// coder = constriction.stream.stack.AnsCoder()
+    /// coder.encode_reverse(message_part2, model)
+    /// (position, state) = coder.pos() # Records a checkpoint.
+    /// coder.encode_reverse(message_part1, model)
+    ///
+    /// # We could now call `coder.get_compressed()` but we'll just decode
+    /// # directly from the original `coder` for simplicity.
+    ///
+    /// # Decode first symbol:
+    /// print(coder.decode(model)) # (prints: 1)
+    ///
+    /// # Jump to part 2 and decode it:
+    /// coder.seek(position, state)
+    /// decoded_part2 = coder.decode(model, 5)
+    /// assert np.all(decoded_part2 == message_part2)
+    /// ```
+    #[pyo3(text_signature = "(position, state)")]
+    pub fn seek(&mut self, position: usize, state: u64) -> PyResult<()> {
+        self.inner.seek((position, state)).map_err(|()| {
+            pyo3::exceptions::PyAttributeError::new_err(
+                "Tried to seek past end of stream. Note: in an ANS coder,\n\
+                both decoding and seeking *consume* compressed data. The Python API of\n\
+                `constriction`'s ANS coder currently does not support seeking backward."
+            )
+        })
+    }
+
+    /// Resets the encoder to an empty state.
+    ///
+    /// This removes any existing compressed data on the encoder. It is equivalent to replacing the
+    /// encoder with a new one but slightly more efficient.
     #[pyo3(text_signature = "()")]
     pub fn clear(&mut self) {
         self.inner.clear();

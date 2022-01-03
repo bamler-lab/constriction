@@ -32,7 +32,7 @@ pub struct Model(pub Arc<dyn internals::Model>);
 /// A `CustomModel` provides maximum flexibility for defining entropy models. It
 /// encapsulates a user-defined cumulative distribution function (CDF) and the corresponding
 /// quantile function (inverse of the CDF, also called percent point function or PPF).
-/// 
+///
 /// **Note:** If you use the `scipy` python package for defining CDFs and PDFs, then
 /// [`ScipyModel`](#constriction.stream.model.ScipyModel) will be a more convenient wrapper
 /// type for you.
@@ -51,7 +51,7 @@ pub struct Model(pub Arc<dyn internals::Model>);
 /// - **cdf** --- the cumulative distribution function; a nondecreasing function that returns a scalar
 ///   between 0.0 and 1.0 (both inclusive), and which will be evaluated by constriction on
 ///   mid-points between integers in order to integrate the probability distribution over
-///   bins centered at each integer. The function signature must be 
+///   bins centered at each integer. The function signature must be
 ///   `cdf(x, [param1, [param2, [param3, ...]]])` where `x` is the value at which
 ///   `constriction` will evaluate the CDF and `paramX` will be provided if the
 ///   `CustomModel` is used as a model *family*.
@@ -61,13 +61,13 @@ pub struct Model(pub Arc<dyn internals::Model>);
 ///   truth and invert it exactly; the provided `approximate_inverse_cdf` is only used to
 ///   speed up this function inversion. The function signature must be analogous to above,
 ///   `approximate_inverse_cdf(xi, [param1, [param2, [param3, ...]]])`, where you may rely
-///   on `0.0 <= xi <= 1.0`. 
+///   on `0.0 <= xi <= 1.0`.
 /// - **min_symbol_inclusive** and **max_symbol_inclusive** --- define the range of integer
 ///   symbols that you will be able to encode with this model, see "Guarantees And
 ///   Requirements" below.
 ///
 /// ## Guarantees And Requirements
-/// 
+///
 /// The `constriction` library takes care of ensuring that the resulting entropy model is
 /// *exactly* invertible, which is crucial for correct encoding/decoding, and which is
 /// nontrivial for probability distributions that are evaluated with a limited floating
@@ -78,7 +78,7 @@ pub struct Model(pub Arc<dyn internals::Model>);
 /// symbols within this range add up to *exactly* one, without rounding errors. This is
 /// important to ensure that all symbols within the provided range can indeed be encoded,
 /// and that encoding with ANS is surjective.
-/// 
+///
 /// All guarantees only hold as long as the provided CDF is nondecreasing, that it can be
 /// evaluated on mid-points between integers, its value is >= 0.0 and <= 1.0 everywhere.
 #[pyclass(extends=Model, subclass)]
