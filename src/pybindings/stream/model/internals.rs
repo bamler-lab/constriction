@@ -100,13 +100,13 @@ pub trait Model: Send + Sync {
         _callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
         Err(pyo3::exceptions::PyAttributeError::new_err(
-            "Model parameters were specified when no parameters were expected.",
+            "Model parameters were specified but the model is already fully parameterized.",
         ))
     }
 
     fn len(&self, _param0: &PyAny) -> PyResult<usize> {
         Err(pyo3::exceptions::PyAttributeError::new_err(
-            "Model parameters were specified when no parameters were expected.",
+            "Model parameters were specified but the model is already fully parameterized.",
         ))
     }
 }
@@ -147,7 +147,7 @@ where
 }
 
 macro_rules! impl_model_for_parameterizable_model {
-    {$p0:ident: $ty0:tt $(, $ps:ident: $tys:tt)* $(,)?} => {
+    {$expected_len: literal, $p0:ident: $ty0:tt $(, $ps:ident: $tys:tt)* $(,)?} => {
         impl<$ty0, $($tys,)* M, F> Model for ParameterizableModel<($ty0, $($tys,)*), M, F>
         where
             $ty0: numpy::Element + Copy + Send + Sync,
@@ -162,9 +162,10 @@ macro_rules! impl_model_for_parameterizable_model {
                 reverse: bool,
                 callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
             ) -> PyResult<()> {
-                if params.len() != 2 {
+                if params.len() != $expected_len {
                     return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
-                        "Wrong number of model parameters: expected 2, got {}.",
+                        "Wrong number of model parameters: expected {}, got {}.",
+                        $expected_len,
                         params.len()
                     )));
                 }
@@ -214,8 +215,8 @@ macro_rules! impl_model_for_parameterizable_model {
     }
 }
 
-impl_model_for_parameterizable_model! {p0: P0}
-impl_model_for_parameterizable_model! {p0: P0, p1: P1}
+impl_model_for_parameterizable_model! {1, p0: P0}
+impl_model_for_parameterizable_model! {2, p0: P0, p1: P1}
 
 #[derive(Debug)]
 pub struct UnspecializedPythonModel {
