@@ -29,16 +29,16 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// The entropy models in this module can be instantiated in two different ways:
 ///
-/// - (a) As *concrete* models that are fully parameterized models. Simply provide all model
+/// - (a) as *concrete* models that are fully parameterized; simply provide all model
 ///   parameters to the constructor of the model (e.g., the mean and standard deviation of a
 ///   [`QuantizedGaussian`](#constriction.stream.model.QuantizedGaussian), or the domain of a
-///   [`Uniform`](#constriction.stream.model.Uniform) model. You can then use the resulting
-///   model to either encode or decode single symbols, or to efficiently encode or decode a whole
+///   [`Uniform`](#constriction.stream.model.Uniform) model). You can use a concrete model
+///   to either encode or decode single symbols, or to efficiently encode or decode a whole
 ///   array of *i.i.d.* symbols (i.e., using the same model for each symbol in the array).
-/// - (b) As model *families*, i.e., models that still have some free parameters (again, like the
-///   mean and standard deviation, or the range of a uniform distribution). Simply leave out any
+/// - (b) as model *families*, i.e., models that still have some free parameters (again, like the
+///   mean and standard deviation, or the range of a uniform distribution); simply leave out any
 ///   optional model parameters when calling the model constructor. When you then use the resulting
-///   model family to encode or decode an array of symbols, then you can provide arrays of model
+///   model family to encode or decode an array of symbols, you can provide *arrays* of model
 ///   parameters to the encode and decode methods of the employed entropy coder. This will allow you
 ///   to use individual model parameters for each symbol in a sequence (and it is more efficient
 ///   constructing a new concrete model for each symbol)
@@ -47,14 +47,14 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// Constructing and using a *concrete* [`QuantizedGaussian`](#constriction.stream.model.QuantizedGaussian)
 /// model with mean 12.6 and standard deviation 7.3, and which is quantized to integers on the domain
-/// {-100, ..., 100}:
+/// {-100, -99, ..., 100}:
 ///
 /// ```python
 /// model = constriction.stream.model.QuantizedGaussian(-100, 100, 12.6, 7.3)
 ///
 /// # Encode and decode an example message:
 /// symbols = np.array([12, 15, 4, -2, 18, 5], dtype=np.int32)
-/// coder = constriction.stream.stack.AnsCoder() # (`RangeEncoder` also works)
+/// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model)
 /// print(coder.get_compressed()) # (prints: [745994372, 25704])
 ///
@@ -63,7 +63,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// ```
 ///
 /// We can generalize the above example and use model-specific means and standard deviations by
-/// constructing and using a model *family* instead of a concrete model, and by providing arrays:
+/// constructing and using a model *family* instead of a concrete model, and by providing arrays
 /// of model parameters to the encode and decode methods:
 ///
 /// ```python
@@ -77,7 +77,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// stds    = np.array([ 3.2,  4.7, 5.2,  3.1,  6.3, 2.9], dtype=np.float64)
 ///
 /// # Encode and decode an example message:
-/// coder = constriction.stream.stack.AnsCoder() # (`RangeEncoder` also works)
+/// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model_family, means, stds)
 /// print(coder.get_compressed()) # (prints: [2051958011, 1549])
 ///
@@ -116,7 +116,7 @@ fn model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
 /// model_part1       = constriction.stream.model.Categorical(probabilities_part1)
 /// # `model_part1` is a categorical distribution over the (implied) alphabet
-/// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4,  P(X=2) = 0.1, and P(X=3) = 0.3;
+/// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
 /// # we will use it below to encode each of the 7 symbols in `message_part1`.
 ///
 /// message_part2       = np.array([6,   10,   -4,    2  ], dtype=np.int32)
@@ -215,7 +215,7 @@ fn queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
 /// model_part1       = constriction.stream.model.Categorical(probabilities_part1)
 /// # `model_part1` is a categorical distribution over the (implied) alphabet
-/// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4,  P(X=2) = 0.1, and P(X=3) = 0.3;
+/// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
 /// # we will use it below to encode each of the 7 symbols in `message_part1`.
 ///
 /// message_part2       = np.array([6,   10,   -4,    2  ], dtype=np.int32)

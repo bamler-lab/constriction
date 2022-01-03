@@ -155,6 +155,11 @@ impl ChainCoder {
                 Ok(())
             })?;
         } else {
+            if symbols.len() != model.0.len(&params[0])? {
+                return Err(pyo3::exceptions::PyAttributeError::new_err(
+                    "`symbols` argument has wrong length.",
+                ));
+            }
             let mut symbol_iter = symbols.iter().rev();
             model.0.parameterize(py, params, true, &mut |model| {
                 let symbol = symbol_iter.next().expect("TODO");
