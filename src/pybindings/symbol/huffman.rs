@@ -11,6 +11,19 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
+/// A Huffman tree that can be used for encoding data.
+///
+/// Expects a single argument `probabilities`, which is a rank-1 numpy array with
+/// `dtype=np.float64` that specifies the probabilities of each one of the symbols in the
+/// range `{0, 1, ..., len(probabilities)-1}`. All probabilities must be nonnegative and
+/// finite, but probabilities do not need to add up to one since only the ratios of
+/// probabilities will affect the shape of the constructed Huffman tree (note, however, that
+/// rescaling probabilities can, in edge cases, affect the shape of the Huffman tree due
+/// to rounding errors, so be consistent with how you scale probabilities).
+///
+/// # Examples
+///
+/// See [examples](../symbol.html#examples) in parent module.
 #[pyclass]
 #[pyo3(text_signature = "(probabilities)")]
 #[derive(Debug)]
@@ -21,8 +34,8 @@ pub struct EncoderHuffmanTree {
 #[pymethods]
 impl EncoderHuffmanTree {
     #[new]
-    pub fn new(probabilities: PyReadonlyArray1<'_, f32>) -> PyResult<Self> {
-        let inner = huffman::EncoderHuffmanTree::from_float_probabilities::<f32, _>(
+    pub fn new(probabilities: PyReadonlyArray1<'_, f64>) -> PyResult<Self> {
+        let inner = huffman::EncoderHuffmanTree::from_float_probabilities::<f64, _>(
             probabilities.iter().unwrap(),
         )?;
 
@@ -30,6 +43,19 @@ impl EncoderHuffmanTree {
     }
 }
 
+/// A Huffman tree that can be used for decoding data.
+///
+/// Expects a single argument `probabilities`, which is a rank-1 numpy array with
+/// `dtype=np.float64` that specifies the probabilities of each one of the symbols in the
+/// range `{0, 1, ..., len(probabilities)-1}`. All probabilities must be nonnegative and
+/// finite, but probabilities do not need to add up to one since only the ratios of
+/// probabilities will affect the shape of the constructed Huffman tree (note, however, that
+/// rescaling probabilities can, in edge cases, affect the shape of the Huffman tree due
+/// to rounding errors, so be consistent with how you scale probabilities).
+///
+/// # Examples
+///
+/// See [examples](../symbol.html#examples) in parent module.
 #[pyclass]
 #[pyo3(text_signature = "(probabilities)")]
 #[derive(Debug)]
@@ -40,8 +66,8 @@ pub struct DecoderHuffmanTree {
 #[pymethods]
 impl DecoderHuffmanTree {
     #[new]
-    pub fn new(probabilities: PyReadonlyArray1<'_, f32>) -> PyResult<Self> {
-        let inner = huffman::DecoderHuffmanTree::from_float_probabilities::<f32, _>(
+    pub fn new(probabilities: PyReadonlyArray1<'_, f64>) -> PyResult<Self> {
+        let inner = huffman::DecoderHuffmanTree::from_float_probabilities::<f64, _>(
             probabilities.iter().unwrap(),
         )?;
 

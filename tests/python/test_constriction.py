@@ -329,7 +329,7 @@ def test_custom_model():
 
 
 def test_huffman_queue():
-    probabilities = np.array([0.3, 0.28, 0.12, 0.1, 0.2], dtype=np.float32)
+    probabilities = np.array([0.3, 0.28, 0.12, 0.1, 0.2], dtype=np.float64)
     symbols = [1, 3, 2, 4, 0, 1, 4, 0, 2, 1]
 
     encoder = constriction.symbol.QueueEncoder()
