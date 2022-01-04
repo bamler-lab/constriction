@@ -2,53 +2,29 @@
 
 ![test status](https://github.com/bamler-lab/constriction/workflows/test/badge.svg?branch=main)
 
-The `constriction` library provides a set of composable implementations of entropy coding
-algorithms. It has APIs for both the **Python and Rust** languages and it focuses on
-correctness, versatility, ease of use, compression performance, and computational
-efficiency. The goals of `constriction` are to three-fold:
+The `constriction` library provides a set of composable entropy coding algorithms with a
+focus on correctness, versatility, ease of use, compression performance, and
+computational efficiency. The goals of `constriction` are three-fold:
 
-1. **to facilitate research on novel lossless and lossy compression methods** by providing a
-   *composable* set of entropy coding primitives rather than a rigid implementation of a
-   single preconfigured method; in compression research, different applications put
-   different requirements on the entropy coding method. For example, you may prefer a Range
-   Coder for an autoregressive entropy model (because it preserves the order of encoded
-   symbols), but you may prefer an ANS Coder for a hierarchical entropy model (because it
-   supports bits-back coding). With many other libraries, swapping out a Range Coder for an
-   ANS Coder would mean that you not only have to find and learn how to use new library, but
-   you would also have to port the part of your code that represents probabilistic entropy
-   models so that it adheres to the rules of the new library. By contrast, the composable
-   architecture of `constriction` lets you seamlessly swap out individual components of your
-   compression pipeline (such as the core entropy coding algorithm) independently from other
-   components (such as the fixed-point representation of entropy models or the strategy for
-   dealing with zero probability symbols).
-2. **to simplify the transition from research code to reliable software products** by
-   exposing the exact same functionality via both a Python API (for rapid prototyping on
-   research code) and a Rust API (for turning successful prototypes into production); This
-   approach bridges the gap between two communities that have vastly different requirements
-   on their software development tools: while *data scientists and machine learning
-   researchers* need the quick iteration cycles that scripting languages like Python
-   provide, *real-world compression codecs* that are to be used outside of laboratory
-   conditions have to be implemented in a compiled language that runs fast and that doesn't
-   require setting up a complex runtime environment with lots of dependencies. With
-   `constriction`, you can seamlessly turn your Python research code into a high-performance
-   standalone binary, library, or WebAssembly module. By default, the Python and Rust API
-   are binary compatible, so you can gradually port one component at a time without breaking
-   things. On top of this, the Rust API provides optional fine-grained control over issues
-   relevant to real-world deployments such as the trade-off between compression
-   effectiveness, memory usage, and run-time efficiency, as well as hooks into the backing
-   data sources and sinks, while preventing accidental misuse through Rust's powerful type
-   system.
-3. **to serve as a teaching resource** by providing a collection of several complementary
-   entropy coding algorithms within a single consistent framework, thus making the various
-   algorithms easily discoverable and comparable on practical examples; [additional teaching
-   material](https://robamler.github.io/teaching/compress21) is being made publicly
-   available as a by-product of an ongoing university course on data compression with deep
-   probabilistic models.
+1. **to facilitate research on novel lossless and lossy compression methods** by
+   providing a *composable* set of primitives (e.g., you can can easily switch out a
+   Range Coder for an ANS coder without having to find a new library or change how you
+   represent exactly invertible entropy models);
+2. **to simplify the transition from research code to deployed software** by providing
+   similar APIs and binary compatible entropy coders for both Python (for rapid
+   prototyping on research code) and Rust (for turning successful prototypes into
+   standalone binaries, libraries, or WebAssembly modules); and
+3. **to serve as a teaching resource** by providing a variety of entropy coding
+   primitives within a single consistent framework. Check out our [additional teaching
+   material](https://robamler.github.io/teaching/compress21/) from a university course
+   on data compression, which contains some problem sets where you use `constriction`
+   (with solutions).
 
-For an example of a compression codec that started as research code in Python and was then
-deployed as a fast and dependency-free WebAssembly module using `constriction`'s Rust API,
-have a look at [The Linguistic Flux
-Capacitor](https://robamler.github.io/linguistic-flux-capacitor).
+**More Information:** [project website](https://bamler-lab.github.io/constriction)
+
+**Live demo:** [here's a web app](https://robamler.github.io/linguistic-flux-capacitor)
+that started out as a machine-learning research project in Python and was later turned
+into a web app by using `constriction` in a WebAssembly module).
 
 ## Project Status
 
@@ -91,7 +67,7 @@ also installs `scipy`, which is not required but useful if you want to use `cons
 with custom probability distributions):
 
 ```bash
-pip install constriction numpy scipy
+pip install constriction~=0.2.0
 ```
 
 Then go ahead and use it:
@@ -100,28 +76,22 @@ Then go ahead and use it:
 import constriction
 import numpy as np
 
-# Let's use a Range Coder in this example. Constriction also provides an ANS 
-# Coder, a Huffman Coder, and an experimental new "Chain Coder".
-encoder = constriction.stream.queue.RangeEncoder()
+message = np.array([6, 10, -4, 2, 5, 2, 1, 0, 2], dtype=np.int32)
 
-# Define some data and a sequence of entropy models. We use quantized Gaussians
-# here, but you could also use other models or even provide your own.
-min_supported_symbol, max_supported_symbol = -100, 100
-symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)
-means = np.array([35.2, -1.7, 30.1, 71.2, -75.1], dtype=np.float64)
-stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
+# Define an i.i.d. entropy model (see below for more complex models):
+entropy_model = constriction.stream.model.QuantizedGaussian(-50, 50, 3.2, 9.6)
 
-# Encode the symbols and get the compressed data.
-encoder.encode_leaky_gaussian_symbols(
-    symbols, min_supported_symbol, max_supported_symbol, means, stds)
+# Let's use an ANS coder in this example. See below for a Range Coder example.
+encoder = constriction.stream.stack.AnsCoder()
+encoder.encode_reverse(message, entropy_model)
+
 compressed = encoder.get_compressed()
-print(compressed)
+print(f"compressed representation: {compressed}")
+print(f"(in binary: {[bin(word) for word in compressed]})")
 
-# Create a decoder and recover the original symbols.
-decoder = constriction.stream.queue.RangeDecoder(compressed)
-reconstructed = decoder.decode_leaky_gaussian_symbols(
-    min_supported_symbol, max_supported_symbol, means, stds)
-assert np.all(reconstructed == symbols)
+decoder = constriction.stream.stack.AnsCoder(compressed)
+decoded = decoder.decode(entropy_model, 9) # (decodes 9 symbols)
+assert np.all(decoded == message)
 ```
 
 There's a lot more you can do with `constriction`'s Python API. Please check out the [Python
@@ -133,7 +103,7 @@ Add this line to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-constriction = "0.1.2"
+constriction = "0.2.0"
 probability = "0.17" # Not strictly required but used in many code examples.
 ```
 
@@ -212,7 +182,7 @@ the choice of each licensee.
 
 There's no official guide for contributions since nobody reads those anyway. Just be nice to
 other people and act like a grown-up (i.e., it's OK to make mistakes as long as you strive
-for improvement and are open to respectfully phrased opinions of other people).
+for improvement and are open to consider respectfully phrased opinions of other people).
 
 ## License
 

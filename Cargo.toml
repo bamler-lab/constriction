@@ -1,16 +1,16 @@
 [package]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
 categories = ["compression", "science", "no-std"]
-description = "Composable entropy coding primitives for research and production (Python and Rust)."
+description = "Entropy coders for research and production (Rust and Python)."
 documentation = "https://docs.rs/constriction/"
 edition = "2018"
 homepage = "https://bamler-lab.github.io/constriction/"
 keywords = ["compression", "entropy-coding", "range-coding", "python", "machine-learning"]
 license = "MIT OR Apache-2.0 OR BSL-1.0"
 name = "constriction"
-readme = "README.md"
+readme = "README-rust.md"
 repository = "https://github.com/bamler-lab/constriction/"
-version = "0.1.5"
+version = "0.2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
