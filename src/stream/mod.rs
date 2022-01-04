@@ -30,7 +30,7 @@
 //! ## Provided Utilities for Entropy Models
 //!
 //! To encode or decode a sequence of symbols with one of the above stream codes, you have
-//! to specify an [`EntropyModel`] for each symbol. The submodule [`models`] provides
+//! to specify an [`EntropyModel`] for each symbol. The submodule [`model`] provides
 //! utilities for defining `EntropyModel`s.
 //!
 //! # Examples
@@ -155,7 +155,7 @@
 //!
 //! *The near-optimal compression performance* of stream codes is to be seen in contrast to
 //! symbol codes (see module [`symbol`](crate::symbol)), such as the well-known [Huffman
-//! code](crate::symbol::codebooks::huffman). Symbol codes do not amortize over symbols.
+//! code](crate::symbol::huffman). Symbol codes do not amortize over symbols.
 //! Instead, they map each symbol to a fixed sequence of bits of integer length (a
 //! "codeword"). This leads to a typical overhead of 0.5&nbsp;bits *per symbol* in the best
 //! case, and to an overhead of almost 1&nbsp;bit per symbol for entropy models with very
@@ -186,12 +186,13 @@
 //! useful presets:
 //!
 //! - **"Default" presets** are the recommended starting point for most users, and they are
-//!   also used by `constriction`'s [Python API](TODO). The "default" presets provide very
-//!   near-optimal compression effectiveness for most conceivable applications and high
-//!   runtime performance on typical (64&nbsp;bit) desktop computers. However, the "default"
-//!   presets are *not* recommended for a [`LookupDecoderModel`] as their high numerical
-//!   precision would lead to enormeous lookup tables (~&nbsp;67&nbsp;MB), which would take
-//!   a considerable time to build and likely leead to extremely poor cashing.
+//!   also used by `constriction`'s [Python
+//!   API](https://bamler-lab.github.io/constriction/apidoc/python/). The "default" presets
+//!   provide very near-optimal compression effectiveness for most conceivable applications
+//!   and high runtime performance on typical (64&nbsp;bit) desktop computers. However, the
+//!   "default" presets are *not* recommended for a [`LookupDecoderModel`] as their high
+//!   numerical precision would lead to enormeous lookup tables (~&nbsp;67&nbsp;MB), which
+//!   would take a considerable time to build and likely leead to extremely poor cashing.
 //!   - entropy *coders* with "default" presets: [`DefaultAnsCoder`],
 //!     [`DefaultRangeEncoder`], [`DefaultRangeDecoder`], and [`DefaultChainCoder`];
 //!   - entropy *models* with "default" presets: [`DefaultLeakyQuantizer`],

@@ -1,6 +1,6 @@
 //! Near-optimal compression on a queue ("first in first out")
 //!
-//! This module provides an implementation of the Range Coding algorithm [1], an entropy
+//! This module provides an implementation of the Range Coding algorithm \[1], an entropy
 //! coder with near-optimal compression effectiveness that operates as a *queue* data
 //! structure. Range Coding is a more computationally efficient variant of Arithmetic
 //! Coding.
@@ -24,7 +24,7 @@
 //!
 //! # References
 //!
-//! [1] Pasco, Richard Clark. Source coding algorithms for fast data compression. Diss.
+//! \[1] Pasco, Richard Clark. Source coding algorithms for fast data compression. Diss.
 //! Stanford University, 1976.
 //!
 //! [`AnsCoder`]: super::stack::AnsCoder
@@ -132,23 +132,16 @@ impl<Word> Default for EncoderSituation<Word> {
 /// Type alias for an [`RangeEncoder`] with sane parameters for typical use cases.
 pub type DefaultRangeEncoder<Backend = Vec<u32>> = RangeEncoder<u32, u64, Backend>;
 
-/// Type alias for a [`RangeEncoder`] for use with [lookup models]
+/// Type alias for a [`RangeEncoder`] for use with lookup models
 ///
-/// This encoder has a smaller word size and internal state than [`DefaultRangeEncoder`]. It
-/// is optimized for use with lookup entropy models, in particular with a
-/// [`DefaultEncoderArrayLookupTable`] or a [`DefaultEncoderHashLookupTable`].
-///
-/// # Examples
-///
-/// See [`DefaultEncoderArrayLookupTable`] and [`DefaultEncoderHashLookupTable`].
-///
-/// # See also
-///
-/// - [`SmallRangeDecoder`]
+/// This encoder has a smaller word size and internal state than [`DefaultRangeEncoder`].
+/// This allows you to use lookup models when decoding data that was encoded with this
+/// coder, see [`SmallRangeDecoder`], as well as [`SmallContiguousLookupDecoderModel`] and
+/// [`SmallNonContiguousLookupDecoderModel`].
 ///
 /// [lookup models]: super::model::lookup
-/// [`DefaultEncoderArrayLookupTable`]: super::model::lookup::DefaultEncoderArrayLookupTable
-/// [`DefaultEncoderHashLookupTable`]: super::model::lookup::DefaultEncoderHashLookupTable
+/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
+/// [`SmallNonContiguousLookupDecoderModel`]: super::model::SmallNonContiguousLookupDecoderModel
 pub type SmallRangeEncoder<Backend = Vec<u16>> = RangeEncoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> Code for RangeEncoder<Word, State, Backend>
@@ -429,59 +422,16 @@ where
     /// This method is only implemented for encoders backed by a `Vec<Word>`
     /// because we have to temporarily seal the encoder and then unseal it when the returned
     /// `EncoderGuard` is dropped, which requires precise knowledge of the backend (and
-    /// which is also the reason why this method takes a `&mut self`receiver). If you're
+    /// which is also the reason why this method takes a `&mut self` receiver). If you're
     /// using a different backend than a `Vec`, consider calling [`into_compressed`]
     /// instead.
     ///
-    /// TODO: update following documentation.
-    ///
-    /// This method is similar to [`as_compressed_raw`] with the difference that it
-    /// concatenates the `bulk` and `head` before returning them. The concatenation
-    /// truncates any trailing zero words, which is compatible with the constructor
-    /// [`from_compressed`].
-    ///
-    /// This method requires a `&mut self` receiver. If you only have a shared reference to
-    /// a `Coder`, consider calling [`as_compressed_raw`] or [`iter_compressed`] instead.
-    ///
-    /// The returned `CoderGuard` dereferences to `&[Word]`, thus providing
-    /// read-only access to the compressed data. If you need ownership of the compressed
-    /// data, consider calling [`into_compressed`] instead.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::stream::{
-    ///     model::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
-    /// };
-    ///
-    /// let mut coder = DefaultAnsCoder::new();
-    ///
-    /// // Push some data on the coder.
-    /// let symbols = vec![8, 2, 0, 7];
-    /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
-    /// let model = DefaultContiguousCategoricalEntropyModel
-    ///     ::from_floating_point_probabilities(&probabilities).unwrap();
-    /// coder.encode_iid_symbols_reverse(&symbols, &model).unwrap();
-    ///
-    /// // Inspect the compressed data.
-    /// dbg!(coder.get_compressed());
-    ///
-    /// // We can still use the coder afterwards.
-    /// let reconstructed = coder
-    ///     .decode_iid_symbols(4, &model)
-    ///     .collect::<Result<Vec<_>, _>>()
-    ///     .unwrap();
-    /// assert_eq!(reconstructed, symbols);
-    /// ```
-    ///
-    /// TODO: this is currently out of date
-    ///
-    /// [`as_compressed_raw`]: #method.as_compressed_raw [`from_compressed`]:
-    /// #method.from_compressed [`iter_compressed`]: #method.iter_compressed
-    /// [`into_compressed`]: #method.into_compressed
+    /// [`into_compressed`]: Self::into_compressed
     pub fn get_compressed(&mut self) -> EncoderGuard<'_, Word, State> {
         EncoderGuard::new(self)
     }
+
+    // TODO: implement `iter_compressed`
 
     /// A decoder for temporary use.
     ///
@@ -493,6 +443,8 @@ where
     /// decoder is dropped, which requires precise knowledge of the backend (and which is
     /// also the reason why this method takes a `&mut self`receiver). If you're using a
     /// different backend than a `Vec`, consider calling [`into_decoder`] instead.
+    ///
+    /// [`into_decoder`]: Self::into_decoder
     pub fn decoder(
         &mut self,
     ) -> RangeDecoder<Word, State, Cursor<Word, EncoderGuard<'_, Word, State>>> {
@@ -645,21 +597,19 @@ pub type DefaultRangeDecoder<Backend = Cursor<u32, Vec<u32>>> = RangeDecoder<u32
 ///
 /// This encoder has a smaller word size and internal state than [`DefaultRangeDecoder`]. It
 /// is optimized for use with lookup entropy models, in particular with a
-/// [`DefaultDecoderIndexLookupTable`] or a [`DefaultDecoderGenericLookupTable`].
+/// [`SmallContiguousLookupDecoderModel`] or a [`SmallNonContiguousLookupDecoderModel`].
 ///
 /// # Examples
 ///
-/// See [`DefaultDecoderIndexLookupTable`] and [`DefaultDecoderGenericLookupTable`].
+/// See [`SmallContiguousLookupDecoderModel`] and [`SmallNonContiguousLookupDecoderModel`].
 ///
 /// # See also
 ///
 /// - [`SmallRangeEncoder`]
 ///
-/// [lookup models]: super::model::lookup
-/// [`DefaultEncoderArrayLookupTable`]: super::model::lookup::DefaultEncoderArrayLookupTable
-/// [`DefaultEncoderHashLookupTable`]: super::model::lookup::DefaultEncoderHashLookupTable
-/// [`DefaultDecoderIndexLookupTable`]: super::model::lookup::DefaultDecoderIndexLookupTable
-/// [`DefaultDecoderGenericLookupTable`]: super::model::lookup::DefaultDecoderGenericLookupTable
+/// [lookup models]: super::model::SmallContiguousLookupDecoderModel
+/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
+/// [`SmallNonContiguousLookupDecoderModel`]: super::model::SmallNonContiguousLookupDecoderModel
 pub type SmallRangeDecoder<Backend> = RangeDecoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> RangeDecoder<Word, State, Backend>
@@ -937,12 +887,9 @@ where
 }
 
 /// Provides temporary read-only access to the compressed data wrapped in an
-/// [`Encoder`].
+/// [`RangeEncoder`].
 ///
-/// Dereferences to `&[Word]`. See [`Encoder::get_compressed`] for an example.
-///
-/// [`Coder`]: struct.Coder.html
-/// [`Coder::get_compressed`]: struct.Coder.html#method.get_compressed
+/// Dereferences to `&[Word]`. See [`RangeEncoder::get_compressed`] for an example.
 pub struct EncoderGuard<'a, Word, State>
 where
     Word: BitArray + Into<State>,
@@ -1338,6 +1285,8 @@ pub enum DecoderFrontendError {
     /// - `range_encode(range_encode(bit_string)) != bit_string` in general.
     ///
     /// If you need equality in the second relation, use an [`AnsCoder`].
+    ///
+    /// [`AnsCoder`]: super::stack::AnsCoder
     InvalidData,
 }
 

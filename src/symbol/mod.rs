@@ -219,7 +219,7 @@ impl<Word: BitArray, S: Semantics, B> SymbolCoder<Word, S, B> {
             .expect("len overflows addressable space")
     }
 
-    /// See comment for [`len`].
+    /// Returns `true` if no bits are on the `SymbolCoder`.
     pub fn is_empty(&self) -> bool
     where
         B: BoundedReadWords<Word, Stack>,

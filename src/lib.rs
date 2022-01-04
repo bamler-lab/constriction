@@ -432,7 +432,7 @@ pub trait Pos: PosSeek {
     /// positions within the compressed data (for example, a [`AnsCoder`] begins encoding
     /// at position zero but it begins decoding at position `ans.buf().len()`).
     ///
-    /// [`AnsCoder`]: stack::AnsCoder
+    /// [`AnsCoder`]: stream::stack::AnsCoder
     fn pos(&self) -> Self::Position;
 }
 
@@ -447,7 +447,7 @@ pub trait Pos: PosSeek {
 /// supports both encoding and decoding and therefore always operates at the head. In
 /// such a case one can usually obtain a seekable entropy coder in return for
 /// surrendering some other property. For example, `DefaultAnsCoder` provides the methods
-/// [`seekable_decoder`] and [`into_seekable_decoder`] that return a decoder which
+/// [`as_seekable_decoder`] and [`into_seekable_decoder`] that return a decoder which
 /// implements `Seek` but which can no longer be used for encoding (i.e., it doesn't
 /// implement [`Encode`]).
 ///
@@ -498,9 +498,10 @@ pub trait Pos: PosSeek {
 /// assert!(seekable_decoder.is_empty()); // <-- We've reached the end again.
 /// ```
 ///
-/// [`DefaultAnsCoder`]: stack::DefaultAnsCoder
-/// [`seekable_decoder`]: stack::AnsCoder::seekable_decoder
-/// [`into_seekable_decoder`]: stack::AnsCoder::into_seekable_decoder
+/// [`Encode`]: stream::Encode
+/// [`DefaultAnsCoder`]: stream::stack::DefaultAnsCoder
+/// [`as_seekable_decoder`]: stream::stack::AnsCoder::as_seekable_decoder
+/// [`into_seekable_decoder`]: stream::stack::AnsCoder::into_seekable_decoder
 pub trait Seek: PosSeek {
     /// Jumps to a given position in the compressed data.
     ///
@@ -576,7 +577,7 @@ pub trait Seek: PosSeek {
     /// assert!(decoder.is_empty()); // <-- We've reached the end of the compressed data.
     /// ```
     ///
-    /// [`DefaultAnsCoder`]: stack::DefaultAnsCoder
+    /// [`DefaultAnsCoder`]: stream::stack::DefaultAnsCoder
     #[allow(clippy::result_unit_err)]
     fn seek(&mut self, pos: Self::Position) -> Result<(), ()>;
 }
@@ -585,10 +586,10 @@ pub trait Seek: PosSeek {
 ///
 /// Short fixed-length bit strings are fundamental building blocks of efficient entropy
 /// coding algorithms. They are currently used for the following purposes:
-/// - to represent the smallest unit of compressed data (see [`Code::Word`]);
+/// - to represent the smallest unit of compressed data (see [`stream::Code::Word`]);
 /// - to represent probabilities in fixed point arithmetic (see
-///   [`EntropyModel::Probability`]); and
-/// - the internal state of entropy coders (see [`Code::State`]) is typically comprised of
+///   [`stream::model::EntropyModel::Probability`]); and
+/// - the internal state of entropy coders (see [`stream::Code::State`]) is typically comprised of
 ///   one or more `BitArray`s, although this is not a requirement.
 ///
 /// This trait is implemented on all primitive unsigned integer types. It is not recommended

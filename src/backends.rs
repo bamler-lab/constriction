@@ -648,7 +648,7 @@ where
 ///
 /// Reading from a `Cursor` with `Queue` semantics reads from the underlying slice `[Word]`
 /// in the normal direction (from index `0` to index `.len() - 1`), which is useful for
-/// decoding data from an entropy coder that has queue semantics (like [`RangeCoder`]). By
+/// decoding data from an entropy coder that has queue semantics (like [`RangeEncoder`]). By
 /// contrast, reading from a `Cursor` with `Stack` semantics reads in the reverse direction.
 /// This is usually a good thing: it is consistent with how `Vec<Word>` (necessarily)
 /// implements reading with `Stack` semantics, so if you have a `Vec<Word>` of data that was
@@ -776,7 +776,7 @@ where
 /// # assert!(c7.is_empty());
 /// ```
 ///
-/// [`RangeCoder`]: crate::stream::queue::RangeCoder
+/// [`RangeEncoder`]: crate::stream::queue::RangeEncoder
 /// [`AnsCoder`]: crate::stream::stack::AnsCoder
 #[derive(Debug)]
 pub struct Reverse<Backend>(pub Backend);

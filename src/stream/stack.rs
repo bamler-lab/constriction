@@ -2,7 +2,7 @@
 //!
 //! This module provides the [`AnsCoder`], a highly efficient entropy coder with
 //! near-optimal compression effectiveness that operates as a *stack* data structure. It
-//! implements the Asymmetric Numeral Systems (ANS) compression algorithm [1].
+//! implements the Asymmetric Numeral Systems (ANS) compression algorithm \[1].
 //!
 //! # Comparison to sister module `queue`
 //!
@@ -18,7 +18,7 @@
 //!
 //! # References
 //!
-//! [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
+//! \[1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 //! replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 //!
 //! [`queue`]: super::queue
@@ -571,11 +571,11 @@ where
 
     /// Consumes the `AnsCoder` and returns a decoder that implements [`Seek`].
     ///
-    /// This method is similar to [`seekable_decoder`] except that it takes ownership of
+    /// This method is similar to [`as_seekable_decoder`] except that it takes ownership of
     /// the original `AnsCoder`, so the returned seekable decoder can typically be returned
     /// from the calling function or put on the heap.
     ///
-    /// [`seekable_decoder`]: Self::seekable_decoder
+    /// [`as_seekable_decoder`]: Self::as_seekable_decoder
     pub fn into_seekable_decoder(self) -> AnsCoder<Word, State, Backend::IntoSeekReadWords>
     where
         Backend: IntoSeekReadWords<Word, Stack>,

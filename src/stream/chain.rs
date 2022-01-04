@@ -669,11 +669,9 @@ where
     /// The conversion can only fail if *all* of the following conditions are true
     ///
     /// - `NEW_PRECISION < PRECISION`; and
-    /// - the `stable::Decoder` originates from a [`stable::Encoder`] that was converted
-    ///   with [`into_decoder`]; and
-    /// - before calling `into_decoder`, the `stable::Encoder` was used incorrectly: it
+    /// - the `ChainCoder` has already been used incorrectly: it
     ///   must have encoded too many symbols or used the wrong sequence of entropy
-    ///   models, causing it to use up just a few more bits of `waste` than available
+    ///   models, causing it to use up just a few more bits of `remainders` than available
     ///   (but also not exceeding the capacity enough for this to be detected during
     ///   encoding).
     ///
@@ -701,9 +699,6 @@ where
     /// let mut coder = coder.change_precision().unwrap();
     /// let _symbol_b = coder.decode_symbol(distribution20);
     /// ```
-    ///
-    /// [`stable::Encoder`]: Encoder
-    /// [`into_decoder`]: Encoder::into_decoder
     #[inline(always)]
     pub fn change_precision<const NEW_PRECISION: usize>(
         self,
@@ -833,9 +828,7 @@ impl core::fmt::Display for EncoderFrontendError {
 #[cfg(feature = "std")]
 impl std::error::Error for EncoderFrontendError {}
 
-/// Error type for backend errors in a [`stable::Decoder`].
-///
-/// [`stable::Decoder`]: Decoder
+/// Error type for backend errors in a [`ChainCoder`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum BackendError<CompressedBackendError, RemaindersBackendError> {
     Compressed(CompressedBackendError),
