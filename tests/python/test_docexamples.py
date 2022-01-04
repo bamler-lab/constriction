@@ -124,17 +124,15 @@ def test_custom_model_ans():
 
         symbols = np.array([5, 14, -1, 21], dtype=np.int32)
         coder = constriction.stream.stack.AnsCoder()
-        coder.encode_iid_custom_model_reverse(symbols, model)
-        assert np.all(coder.decode_iid_custom_model(4, model) == symbols)
+        coder.encode_reverse(symbols, model)
+        assert np.all(coder.decode(model, 4) == symbols)
 
     def variable_model_params():
         # The optional argument `params` will receive a 1-d python array when
         # the model is used for encoding or decoding.
         model = constriction.stream.model.CustomModel(
-            lambda x, params: scipy.stats.cauchy.cdf(
-                x, loc=params[0], scale=params[1]),
-            lambda x, params: scipy.stats.cauchy.ppf(
-                x, loc=params[0], scale=params[1]),
+            lambda x, loc, scale: scipy.stats.cauchy.cdf(x, loc, scale),
+            lambda x, loc, scale: scipy.stats.cauchy.ppf(x, loc, scale),
             -100, 100)
 
         model_parameters = np.array([
@@ -146,24 +144,24 @@ def test_custom_model_ans():
 
         symbols = np.array([5, 14, -1, 21], dtype=np.int32)
         coder = constriction.stream.stack.AnsCoder()
-        coder.encode_custom_model_reverse(symbols, model, model_parameters)
+        coder.encode_reverse(symbols, model, model_parameters[:, 0].copy(), model_parameters[:, 1].copy())
         assert np.all(
-            coder.decode_custom_model(model, model_parameters) == symbols)
+            coder.decode(model, model_parameters[:, 0].copy(), model_parameters[:, 1].copy()) == symbols)
 
     def discrete_distribution():
         model = constriction.stream.model.CustomModel(
-            lambda x, params: scipy.stats.binom.cdf(x, n=10, p=params[0]),
-            lambda x, params: scipy.stats.binom.ppf(x, n=10, p=params[0]),
+            lambda x, params: scipy.stats.binom.cdf(x, n=10, p=params),
+            lambda x, params: scipy.stats.binom.ppf(x, n=10, p=params),
             0, 10)
 
-        success_probabilities = np.array([(0.3,), (0.7,), (0.2,), (0.6,)])
+        success_probabilities = np.array([0.3, 0.7, 0.2, 0.6])
 
         symbols = np.array([4, 8, 1, 5], dtype=np.int32)
         coder = constriction.stream.stack.AnsCoder()
-        coder.encode_custom_model_reverse(
+        coder.encode_reverse(
             symbols, model, success_probabilities)
         assert np.all(
-            coder.decode_custom_model(model, success_probabilities) == symbols)
+            coder.decode(model, success_probabilities) == symbols)
 
     fixed_model_params()
     variable_model_params()
@@ -181,19 +179,17 @@ def test_custom_model_range():
 
         symbols = np.array([5, 14, -1, 21], dtype=np.int32)
         encoder = constriction.stream.queue.RangeEncoder()
-        encoder.encode_iid_custom_model(symbols, model)
+        encoder.encode(symbols, model)
         compressed = encoder.get_compressed()
         decoder = constriction.stream.queue.RangeDecoder(compressed)
-        assert np.all(decoder.decode_iid_custom_model(4, model) == symbols)
+        assert np.all(decoder.decode(model, 4) == symbols)
 
     def variable_model_params():
         # The optional argument `params` will receive a 1-d python array when
         # the model is used for encoding or decoding.
         model = constriction.stream.model.CustomModel(
-            lambda x, params: scipy.stats.cauchy.cdf(
-                x, loc=params[0], scale=params[1]),
-            lambda x, params: scipy.stats.cauchy.ppf(
-                x, loc=params[0], scale=params[1]),
+            lambda x, loc, scale: scipy.stats.cauchy.cdf(x, loc, scale),
+            lambda x, loc, scale: scipy.stats.cauchy.ppf(x, loc, scale),
             -100, 100)
 
         model_parameters = np.array([
@@ -205,27 +201,27 @@ def test_custom_model_range():
 
         symbols = np.array([5, 14, -1, 21], dtype=np.int32)
         encoder = constriction.stream.queue.RangeEncoder()
-        encoder.encode_custom_model(symbols, model, model_parameters)
+        encoder.encode(symbols, model, model_parameters[:, 0].copy(), model_parameters[:, 1].copy())
         compressed = encoder.get_compressed()
         decoder = constriction.stream.queue.RangeDecoder(compressed)
         assert np.all(
-            decoder.decode_custom_model(model, model_parameters) == symbols)
+            decoder.decode(model, model_parameters[:, 0].copy(), model_parameters[:, 1].copy()) == symbols)
 
     def discrete_distribution():
         model = constriction.stream.model.CustomModel(
-            lambda x, params: scipy.stats.binom.cdf(x, n=10, p=params[0]),
-            lambda x, params: scipy.stats.binom.ppf(x, n=10, p=params[0]),
+            lambda x, params: scipy.stats.binom.cdf(x, n=10, p=params),
+            lambda x, params: scipy.stats.binom.ppf(x, n=10, p=params),
             0, 10)
 
-        success_probabilities = np.array([(0.3,), (0.7,), (0.2,), (0.6,)])
+        success_probabilities = np.array([0.3, 0.7, 0.2, 0.6])
 
         symbols = np.array([4, 8, 1, 5], dtype=np.int32)
         encoder = constriction.stream.queue.RangeEncoder()
-        encoder.encode_custom_model(symbols, model, success_probabilities)
+        encoder.encode(symbols, model, success_probabilities)
         compressed = encoder.get_compressed()
         decoder = constriction.stream.queue.RangeDecoder(compressed)
         assert np.all(
-            decoder.decode_custom_model(model, success_probabilities) == symbols)
+            decoder.decode(model, success_probabilities) == symbols)
 
     fixed_model_params()
     variable_model_params()
@@ -247,19 +243,17 @@ def test_custom_model_chain():
             model_scipy.cdf, model_scipy.ppf, -100, 100)
 
         coder = constriction.stream.chain.ChainCoder(compressed, False, False)
-        symbols = coder.decode_iid_custom_model(4, model)
+        symbols = coder.decode(model, 4)
         assert np.all(symbols == np.array([18, 6, 33, 59]))
-        coder.encode_iid_custom_model_reverse(symbols, model)
+        coder.encode_reverse(symbols, model)
         assert np.all(np.hstack(coder.get_data()) == compressed)
 
     def variable_model_params():
         # The optional argument `params` will receive a 1-d python array when
         # the model is used for encoding or decoding.
         model = constriction.stream.model.CustomModel(
-            lambda x, params: scipy.stats.cauchy.cdf(
-                x, loc=params[0], scale=params[1]),
-            lambda x, params: scipy.stats.cauchy.ppf(
-                x, loc=params[0], scale=params[1]),
+            lambda x, loc, scale: scipy.stats.cauchy.cdf(x, loc, scale),
+            lambda x, loc, scale: scipy.stats.cauchy.ppf(x, loc, scale),
             -100, 100)
 
         model_parameters = np.array([
@@ -270,23 +264,23 @@ def test_custom_model_chain():
         ])
 
         coder = constriction.stream.chain.ChainCoder(compressed, False, False)
-        symbols = coder.decode_custom_model(model, model_parameters)
+        symbols = coder.decode(model, model_parameters[:, 0].copy(), model_parameters[:, 1].copy())
         assert np.all(symbols == np.array([13, 7, 16, 85]))
-        coder.encode_custom_model_reverse(symbols, model, model_parameters)
+        coder.encode_reverse(symbols, model, model_parameters[:, 0].copy(), model_parameters[:, 1].copy())
         assert np.all(np.hstack(coder.get_data()) == compressed)
 
     def discrete_distribution():
         model = constriction.stream.model.CustomModel(
-            lambda x, params: scipy.stats.binom.cdf(x, n=10, p=params[0]),
-            lambda x, params: scipy.stats.binom.ppf(x, n=10, p=params[0]),
+            lambda x, params: scipy.stats.binom.cdf(x, n=10, p=params),
+            lambda x, params: scipy.stats.binom.ppf(x, n=10, p=params),
             0, 10)
 
-        success_probabilities = np.array([(0.3,), (0.7,), (0.2,), (0.6,)])
+        success_probabilities = np.array([0.3, 0.7, 0.2, 0.6])
 
         coder = constriction.stream.chain.ChainCoder(compressed, False, False)
-        symbols = coder.decode_custom_model(model, success_probabilities)
+        symbols = coder.decode(model, success_probabilities)
         assert np.all(symbols == np.array([4, 6, 4, 9]))
-        coder.encode_custom_model_reverse(
+        coder.encode_reverse(
             symbols, model, success_probabilities)
         assert np.all(np.hstack(coder.get_data()) == compressed)
 

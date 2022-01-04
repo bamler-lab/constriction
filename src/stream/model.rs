@@ -144,9 +144,8 @@ use probability::distribution::{Distribution, Inverse};
 ///
 /// This trait is only exported if `constriction` is used in a no-std context (i.e., with
 /// `default-features = false`). In this case, we can't use the `probability` crate because
-/// it doesn't seems to be incompatible with no-std. However, for most things, we really
-/// only need the trait definitions for `Distribution` and for [`Inverse`], so we copy them
-/// here.
+/// it uses a lot of FFI calls. However, for moany things, we really only need the trait
+/// definitions for `Distribution` and for [`Inverse`], so we copy them here.
 #[cfg(not(feature = "probability"))]
 pub trait Distribution {
     /// The type of outcomes.
@@ -160,9 +159,8 @@ pub trait Distribution {
 ///
 /// This trait is only exported if `constriction` is used in a no-std context (i.e., with
 /// `default-features = false`). In this case, we can't use the `probability` crate because
-/// it doesn't seems to be incompatible with no-std. However, for most things, we really
-/// only need the trait definitions for [`Distribution`] and for `Inverse`, so we copy them
-/// here.
+/// it uses a lot of FFI calls. However, for moany things, we really only need the trait
+/// definitions for `Distribution` and for [`Inverse`], so we copy them here.
 #[cfg(not(feature = "probability"))]
 pub trait Inverse: Distribution {
     /// Compute the inverse of the cumulative distribution function.
@@ -187,7 +185,7 @@ use crate::{wrapping_pow2, BitArray, NonZeroBitArray};
 /// ```ignore
 /// impl<M, const PRECISION: usize> EntropyModel<PRECISION> for &M
 /// where
-///     M: EntropyModel<PRECISION>
+///     M: EntropyModel<PRECISION> + ?Sized
 /// { ... }
 /// ```
 ///
@@ -528,7 +526,7 @@ where
 /// ```ignore
 /// impl<M, const PRECISION: usize> EncoderModel<PRECISION> for &M
 /// where
-///     M: EncoderModel<PRECISION>
+///     M: EncoderModel<PRECISION> + ?Sized
 /// { ... }
 /// ```
 ///
@@ -642,7 +640,7 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
 /// ```ignore
 /// impl<M, const PRECISION: usize> DecoderModel<PRECISION> for &M
 /// where
-///     M: DecoderModel<PRECISION>
+///     M: DecoderModel<PRECISION> + ?Sized
 /// { ... }
 /// ```
 ///
@@ -704,7 +702,7 @@ pub trait DecoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
 
 impl<M, const PRECISION: usize> EntropyModel<PRECISION> for &M
 where
-    M: EntropyModel<PRECISION>,
+    M: EntropyModel<PRECISION> + ?Sized,
 {
     type Probability = M::Probability;
     type Symbol = M::Symbol;
@@ -756,7 +754,7 @@ where
 
 impl<M, const PRECISION: usize> EncoderModel<PRECISION> for &M
 where
-    M: EncoderModel<PRECISION>,
+    M: EncoderModel<PRECISION> + ?Sized,
 {
     #[inline(always)]
     fn left_cumulative_and_probability(
@@ -769,7 +767,7 @@ where
 
 impl<M, const PRECISION: usize> DecoderModel<PRECISION> for &M
 where
-    M: DecoderModel<PRECISION>,
+    M: DecoderModel<PRECISION> + ?Sized,
 {
     #[inline(always)]
     fn quantile_function(
@@ -781,6 +779,167 @@ where
         <Self::Probability as BitArray>::NonZero,
     ) {
         (*self).quantile_function(quantile)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct UniformModel<Probability: BitArray, const PRECISION: usize> {
+    probability_per_bin: Probability::NonZero,
+    last_symbol: Probability,
+}
+
+impl<Probability: BitArray, const PRECISION: usize> UniformModel<Probability, PRECISION> {
+    pub fn new(range: Probability) -> Self {
+        assert!(range > Probability::one()); // We don't support degenerate probability distributions (i.e. range=1).
+        let range = unsafe { range.into_nonzero_unchecked() }; // For performance hint.
+        let last_symbol = range.get() - Probability::one();
+
+        if PRECISION == Probability::BITS {
+            let probability_per_bin =
+                (Probability::zero().wrapping_sub(&range.get()) / range.get()) + Probability::one();
+            unsafe {
+                Self {
+                    probability_per_bin: probability_per_bin.into_nonzero_unchecked(),
+                    last_symbol,
+                }
+            }
+        } else {
+            let probability_per_bin = (Probability::one() << PRECISION) / range.get();
+            let probability_per_bin = probability_per_bin
+                .into_nonzero()
+                .expect("Range of Uniform model must not exceed 1 << PRECISION.");
+            Self {
+                probability_per_bin,
+                last_symbol,
+            }
+        }
+    }
+}
+
+impl<Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
+    for UniformModel<Probability, PRECISION>
+{
+    type Symbol = Probability;
+    type Probability = Probability;
+}
+
+impl<'m, Probability: BitArray, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
+    for UniformModel<Probability, PRECISION>
+where
+    Probability: AsPrimitive<usize>,
+{
+    type Iter = UniformModelIter<'m, Probability, PRECISION>;
+
+    fn symbol_table(&'m self) -> Self::Iter {
+        UniformModelIter {
+            model: self,
+            symbol: Probability::zero(),
+            terminated: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct UniformModelIter<'m, Probability: BitArray, const PRECISION: usize> {
+    model: &'m UniformModel<Probability, PRECISION>,
+    symbol: Probability,
+    terminated: bool,
+}
+
+impl<'m, Probability: BitArray, const PRECISION: usize> Iterator
+    for UniformModelIter<'m, Probability, PRECISION>
+where
+    Probability: AsPrimitive<usize>,
+{
+    type Item = (Probability, Probability, Probability::NonZero);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.terminated {
+            None
+        } else {
+            let left_cumulative = self.symbol * self.model.probability_per_bin.get();
+
+            if self.symbol != self.model.last_symbol {
+                let symbol = self.symbol;
+                self.symbol = symbol.wrapping_add(&Probability::one());
+                // Most common case.
+                Some((symbol, left_cumulative, self.model.probability_per_bin))
+            } else {
+                // Less common but possible case.
+                self.terminated = true;
+                self.symbol = self.symbol.wrapping_add(&Probability::one());
+                let probability =
+                    wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&left_cumulative);
+                let probability = unsafe { probability.into_nonzero_unchecked() };
+                Some((self.model.last_symbol, left_cumulative, probability))
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.model.last_symbol.as_() + 1 - self.symbol.as_();
+        (len, Some(len))
+    }
+}
+
+impl<'m, Probability: BitArray, const PRECISION: usize> ExactSizeIterator
+    for UniformModelIter<'m, Probability, PRECISION>
+where
+    Probability: AsPrimitive<usize>,
+{
+}
+
+impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
+    for UniformModel<Probability, PRECISION>
+{
+    fn left_cumulative_and_probability(
+        &self,
+        symbol: impl Borrow<Self::Symbol>,
+    ) -> Option<(Self::Probability, <Self::Probability as BitArray>::NonZero)> {
+        let symbol = *symbol.borrow();
+        let left_cumulative = symbol.wrapping_mul(&self.probability_per_bin.get());
+
+        #[allow(clippy::comparison_chain)]
+        if symbol < self.last_symbol {
+            // Most common case.
+            Some((left_cumulative, self.probability_per_bin))
+        } else if symbol == self.last_symbol {
+            // Less common but possible case.
+            let probability =
+                wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&left_cumulative);
+            let probability = unsafe { probability.into_nonzero_unchecked() };
+            Some((left_cumulative, probability))
+        } else {
+            // Least common case.
+            None
+        }
+    }
+}
+
+impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
+    for UniformModel<Probability, PRECISION>
+{
+    fn quantile_function(
+        &self,
+        quantile: Self::Probability,
+    ) -> (
+        Self::Symbol,
+        Self::Probability,
+        <Self::Probability as BitArray>::NonZero,
+    ) {
+        let symbol_guess = quantile / self.probability_per_bin.get(); // Might be 1 too large for last symbol.
+        let remainder = quantile % self.probability_per_bin.get();
+        if symbol_guess < self.last_symbol {
+            (symbol_guess, quantile - remainder, self.probability_per_bin)
+        } else {
+            let left_cumulative = self.last_symbol * self.probability_per_bin.get();
+            let prob = wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&left_cumulative);
+            let prob = unsafe {
+                // SAFETY: prob can't be zero because we have a `quantile` that is contained in its interval.
+                prob.into_nonzero_unchecked()
+            };
+            (self.last_symbol, left_cumulative, prob)
+        }
     }
 }
 
@@ -992,7 +1151,7 @@ where
 /// [`to_generic_decoder_model`]: IterableEntropyModel::to_generic_decoder_model
 /// [`to_generic_lookup_decoder_model`]: IterableEntropyModel::to_generic_lookup_decoder_model
 /// [`IterableEntropyModel`]: IterableEntropyModel
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
     min_symbol_inclusive: Symbol,
     max_symbol_inclusive: Symbol,
@@ -1076,10 +1235,11 @@ where
     ///
     /// Note that this method takes `self` only by reference, i.e., you can reuse
     /// the same `Quantizer` to quantize arbitrarily many distributions.
+    #[inline]
     pub fn quantize<D: Distribution>(
-        &self,
+        self,
         distribution: D,
-    ) -> LeakilyQuantizedDistribution<'_, F, Symbol, Probability, D, PRECISION> {
+    ) -> LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION> {
         LeakilyQuantizedDistribution {
             inner: distribution,
             quantizer: self,
@@ -1139,13 +1299,13 @@ where
 /// [`Binomial`]: probability::distribution::Binomial
 /// [`Categorical`]: probability::distribution::Categorical
 #[derive(Debug, Clone, Copy)]
-pub struct LeakilyQuantizedDistribution<'q, F, Symbol, Probability, D, const PRECISION: usize> {
+pub struct LeakilyQuantizedDistribution<F, Symbol, Probability, D, const PRECISION: usize> {
     inner: D,
-    quantizer: &'q LeakyQuantizer<F, Symbol, Probability, PRECISION>,
+    quantizer: LeakyQuantizer<F, Symbol, Probability, PRECISION>,
 }
 
 impl<'q, F, Symbol, Probability, D, const PRECISION: usize>
-    LeakilyQuantizedDistribution<'q, F, Symbol, Probability, D, PRECISION>
+    LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION>
 where
     Probability: BitArray + Into<F>,
     Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
@@ -1155,7 +1315,7 @@ where
     ///
     /// You may want to reuse this quantizer to quantize further probability distributions.
     #[inline]
-    pub fn quantizer(&self) -> &'q LeakyQuantizer<F, Symbol, Probability, PRECISION> {
+    pub fn quantizer(self) -> LeakyQuantizer<F, Symbol, Probability, PRECISION> {
         self.quantizer
     }
 
@@ -1236,7 +1396,7 @@ where
 }
 
 impl<'q, F, Symbol, Probability, D, const PRECISION: usize> EntropyModel<PRECISION>
-    for LeakilyQuantizedDistribution<'q, F, Symbol, Probability, D, PRECISION>
+    for LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION>
 where
     Probability: BitArray,
 {
@@ -1245,7 +1405,7 @@ where
 }
 
 impl<'q, Symbol, Probability, D, const PRECISION: usize> EncoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, D, PRECISION>
+    for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
 where
     f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub,
@@ -1318,7 +1478,7 @@ where
 }
 
 impl<'q, Symbol, Probability, D, const PRECISION: usize> DecoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, D, PRECISION>
+    for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
 where
     f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub + WrappingAdd,
@@ -1520,7 +1680,7 @@ where
 }
 
 impl<'m, 'q: 'm, Symbol, Probability, D, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
-    for LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, D, PRECISION>
+    for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
 where
     f64: AsPrimitive<Probability>,
     Symbol: PrimInt + AsPrimitive<Probability> + AsPrimitive<usize> + Into<f64> + WrappingSub,
@@ -1556,7 +1716,7 @@ impl<'m, 'q, Symbol, Probability, D, const PRECISION: usize> Iterator
     for LeakilyQuantizedDistributionIter<
         Symbol,
         Probability,
-        &'m LeakilyQuantizedDistribution<'q, f64, Symbol, Probability, D, PRECISION>,
+        &'m LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>,
         PRECISION,
     >
 where
@@ -3725,6 +3885,22 @@ mod tests {
     }
 
     #[test]
+    fn uniform() {
+        for range in [2, 3, 4, 5, 6, 7, 8, 9, 62, 63, 64, 254, 255, 256] {
+            test_entropy_model(&UniformModel::<u32, 24>::new(range as u32), 0..range as u32);
+            test_entropy_model(&UniformModel::<u32, 32>::new(range as u32), 0..range as u32);
+            test_entropy_model(&UniformModel::<u16, 12>::new(range as u16), 0..range as u16);
+            test_entropy_model(&UniformModel::<u16, 16>::new(range as u16), 0..range as u16);
+            if range < 255 {
+                test_entropy_model(&UniformModel::<u8, 8>::new(range as u8), 0..range as u8);
+            }
+            if range <= 64 {
+                test_entropy_model(&UniformModel::<u8, 6>::new(range as u8), 0..range as u8);
+            }
+        }
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore)]
     fn entropy() {
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-1000..=1000);
@@ -3823,7 +3999,7 @@ mod tests {
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
         let model =
-            ContiguousCategoricalEntropyModel::<_, _, 32>::from_floating_point_probabilities(
+            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities(
                 &probabilities,
             )
             .unwrap();
@@ -3844,7 +4020,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let model =
-            NonContiguousCategoricalDecoderModel::<_,_, _, 32>::from_symbols_and_floating_point_probabilities(
+            NonContiguousCategoricalDecoderModel::<_,u32, _, 32>::from_symbols_and_floating_point_probabilities(
                 &symbols,
                 &probabilities,
             )
@@ -3856,23 +4032,25 @@ mod tests {
         model: &'m D,
         support: impl Clone + Iterator<Item = D::Symbol>,
     ) where
-        D: IterableEntropyModel<'m, PRECISION, Probability = u32>
+        D: IterableEntropyModel<'m, PRECISION>
             + EncoderModel<PRECISION>
             + DecoderModel<PRECISION>
             + 'm,
         D::Symbol: Copy + core::fmt::Debug + PartialEq,
+        D::Probability: Into<u64>,
+        u64: AsPrimitive<D::Probability>,
     {
         let mut sum = 0;
         for symbol in support.clone() {
             let (left_cumulative, prob) = model.left_cumulative_and_probability(symbol).unwrap();
-            assert_eq!(left_cumulative as u64, sum);
-            sum += prob.get() as u64;
+            assert_eq!(left_cumulative.into(), sum);
+            sum += prob.get().into();
 
             let expected = (symbol, left_cumulative, prob);
             assert_eq!(model.quantile_function(left_cumulative), expected);
-            assert_eq!(model.quantile_function((sum - 1) as u32), expected);
+            assert_eq!(model.quantile_function((sum - 1).as_()), expected);
             assert_eq!(
-                model.quantile_function(left_cumulative + prob.get() / 2),
+                model.quantile_function((left_cumulative.into() + prob.get().into() / 2).as_()),
                 expected
             );
         }
@@ -3885,8 +4063,10 @@ mod tests {
         model: &'m D,
         support: impl Clone + Iterator<Item = D::Symbol>,
     ) where
-        D: IterableEntropyModel<'m, PRECISION, Probability = u32> + 'm,
+        D: IterableEntropyModel<'m, PRECISION> + 'm,
         D::Symbol: Copy + core::fmt::Debug + PartialEq,
+        D::Probability: Into<u64>,
+        u64: AsPrimitive<D::Probability>,
     {
         let mut expected_cumulative = 0u64;
         let mut count = 0;
@@ -3894,8 +4074,8 @@ mod tests {
             support.clone().zip(model.symbol_table())
         {
             assert_eq!(symbol, expected_symbol);
-            assert_eq!(left_sided_cumulative as u64, expected_cumulative);
-            expected_cumulative += probability.get() as u64;
+            assert_eq!(left_sided_cumulative.into(), expected_cumulative);
+            expected_cumulative += probability.get().into();
             count += 1;
         }
         assert_eq!(count, support.size_hint().0);

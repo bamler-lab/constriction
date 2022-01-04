@@ -281,7 +281,7 @@ use core::{
 
 use num::{
     cast::AsPrimitive,
-    traits::{WrappingAdd, WrappingSub},
+    traits::{WrappingAdd, WrappingMul, WrappingSub},
     PrimInt, Unsigned,
 };
 
@@ -606,6 +606,7 @@ pub unsafe trait BitArray:
     + Unsigned
     + WrappingAdd
     + WrappingSub
+    + WrappingMul
     + LowerHex
     + UpperHex
     + Binary

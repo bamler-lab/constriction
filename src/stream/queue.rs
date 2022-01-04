@@ -68,7 +68,20 @@ pub struct RangeCoderState<Word, State: BitArray> {
     phantom: PhantomData<Word>,
 }
 
-impl<Word, State: BitArray> RangeCoderState<Word, State> {
+impl<Word: BitArray, State: BitArray> RangeCoderState<Word, State> {
+    #[allow(clippy::result_unit_err)]
+    pub fn new(lower: State, range: State) -> Result<Self, ()> {
+        if range >> (State::BITS - Word::BITS) == State::zero() {
+            Err(())
+        } else {
+            Ok(Self {
+                lower,
+                range: range.into_nonzero().expect("We checked above."),
+                phantom: PhantomData,
+            })
+        }
+    }
+
     /// Get the lower bound of the current range (inclusive)
     pub fn lower(&self) -> State {
         self.lower
