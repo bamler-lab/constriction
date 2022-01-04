@@ -499,7 +499,8 @@
         <p>Install <code class="constriction">constriction</code> for Python:</p>
         <pre>pip install --upgrade pip
 pip install constriction</pre>
-        <p>Then try out <a href="TODO">this example</a>.</p>
+        <p>Then try out <a href="https://bamler-lab.github.io/constriction/apidoc/python/#hello-world">this example</a>.
+        </p>
       </div>
       <div class="sep"></div>
       <div>
@@ -508,7 +509,8 @@ pip install constriction</pre>
         </p>
         <pre>[dependencies] <span class="comment"># (in Cargo.toml)</span>
 constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
-        <p>Then try out <a href="TODO">this example</a>.</p>
+        <p>Then try out <a href="https://docs.rs/constriction/latest/constriction/#encoding-example">this example</a>.
+        </p>
       </div>
     </div>
   </div>
@@ -516,15 +518,15 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
   <ul>
     <li>
       <strong>Python Demo:</strong>
-      Try out <a href="TODO">this demo script</a> of a simple but highly effective machine-learning based lossless
-      compression codec for text.
+      (Try out <a href="https://github.com/bamler-lab/constriction/blob/main/examples/python/01-hello-world.ipynb">this
+        jupyter notebook</a> of a simple encoding-decoding round trip (more elaborate Python demo coming soon).
+      <!-- TODO -->
     </li>
     <li>
       <strong>Rust Demo:</strong>
       Try out <a href="https://robamler.github.io/linguistic-flux-capacitor/" target="_blank">this web app</a>, which
       uses <code class="constriction">constriction</code> in a WebAssembly module to run a custom compression codec
-      directly in your web
-      browser (no installation required).
+      directly in your web browser (no installation required).
     </li>
   </ul>
   <h3>Documentation</h3>
@@ -545,17 +547,24 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
   </div>
   <div class="tabContent">
     <ul id="tutorials">
-      <li>Simple encoding and decoding: <a href="TODO">Python&nbsp;example</a> | <a href="TODO">Rust&nbsp;example</a>
+      <li>Simple encoding and decoding: <a
+          href="https://github.com/bamler-lab/constriction/blob/main/examples/python/01-hello-world.ipynb">Python&nbsp;example</a>
+        | <a href="https://docs.rs/constriction/latest/constriction/#encoding-example">Rust&nbsp;example</a>
       </li>
-      <li>Defining a custom entropy model: <a href="TODO">Python&nbsp;example</a> | <a href="TODO">Rust&nbsp;example</a>
+      <li>Defining a custom entropy model: <a
+          href="https://github.com/bamler-lab/constriction/blob/main/examples/python/02-custom-entropy-models.ipynb">Python&nbsp;example</a>
+        | Rust&nbsp;example (coming soon)
+        <!-- TODO -->
       </li>
-      <li>Compressing natural language with an autoregressive machine learning model: <a
-          href="TODO">Python&nbsp;tutorial</a> |
-        <a href="TODO">finished&nbsp;demo</a>
+      <li>Compressing natural language with an autoregressive machine learning model: (coming soon)
+        <!-- TODO -->
       </li>
-      <li>Bits-back coding with a latent variable model: <a href="TODO">Python&nbsp;tutorial</a></li>
-      <li>Deploying your compression method on the web using WebAssembly: <a href="TODO">Rust&nbsp;tutorial</a> | <a
-          href="https://robamler.github.io/linguistic-flux-capacitor/" target="_blank">finished&nbsp;demo</a></li>
+      <li>Bits-back coding with a latent variable model: <a
+          href="https://robamler.github.io/teaching/compress21/problem-set-05.zip">Python&nbsp;Problem&nbsp;Set</a> | <a
+          href="https://robamler.github.io/teaching/compress21/problem-set-05-solutions.zip">Solutions</a>
+      </li>
+      <!-- TODO:  <li>Deploying your compression method on the web using WebAssembly: <a href="TODO">Rust&nbsp;tutorial</a> | <a
+          href="https://robamler.github.io/linguistic-flux-capacitor/" target="_blank">finished&nbsp;demo</a></li> -->
     </ul>
     <ul id="api-reference">
       <li><a href="apidoc/python/"><img src="python.svg" alt="Python logo">
@@ -573,9 +582,10 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
         solutions).</li>
       <li><a href="https://www.youtube.com/playlist?list=PL05umP7R6ij0Mp1dW2HuXlb-UQIYnv8xK">YouTube playlist</a> of
         the above university course.</li>
-      <li><a href="TODO">Preprint paper</a> with benchmark results of <code class="constriction">constriction</code>'s
+      <li>Preprint paper with benchmark results of <code class="constriction">constriction</code>'s
         entropy coders (in
-        Section&nbsp;5.2), and with an explanation of internals of the ANS entropy coder.
+        Section&nbsp;5.2), and with an explanation of internals of the ANS entropy coder: (coming soon)
+        <!-- TODO -->
       </li>
     </ul>
   </div>
@@ -662,7 +672,7 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
       repository</a>.</p>
   <h3>What's With the Name?</h3>
   <p>
-    <code class="constriction">constriction</code> is a library of compression primitives with bindings for Rust and
+    <code class="constriction">constriction</code> is compression library with bindings for Rust and
     Python.
     <a href="https://en.wikipedia.org/wiki/Pythonidae">Pythons</a> are a family of nonvenomous snakes that
     subdue their prey by “compressing” it, a method known as
