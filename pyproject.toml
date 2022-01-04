@@ -3,6 +3,7 @@ dependencies = [
   "numpy~=1.20",
 ]
 name = "constriction"
+readme = "README-python.md"
 requires-python = ">=3.7,<3.11"
 
 [tool.poetry]
@@ -13,7 +14,6 @@ homepage = "https://bamler-lab.github.io/constriction/"
 keywords = ["compression", "machine-learning", "entropy-coding", "range-coding", "ANS"]
 license = "MIT OR Apache-2.0 OR BSL-1.0"
 name = "constriction"
-readme = "README-python.md"
 repository = "https://github.com/bamler-lab/constriction/"
 version = "0.2.0"
 
