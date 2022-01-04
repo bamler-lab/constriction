@@ -345,7 +345,7 @@ impl AnsCoder {
         }
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    Superseded by `.get_compressed(unseal=True)`.
     #[pyo3(text_signature = "(DEPRECATED)")]
     pub fn get_binary<'p>(&mut self, py: Python<'p>) -> PyResult<&'p PyArray1<u32>> {
@@ -507,7 +507,7 @@ impl AnsCoder {
         Ok(())
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode_reverse`](#constriction.stream.stack.AnsCoder.encode_reverse) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -561,9 +561,9 @@ impl AnsCoder {
         stds: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
         let _ = py.run(
-            "print('WARNING: the method `encode_leaky_gaussian_symbols` is deprecated. Use method\\n\
+            "print('WARNING: the method `encode_leaky_gaussian_symbols_reverse` is deprecated. Use method\\n\
             \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.encode_leaky_gaussian_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
             None,
             None
         );
@@ -593,7 +593,7 @@ impl AnsCoder {
         Ok(())
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode_reverse`](#constriction.stream.stack.AnsCoder.encode_reverse) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
@@ -639,9 +639,9 @@ impl AnsCoder {
         probabilities: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
         let _ = py.run(
-            "print('WARNING: the method `encode_iid_categorical_symbols` is deprecated. Use method\\n\
+            "print('WARNING: the method `encode_iid_categorical_symbols_reverse` is deprecated. Use method\\n\
             \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.encode_iid_categorical_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
             None,
             None
         );
@@ -666,7 +666,7 @@ impl AnsCoder {
         Ok(())
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode_reverse`](#constriction.stream.stack.AnsCoder.encode_reverse) method in conjunction with the
     ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
@@ -727,9 +727,9 @@ impl AnsCoder {
         model: &Model,
     ) -> PyResult<()> {
         let _ = py.run(
-            "print('WARNING: the method `encode_iid_custom_model` is deprecated. Use method\\n\
+            "print('WARNING: the method `encode_iid_custom_model_reverse` is deprecated. Use method\\n\
             \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.encode_iid_custom_model')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
             None,
             None
         );
@@ -885,7 +885,7 @@ impl AnsCoder {
         Ok(PyArray1::from_vec(py, symbols).to_object(py))
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.stack.AnsCoder.decode) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -940,7 +940,7 @@ impl AnsCoder {
         let _ = py.run(
             "print('WARNING: the method `decode_leaky_gaussian_symbols` is deprecated. Use method\\n\
             \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.decode_leaky_gaussian_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
             None,
             None
         );
@@ -967,7 +967,7 @@ impl AnsCoder {
         Ok(PyArray1::from_vec(py, symbols))
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.stack.AnsCoder.decode) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
@@ -1016,7 +1016,7 @@ impl AnsCoder {
         let _ = py.run(
             "print('WARNING: the method `decode_iid_categorical_symbols` is deprecated. Use method\\n\
             \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.decode_iid_categorical_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
             None,
             None
         );
@@ -1039,7 +1039,7 @@ impl AnsCoder {
         ))
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.stack.AnsCoder.decode) method in conjunction with the
     ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
@@ -1082,9 +1082,9 @@ impl AnsCoder {
         model: &Model,
     ) -> PyResult<PyObject> {
         let _ = py.run(
-            "print('WARNING: the method `encode_iid_custom_model` is deprecated. Use method\\n\
+            "print('WARNING: the method `decode_iid_custom_model` is deprecated. Use method\\n\
             \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.encode_iid_custom_model')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
             None,
             None
         );

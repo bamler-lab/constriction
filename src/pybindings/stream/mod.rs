@@ -17,13 +17,22 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-/// Entropy models and model families for use with any of the provided stream codes.
+/// Entropy models and model families for use with any of the stream codes from the sister
+/// modules [`stack`](stack.html), [`queue`](queue.html), and [`chain`](chain.html).
 ///
 /// This module provides tools to define probability distributions over symbols in fixed
-/// point arithmetic, so that the models (more precisely, the cumulative distribution
-/// functions) are *exactly* invertible without any rounding errors. Such exactly invertible
-/// models are used by all entropy coders in the sister modules [`stack`](stack.html),
-/// [`queue`](queue.html), and [`chain`](chain.html).
+/// point arithmetic, so that the models (more precisely, their cumulative distributions
+/// functions) are *exactly* invertible without any rounding errors. Being exactly
+/// invertible is crucial for for data compression since even tiny rounding errors can have
+/// catastrophic consequences in an entropy coder (this issue is discussed in the
+/// [motivating example of the `ChainCoder`](chain.html#motivation)). Further, the entropy
+/// models in this module all have a well-defined domain, and they always assign a nonzero
+/// probability to all symbols within this domain, even if the symbol is in the tail of some
+/// distribution where its true probability would be lower than the smallest value that is
+/// representable in the employed fixed point arithmetic. This ensures that symbols from the
+/// well-defined domain of a model can, in principle, always be encoded without throwing an
+/// error (symbols with the smallest representable probability will, however, have a very
+/// high bitrate of 24 bits).
 ///
 /// ## Concrete Models vs. Model Families
 ///
@@ -34,14 +43,17 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///   [`QuantizedGaussian`](#constriction.stream.model.QuantizedGaussian), or the domain of a
 ///   [`Uniform`](#constriction.stream.model.Uniform) model). You can use a concrete model
 ///   to either encode or decode single symbols, or to efficiently encode or decode a whole
-///   array of *i.i.d.* symbols (i.e., using the same model for each symbol in the array).
-/// - (b) as model *families*, i.e., models that still have some free parameters (again, like the
-///   mean and standard deviation, or the range of a uniform distribution); simply leave out any
-///   optional model parameters when calling the model constructor. When you then use the resulting
-///   model family to encode or decode an array of symbols, you can provide *arrays* of model
-///   parameters to the encode and decode methods of the employed entropy coder. This will allow you
-///   to use individual model parameters for each symbol in a sequence (and it is more efficient
-///   constructing a new concrete model for each symbol)
+///   array of *i.i.d.* symbols (i.e., using the same model for each symbol in the array,
+///   see first example below).
+/// - (b) as model *families*, i.e., models that still have some free parameters (again,
+///   like the mean and standard deviation of a `QuantizedGaussian`, or the range of a
+///   `Uniform` distribution); simply leave out any optional model parameters when calling
+///   the model constructor. When you then use the resulting model family to encode or
+///   decode an array of symbols, you can provide *arrays* of model parameters to the encode
+///   and decode methods of the employed entropy coder. This will allow you to use
+///   individual model parameters for each symbol, see second example below (this is more
+///   efficient than constructing a new concrete model for each symbol and looping over the
+///   symbols in Python).
 ///
 /// ## Examples
 ///
@@ -280,26 +292,24 @@ fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// The following two examples illustrate how decoding differs between an `AnsCoder` and a
 /// `ChainCoder`. In the first example, we decode from the same bitstring `data` twice with
-/// an `AnsCoder`: once with a
-/// sequence of toy entropy models, and then a second time with slightly different sequence
-/// of entropy models. Importantly, only the entropy model for the first decoded symbol
-/// differs between the two applications of each coder. We then observe, however that,
-/// changing the first entropy model affects not only the first decoded symbol but it also
-/// has a ripple effect that can affect subsequently decoded symbols.
+/// an `AnsCoder`: a first time with an initial sequence of toy entropy models, and then a
+/// second time with a slightly different sequence of entropy models. Importantly, we change
+/// only the entropy model for the first decoded symbol (and the change is small). The
+/// entropy models for all other symbols remain exactly unmodified. We observe, however,
+/// that changing the first entropy model affects not only the first decoded symbol. It also
+/// has a ripple effect on subsequently decoded symbols.
 ///
 /// ```python
 /// # Some sample binary data and sample probabilities for our entropy models
-/// data = np.array(
-///     [0x80d1_4131, 0xdda9_7c6c, 0x5017_a640, 0x0117_0a3d], np.uint32)
-/// probabilities = np.array([
-///     [0.1, 0.7, 0.1, 0.1],
-///     [0.2, 0.2, 0.1, 0.5],
-///     [0.2, 0.1, 0.4, 0.3],
-/// ])
+/// data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+/// probabilities = np.array(
+///     [[0.1, 0.7, 0.1, 0.1],  # (<-- probabilities for first decoded symbol)
+///      [0.2, 0.2, 0.1, 0.5],  # (<-- probabilities for second decoded symbol)
+///      [0.2, 0.1, 0.4, 0.3]]) # (<-- probabilities for third decoded symbol)
 /// model_family = constriction.stream.model.Categorical()
 ///
-/// # Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 1]`.
-/// ansCoder = constriction.stream.stack.AnsCoder(data, True)
+/// # Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 1]`:
+/// ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
 /// print(ansCoder.decode(model_family, probabilities)) # (prints: [0, 0, 1])
 ///
 /// # Even if we change only the first entropy model (slightly), *all* decoded
@@ -317,25 +327,21 @@ fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// ```python
 /// # Same compressed data and original entropy models as in our first example
-/// data = np.array(
-///     [0x80d1_4131, 0xdda9_7c6c, 0x5017_a640, 0x0117_0a3d], np.uint32)
-/// probabilities = np.array([
-///     [0.1, 0.7, 0.1, 0.1],
-///     [0.2, 0.2, 0.1, 0.5],
-///     [0.2, 0.1, 0.4, 0.3],
-/// ])
+/// data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+/// probabilities = np.array(
+///     [[0.1, 0.7, 0.1, 0.1],
+///      [0.2, 0.2, 0.1, 0.5],
+///      [0.2, 0.1, 0.4, 0.3]])
 /// model_family = constriction.stream.model.Categorical()
 ///
-/// # Decode with the original entropy models,  this time using a `ChainCoder`:
-/// chainCoder = constriction.stream.chain.ChainCoder(
-///     data, is_remainders=False, seal=True)
+/// # Decode with the original entropy models, this time using a `ChainCoder`:
+/// chainCoder = constriction.stream.chain.ChainCoder(data, seal=True)
 /// print(chainCoder.decode(model_family, probabilities)) # (prints: [0, 3, 3])
 ///
 /// # We obtain different symbols than for the `AnsCoder`, of course, but that's
-/// # not the point here. No let's change the first model again:
+/// # not the point here. Now let's change the first model again:
 /// probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
-/// chainCoder = constriction.stream.chain.ChainCoder(
-///     data, is_remainders=False, seal=True)
+/// chainCoder = constriction.stream.chain.ChainCoder(data, seal=True)
 /// print(chainCoder.decode(model_family, probabilities)) # (prints: [1, 3, 3])
 /// ```
 ///
@@ -352,8 +358,8 @@ fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// 1. The `AnsCoder` consumes a fixed amount of bits (24 bits in `constriction`'s default
 ///    configuration) from the end of its encapsulated compressed data; then
 /// 2. the `AnsCoder` interprets these 24 bits as a number `xi` between 0.0 and 1.0 in fixed
-///    point representation, and it looks up the symbol that the entropy model's quantile
-///    function (aka percent point function) assigns to this number `xi`; finally
+///    point representation, and it maps `xi` to a symbol using the entropy model's quantile
+///    function (aka percent point function); finally
 /// 3. the `AnsCoder` uses the bits-back trick to write (24 - inf_content) bits worth of
 ///    (amortized) bits back onto the encapsulated compressed data; these "returned" bits
 ///    reflect the information contained in the precise position of the number `xi` within
@@ -361,45 +367,46 @@ fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// A `ChainCoder` breaks these three steps apart. It encapsulates *two* rather than just
 /// one bitstring buffers, referred to in the following as "compressed" and "remainders".
-/// When you call the constructor of `ChainCoder` with argument `is_remainders=False` then
-/// the provided argument `data` is used to initialize the "compressed" buffer. When the
-/// `ChainCoder` decodes a symbol, it executes steps 1-3 from above, with the modification
-/// that step 1 reads from the "compressed" buffer while step 3 writes to the "remainders"
-/// buffer. Since step 1 is independent of the employed entropy model, changes to the
-/// entropy model have no effect on subsequently decoded symbols.
+/// When you call the constructor of `ChainCoder` with argument `is_remainders=False` (which
+/// is the default) then the provided argument `data` is used to initialize the "compressed"
+/// buffer. When the `ChainCoder` decodes a symbol, it executes steps 1-3 from above, with
+/// the modification that step 1 reads from the "compressed" buffer while step 3 writes to
+/// the "remainders" buffer. Since step 1 is independent of the employed entropy model,
+/// changes to the entropy model have no effect on subsequently decoded symbols.
 ///
 /// Once you're done decoding a sequence of symbols, you can concatenate the two buffers to
 /// a single one.
 ///
 /// ## Usage for Bits-Back Coding
 ///
-/// A typical usage cycle goes along the following steps:
+/// A typical usage cycle of a `ChainCoder` goes along the following steps:
 ///
 /// ### When compressing data using the bits-back trick
 ///
 /// 1. Start with some array of (typically already compressed) binary data, which you want
 ///    to piggy-back into the choice of latent variables in a latent variable entropy model.
 /// 2. Create a `ChainCoder`, passing into the constructor the binary data and the arguments
-///    `is_remainders=False` and `seal=True` (you can use `seal=False if you know that the
+///    `is_remainders=False` and `seal=True` (you can set `seal=False` if you know that the
 ///    data cannot end in a zero word, e.g., if it comes from
 ///    `AnsCoder.get_compressed(unseal=False)`).
-/// 3. Decode the latent variables from the `ChainCoder`.
+/// 3. Decode the latent variables from the `ChainCoder` as usual in bits-back coding.
 /// 4. Export the remaining data on the `ChainCoder` by calling its method
-///    `.get_remaining()`. The method returns two numpy arrays, which you may concatenate in
+///    `.get_remainders()`. The method returns two numpy arrays, which you may concatenate in
 ///    order.
-/// 5. You can now use this binary data in an `AnsCoder` (it is guaranteed not to have a
-///    zero word at the end, so you can set `seal=False` in the constructor of `AnsCoder`),
-///    and you can encode a message on top of it using entropy models that are conditioned
-///    on the latent variables you just decoded.
+/// 5. You can now use this remaining binary data in an `AnsCoder` (it is guaranteed not to
+///    have a zero word at the end, so you can set `seal=False` in the constructor of
+///    `AnsCoder`), and you can encode a message on top of it using entropy models that are
+///    conditioned on the latent variables you just decoded.
 ///
 /// ### When decompressing the data
 ///
-/// 1. Start from the binary data that you had after encoder step 4 above.
+/// 1. Recreate the binary data that you had after encoder step 4 above, and the latent
+///    variables that you decoded in encoder step 3 above, as usual in bits-back coding.
 /// 2. Pass it to the constructor of `ChainCoder`, with additional arguments
-///    `is_remainders=True` (`seal` always has to be `False` when `is_remainders=True`,
+///    `is_remainders=True` (`seal` always has to be `False` when `is_remainders=True`
 ///    because remainders data is guaranteed not to end in a zero word).
-/// 3. Encode the latent variables you decoded in encoder step 3 above back onto the new
-///    `ChainCoder` (in reverse order), using the same entropy models as during decoding.
+/// 3. Encode the latent variables back onto the new `ChainCoder` (in reverse order), using
+///    the same entropy models as during decoding.
 /// 4. Recover the original binary data from encoder step 1 above by calling
 ///    `.get_data(unseal=True)` (if you set `seal=False` in encoder step 2 above, then set
 ///    `unseal=False` now). The method returns two arrays, which you may concatenate in

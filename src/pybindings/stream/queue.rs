@@ -176,7 +176,7 @@ impl RangeEncoder {
         RangeDecoder::from_vec(compressed)
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -232,7 +232,7 @@ impl RangeEncoder {
         let _ = py.run(
             "print('WARNING: the method `encode_leaky_gaussian_symbols` is deprecated. Use method\\n\
             \x20        `encode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode_leaky_gaussian_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
             None,
             None
         );
@@ -259,7 +259,7 @@ impl RangeEncoder {
         Ok(())
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
@@ -307,7 +307,7 @@ impl RangeEncoder {
         let _ = py.run(
             "print('WARNING: the method `encode_iid_categorical_symbols` is deprecated. Use method\\n\
             \x20        `encode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode_iid_categorical_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
             None,
             None
         );
@@ -481,7 +481,7 @@ impl RangeEncoder {
         Ok(())
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode`](#constriction.stream.queue.RangeEncoder.encode) method in conjunction with the
     ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
@@ -544,7 +544,7 @@ impl RangeEncoder {
         let _ = py.run(
             "print('WARNING: the method `encode_iid_custom_model` is deprecated. Use method\\n\
             \x20        `encode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode_iid_custom_model')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
             None,
             None
         );
@@ -636,7 +636,7 @@ impl RangeDecoder {
         self.inner.maybe_exhausted()
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -691,7 +691,7 @@ impl RangeDecoder {
         let _ = py.run(
             "print('WARNING: the method `decode_leaky_gaussian_symbols` is deprecated. Use method\\n\
             \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeDecoder.decode_leaky_gaussian_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
             None,
             None
         );
@@ -718,7 +718,7 @@ impl RangeDecoder {
         Ok(PyArray1::from_vec(py, symbols))
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
@@ -767,7 +767,7 @@ impl RangeDecoder {
         let _ = py.run(
             "print('WARNING: the method `decode_iid_categorical_symbols` is deprecated. Use method\\n\
             \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeDecoder.decode_iid_categorical_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
             None,
             None
         );
@@ -938,7 +938,7 @@ impl RangeDecoder {
         Ok(PyArray1::from_vec(py, symbols).to_object(py))
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.queue.RangeDecoder.decode) method in conjunction with the
     ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
@@ -981,9 +981,9 @@ impl RangeDecoder {
         model: &Model,
     ) -> PyResult<PyObject> {
         let _ = py.run(
-            "print('WARNING: the method `encode_iid_custom_model` is deprecated. Use method\\n\
+            "print('WARNING: the method `decode_iid_custom_model` is deprecated. Use method\\n\
             \x20        `encode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.queue.RangeEncoder.encode_iid_custom_model')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
             None,
             None
         );

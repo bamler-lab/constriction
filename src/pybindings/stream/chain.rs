@@ -172,7 +172,7 @@ impl ChainCoder {
         Ok(())
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode_reverse`](#constriction.stream.chain.ChainCoder.encode_reverse) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -187,9 +187,9 @@ impl ChainCoder {
         stds: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
         let _ = py.run(
-            "print('WARNING: the method `encode_leaky_gaussian_symbols` is deprecated. Use method\\n\
+            "print('WARNING: the method `encode_leaky_gaussian_symbols_reverse` is deprecated. Use method\\n\
             \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.encode_leaky_gaussian_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
             None,
             None
         );
@@ -219,7 +219,7 @@ impl ChainCoder {
         Ok(())
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode_reverse`](#constriction.stream.chain.ChainCoder.encode_reverse) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
@@ -232,9 +232,9 @@ impl ChainCoder {
         probabilities: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<()> {
         let _ = py.run(
-            "print('WARNING: the method `encode_iid_categorical_symbols` is deprecated. Use method\\n\
+            "print('WARNING: the method `encode_iid_categorical_symbols_reverse` is deprecated. Use method\\n\
             \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.encode_iid_categorical_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
             None,
             None
         );
@@ -259,7 +259,7 @@ impl ChainCoder {
         Ok(())
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`encode_reverse`](#constriction.stream.chain.ChainCoder.encode_reverse) method in conjunction with the
     ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
@@ -272,9 +272,9 @@ impl ChainCoder {
         model: &Model,
     ) -> PyResult<()> {
         let _ = py.run(
-            "print('WARNING: the method `encode_iid_custom_model` is deprecated. Use method\\n\
+            "print('WARNING: the method `encode_iid_custom_model_reverse` is deprecated. Use method\\n\
             \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.encode_iid_custom_model')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
             None,
             None
         );
@@ -286,10 +286,11 @@ impl ChainCoder {
     ///
     /// Usage is analogous to [`AnsCoder.decode`](stack.html#constriction.stream.stack.AnsCoder.decode).
     ///
-    /// Decoding consumes the fixed amount of 24 bits per encoded symbol from the internal "compressed",
-    /// regardless of the employed entropy model(s), and it appends (24 bits - inf_content)
-    /// per symbol to the internal "remainders" buffer (where "inf_content" is the information
-    /// content of the decoded symbol under the employed entropy model).
+    /// Decoding consumes the fixed amount of 24 bits per encoded symbol from the internal
+    /// "compressed" buffer, regardless of the employed entropy model(s), and it appends (24
+    /// bits - inf_content) per symbol to the internal "remainders" buffer (where
+    /// "inf_content" is the information content of the decoded symbol under the employed
+    /// entropy model).
     #[pyo3(text_signature = "(model, optional_amt_or_model_params)")]
     #[args(symbols, model, params = "*")]
     pub fn decode<'py>(
@@ -342,7 +343,7 @@ impl ChainCoder {
         Ok(PyArray1::from_vec(py, symbols).to_object(py))
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.chain.ChainCoder.decode) method in conjunction with the
     ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
@@ -358,7 +359,7 @@ impl ChainCoder {
         let _ = py.run(
             "print('WARNING: the method `decode_leaky_gaussian_symbols` is deprecated. Use method\\n\
             \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.decode_leaky_gaussian_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
             None,
             None
         );
@@ -385,7 +386,7 @@ impl ChainCoder {
         Ok(PyArray1::from_vec(py, symbols))
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.chain.ChainCoder.decode) method in conjunction with the
     ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
@@ -400,7 +401,7 @@ impl ChainCoder {
         let _ = py.run(
             "print('WARNING: the method `decode_iid_categorical_symbols` is deprecated. Use method\\n\
             \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.decode_iid_categorical_symbols')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
             None,
             None
         );
@@ -423,7 +424,7 @@ impl ChainCoder {
         ))
     }
 
-    /// .. deprecated:: 1.0.0
+    /// .. deprecated:: 0.2.0
     ///    This method has been superseded by the new and more powerful generic
     ///    [`decode`](#constriction.stream.chain.ChainCoder.decode) method in conjunction with the
     ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
@@ -436,9 +437,9 @@ impl ChainCoder {
         model: &Model,
     ) -> PyResult<PyObject> {
         let _ = py.run(
-            "print('WARNING: the method `encode_iid_custom_model` is deprecated. Use method\\n\
+            "print('WARNING: the method `decode_iid_custom_model` is deprecated. Use method\\n\
             \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#constriction.stream.stack.AnsCoder.encode_iid_custom_model')",
+            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
             None,
             None
         );

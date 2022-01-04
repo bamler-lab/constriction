@@ -9,16 +9,16 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// The `constriction` library provides a set of composable entropy coding algorithms with a
 /// focus on correctness, versatility, ease of use, compression performance, and
-/// computational efficiency. The goals of `constriction` are to three-fold:
+/// computational efficiency. The goals of `constriction` are three-fold:
 ///
 /// 1. **to facilitate research on novel lossless and lossy compression methods** by
 ///    providing a *composable* set of primitives (e.g., you can can easily switch out a
 ///    Range Coder for an ANS coder without having to find a new library or change how you
 ///    represent exactly invertible entropy models);
-/// 2. **to simplify the transition from research code to production software** by providing
-///    binary compatible APIs for both Python (for rapid prototyping on research code) and
-///    Rust (for turning successful prototypes into standalone binaries, libraries, or
-///    WebAssembly modules); and
+/// 2. **to simplify the transition from research code to deployed software** by providing
+///    similar APIs and binary compatible entropy coders for both Python (for rapid
+///    prototyping on research code) and Rust (for turning successful prototypes into
+///    standalone binaries, libraries, or WebAssembly modules); and
 /// 3. **to serve as a teaching resource** by providing a variety of entropy coding
 ///    primitives within a single consistent framework. Check out our [additional teaching
 ///    material](https://robamler.github.io/teaching/compress21/) from a university course
@@ -29,29 +29,30 @@ use pyo3::{prelude::*, wrap_pymodule};
 ///
 /// **Live demo:** [here's a web app](https://robamler.github.io/linguistic-flux-capacitor)
 /// that started out as a machine-learning research project in Python and was later turned
-/// into a web app that uses `constriction` in a WebAssembly module).
+/// into a web app by using `constriction` in a WebAssembly module).
 ///
 /// ## Quick Start
 ///
-/// ### Installing `constriction` For Python
+/// ### Installing `constriction` for Python
 ///
 /// ```bash
-/// pip install constriction=~0.2.0
+/// pip install constriction~=0.2.0
 /// ```
 ///
 /// ### Hello, World
 ///
 /// You'll mostly use the `stream` submodule, which provides stream codes (like Range
-/// Coding or ANS). The following example shows a trivial encoding-decoding round trip. More
-/// complicated entropy models and other entropy coders are also supported, see
+/// Coding or ANS). The following example shows a simple encoding-decoding round trip. More
+/// complex entropy models and other entropy coders are also supported, see
 /// [more examples](#more-examples) below.
 ///
 /// ```python
 /// import constriction
 /// import numpy as np
 ///
-/// # Define an i.i.d. entropy model (more complicated models are also supported):
 /// message = np.array([6, 10, -4, 2, 5, 2, 1, 0, 2], dtype=np.int32)
+///
+/// # Define an i.i.d. entropy model (see below for more complex models):
 /// entropy_model = constriction.stream.model.QuantizedGaussian(-50, 50, 3.2, 9.6)
 ///
 /// # Let's use an ANS coder in this example. See below for a Range Coder example.
@@ -139,6 +140,28 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// `constriction` library provides wrappers that turn your models into *exactly*
 /// invertible fixed-point arithmetic since even tiny rounding errors could otherwise
 /// completely break an entropy coding algorithm.
+///
+/// ### Exercise
+///
+/// We've shown examples of [ANS coding with a simple entropy model](#hello-world), of
+/// [Range Coding with the same simple entropy
+/// model](#switching-out-the-entropy-coding-algorithm) and of [Range coding with a complex
+/// entropy model](#complex-entropy-models). One combination is still missing: ANS coding
+/// with the complex entropy model from the last example above. This should be no problem
+/// now, so try it out yourself:
+///
+/// - In the last example above, change both "queue.RangeEncoder" and "queue.RangeDecoder"
+///   to "stack.AnsCoder" (ANS uses the same data structure for both encoding and decoding).
+/// - Then change both occurrences of `.encode(...)` to `.encode_reverse(...)` (since ANS
+///   operates as a stack, i.e., last-in-first-out, we encode the symbols in reverse order
+///   so that we can decode them in their normal order).
+/// - Finally, there's one slightly subtle change: when encoding the message, switch the
+///   order of the two lines that encode `message[0:5]` and `message[5:9]`, respectively.
+///   Do *not* change the order of decoding though. This is again necessary because ANS
+///   operates as a stack.
+///
+/// Congratulations, you've successfully implemented your first own compression scheme with
+/// `constriction`.
 ///
 /// ## Further Reading
 ///

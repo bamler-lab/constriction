@@ -95,20 +95,20 @@ pub struct Model(pub Arc<dyn internals::Model>);
 /// model. They cannot be delayed until encoding or decoding. However, you may provide
 /// callback functions `cdf` and `approximate_inverse_cdf` that expect additional model
 /// parameters, which you then pass in as numpy arrays when calling the entropy coder's
-/// encode or decode method.
+/// encode or decode method, see second example above.
 ///
-/// - **cdf** --- the cumulative distribution function; a nondecreasing function that returns a scalar
-///   between 0.0 and 1.0 (both inclusive), and which will be evaluated by constriction on
-///   mid-points between integers in order to integrate the probability distribution over
-///   bins centered at each integer. The function signature must be
+/// - **cdf** --- the cumulative distribution function; a nondecreasing function that
+///   returns a scalar between 0.0 and 1.0 (both inclusive), and which `constriction` will
+///   evaluate on mid-points between integers in order to integrate the probability
+///   distribution over bins centered at each integer. The function signature must be
 ///   `cdf(x, [param1, [param2, [param3, ...]]])` where `x` is the value at which
 ///   `constriction` will evaluate the CDF and `paramX` will be provided if the
-///   `CustomModel` is used as a model *family*.
+///   `CustomModel` is used as a model *family*, as in the second example above.
 /// - **approximate_inverse_cdf** --- the inverse of the CDF, also called quantile function
 ///   or percent point function (PPF). This function does not have to return very precise
 ///   results since `constriction` will use the provided `cdf` as the defining source of
 ///   truth and invert it exactly; the provided `approximate_inverse_cdf` is only used to
-///   speed up this function inversion. The function signature must be analogous to above,
+///   speed up the function inversion. The function signature must be analogous to above,
 ///   `approximate_inverse_cdf(xi, [param1, [param2, [param3, ...]]])`, where you may rely
 ///   on `0.0 <= xi <= 1.0`.
 /// - **min_symbol_inclusive** and **max_symbol_inclusive** --- define the range of integer
@@ -119,17 +119,18 @@ pub struct Model(pub Arc<dyn internals::Model>);
 ///
 /// The `constriction` library takes care of ensuring that the resulting entropy model is
 /// *exactly* invertible, which is crucial for correct encoding/decoding, and which is
-/// nontrivial for probability distributions that are evaluated with a limited floating
-/// point precision. In addition, `constriction` ensures that all symbols within the
-/// provided range {`min_symbol_inclusive`, ..., `max_symbol_inclusive`} are assigned a
-/// nonzero probability (even if their actual probability under the provided model is
-/// smaller than the smallest representable probability), and that the probabilities of all
-/// symbols within this range add up to *exactly* one, without rounding errors. This is
-/// important to ensure that all symbols within the provided range can indeed be encoded,
-/// and that encoding with ANS is surjective.
+/// nontrivial due to inevitable rounding errors. In addition, `constriction` ensures that
+/// all symbols within the provided range {`min_symbol_inclusive`, ...,
+/// `max_symbol_inclusive`} are assigned a nonzero probability (even if their actual
+/// probability under the provided model is smaller than the smallest representable
+/// probability), and that the probabilities of all symbols within this range add up to
+/// *exactly* one, without rounding errors. This is important to ensure that all symbols
+/// within the provided range can indeed be encoded, and that encoding with ANS is
+/// surjective.
 ///
-/// All guarantees only hold as long as the provided CDF is nondecreasing, that it can be
-/// evaluated on mid-points between integers, its value is >= 0.0 and <= 1.0 everywhere.
+/// The above guarantees hold only as long as the provided CDF is nondecreasing, can be
+/// evaluated on mid-points between integers, and returns a value >= 0.0 and <= 1.0
+/// everywhere.
 #[pyclass(extends=Model, subclass)]
 #[pyo3(
     text_signature = "(cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)"
@@ -612,9 +613,10 @@ impl QuantizedLaplace {
 ///
 /// Each model parameter can either be specified as a scalar when constructing the model, or
 /// as a rank-1 numpy array (with `dtype=np.int32` for `n` and `dtype=np.float64` for `p`)
-/// when calling the entropy coder's encode or decode method. Note that, even if you delay
-/// all model parameters to the point of encoding or decoding, then  you still have to
-/// *call* the constructor of the model, i.e.: `model_family = constriction.stream.model.Binomial()`
+/// when calling the entropy coder's encode or decode method (see [discussion
+/// above](#concrete-models-vs-model-families)). Note that, even if you delay all model
+/// parameters to the point of encoding or decoding, then  you still have to *call* the
+/// constructor of the model, i.e.: `model_family = constriction.stream.model.Binomial()`
 /// --- note the trailing `()`.
 ///
 /// - **n** --- the number of trials;
@@ -622,7 +624,7 @@ impl QuantizedLaplace {
 ///   (both inclusive). For your convenience, `constriction` always assigns a (possibly
 ///   tiny but) nonzero probability to all symbols in the range {0, 1, ..., n}, even if you
 ///   set `p = 0.0` or `p = 1.0` so that all symbols in this range can in principle be
-///   encoded, albeit possibly at a high bit rate.
+///   encoded, albeit possibly at a high bitrate.
 #[pyclass(extends=Model)]
 #[pyo3(text_signature = "(n=None, p=None)")]
 #[derive(Debug)]
@@ -674,9 +676,9 @@ impl Binomial {
 ///
 /// The model parameter can either be specified as a scalar when constructing the model, or
 /// as a rank-1 numpy array with `dtype=np.float64` when calling the entropy coder's encode
-/// or decode method. Note that, in the latter case, you still have to *call* the
-/// constructor of the model, i.e.: `model_family = constriction.stream.model.Bernoulli()`
-/// --- note the trailing `()`.
+/// or decode method (see [discussion above](#concrete-models-vs-model-families)). Note
+/// that, in the latter case, you still have to *call* the constructor of the model, i.e.:
+/// `model_family = constriction.stream.model.Bernoulli()` --- note the trailing `()`.
 ///
 /// - **p** --- the probability for the symbol being `1` rather than `0`. Must be between
 ///   0.0 and 1.0 (both inclusive). Note that, even if you set `p = 0.0` or `p = 1.0`,
