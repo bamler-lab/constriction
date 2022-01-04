@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.9.2" />
 <title>constriction.stream.stack API documentation</title>
-<meta name="description" content="Entropy coding with stack semantics (last in first out) using Asymmetric Numeral Systems
-(ANS) [1] …" />
+<meta name="description" content="Asymmetric Numeral Systems (ANS): a stream code with stack semantics
+(i.e., &#34;last in first out&#34;) [1] …" />
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
 <link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/styles/github.min.css" crossorigin>
@@ -23,9 +23,83 @@
 <h1 class="title">Module <code>constriction.stream.stack</code></h1>
 </header>
 <section id="section-intro">
-<p>Entropy coding with stack semantics (last in first out) using Asymmetric Numeral Systems
-(ANS) [1].</p>
-<p>See first two examples in the top-level API documentation of <code><a title="constriction" href="../index.html">constriction</a></code>.</p>
+<p>Asymmetric Numeral Systems (ANS): a stream code with stack semantics
+(i.e., "last in first out") [1].</p>
+<p>The ANS entropy coding algorithm is a popular choice for bits-back coding with latent variable
+models. It uses only a single data structure, <code><a title="constriction.stream.stack.AnsCoder" href="#constriction.stream.stack.AnsCoder">AnsCoder</a></code>, which operates as both encoder and
+decoder. This allows you to easily switch back and forth between encoding and decoding
+operations. A further, more subtle property that distinguishes <code>constrictions</code> ANS
+implementation from its Range Coding implementation in the sister module <code><a title="constriction.stream.queue" href="queue.html">constriction.stream.queue</a></code>) is that
+encoding with an <code><a title="constriction.stream.stack.AnsCoder" href="#constriction.stream.stack.AnsCoder">AnsCoder</a></code> is <em>surjective</em> and therefore decoding is injective. This means that
+you can decode some symbols from any bitstring, regardless of its origin, and then re-encode the
+symbols to exactly reconstruct the original bitstring (e.g., for bits-back coding).</p>
+<h2 id="stack-semantics">Stack Semantics</h2>
+<p>ANS operates as a <em>stack</em>: encoding <em>pushes</em> (i.e., appends) data onto the top of the stack and
+decoding <em>pops</em>
+data from the top of the stack (i.e., it consumes data from the <em>same</em> end).
+This means that encoding and
+decoding operate in opposite directions to each other. When using
+an <code><a title="constriction.stream.stack.AnsCoder" href="#constriction.stream.stack.AnsCoder">AnsCoder</a></code>, we recommend to encode sequences of symbols in reverse order so that you can
+later decode them in their original order. The method <code>encode_reverse</code> does this automatically
+when given an array of symbols. If you call <code>encode_reverse</code> several times to encode several
+parts of a message, then start with the last part of your message and work your way back, as in
+the example below.</p>
+<h2 id="example">Example</h2>
+<p>The following example shows a full round trip that encodes a message, prints its compressed
+representation, and then decodes the message again. The message is a sequence of 11 integers
+(referred to as "symbols") and comprised of two parts: the first 7 symbols are encoded with an
+i.i.d. entropy model, i.e., using the same distribution for each symbol, which happens to be a
+<a href="model.html#constriction.stream.model.Categorical"><code>Categorical</code></a> distribution; and the remaining
+4 symbols are each encoded with a different entropy model, but all of these 4 models are from
+the same family of <a href="model.html#constriction.stream.model.QuantizedGaussian"><code>QuantizedGaussian</code></a>s,
+just with different model parameters (means and standard deviations) for each of the 4 symbols.</p>
+<p>Notice that we encode part 2 before part 1, but when we decode, we first obtain part 1 and then
+part 2. This is because of the <code><a title="constriction.stream.stack.AnsCoder" href="#constriction.stream.stack.AnsCoder">AnsCoder</a></code>'s <a href="#stack-semantics">stack semantics</a>.</p>
+<pre><code class="language-python">import constriction
+import numpy as np
+
+# Define the two parts of the message and their respective entropy models:
+message_part1       = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
+probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
+model_part1       = constriction.stream.model.Categorical(probabilities_part1)
+# `model_part1` is a categorical distribution over the (implied) alphabet
+# {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
+# we will use it below to encode each of the 7 symbols in `message_part1`.
+
+message_part2       = np.array([6,   10,   -4,    2  ], dtype=np.int32)
+means_part2         = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float64)
+stds_part2          = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float64)
+model_family_part2  = constriction.stream.model.QuantizedGaussian(-100, 100)
+# `model_part2` is a *family* of Gaussian distributions that are quantized
+# to bins of with 1 centered at the integers -100, -99, ..., 100. We could
+# have provided a fixed mean and standard deviation to the constructor of
+# `QuantizedGaussian` but we'll instead provide individual means and standard
+# deviations for each symbol when we encode and decode `message_part2` below.
+
+print(f&quot;Original message: {np.concatenate([message_part1, message_part2])}&quot;)
+
+# Encode both parts of the message in sequence (in reverse order):
+coder = constriction.stream.stack.AnsCoder()
+coder.encode_reverse(
+    message_part2, model_family_part2, means_part2, stds_part2)
+coder.encode_reverse(message_part1, model_part1)
+
+# Get and print the compressed representation:
+compressed = coder.get_compressed()
+print(f&quot;compressed representation: {compressed}&quot;)
+print(f&quot;(in binary: {[bin(word) for word in compressed]})&quot;)
+
+# You could save `compressed` to a file using `compressed.tofile(&quot;filename&quot;)`,
+# read it back in: `compressed = np.fromfile(&quot;filename&quot;, dtype=np.uint32) and
+# then re-create `coder = constriction.stream.stack.AnsCoder(compressed)`.
+
+# Decode the message:
+decoded_part1 = coder.decode(model_part1, 7) # (decodes 7 symbols)
+decoded_part2 = coder.decode(model_family_part2, means_part2, stds_part2)
+print(f&quot;Decoded message: {np.concatenate([decoded_part1, decoded_part2])}&quot;)
+assert np.all(decoded_part1 == message_part1)
+assert np.all(decoded_part2 == message_part2)
+</code></pre>
 <h2 id="references">References</h2>
 <p>[1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.</p>
@@ -114,184 +188,230 @@ replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.stream.stack.AnsCoder.clear"><code class="name flex">
-<span>def <span class="ident">clear</span></span>(<span>...)</span>
+<span>def <span class="ident">clear</span></span>(<span>)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Resets the coder for compression.</p>
-<p>After calling this method, the method <code>is_empty</code> will return <code>True</code>.</p></div>
+<div class="desc"><p>Resets the encoder to an empty state.</p>
+<p>This removes any existing compressed data on the encoder. It is equivalent to replacing the
+encoder with a new one but slightly more efficient.</p></div>
 </dd>
-<dt id="constriction.stream.stack.AnsCoder.decode_custom_model"><code class="name flex">
-<span>def <span class="ident">decode_custom_model</span></span>(<span>model, model_parameters)</span>
+<dt id="constriction.stream.stack.AnsCoder.decode"><code class="name flex">
+<span>def <span class="ident">decode</span></span>(<span>model, optional_amt_or_model_params)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Decodes a sequence of symbols with parameterized custom models.</p>
-<ul>
-<li>For usage examples, see
-<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
-<li>If all symbols use the same entropy model (with identical model parameters) then
-you'll want to use
-<a href="#constriction.stream.stack.AnsCoder.decode_iid_custom_model"><code>decode_iid_custom_model</code></a>
-instead.</li>
-</ul></div>
-</dd>
-<dt id="constriction.stream.stack.AnsCoder.decode_iid_categorical_symbols"><code class="name flex">
-<span>def <span class="ident">decode_iid_categorical_symbols</span></span>(<span>...)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Decodes a sequence of categorically distributed symbols <em>in reverse order</em>.</p>
-<p>This method is analogous to the method <code>decode_leaky_gaussian_symbols</code> except that</p>
-<ul>
-<li>all symbols are decoded with the same entropy model; and</li>
-<li>the entropy model is a categorical rather than a Gaussian model.</li>
-</ul>
-<p>See documentation of <code>encode_iid_categorical_symbols_reverse</code> for details of the
-categorical entropy model. See documentation of <code>decode_leaky_gaussian_symbols</code> for a
-discussion of the reverse order of decoding, and for a related usage
-example.</p></div>
-</dd>
-<dt id="constriction.stream.stack.AnsCoder.decode_iid_custom_model"><code class="name flex">
-<span>def <span class="ident">decode_iid_custom_model</span></span>(<span>amt, model)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Decodes a sequence of symbols with identical custom models.</p>
-<ul>
-<li>For usage examples, see
-<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
-<li>If the model parameters are different for each symbol then you'll want to use
-<a href="#constriction.stream.stack.AnsCoder.decode_custom_model"><code>decode_custom_model</code></a>
-instead.</li>
-</ul></div>
-</dd>
-<dt id="constriction.stream.stack.AnsCoder.decode_leaky_gaussian_symbols"><code class="name flex">
-<span>def <span class="ident">decode_leaky_gaussian_symbols</span></span>(<span>...)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Decodes a sequence of symbols <em>in reverse order</em> using (leaky) Gaussian entropy
-models.</p>
-<p>The provided numpy arrays <code>means</code>, <code>stds</code>, and <code>symbols_out</code> must all have
-the same size. The provided <code>means</code>, <code>stds</code>, <code>min_supported_symbol</code>,
-<code>max_supported_symbol</code>, and <code>leaky</code> must be the exact same values that were
-used for encoding. Even a tiny modification of these arguments can cause the
-coder to decode <em>completely</em> different symbols.</p>
-<p>The symbols will be popped off the stack and returned in reverse order so as to
-simplify usage, e.g.:</p>
-<pre><code class="language-python">coder = constriction.AnsCoder()
-symbols = np.array([2, 8, -5], dtype=np.int32)
-means = np.array([0.1, 10.3, -3.2], dtype=np.float64)
-stds = np.array([3.2, 1.3, 1.9], dtype=np.float64)
+<div class="desc"><p>Decodes one or more symbols, consuming them from the encapsulated compressed data.</p>
+<p>This method can be called in 3 different ways:</p>
+<h2 id="option-1-decodemodel">Option 1: decode(model)</h2>
+<p>Decodes a <em>single</em> symbol with a concrete (i.e., fully parameterized) entropy model and
+returns the decoded symbol; (for optimal computational efficiency, don't use this option in
+a loop if you can instead use one of the two alternative options below.)</p>
+<p>For example:</p>
+<pre><code class="language-python"># Define a concrete categorical entropy model over the (implied)
+# alphabet {0, 1, 2}:
+probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+model = constriction.stream.model.Categorical(probabilities)
 
-# Push symbols on the stack:
-coder.encode_leaky_gaussian_symbols_reverse(symbols, -10, 10, means, stds, True)
-
-# Pop symbols off the stack in reverse order:
-decoded = coder.decode_leaky_gaussian_symbols(-10, 10, means, stds, True)
-
-# Verify that the decoded symbols match the encoded ones.
-assert np.all(symbols == decoded)
-assert coder.is_empty()
+# Decode a single symbol from some example compressed data:
+compressed = np.array([636697421, 6848946], dtype=np.uint32)
+coder = constriction.stream.stack.AnsCoder(compressed)
+symbol = coder.decode(model)
+print(symbol) # (prints: 2)
+# ... then decode some more symbols ...
 </code></pre>
-<p>Arguments:
-min_supported_symbol &ndash; lower bound of the domain supported by the entropy
-model (inclusively). Must be the same value that was used for encoding.
-max_supported_symbol &ndash; upper bound of the domain supported by the entropy
-model (inclusively). Must be the same value that was used for encoding.
-means &ndash; the mean values of the Gaussian entropy models for each symbol.
-Must be a contiguous one-dimensional numpy array with dtype <code>float64</code>
-and with the exact same length as the argument <code>symbols_out</code>.
-stds &ndash; the standard deviations of the Gaussian entropy models for each
-symbol. Must be a contiguous one-dimensional numpy array with dtype
-<code>float64</code> and with the exact same length as the argument <code>symbols_out</code>.</p></div>
+<h2 id="option-2-decodemodel-amt-where-amt-is-an-integer">Option 2: decode(model, amt) [where <code>amt</code> is an integer]</h2>
+<p>Decodes <code>amt</code> i.i.d. symbols using the same concrete (i.e., fully parametrized) entropy
+model for each symbol, and returns the decoded symbols as a rank-1 numpy array with
+<code>dtype=np.int32</code> and length <code>amt</code>;</p>
+<p>For example:</p>
+<pre><code class="language-python"># Use the same concrete entropy model as in the previous example:
+probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+model = constriction.stream.model.Categorical(probabilities)
+
+# Decode 9 symbols from some example compressed data, using the
+# same (fixed) entropy model defined above for all symbols:
+compressed = np.array([636697421, 6848946], dtype=np.uint32)
+coder = constriction.stream.stack.AnsCoder(compressed)
+symbols = coder.decode(model, 9)
+print(symbols) # (prints: [2, 0, 0, 1, 2, 2, 1, 2, 2])
+</code></pre>
+<h2 id="option-3-decodemodel_family-params1-params2">Option 3: decode(model_family, params1, params2, &hellip;)</h2>
+<p>Decodes multiple symbols, using the same <em>family</em> of entropy models (e.g., categorical or
+quantized Gaussian) for all symbols, but with different model parameters for each symbol,
+and returns the decoded symbols as a rank-1 numpy array with <code>dtype=np.int32</code>; here, all
+<code>paramsX</code> arguments are arrays of equal length (the number of symbols to be decoded). The
+number of required <code>paramsX</code> arguments and their shapes and <code>dtype</code>s depend on the model
+family.</p>
+<p>For example, the
+<a href="model.html#constriction.stream.model.QuantizedGaussian"><code>QuantizedGaussian</code></a> model family
+expects two rank-1 model parameters of dtype <code>np.float64</code>, which specify the mean and
+standard deviation for each entropy model:</p>
+<pre><code class="language-python"># Define a generic quantized Gaussian distribution for all integers
+# in the range from -100 to 100 (both ends inclusive):
+model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
+
+# Specify the model parameters for each symbol:
+means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
+stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
+
+# Decode a message from some example compressed data:
+# (needs `len(symbols) == len(means) == len(stds)`)
+compressed = np.array([597775281, 3], dtype=np.uint32)
+coder = constriction.stream.stack.AnsCoder(compressed)
+symbols = coder.decode(model_family, means, stds)
+print(symbols) # (prints: [12, -13, 25])
+</code></pre>
+<p>By contrast, the <a href="model.html#constriction.stream.model.Categorical"><code>Categorical</code></a> model
+family expects a single rank-2 model parameter where the i'th row lists the
+probabilities for each possible value of the i'th symbol:</p>
+<pre><code class="language-python"># Define 2 categorical models over the alphabet {0, 1, 2, 3, 4}:
+probabilities = np.array(
+    [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first decoded symbol)
+     [0.3, 0.2, 0.2, 0.2, 0.1]], # (for second decoded symbol)
+    dtype=np.float64)
+model_family = constriction.stream.model.Categorical()
+
+# Decode 2 symbols:
+compressed = np.array([2142112014, 31], dtype=np.uint32)
+coder = constriction.stream.stack.AnsCoder(compressed)
+symbols = coder.decode(model_family, probabilities)
+print(symbols) # (prints: [3, 1])
+</code></pre></div>
 </dd>
-<dt id="constriction.stream.stack.AnsCoder.encode_custom_model_reverse"><code class="name flex">
-<span>def <span class="ident">encode_custom_model_reverse</span></span>(<span>symbols, model, model_parameters)</span>
+<dt id="constriction.stream.stack.AnsCoder.encode_reverse"><code class="name flex">
+<span>def <span class="ident">encode_reverse</span></span>(<span>symbols, model, optional_model_params)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Encodes a sequence of symbols with parameterized custom models.</p>
-<ul>
-<li>For usage examples, see
-<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
-<li>If all symbols use the same entropy model (with identical model parameters) then
-you'll want to use
-<a href="#constriction.stream.stack.AnsCoder.encode_iid_custom_model_reverse"><code>encode_iid_custom_model_reverse</code></a>
-instead.</li>
-</ul></div>
-</dd>
-<dt id="constriction.stream.stack.AnsCoder.encode_iid_categorical_symbols_reverse"><code class="name flex">
-<span>def <span class="ident">encode_iid_categorical_symbols_reverse</span></span>(<span>...)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Encodes a sequence of symbols using a fixed categorical entropy model.</p>
-<p>This method is analogous to the method <code>encode_leaky_gaussian_symbols_reverse</code> except that</p>
-<ul>
-<li>all symbols are encoded with the same entropy model; and</li>
-<li>the entropy model is a categorical rather than a Gaussian distribution.</li>
-</ul>
-<p>In detail, the categorical entropy model is constructed as follows:</p>
-<ul>
-<li>each symbol from <code>min_supported_symbol</code> to <code>max_supported_symbol</code>
-(inclusively) gets assigned at least the smallest nonzero probability
-that is representable within the internally used precision.</li>
-<li>the remaining probability mass is distributed among the symbols from
-<code>min_provided_symbol</code> to <code>min_provided_symbol + len(probabilities) - 1</code>
-(inclusively), in the proportions specified by the provided probabilities
-(as far as this is possible within the internally used fixed point
-accuracy). The provided probabilities do not need to be normalized (i.e.,
-the do not need to add up to one) but they must all be nonnegative.</li>
-</ul></div>
-</dd>
-<dt id="constriction.stream.stack.AnsCoder.encode_iid_custom_model_reverse"><code class="name flex">
-<span>def <span class="ident">encode_iid_custom_model_reverse</span></span>(<span>symbols, model)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Encodes a sequence of symbols with identical custom models.</p>
-<ul>
-<li>For usage examples, see
-<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
-<li>If the model parameters are different for each symbol then you'll want to use
-<a href="#constriction.stream.stack.AnsCoder.encode_custom_model_reverse"><code>encode_custom_model_reverse</code></a>
-instead.</li>
-</ul></div>
-</dd>
-<dt id="constriction.stream.stack.AnsCoder.encode_leaky_gaussian_symbols_reverse"><code class="name flex">
-<span>def <span class="ident">encode_leaky_gaussian_symbols_reverse</span></span>(<span>symbols, min_supported_symbol, max_supported_symbol, means, stds)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Encodes a sequence of symbols using (leaky) Gaussian entropy models.</p>
-<p>The provided numpy arrays <code>symbols</code>, <code>means</code>, and <code>stds</code> must all have the
-same size.</p>
-<p>See method <code>decode_leaky_gaussian_symbols</code> for a usage example.</p>
-<p>Arguments:
-min_supported_symbol &ndash; lower bound of the domain for argument <code>symbols</code>
-(inclusively).
-max_supported_symbol &ndash; upper bound of the domain for argument <code>symbols</code>
-(inclusively).
-symbols &ndash; the symbols to be encoded. Must be a contiguous one-dimensional
-numpy array (call <code>.copy()</code> on it if it is not contiguous) with dtype
-<code>np.int32</code>. Each value in the array must be no smaller than
-<code>min_supported_symbol</code> and no larger than <code>max_supported_symbol</code>.
-means &ndash; the mean values of the Gaussian entropy models for each symbol.
-Must be a contiguous one-dimensional numpy array with dtype <code>np.float64</code>
-and with the exact same length as the argument <code>symbols</code>.
-stds &ndash; the standard deviations of the Gaussian entropy models for each
-symbol. Must be a contiguous one-dimensional numpy array with dtype
-<code>np.float64</code> and with the exact same length as the argument <code>symbols</code>.
-All entries must be strictly positive (i.e., nonzero and nonnegative)
-and finite.</p></div>
-</dd>
-<dt id="constriction.stream.stack.AnsCoder.get_binary"><code class="name flex">
-<span>def <span class="ident">get_binary</span></span>(<span>...)</span>
-</code></dt>
-<dd>
-<div class="desc"></div>
+<div class="desc"><p>Encodes one or more symbols, appending them to the encapsulated compressed data.</p>
+<p>This method can be called in 3 different ways:</p>
+<h2 id="option-1-encode_reversesymbol-model">Option 1: encode_reverse(symbol, model)</h2>
+<p>Encodes a <em>single</em> symbol with a concrete (i.e., fully parameterized) entropy model; the
+suffix "_reverse" of the method name has no significance when called this way.</p>
+<p>For optimal computational efficiency, don't use this option in a loop if you can instead
+use one of the two alternative options below.</p>
+<p>For example:</p>
+<pre><code class="language-python"># Define a concrete categorical entropy model over the (implied)
+# alphabet {0, 1, 2}:
+probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+model = constriction.stream.model.Categorical(probabilities)
+
+# Encode a single symbol with this entropy model:
+coder = constriction.stream.stack.AnsCoder()
+coder.encode_reverse(2, model) # Encodes the symbol `2`.
+# ... then encode some more symbols ...
+</code></pre>
+<h2 id="option-2-encode_reversesymbols-model">Option 2: encode_reverse(symbols, model)</h2>
+<p>Encodes multiple i.i.d. symbols, i.e., all symbols in the rank-1 array <code>symbols</code> will be
+encoded with the same concrete (i.e., fully parameterized) entropy model. The symbols are
+encoded in <em>reverse</em> order so that subsequent decoding will retrieve them in forward order
+(see <a href="#example">module-level example</a>).</p>
+<p>For example:</p>
+<pre><code class="language-python"># Use the same concrete entropy model as in the previous example:
+probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+model = constriction.stream.model.Categorical(probabilities)
+
+# Encode an example message using the above `model` for all symbols:
+symbols = np.array([0, 2, 1, 2, 0, 2, 0, 2, 1], dtype=np.int32)
+coder = constriction.stream.stack.AnsCoder()
+coder.encode_reverse(symbols, model)
+print(coder.get_compressed()) # (prints: [1276728145, 172])
+</code></pre>
+<h2 id="option-3-encode_reversesymbols-model_family-params1-params2">Option 3: encode_reverse(symbols, model_family, params1, params2, &hellip;)</h2>
+<p>Encodes multiple symbols, using the same <em>family</em> of entropy models (e.g., categorical or
+quantized Gaussian) for all symbols, but with different model parameters for each symbol;
+here, each <code>paramsX</code> argument is an array of the same length as <code>symbols</code>. The number of
+required <code>paramsX</code> arguments and their shapes and <code>dtype</code>s depend on the model family. The
+symbols are encoded in <em>reverse</em> order so that subsequent decoding will retrieve them in
+forward order (see <a href="#example">module-level example</a>). But the mapping between symbols and
+model parameters is as you'd expect it to be (i.e., <code>symbols[i]</code> gets encoded with model
+parameters <code>params1[i]</code>, <code>params2[i]</code>, and so on, where <code>i</code> counts backwards).</p>
+<p>For example, the
+<a href="model.html#constriction.stream.model.QuantizedGaussian"><code>QuantizedGaussian</code></a> model family
+expects two rank-1 model parameters of dtype <code>np.float64</code>, which specify the mean and
+standard deviation for each entropy model:</p>
+<pre><code class="language-python"># Define a generic quantized Gaussian distribution for all integers
+# in the range from -100 to 100 (both ends inclusive):
+model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
+
+# Specify the model parameters for each symbol:
+means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
+stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
+
+# Encode an example message:
+# (needs `len(symbols) == len(means) == len(stds)`)
+symbols = np.array([12, -13, 25], dtype=np.int32)
+coder = constriction.stream.stack.AnsCoder()
+coder.encode_reverse(symbols, model_family, means, stds)
+print(coder.get_compressed()) # (prints: [597775281, 3])
+</code></pre>
+<p>By contrast, the <a href="model.html#constriction.stream.model.Categorical"><code>Categorical</code></a> model
+family expects a single rank-2 model parameter where the i'th row lists the
+probabilities for each possible value of the i'th symbol:</p>
+<pre><code class="language-python"># Define 2 categorical models over the alphabet {0, 1, 2, 3, 4}:
+probabilities = np.array(
+    [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for symbols[0])
+     [0.3, 0.2, 0.2, 0.2, 0.1]], # (for symbols[1])
+    dtype=np.float64)
+model_family = constriction.stream.model.Categorical()
+
+# Encode 2 symbols (needs `len(symbols) == probabilities.shape[0]`):
+symbols = np.array([3, 1], dtype=np.int32)
+coder = constriction.stream.stack.AnsCoder()
+coder.encode_reverse(symbols, model_family, probabilities)
+print(coder.get_compressed()) # (prints: [45298483])
+</code></pre></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.get_compressed"><code class="name flex">
-<span>def <span class="ident">get_compressed</span></span>(<span>...)</span>
+<span>def <span class="ident">get_compressed</span></span>(<span>unseal=False)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Returns a copy of the compressed data.</p></div>
+<div class="desc"><p>Returns a copy of the compressed data.</p>
+<p>You'll almost always want to call this method without arguments (which will default to
+<code>unseal=False</code>). See below for an explanation of the advanced use case with argument
+<code>unseal=True</code>.</p>
+<p>You will typically only want to call this method at the very end of your encoding task,
+i.e., once you've encoded the <em>entire</em> message. There is usually no need to call this method
+after encoding each symbol or other portion of your message. The encoders in <code><a title="constriction" href="../index.html">constriction</a></code>
+<em>accumulate</em> compressed data in an internal buffer, and encoding (semantically) <em>appends</em> to
+this buffer.</p>
+<p>That said, calling <code>get_compressed</code> has no side effects, so you <em>can</em> call <code>get_compressed</code>,
+then continue to encode more symbols, and then call <code>get_compressed</code> again. The first call
+of <code>get_compressed</code> will have no effect on the return value of the second call of
+<code>get_compressed</code>.</p>
+<p>The return value is a rank-1 numpy array of <code>dtype=np.uint32</code>. You can write it to a file by
+calling <code>to_file</code> on it, but we recommend to convert it into an architecture-independent
+byte order first:</p>
+<pre><code class="language-python">import sys
+
+encoder = constriction.stream.stack.AnsCoder()
+# ... encode some message (skipped here) ...
+compressed = encoder.get_compressed() # returns a numpy array.
+if sys.byteorder != 'little':
+    # Let's save data in little-endian byte order by convention.
+    compressed.byteswap(inplace=True)
+compressed.tofile('compressed-file.bin')
+
+# At a later point, you might want to read and decode the file:
+compressed = np.fromfile('compressed-file.bin', dtype=np.uint32)
+if sys.byteorder != 'little':
+    # Restore native byte order before passing it to `constriction`.
+    compressed.byteswap(inplace=True)
+decoder = constriction.stream.stack.AnsCoder(compressed)
+# ... decode the message (skipped here) ...
+</code></pre>
+<h2 id="explanation-of-the-optional-argument-unseal">Explanation of the optional argument <code>unseal</code></h2>
+<p>The optional argument <code>unseal</code> of this method is the counterpart to the optional argument
+<code>seal</code> of the constructor. Calling <code>.get_compressed(unseal=True)</code> tells the ANS coder that
+you expect it to be in a "sealed" state and instructs it to reverse the "sealing" operation.
+An ANS coder is in a sealed state if its encapsulated compressed data ends in a single "1"
+word. Calling the constructor of <code><a title="constriction.stream.stack.AnsCoder" href="#constriction.stream.stack.AnsCoder">AnsCoder</a></code> with argument <code>seal=True</code> constructs a coder
+that is guaranteed to be in a sealed state because the constructor will append a single "1"
+word to the provided <code>compressed</code> data. This sealing/unsealing operation makes sure that any
+trailing zero words are conserved since an <code><a title="constriction.stream.stack.AnsCoder" href="#constriction.stream.stack.AnsCoder">AnsCoder</a></code> would otherwise truncate them.</p>
+<p>Note that calling <code>.get_compressed(unseal=True)</code> fails if the coder is not in a "sealed"
+state.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.is_empty"><code class="name flex">
-<span>def <span class="ident">is_empty</span></span>(<span>...)</span>
+<span>def <span class="ident">is_empty</span></span>(<span>)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns <code>True</code> iff the coder is in its default initial state.</p>
@@ -300,22 +420,81 @@ called without arguments, or the state to which the coder is set when
 calling <code>clear</code>.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.num_bits"><code class="name flex">
-<span>def <span class="ident">num_bits</span></span>(<span>...)</span>
+<span>def <span class="ident">num_bits</span></span>(<span>)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>The current size of the compressed data, in bits, rounded up to full words.</p></div>
+<div class="desc"><p>Returns the current size of the compressed data, in bits, rounded up to full words.</p>
+<p>This is 32 times the result of what <a href="#constriction.stream.queue.RangeEncoder.num_words"><code>num_words</code></a>
+would return.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.num_valid_bits"><code class="name flex">
-<span>def <span class="ident">num_valid_bits</span></span>(<span>...)</span>
+<span>def <span class="ident">num_valid_bits</span></span>(<span>)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>The current size of the compressed data, in bits, not rounded up to full words.</p></div>
+<div class="desc"><p>The current size of the compressed data, in bits, not rounded up to full words.</p>
+<p>This can be at most 32 smaller than <code>.num_bits()</code>.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.num_words"><code class="name flex">
-<span>def <span class="ident">num_words</span></span>(<span>...)</span>
+<span>def <span class="ident">num_words</span></span>(<span>)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>The current size of the compressed data, in <code>np.uint32</code> words.</p></div>
+<div class="desc"><p>Returns the current size of the encapsulated compressed data, in <code>np.uint32</code> words.</p>
+<p>Thus, the number returned by this method is the length of the array that you would get if
+you called <a href="#constriction.stream.queue.RangeEncoder.get_compressed"><code>get_compressed</code></a>
+without arguments.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.pos"><code class="name flex">
+<span>def <span class="ident">pos</span></span>(<span>)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Records a checkpoint to which you can jump during decoding using
+<a href="#constriction.stream.stack.AnsCoder.seek"><code>seek</code></a>.</p>
+<p>Returns a tuple <code>(position, state)</code> where <code>position</code> is an integer that specifies how many
+32-bit words of compressed data have been produced so far, and <code>state</code> is an integer that
+defines the <code>RangeEncoder</code>'s internal state (so that it can be restored upon
+<a href="#constriction.stream.stack.AnsCoder.seek"><code>seek</code>ing</a>.</p>
+<p><strong>Note:</strong> Don't call <code>pos</code> if you just want to find out how much compressed data has been
+produced so far. Call <a href="#constriction.stream.stack.AnsCoder.num_words"><code>num_words</code></a>
+instead.</p>
+<h2 id="example">Example</h2>
+<p>See <a href="#constriction.stream.stack.AnsCoder.seek"><code>seek</code></a>.</p></div>
+</dd>
+<dt id="constriction.stream.stack.AnsCoder.seek"><code class="name flex">
+<span>def <span class="ident">seek</span></span>(<span>position, state)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Jumps to a checkpoint recorded with method
+<a href="#constriction.stream.stack.AnsCoder.pos"><code>pos</code></a> during encoding.</p>
+<p>This allows random-access decoding. The arguments <code>position</code> and <code>state</code> are the two values
+returned by the method [<code>pos</code>](#constriction.stream.stack</p>
+<p><strong>Note:</strong> in an ANS coder, both decoding and seeking <em>consume</em> compressed data. The Python
+API of <code><a title="constriction" href="../index.html">constriction</a></code>'s ANS coder currently supports only seeking forward but not backward
+(seeking backward is supported for Range Coding, and for both ANS and Range Coding in
+<code><a title="constriction" href="../index.html">constriction</a></code>'s Rust API).</p>
+<h2 id="example">Example</h2>
+<pre><code class="language-python">probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
+model         = constriction.stream.model.Categorical(probabilities)
+message_part1 = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
+message_part2 = np.array([2, 2, 0, 1, 3], dtype=np.int32)
+
+# Encode both parts of the message (in reverse order, because ANS
+# operates as a stack) and record a checkpoint in-between:
+coder = constriction.stream.stack.AnsCoder()
+coder.encode_reverse(message_part2, model)
+(position, state) = coder.pos() # Records a checkpoint.
+coder.encode_reverse(message_part1, model)
+
+# We could now call `coder.get_compressed()` but we'll just decode
+# directly from the original `coder` for simplicity.
+
+# Decode first symbol:
+print(coder.decode(model)) # (prints: 1)
+
+# Jump to part 2 and decode it:
+coder.seek(position, state)
+decoded_part2 = coder.decode(model, 5)
+assert np.all(decoded_part2 == message_part2)
+</code></pre></div>
 </dd>
 </dl>
 </dd>
@@ -326,6 +505,8 @@ calling <code>clear</code>.</p></div>
 <h1>Index</h1>
 <div class="toc">
 <ul>
+<li><a href="#stack-semantics">Stack Semantics</a></li>
+<li><a href="#example">Example</a></li>
 <li><a href="#references">References</a></li>
 </ul>
 </div>
@@ -339,22 +520,17 @@ calling <code>clear</code>.</p></div>
 <ul>
 <li>
 <h4><code><a title="constriction.stream.stack.AnsCoder" href="#constriction.stream.stack.AnsCoder">AnsCoder</a></code></h4>
-<ul class="">
+<ul class="two-column">
 <li><code><a title="constriction.stream.stack.AnsCoder.clear" href="#constriction.stream.stack.AnsCoder.clear">clear</a></code></li>
-<li><code><a title="constriction.stream.stack.AnsCoder.decode_custom_model" href="#constriction.stream.stack.AnsCoder.decode_custom_model">decode_custom_model</a></code></li>
-<li><code><a title="constriction.stream.stack.AnsCoder.decode_iid_categorical_symbols" href="#constriction.stream.stack.AnsCoder.decode_iid_categorical_symbols">decode_iid_categorical_symbols</a></code></li>
-<li><code><a title="constriction.stream.stack.AnsCoder.decode_iid_custom_model" href="#constriction.stream.stack.AnsCoder.decode_iid_custom_model">decode_iid_custom_model</a></code></li>
-<li><code><a title="constriction.stream.stack.AnsCoder.decode_leaky_gaussian_symbols" href="#constriction.stream.stack.AnsCoder.decode_leaky_gaussian_symbols">decode_leaky_gaussian_symbols</a></code></li>
-<li><code><a title="constriction.stream.stack.AnsCoder.encode_custom_model_reverse" href="#constriction.stream.stack.AnsCoder.encode_custom_model_reverse">encode_custom_model_reverse</a></code></li>
-<li><code><a title="constriction.stream.stack.AnsCoder.encode_iid_categorical_symbols_reverse" href="#constriction.stream.stack.AnsCoder.encode_iid_categorical_symbols_reverse">encode_iid_categorical_symbols_reverse</a></code></li>
-<li><code><a title="constriction.stream.stack.AnsCoder.encode_iid_custom_model_reverse" href="#constriction.stream.stack.AnsCoder.encode_iid_custom_model_reverse">encode_iid_custom_model_reverse</a></code></li>
-<li><code><a title="constriction.stream.stack.AnsCoder.encode_leaky_gaussian_symbols_reverse" href="#constriction.stream.stack.AnsCoder.encode_leaky_gaussian_symbols_reverse">encode_leaky_gaussian_symbols_reverse</a></code></li>
-<li><code><a title="constriction.stream.stack.AnsCoder.get_binary" href="#constriction.stream.stack.AnsCoder.get_binary">get_binary</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.decode" href="#constriction.stream.stack.AnsCoder.decode">decode</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.encode_reverse" href="#constriction.stream.stack.AnsCoder.encode_reverse">encode_reverse</a></code></li>
 <li><code><a title="constriction.stream.stack.AnsCoder.get_compressed" href="#constriction.stream.stack.AnsCoder.get_compressed">get_compressed</a></code></li>
 <li><code><a title="constriction.stream.stack.AnsCoder.is_empty" href="#constriction.stream.stack.AnsCoder.is_empty">is_empty</a></code></li>
 <li><code><a title="constriction.stream.stack.AnsCoder.num_bits" href="#constriction.stream.stack.AnsCoder.num_bits">num_bits</a></code></li>
 <li><code><a title="constriction.stream.stack.AnsCoder.num_valid_bits" href="#constriction.stream.stack.AnsCoder.num_valid_bits">num_valid_bits</a></code></li>
 <li><code><a title="constriction.stream.stack.AnsCoder.num_words" href="#constriction.stream.stack.AnsCoder.num_words">num_words</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.pos" href="#constriction.stream.stack.AnsCoder.pos">pos</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.seek" href="#constriction.stream.stack.AnsCoder.seek">seek</a></code></li>
 </ul>
 </li>
 </ul>

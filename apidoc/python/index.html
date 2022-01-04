@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.9.2" />
 <title>constriction API documentation</title>
-<meta name="description" content="Entropy Coding Primitives for Research and Production …" />
+<meta name="description" content="Entropy Coders for Research and Production …" />
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
 <link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/styles/github.min.css" crossorigin>
@@ -22,192 +22,146 @@
 <h1 class="title">Package <code>constriction</code></h1>
 </header>
 <section id="section-intro">
-<h2 id="entropy-coding-primitives-for-research-and-production">Entropy Coding Primitives for Research and Production</h2>
+<h2 id="entropy-coders-for-research-and-production">Entropy Coders for Research and Production</h2>
 <p>The <code><a title="constriction" href="#constriction">constriction</a></code> library provides a set of composable entropy coding algorithms with a
 focus on correctness, versatility, ease of use, compression performance, and
-computational efficiency. The goals of <code><a title="constriction" href="#constriction">constriction</a></code> are to three-fold:</p>
+computational efficiency. The goals of <code><a title="constriction" href="#constriction">constriction</a></code> are three-fold:</p>
 <ol>
 <li><strong>to facilitate research on novel lossless and lossy compression methods</strong> by
-providing a <em>composable</em> set of entropy coding primitives rather than a rigid
-implementation of a single preconfigured method;</li>
-<li><strong>to simplify the transition from research code to production software</strong> by exposing
-the exact same functionality via both a Python API (for rapid prototyping on research
-code) and a Rust API (for turning successful prototypes into production); and</li>
-<li><strong>to serve as a teaching resource</strong> by providing a wide range of entropy coding
-algorithms within a single consistent framework, thus making the various algorithms
-easily discoverable and comparable on example models and data. <a href="https://robamler.github.io/teaching/compress21/">Additional teaching
-material</a> is being made publicly
-available as a by-product of an ongoing university course on data compression with
-deep probabilistic models.</li>
+providing a <em>composable</em> set of primitives (e.g., you can can easily switch out a
+Range Coder for an ANS coder without having to find a new library or change how you
+represent exactly invertible entropy models);</li>
+<li><strong>to simplify the transition from research code to deployed software</strong> by providing
+similar APIs and binary compatible entropy coders for both Python (for rapid
+prototyping on research code) and Rust (for turning successful prototypes into
+standalone binaries, libraries, or WebAssembly modules); and</li>
+<li><strong>to serve as a teaching resource</strong> by providing a variety of entropy coding
+primitives within a single consistent framework. Check out our <a href="https://robamler.github.io/teaching/compress21/">additional teaching
+material</a> from a university course
+on data compression, which contains some problem sets where you use <code><a title="constriction" href="#constriction">constriction</a></code>
+(with solutions).</li>
 </ol>
-<p>For an example of a compression codec that started as research code in Python and was
-then deployed as a fast and dependency-free WebAssembly module using <code><a title="constriction" href="#constriction">constriction</a></code>'s
-Rust API, have a look at <a href="https://robamler.github.io/linguistic-flux-capacitor">The Linguistic Flux
-Capacitor</a>.</p>
-<h2 id="project-status">Project Status</h2>
-<p>We currently provide implementations of the following entropy coding algorithms:</p>
-<ul>
-<li><strong>Asymmetric Numeral Systems (ANS):</strong> a fast modern entropy coder with near-optimal
-compression effectiveness that supports advanced use cases like bits-back coding.</li>
-<li><strong>Range Coding:</strong> a computationally efficient variant of Arithmetic Coding, that has
-essentially the same compression effectiveness as ANS Coding but operates as a queue
-("first in first out"), which makes it preferable for autoregressive models.</li>
-<li><strong>Chain Coding:</strong> an experimental new entropy coder that combines the (net)
-effectiveness of stream codes with the locality of symbol codes; it is meant for
-experimental new compression approaches that perform joint inference, quantization,
-and bits-back coding in an end-to-end optimization. This experimental coder is mainly
-provided to prove to ourselves that the API for encoding and decoding, which is shared
-across all stream coders, is flexible enough to express complex novel tasks.</li>
-<li><strong>Huffman Coding:</strong> a well-known symbol code, mainly provided here for teaching
-purpose; you'll usually want to use a stream code like ANS or Range Coding instead
-since symbol codes can have a considerable overhead on the bitrate, especially in the
-regime of low entropy per symbol, which is common in machine-learning based
-compression methods.</li>
-</ul>
-<p>Further, <code><a title="constriction" href="#constriction">constriction</a></code> provides implementations of common probability distributions in
-fixed-point arithmetic, which can be used as entropy models in either of the above
-stream codes. The library also provides adapters for turning custom probability
-distributions into exactly invertible fixed-point arithmetic.</p>
-<p>The provided implementations of entropy coding algorithms and probability distributions
-are extensively tested and should be considered reliable (except for the still
-experimental Chain Coder). However, their APIs may change in future versions of
-<code><a title="constriction" href="#constriction">constriction</a></code> if more user experience reveals any shortcomings of the current APIs in
-terms of ergonomics. Please <a href="https://github.com/bamler-lab/constriction/issues">file an
-issue</a> if you run into a scenario
-where the current APIs are suboptimal.</p>
-<h2 id="quick-start-with-the-python-api">Quick Start With the Python API</h2>
-<p>You are currently reading the documentation of <code><a title="constriction" href="#constriction">constriction</a></code>'s Python API. If Python is
-not your language of choice then head over to the <a href="https://docs.rs/constriction">Rust API
-Documentation</a>. The Python API focuses on ease of use and
-rapid iteration and is targeted mainly towards data scientists and machine learning
-researchers. The Rust API provides binary identical implementations of everything that's
-available through the Python API. Additionally, the Rust API, provides optional finer
-grained control over technical details (such as word size or numerical precision) using
-Rust's generic type system.</p>
-<h3 id="installation">Installation</h3>
-<p>The easiest and recommended way to install <code><a title="constriction" href="#constriction">constriction</a></code> for Python is via <code>pip</code>:</p>
-<pre><code class="language-bash">pip install constriction numpy
+<p><strong>More Information:</strong> <a href="https://bamler-lab.github.io/constriction">project website</a></p>
+<p><strong>Live demo:</strong> <a href="https://robamler.github.io/linguistic-flux-capacitor">here's a web app</a>
+that started out as a machine-learning research project in Python and was later turned
+into a web app by using <code><a title="constriction" href="#constriction">constriction</a></code> in a WebAssembly module).</p>
+<h2 id="quick-start">Quick Start</h2>
+<h3 id="installing-constriction-for-python">Installing <code><a title="constriction" href="#constriction">constriction</a></code> for Python</h3>
+<pre><code class="language-bash">pip install constriction~=0.2.0
 </code></pre>
-<h3 id="example">Example</h3>
-<p>Let's encode a sequence of symbols and write the compressed data to a binary file. We'll
-use a quantized Gaussian distribution as entropy model, with a different mean and
-standard deviation of the Gaussian for each symbol so that the example is not too
-simplistic. Further, we'll use an Asymmetric Numeral Systems (ANS) Coder here for its
-speed and compression performance. We'll discuss how you could replace the ANS Coder
-with a Range Coder or a symbol code like Huffman Coding <a href="#exercise">below</a>.</p>
+<h3 id="hello-world">Hello, World</h3>
+<p>You'll mostly use the <code><a title="constriction.stream" href="stream.html">constriction.stream</a></code> submodule, which provides stream codes (like Range
+Coding or ANS). The following example shows a simple encoding-decoding round trip. More
+complex entropy models and other entropy coders are also supported, see
+<a href="#more-examples">more examples</a> below.</p>
 <pre><code class="language-python">import constriction
 import numpy as np
-import sys
 
-# Create an empty Asymmetric Numeral Systems (ANS) Coder:
-coder = constriction.stream.stack.AnsCoder()
+message = np.array([6, 10, -4, 2, 5, 2, 1, 0, 2], dtype=np.int32)
 
-# Some made up data and entropy models for demonstration purpose:
-min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
-symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)
-means = np.array([35.2, -1.7, 30.1, 71.2, -75.1], dtype=np.float64)
-stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
+# Define an i.i.d. entropy model (see below for more complex models):
+entropy_model = constriction.stream.model.QuantizedGaussian(-50, 50, 3.2, 9.6)
 
-# Encode the data (in reverse order, since ANS is a stack):
-coder.encode_leaky_gaussian_symbols_reverse(
-    symbols, min_supported_symbol, max_supported_symbol, means, stds)
+# Let's use an ANS coder in this example. See below for a Range Coder example.
+encoder = constriction.stream.stack.AnsCoder()
+encoder.encode_reverse(message, entropy_model)
 
-print(f&quot;Compressed size: {coder.num_bits()} bits&quot;)
-print(f&quot;(without unnecessary trailing zeros: {coder.num_valid_bits()} bits)&quot;)
-
-# Get the compressed bit string, convert it into an architecture-independent
-# byte order, and write it to a binary file:
-compressed = coder.get_compressed()
-if sys.byteorder == &quot;big&quot;:
-    compressed.byteswap(inplace=True)
-compressed.tofile(&quot;compressed.bin&quot;)
-</code></pre>
-<p>Now let's read the compressed bit string back in and decode it.</p>
-<pre><code class="language-python">import constriction
-import numpy as np
-import sys
-
-# Read the compressed bit string from the file we created above and convert
-# it into the right byte order for the current computer architecture:
-compressed = np.fromfile(&quot;compressed.bin&quot;, dtype=np.uint32)
-if sys.byteorder == &quot;big&quot;:
-    compressed.byteswap(inplace=True)
-
-# Initialize an ANS coder from the compressed bit string:
-coder = constriction.stream.stack.AnsCoder(compressed)
-
-# Use the same entropy models that we used for encoding:
-min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
-means = np.array([35.2, -1.7, 30.1, 71.2, -75.1], dtype=np.float64)
-stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
-
-# Decode and print the data:
-reconstructed = coder.decode_leaky_gaussian_symbols(
-    min_supported_symbol, max_supported_symbol, means, stds)
-assert coder.is_empty()
-print(reconstructed)  # Should print [23, -15, 78, 43, -69].
-</code></pre>
-<h3 id="exercise">Exercise</h3>
-<p>Try out the above example and verify that decoding reconstructs the original data. Then
-see how easy <code><a title="constriction" href="#constriction">constriction</a></code> makes it to replace the ANS coder with a range coder by
-making the following substitutions:</p>
-<p><strong>In the encoder,</strong></p>
-<ul>
-<li>replace <code>constriction.stream.stack.AnsCoder</code> with
-<code>constriction.stream.queue.RangeEncoder</code>; and</li>
-<li>replace <code>coder.encode_leaky_gaussian_symbols_reverse</code> with
-<code>coder.encode_leaky_gaussian_symbols</code> (we no longer need to encode symbols in reverse
-order since Range Coding is a queue, i.e., first-in-first-out; we only had to reverse
-the order for the ANS coder since ANS is a stack, i.e., last-in-first-out).</li>
-</ul>
-<p><strong>In the decoder,</strong></p>
-<ul>
-<li>replace <code>constriction.stream.stack.AnsCoder</code> with
-<code>constriction.stream.queue.RangeDecoder</code> (note that Range Coding distinguishes between
-an encoder and a decoder type since the encoder writes to the back while the decoder
-reads from the front; by contrast, ANS Coding is a stack, i.e., it reads and writes at
-the same position and allows interleaving reads and writes).</li>
-</ul>
-<p>You could also use a symbol code like Huffman Coding (see submodule <code><a title="constriction.symbol" href="symbol.html">constriction.symbol</a></code>) but that
-would have considerably worse compression performance, especially on large files, since
-symbol codes always emit an integer number of bits per compressed symbol, even if the
-information content of the symbol is a fractional number (stream codes like ANS and
-Range Coding <em>effectively</em> emit a fractional number of bits per symbol since they
-amortize over several symbols).</p>
-<p>The above replacements should lead you to something like the following:</p>
-<pre><code class="language-python">import constriction
-import numpy as np
-import sys
-
-# Create an empty Range Encoder:
-encoder = constriction.stream.queue.RangeEncoder()
-
-# Same made up data and entropy models as in the ANS Coding example above:
-min_supported_symbol, max_supported_symbol = -100, 100  # both inclusively
-symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)
-means = np.array([35.2, -1.7, 30.1, 71.2, -75.1], dtype=np.float64)
-stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
-
-# Encode the data (this time in normal order, since Range Coding is a queue):
-encoder.encode_leaky_gaussian_symbols(
-    symbols, min_supported_symbol, max_supported_symbol, means, stds)
-
-print(f&quot;Compressed size: {encoder.num_bits()} bits&quot;)
-
-# Get the compressed bit string (sealed up to full words):
 compressed = encoder.get_compressed()
+print(f&quot;compressed representation: {compressed}&quot;)
+print(f&quot;(in binary: {[bin(word) for word in compressed]})&quot;)
 
-# ... writing and reading from file same as above (skipped here) ...
-
-# Initialize a Range Decoder from the compressed bit string:
-decoder = constriction.stream.queue.RangeDecoder(compressed)
-
-# Decode the data and verify it's correct:
-reconstructed = decoder.decode_leaky_gaussian_symbols(
-    min_supported_symbol, max_supported_symbol, means, stds)
-assert decoder.maybe_exhausted()
-assert np.all(reconstructed == symbols)
+decoder = constriction.stream.stack.AnsCoder(compressed)
+decoded = decoder.decode(entropy_model, 9) # (decodes 9 symbols)
+assert np.all(decoded == message)
 </code></pre>
+<h2 id="more-examples">More Examples</h2>
+<h3 id="switching-out-the-entropy-coding-algorithm">Switching Out the Entropy Coding Algorithm</h3>
+<p>Let's take our <a href="#hello-world">"Hello, World"</a> example from above and assume we want to
+switch the entropy coding algorithm from ANS to Range Coding. But we don't want to
+look for a new library or change how we represent entropy <em>models</em> and compressed data.
+Luckily, we only have to modify a few lines of code:</p>
+<pre><code class="language-python">import constriction
+import numpy as np
+
+# Same representation of message and entropy model as in the previous example:
+message = np.array([6, 10, -4, 2, 5, 2, 1, 0, 2], dtype=np.int32)
+entropy_model = constriction.stream.model.QuantizedGaussian(-50, 50, 3.2, 9.6)
+
+# Let's use a Range coder now:
+encoder = constriction.stream.queue.RangeEncoder()         # &lt;-- CHANGED LINE
+encoder.encode(message, entropy_model)          # &lt;-- (slightly) CHANGED LINE
+
+compressed = encoder.get_compressed()
+print(f&quot;compressed representation: {compressed}&quot;)
+print(f&quot;(in binary: {[bin(word) for word in compressed]})&quot;)
+
+decoder = constriction.stream.queue.RangeDecoder(compressed) #&lt;--CHANGED LINE
+decoded = decoder.decode(entropy_model, 9) # (decodes 9 symbols)
+assert np.all(decoded == message)
+</code></pre>
+<h3 id="complex-entropy-models">Complex Entropy Models</h3>
+<p>This time, let's keep the entropy coding algorithm as it is but make the entropy <em>model</em>
+more complex. We'll encode the first 5 symbols of the message again with a
+<code>QuantizedGaussian</code> distribution, but this time we'll use individual model parameters
+(means and standard deviations) for each of the 5 symbols. For the remaining 4 symbols,
+we'll use a fixed categorical distribution, just to make it more interesting:</p>
+<pre><code class="language-python">import constriction
+import numpy as np
+
+# Same message as above, but a complex entropy model consisting of two parts:
+message = np.array([6,   10,   -4,   2,   5,    2, 1, 0, 2], dtype=np.int32)
+means   = np.array([2.3,  6.1, -8.5, 4.1, 1.3], dtype=np.float64)
+stds    = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float64)
+entropy_model1 = constriction.stream.model.QuantizedGaussian(-50, 50)
+entropy_model2 = constriction.stream.model.Categorical(np.array(
+    [0.2, 0.5, 0.3], dtype=np.float64))  # Probabilities of the symbols 0,1,2.
+
+# Simply encode both parts in sequence with their respective models:
+encoder = constriction.stream.queue.RangeEncoder()
+encoder.encode(message[0:5], entropy_model1, means, stds) # per-symbol params.
+encoder.encode(message[5:9], entropy_model2)
+
+compressed = encoder.get_compressed()
+print(f&quot;compressed representation: {compressed}&quot;)
+print(f&quot;(in binary: {[bin(word) for word in compressed]})&quot;)
+
+decoder = constriction.stream.queue.RangeDecoder(compressed)
+decoded_part1 = decoder.decode(entropy_model1, means, stds)
+decoded_part2 = decoder.decode(entropy_model2, 4)
+assert np.all(np.concatenate((decoded_part1, decoded_part2)) == message)
+</code></pre>
+<p>You can define even more complex entropy models by providing an arbitrary Python
+function for the cumulative distribution function (see
+<a href="stream/model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a> and
+<a href="stream/model.html#constriction.stream.model.CustomModel"><code>ScipyModel</code></a>). The
+<code><a title="constriction" href="#constriction">constriction</a></code> library provides wrappers that turn your models into <em>exactly</em>
+invertible fixed-point arithmetic since even tiny rounding errors could otherwise
+completely break an entropy coding algorithm.</p>
+<h3 id="exercise">Exercise</h3>
+<p>We've shown examples of <a href="#hello-world">ANS coding with a simple entropy model</a>, of
+<a href="#switching-out-the-entropy-coding-algorithm">Range Coding with the same simple entropy
+model</a> and of <a href="#complex-entropy-models">Range coding with a complex
+entropy model</a>. One combination is still missing: ANS coding
+with the complex entropy model from the last example above. This should be no problem
+now, so try it out yourself:</p>
+<ul>
+<li>In the last example above, change both "queue.RangeEncoder" and "queue.RangeDecoder"
+to "stack.AnsCoder" (ANS uses the same data structure for both encoding and decoding).</li>
+<li>Then change both occurrences of <code>.encode(&hellip;)</code> to <code>.encode_reverse(&hellip;)</code> (since ANS
+operates as a stack, i.e., last-in-first-out, we encode the symbols in reverse order
+so that we can decode them in their normal order).</li>
+<li>Finally, there's one slightly subtle change: when encoding the message, switch the
+order of the two lines that encode <code>message[0:5]</code> and <code>message[5:9]</code>, respectively.
+Do <em>not</em> change the order of decoding though. This is again necessary because ANS
+operates as a stack.</li>
+</ul>
+<p>Congratulations, you've successfully implemented your first own compression scheme with
+<code><a title="constriction" href="#constriction">constriction</a></code>.</p>
+<h2 id="further-reading">Further Reading</h2>
+<p>You can find links to more examples and tutorials on the <a href="https://bamler-lab.github.io/constriction">project
+website</a>. Or just dive right into the
+documentation of <a href="stream/queue.html">range coding</a>, <a href="stream/stack.html">ANS</a>, and
+<a href="stream/model.html">entropy models</a>.</p>
 <details class="source">
 <summary>
 <span>Expand source code</span>
@@ -222,12 +176,12 @@ __doc__ = constriction.__doc__</code></pre>
 <dl>
 <dt><code class="name"><a title="constriction.stream" href="stream.html">constriction.stream</a></code></dt>
 <dd>
-<div class="desc"><p>Stream codes, i.e., entropy codes that amortize compressed bits over several symbols.</p></div>
+<div class="desc"><p>Stream codes, i.e., entropy codes that amortize compressed bits over several symbols …</p></div>
 </dd>
 <dt><code class="name"><a title="constriction.symbol" href="symbol.html">constriction.symbol</a></code></dt>
 <dd>
-<div class="desc"><p>Symbol codes. Mainly provided for teaching purpose. You probably want to use a <a href="stream.html">stream
-code</a> instead.</p></div>
+<div class="desc"><p>Symbol codes. Mainly provided for teaching purpose. You'll probably want to use a
+<a href="stream.html">stream code</a> instead …</p></div>
 </dd>
 </dl>
 </section>
@@ -242,14 +196,19 @@ code</a> instead.</p></div>
 <h1>Index</h1>
 <div class="toc">
 <ul>
-<li><a href="#entropy-coding-primitives-for-research-and-production">Entropy Coding Primitives for Research and Production</a></li>
-<li><a href="#project-status">Project Status</a></li>
-<li><a href="#quick-start-with-the-python-api">Quick Start With the Python API</a><ul>
-<li><a href="#installation">Installation</a></li>
-<li><a href="#example">Example</a></li>
+<li><a href="#entropy-coders-for-research-and-production">Entropy Coders for Research and Production</a></li>
+<li><a href="#quick-start">Quick Start</a><ul>
+<li><a href="#installing-constriction-for-python">Installing constriction for Python</a></li>
+<li><a href="#hello-world">Hello, World</a></li>
+</ul>
+</li>
+<li><a href="#more-examples">More Examples</a><ul>
+<li><a href="#switching-out-the-entropy-coding-algorithm">Switching Out the Entropy Coding Algorithm</a></li>
+<li><a href="#complex-entropy-models">Complex Entropy Models</a></li>
 <li><a href="#exercise">Exercise</a></li>
 </ul>
 </li>
+<li><a href="#further-reading">Further Reading</a></li>
 </ul>
 </div>
 <ul id="index">

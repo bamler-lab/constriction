@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.9.2" />
 <title>constriction.symbol API documentation</title>
-<meta name="description" content="Symbol codes. Mainly provided for teaching purpose. You probably want to use a [stream
-code](stream.html) instead." />
+<meta name="description" content="Symbol codes. Mainly provided for teaching purpose. You&#39;ll probably want to use a
+[stream code](stream.html) instead …" />
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
 <link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/styles/github.min.css" crossorigin>
@@ -23,15 +23,95 @@ code](stream.html) instead." />
 <h1 class="title">Module <code>constriction.symbol</code></h1>
 </header>
 <section id="section-intro">
-<p>Symbol codes. Mainly provided for teaching purpose. You probably want to use a <a href="stream.html">stream
-code</a> instead.</p>
+<p>Symbol codes. Mainly provided for teaching purpose. You'll probably want to use a
+<a href="stream.html">stream code</a> instead.</p>
+<p>Symbol codes encode messages (= sequences of symbols) by compressing each symbol
+individually and then concatenating the compressed representations of the symbols
+(called code words). This has the advantage of being conceptually simple, but the
+disadvantage of incurring an overhead of up to almost 1 bit <em>per symbol</em>. The overhead
+is most significant in the regime of low entropy per symbol (often the regime of novel
+machine-learning based compression methods), since each (nontrivial) symbol in a symbol
+code contributes at least 1 bit to the total bitrate of the message, even if its
+information content is only marginally above zero.</p>
+<p>This module defines the types <code><a title="constriction.symbol.QueueEncoder" href="#constriction.symbol.QueueEncoder">QueueEncoder</a></code>, <code><a title="constriction.symbol.QueueDecoder" href="#constriction.symbol.QueueDecoder">QueueDecoder</a></code>, and <code><a title="constriction.symbol.StackCoder" href="#constriction.symbol.StackCoder">StackCoder</a></code>, which
+are essentially just efficient containers for of growable bit strings. The interesting
+part happens in the so-called code book, which defines how symbols map to code words. We
+provide the Huffman Coding algorithm in the submodule <a href="symbol/huffman.html"><code>huffman</code></a>,
+which calculates an optimal code book for a given probability distribution.</p>
+<h2 id="examples">Examples</h2>
+<p>The following two examples both encode and then decode a sequence of symbols using the
+same entropy model for each symbol. We could as well use a different entropy model for
+each symbol, but it would make the examples more lengthy.</p>
+<ul>
+<li>Example 1: Encoding and decoding with "queue" semantics ("first in first out", i.e.,
+we'll decode symbols in the same order in which we encode them):</li>
+</ul>
+<pre><code class="language-python">import constriction
+import numpy as np
+
+# Define an entropy model over the (implied) alphabet {0, 1, 2, 3}:
+probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float64)
+
+# Encode some example message, using the same model for each symbol here:
+message = [1, 3, 2, 3, 0, 1, 3, 0, 2, 1, 1, 3, 3, 1, 2, 0, 1, 3, 1]
+encoder = constriction.symbol.QueueEncoder()
+encoder_codebook = constriction.symbol.huffman.EncoderHuffmanTree(probabils)
+for symbol in message:
+    encoder.encode_symbol(symbol, encoder_codebook)
+
+# Obtain the compressed representation and the bitrate:
+compressed, bitrate = encoder.get_compressed()
+print(compressed, bitrate) # (prints: [3756389791, 61358], 48)
+print(f&quot;(in binary: {[bin(word) for word in compressed]}&quot;)
+
+# Decode the message
+decoder = constriction.symbol.QueueDecoder(compressed)
+decoded = []
+decoder_codebook = constriction.symbol.huffman.DecoderHuffmanTree(probabils)
+for symbol in range(19):
+    decoded.append(decoder.decode_symbol(decoder_codebook))
+
+assert decoded == message # (verifies correctness)
+</code></pre>
+<ul>
+<li>Example 2: Encoding and decoding with "stack" semantics ("last in first out", i.e.,
+we'll encode symbols from back to front and then decode them from front to back):</li>
+</ul>
+<pre><code class="language-python">import constriction
+import numpy as np
+
+# Define an entropy model over the (implied) alphabet {0, 1, 2, 3}:
+probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float64)
+
+# Encode some example message, using the same model for each symbol here:
+message = [1, 3, 2, 3, 0, 1, 3, 0, 2, 1, 1, 3, 3, 1, 2, 0, 1, 3, 1]
+coder = constriction.symbol.StackCoder()
+encoder_codebook = constriction.symbol.huffman.EncoderHuffmanTree(probabils)
+for symbol in reversed(message): # Note: reversed
+    coder.encode_symbol(symbol, encoder_codebook)
+
+# Obtain the compressed representation and the bitrate:
+compressed, bitrate = coder.get_compressed()
+print(compressed, bitrate) # (prints: [[2818274807, 129455] 48)
+print(f&quot;(in binary: {[bin(word) for word in compressed]}&quot;)
+
+# Decode the message (we could explicitly construct a decoder:
+# `decoder = constritcion.symbol.StackCoder(compressed)`
+# but we can also also reuse our existing `coder` for decoding):
+decoded = []
+decoder_codebook = constriction.symbol.huffman.DecoderHuffmanTree(probabils)
+for symbol in range(19):
+    decoded.append(coder.decode_symbol(decoder_codebook))
+
+assert decoded == message # (verifies correctness)
+</code></pre>
 </section>
 <section>
 <h2 class="section-title" id="header-submodules">Sub-modules</h2>
 <dl>
 <dt><code class="name"><a title="constriction.symbol.huffman" href="symbol/huffman.html">constriction.symbol.huffman</a></code></dt>
 <dd>
-<div class="desc"><p>Codebooks for Huffman coding …</p></div>
+<div class="desc"><p>Codebooks for Huffman coding [1] …</p></div>
 </dd>
 </dl>
 </section>
@@ -47,14 +127,28 @@ code</a> instead.</p>
 <span>(</span><span>compressed)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>A container of compressed bits that can be read from front to back for decoding.</p>
+<p>This is the counterpart to <code><a title="constriction.symbol.QueueEncoder" href="#constriction.symbol.QueueEncoder">QueueEncoder</a></code>. The constructor takes a single argument,
+which must be a rank-1 numpy array with <code>dtype=np.uint32</code>, as in the first return value
+of
+is returned by `QueueEncoder.get_compressed()</p>
+<h2 id="example">Example:</h2>
+<p>See first <a href="#examples">module level example</a>.</p></div>
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.symbol.QueueDecoder.decode_symbol"><code class="name flex">
 <span>def <span class="ident">decode_symbol</span></span>(<span>codebook)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Reads more bits from the current encapsulated compressed data and tries to match
+them up with one of the code words in the provided code book, returning the
+corresponding symbol on success.</p>
+<h2 id="arguments">Arguments</h2>
+<ul>
+<li><strong>codebook</strong> &mdash; a decoder code book for a symbol code. Currently,
+<a href="symbol/huffman.html#constriction.symbol.huffman.DecoderHuffmanTree"><code>DecoderHuffmanTree</code></a>
+is the only implemented decoder code book.</li>
+</ul></div>
 </dd>
 </dl>
 </dd>
@@ -70,20 +164,38 @@ code</a> instead.</p>
 <span>def <span class="ident">encode_symbol</span></span>(<span>symbol, codebook)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Looks up the provided symbol in the provided codebook and appends its bits to the
+compressed data such that they form a prefix-free code (i.e., a code that can easily
+be read from front to back).</p>
+<h2 id="arguments">Arguments</h2>
+<ul>
+<li><strong>symbol</strong> &mdash; an integer in the range <code>{0, 1, ..., n-1}</code> where <code>n</code> is the size of
+the <code>codebook</code> provided in the second argument.</li>
+<li><strong>codebook</strong> &mdash; an encoder code book for a symbol code. Currently,
+<a href="symbol/huffman.html#constriction.symbol.huffman.EncoderHuffmanTree"><code>EncoderHuffmanTree</code></a>
+is the only implemented encoder code book.</li>
+</ul></div>
 </dd>
 <dt id="constriction.symbol.QueueEncoder.get_compressed"><code class="name flex">
 <span>def <span class="ident">get_compressed</span></span>(<span>)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Returns a tuple of the compressed data (filled with zero bits to a multiple of 32
-bits) and the number of valid bits.</p></div>
+<div class="desc"><p>Returns a tuple <code>(compressed, bitrate)</code>, where <code>compressed</code> is a copy of the
+compressed representation that is currently on the coder (filled with zero bits to a
+multiple of 32 bits), and <code>bitrate</code> is the number of information-carrying bits.</p>
+<p>You can write the compressed data to a file (by calling
+<code>compressed.tofile("filename")</code>), read it back in at a later point (with
+<code>compressed = np.fromfile("filename")</code>) and then construct a <code><a title="constriction.symbol.QueueDecoder" href="#constriction.symbol.QueueDecoder">QueueDecoder</a></code> from.</p></div>
 </dd>
 <dt id="constriction.symbol.QueueEncoder.get_decoder"><code class="name flex">
 <span>def <span class="ident">get_decoder</span></span>(<span>)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Shortcut for <code><a title="constriction.symbol.QueueDecoder" href="#constriction.symbol.QueueDecoder">QueueDecoder</a>(encoder.get_compressed())</code> where <code>encoder</code> is a
+<code><a title="constriction.symbol.QueueEncoder" href="#constriction.symbol.QueueEncoder">QueueEncoder</a></code>.</p>
+<p>Copies the compressed data out of the encoder. Thus, if you continue to encode
+symbols on the encoder, those won't affect what you will be able to decode on the
+decoder.</p></div>
 </dd>
 </dl>
 </dd>
@@ -92,27 +204,65 @@ bits) and the number of valid bits.</p></div>
 <span>(</span><span>compressed)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>A container of compressed bits that allows appending and consuming bits from the same
+end.</p>
+<p>When encoding onto a <code><a title="constriction.symbol.StackCoder" href="#constriction.symbol.StackCoder">StackCoder</a></code>, the bits that comprise each code word are
+automatically appended in reverse order so that a prefix-free code becomes a suffix-free
+code which can easily be decoded from the end. For Huffman Coding, this is actually the
+natural way to generate code words (by walking the tree from a leaf to the root).</p>
+<p>A <code><a title="constriction.symbol.StackCoder" href="#constriction.symbol.StackCoder">StackCoder</a></code> does not distinguish between an encoder and a decoder. It supports both
+encoding and decoding with a single data structure and even allows you to arbitrarily
+switch back and forth between encoding and decoding operations (e.g., for bits-back
+coding).</p>
+<p>The constructor takes existing compressed data as an optional argument. If it is
+provided, it must must be a rank-1 numpy array with, as in the first return value of the
+method <code>get_compressed</code>. If no argument is provided, then the <code><a title="constriction.symbol.StackCoder" href="#constriction.symbol.StackCoder">StackCoder</a></code> is
+initialized empty (useful for encoding).</p>
+<h2 id="example">Example:</h2>
+<p>See second <a href="#examples">module level example</a>.</p></div>
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.symbol.StackCoder.decode_symbol"><code class="name flex">
 <span>def <span class="ident">decode_symbol</span></span>(<span>codebook)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Consumes bits from the end of the encapsulated compressed data and tries to match
+them up with one of the code words in the provided code book, returning the
+corresponding symbol on success.</p>
+<h2 id="arguments">Arguments</h2>
+<ul>
+<li><strong>codebook</strong> &mdash; a decoder code book for a symbol code. Currently,
+<a href="symbol/huffman.html#constriction.symbol.huffman.DecoderHuffmanTree"><code>DecoderHuffmanTree</code></a>
+is the only implemented decoder code book.</li>
+</ul></div>
 </dd>
 <dt id="constriction.symbol.StackCoder.encode_symbol"><code class="name flex">
 <span>def <span class="ident">encode_symbol</span></span>(<span>symbol, codebook)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Looks up the provided symbol in the provided codebook and appends its bits to the
+compressed data such that they form a suffix-free code (i.e., a code that can easily
+be read from back to front).</p>
+<h2 id="arguments">Arguments</h2>
+<ul>
+<li><strong>symbol</strong> &mdash; an integer in the range <code>{0, 1, ..., n-1}</code> where <code>n</code> is the size of
+the <code>codebook</code> provided in the second argument.</li>
+<li><strong>codebook</strong> &mdash; an encoder code book for a symbol code. Currently,
+<a href="symbol/huffman.html#constriction.symbol.huffman.EncoderHuffmanTree"><code>EncoderHuffmanTree</code></a>
+is the only implemented encoder code book.</li>
+</ul></div>
 </dd>
 <dt id="constriction.symbol.StackCoder.get_compressed"><code class="name flex">
 <span>def <span class="ident">get_compressed</span></span>(<span>)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Returns a tuple of the compressed data (filled with zero bits to a multiple of 32
-bits) and the number of valid bits.</p></div>
+<div class="desc"><p>Returns a tuple <code>(compressed, bitrate)</code>, where <code>compressed</code> is a copy of the
+compressed representation that is currently on the coder (filled with zero bits to a
+multiple of 32 bits), and <code>bitrate</code> is the number of information-carrying bits.</p>
+<p>You can write the compressed data to a file (by calling
+<code>compressed.tofile("filename")</code>), read it back in at a later point (with
+<code>compressed = np.fromfile("filename")</code>) and then reconstruct a coder (for decoding)
+py passing <code>compressed</code> to the constructor of <code><a title="constriction.symbol.StackCoder" href="#constriction.symbol.StackCoder">StackCoder</a></code>.</p></div>
 </dd>
 </dl>
 </dd>
@@ -122,7 +272,9 @@ bits) and the number of valid bits.</p></div>
 <nav id="sidebar">
 <h1>Index</h1>
 <div class="toc">
-<ul></ul>
+<ul>
+<li><a href="#examples">Examples</a></li>
+</ul>
 </div>
 <ul id="index">
 <li><h3>Super-module</h3>

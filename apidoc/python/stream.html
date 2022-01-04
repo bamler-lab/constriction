@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.9.2" />
 <title>constriction.stream API documentation</title>
-<meta name="description" content="Stream codes, i.e., entropy codes that amortize compressed bits over several symbols." />
+<meta name="description" content="Stream codes, i.e., entropy codes that amortize compressed bits over several symbols …" />
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
 <link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/styles/github.min.css" crossorigin>
@@ -23,26 +23,57 @@
 </header>
 <section id="section-intro">
 <p>Stream codes, i.e., entropy codes that amortize compressed bits over several symbols.</p>
+<p>We provide two main stream codes:</p>
+<ul>
+<li><strong>Range Coding</strong> [1, 2] (in submodule <a href="stream/queue.html"><code>queue</code></a>), which is a computationally
+more efficient variant of Arithmetic Coding [3], and which has "queue" semantics ("first in
+first out", i.e., symbols get decoded in the same order in which they were encoded); and</li>
+<li><strong>Asymmetric Numeral Systems (ANS)</strong> [4] (in submodule <a href="stream/stack.html"><code>stack</code></a>), which has
+"stack" semantics ("last in first out", i.e., symbols get decoded in <em>reverse</em> order compared
+to the the order
+in which they got encoded).</li>
+</ul>
+<p>In addition, the submodule <a href="stream/model.html"><code>model</code></a> provides common entropy models and
+wrappers for defining your own entropy models (or for using models from the popular <code>scipy</code>
+package in <code><a title="constriction" href="index.html">constriction</a></code>). These entropy models can be used with both of the above stream
+codes.</p>
+<p>We further provide an experimental new "Chain Coder"
+(in submodule <a href="stream/chain.html"><code>chain</code></a>),
+which is intended for special new compression methods.</p>
+<h2 id="examples">Examples</h2>
+<p>See top of the documentations of both submodules <a href="stream/queue.html"><code>queue</code></a> and
+<a href="stream/stack.html"><code>stack</code></a>.</p>
+<h2 id="references">References</h2>
+<p>[1] Pasco, Richard Clark. Source coding algorithms for fast data compression. Diss.
+Stanford University, 1976.</p>
+<p>[2] Martin, G. Nigel N. "Range encoding: an algorithm for removing redundancy from a
+digitised message." Proc. Institution of Electronic and Radio Engineers International
+Conference on Video and Data Recording. 1979.</p>
+<p>[3] Rissanen, Jorma, and Glen G. Langdon. "Arithmetic coding." IBM Journal of research
+and development 23.2 (1979): 149-162.</p>
+<p>[4] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
+replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.</p>
 </section>
 <section>
 <h2 class="section-title" id="header-submodules">Sub-modules</h2>
 <dl>
 <dt><code class="name"><a title="constriction.stream.chain" href="stream/chain.html">constriction.stream.chain</a></code></dt>
 <dd>
-<div class="desc"><p>Experimental entropy coding algorithm for advanced variants of bitsback coding …</p></div>
+<div class="desc"><p>Experimental entropy coding algorithm for advanced variants of bits-back coding …</p></div>
 </dd>
 <dt><code class="name"><a title="constriction.stream.model" href="stream/model.html">constriction.stream.model</a></code></dt>
 <dd>
-<div class="desc"><p>Entropy models for individual symbols …</p></div>
+<div class="desc"><p>Entropy models and model families for use with any of the stream codes from the sister
+modules <a href="stack.html"><code>stack</code></a>, <a href="queue.html"><code>queue</code></a>, and …</p></div>
 </dd>
 <dt><code class="name"><a title="constriction.stream.queue" href="stream/queue.html">constriction.stream.queue</a></code></dt>
 <dd>
-<div class="desc"><p>Entropy coding with queue semantics (first in first out) using a Range Coder [1] …</p></div>
+<div class="desc"><p>Range Coding: a stream code with queue semantics (i.e., "first in first out") [1, 2] …</p></div>
 </dd>
 <dt><code class="name"><a title="constriction.stream.stack" href="stream/stack.html">constriction.stream.stack</a></code></dt>
 <dd>
-<div class="desc"><p>Entropy coding with stack semantics (last in first out) using Asymmetric Numeral Systems
-(ANS) [1] …</p></div>
+<div class="desc"><p>Asymmetric Numeral Systems (ANS): a stream code with stack semantics
+(i.e., "last in first out") [1] …</p></div>
 </dd>
 </dl>
 </section>
@@ -56,7 +87,10 @@
 <nav id="sidebar">
 <h1>Index</h1>
 <div class="toc">
-<ul></ul>
+<ul>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#references">References</a></li>
+</ul>
 </div>
 <ul id="index">
 <li><h3>Super-module</h3>

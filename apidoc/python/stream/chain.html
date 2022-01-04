@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.9.2" />
 <title>constriction.stream.chain API documentation</title>
-<meta name="description" content="Experimental entropy coding algorithm for advanced variants of bitsback coding …" />
+<meta name="description" content="Experimental entropy coding algorithm for advanced variants of bits-back coding …" />
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
 <link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/styles/github.min.css" crossorigin>
@@ -22,77 +22,128 @@
 <h1 class="title">Module <code>constriction.stream.chain</code></h1>
 </header>
 <section id="section-intro">
-<p>Experimental entropy coding algorithm for advanced variants of bitsback coding.</p>
+<p>Experimental entropy coding algorithm for advanced variants of bits-back coding.</p>
 <p>This module provides the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>, an experimental entropy coder that is similar
-to an <code>AnsCoder</code> in that it operates as a stack (i.e., a last-in-first-out data
-structure). However, different to an <code>AnsCoder</code>, a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> treats each symbol
-independently. Thus, when decoding some bit string into a sequence of symbols, any
-modification to the entropy model for one symbol does not affect decoding for any other
-symbol (by contrast, when decoding with an <code>AnsCoder</code> then changing the entropy model
-for one symbol can affect <em>all</em> subsequently decoded symbols too, see
-<a href="#motivation">Motivation</a> below).</p>
+to an <a href="stack.html#constriction.stream.stack.AnsCoder"><code>AnsCoder</code></a> in that it operates as
+a stack (i.e., a last-in-first-out data structure). However, different to an <code>AnsCoder</code>,
+a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> treats each symbol independently. Thus, when decoding some bit string
+into a sequence of symbols, any modification to the entropy model for one symbol does
+not affect decoding for any other symbol (by contrast, when decoding with an <code>AnsCoder</code>
+or <code>RangeDecoder</code>, a change to the entropy model for one symbol can affect <em>all</em>
+subsequently decoded symbols too, see <a href="#motivation">Motivation</a> below).</p>
 <p>This property of treating symbols independently upon decoding can be useful for advanced
 compression methods that combine inference, quantization, and bits-back coding.</p>
-<h1 id="motivation">Motivation</h1>
-<p>The following example illustrates how decoding differs between an <code>AnsCoder</code> and a
-<code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>. We decode the same bitstring <code>data</code> twice with each coder: once with a
-sequence of toy entropy models, and then a second time with slightly different sequence
-of entropy models. Importantly, only the entropy model for the first decoded symbol
-differs between the two applications of each coder. We then observe that</p>
-<ul>
-<li>with the <code>AnsCoder</code>, changing the first entropy model affects not only the first
-decoded symbol but also has a ripple effect that can affect subsequently decoded
-symbols; while</li>
-<li>with the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>, changing the first entropy model affects only the first decoded
-symbol; all subsequently decoded symbols remain unchanged.</li>
-</ul>
+<h2 id="motivation">Motivation</h2>
+<p>The following two examples illustrate how decoding differs between an <code>AnsCoder</code> and a
+<code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>. In the first example, we decode from the same bitstring <code>data</code> twice with
+an <code>AnsCoder</code>: a first time with an initial sequence of toy entropy models, and then a
+second time with a slightly different sequence of entropy models. Importantly, we change
+only the entropy model for the first decoded symbol (and the change is small). The
+entropy models for all other symbols remain exactly unmodified. We observe, however,
+that changing the first entropy model affects not only the first decoded symbol. It also
+has a ripple effect on subsequently decoded symbols.</p>
 <pre><code class="language-python"># Some sample binary data and sample probabilities for our entropy models
-data = np.array(
-    [0x80d1_4131, 0xdda9_7c6c, 0x5017_a640, 0x0117_0a3d], np.uint32)
-probs = np.array([
-    [0.1, 0.7, 0.1, 0.1],
-    [0.2, 0.2, 0.1, 0.5],
-    [0.2, 0.1, 0.4, 0.3],
-])
+data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+probabilities = np.array(
+    [[0.1, 0.7, 0.1, 0.1],  # (&lt;-- probabilities for first decoded symbol)
+     [0.2, 0.2, 0.1, 0.5],  # (&lt;-- probabilities for second decoded symbol)
+     [0.2, 0.1, 0.4, 0.3]]) # (&lt;-- probabilities for third decoded symbol)
+model_family = constriction.stream.model.Categorical()
 
-# Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 1]`.
-ansCoder = constriction.stream.stack.AnsCoder(data, True)
-assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[0, :]) == [0]
-assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[1, :]) == [0]
-assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [1]
+# Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 1]`:
+ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
+print(ansCoder.decode(model_family, probabilities)) # (prints: [0, 0, 1])
 
 # Even if we change only the first entropy model (slightly), *all* decoded
 # symbols can change:
-probs[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
-ansCoder = constriction.stream.stack.AnsCoder(data, True)
-assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[0, :]) == [1]
-assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[1, :]) == [0]
-assert ansCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [3]
-# It's no surprise that the first symbol changed since we changed its entropy
-# model. But note that the third symbol changed too even though we hadn't
-# changed its entropy model.
-# --&gt; Changes to entropy models have a *global* effect.
-
-# Let's try the same with a `ChainCoder`:
-probs[0, :] = np.array([0.1, 0.7, 0.1, 0.1]) # Restore original model.
-chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
-assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[0, :]) == [0]
-assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[1, :]) == [3]
-assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [3]
-# We obtain different symbols than for the `AnsCoder`, of course, but that's
-# not the point here.
-
-probs[0, :] = np.array([0.09, 0.71, 0.1, 0.1]) # Change the first model again.
-chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
-assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[0, :]) == [1]
-assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[1, :]) == [3]
-assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [3]
-# The only symbol that changed was the one whose entropy model we had changed.
-# --&gt; In a `ChainCoder`, changes to entropy models (and also to compressed
-#     bits) only have a *local* effect on the decompressed symbols.
+probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
+ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
+print(ansCoder.decode(model_family, probabilities)) # (prints: [1, 0, 3])
 </code></pre>
-<h1 id="how-does-this-work">How does this work?</h1>
-<p>TODO</p>
+<p>It's no surprise that the first symbol changed since we changed its entropy model. But
+note that the third symbol changed too even though we hadn't changed its entropy model.
+Thus, in ANS (as in most codes), changes to entropy models have a
+<em>global</em> effect.</p>
+<p>Now let's try the same with a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>:</p>
+<pre><code class="language-python"># Same compressed data and original entropy models as in our first example
+data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+probabilities = np.array(
+    [[0.1, 0.7, 0.1, 0.1],
+     [0.2, 0.2, 0.1, 0.5],
+     [0.2, 0.1, 0.4, 0.3]])
+model_family = constriction.stream.model.Categorical()
+
+# Decode with the original entropy models, this time using a `ChainCoder`:
+chainCoder = constriction.stream.chain.ChainCoder(data, seal=True)
+print(chainCoder.decode(model_family, probabilities)) # (prints: [0, 3, 3])
+
+# We obtain different symbols than for the `AnsCoder`, of course, but that's
+# not the point here. Now let's change the first model again:
+probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
+chainCoder = constriction.stream.chain.ChainCoder(data, seal=True)
+print(chainCoder.decode(model_family, probabilities)) # (prints: [1, 3, 3])
+</code></pre>
+<p>Notice that the only symbol that changed was the one whose entropy model we had changed.
+Thus, in a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>, changes to entropy models (and also to compressed bits) only
+have a <em>local</em> effect on the decompressed symbols.</p>
+<h2 id="how-does-this-work">How does this work?</h2>
+<p>A <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> is a variant on ANS. To understand how a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> works, one first
+has to understand how an <code>AnsCoder</code> works. When an <code>AnsCoder</code> decodes a symbol, it
+performs the following three steps:</p>
+<ol>
+<li>The <code>AnsCoder</code> consumes a fixed amount of bits (24 bits in <code><a title="constriction" href="../index.html">constriction</a></code>'s default
+configuration) from the end of its encapsulated compressed data; then</li>
+<li>the <code>AnsCoder</code> interprets these 24 bits as a number <code>xi</code> between 0.0 and 1.0 in fixed
+point representation, and it maps <code>xi</code> to a symbol using the entropy model's quantile
+function (aka percent point function); finally</li>
+<li>the <code>AnsCoder</code> uses the bits-back trick to write (24 - inf_content) bits worth of
+(amortized) bits back onto the encapsulated compressed data; these "returned" bits
+reflect the information contained in the precise position of the number <code>xi</code> within
+the whole range of numbers that the quantile function would map to the same symbol.</li>
+</ol>
+<p>A <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> breaks these three steps apart. It encapsulates <em>two</em> rather than just
+one bitstring buffers, referred to in the following as "compressed" and "remainders".
+When you call the constructor of <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> with argument <code>is_remainders=False</code> (which
+is the default) then the provided argument <code>data</code> is used to initialize the "compressed"
+buffer. When the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> decodes a symbol, it executes steps 1-3 from above, with
+the modification that step 1 reads from the "compressed" buffer while step 3 writes to
+the "remainders" buffer. Since step 1 is independent of the employed entropy model,
+changes to the entropy model have no effect on subsequently decoded symbols.</p>
+<p>Once you're done decoding a sequence of symbols, you can concatenate the two buffers to
+a single one.</p>
+<h2 id="usage-for-bits-back-coding">Usage for Bits-Back Coding</h2>
+<p>A typical usage cycle of a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> goes along the following steps:</p>
+<h3 id="when-compressing-data-using-the-bits-back-trick">When compressing data using the bits-back trick</h3>
+<ol>
+<li>Start with some array of (typically already compressed) binary data, which you want
+to piggy-back into the choice of latent variables in a latent variable entropy model.</li>
+<li>Create a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>, passing into the constructor the binary data and the arguments
+<code>is_remainders=False</code> and <code>seal=True</code> (you can set <code>seal=False</code> if you know that the
+data cannot end in a zero word, e.g., if it comes from
+<code>AnsCoder.get_compressed(unseal=False)</code>).</li>
+<li>Decode the latent variables from the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> as usual in bits-back coding.</li>
+<li>Export the remaining data on the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> by calling its method
+<code>.get_remainders()</code>. The method returns two numpy arrays, which you may concatenate in
+order.</li>
+<li>You can now use this remaining binary data in an <code>AnsCoder</code> (it is guaranteed not to
+have a zero word at the end, so you can set <code>seal=False</code> in the constructor of
+<code>AnsCoder</code>), and you can encode a message on top of it using entropy models that are
+conditioned on the latent variables you just decoded.</li>
+</ol>
+<h3 id="when-decompressing-the-data">When decompressing the data</h3>
+<ol>
+<li>Recreate the binary data that you had after encoder step 4 above, and the latent
+variables that you decoded in encoder step 3 above, as usual in bits-back coding.</li>
+<li>Pass it to the constructor of <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>, with additional arguments
+<code>is_remainders=True</code> (<code>seal</code> always has to be <code>False</code> when <code>is_remainders=True</code>
+because remainders data is guaranteed not to end in a zero word).</li>
+<li>Encode the latent variables back onto the new <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> (in reverse order), using
+the same entropy models as during decoding.</li>
+<li>Recover the original binary data from encoder step 1 above by calling
+<code>.get_data(unseal=True)</code> (if you set <code>seal=False</code> in encoder step 2 above, then set
+<code>unseal=False</code> now). The method returns two arrays, which you may concatenate in
+order.</li>
+</ol>
 </section>
 <section>
 </section>
@@ -105,182 +156,51 @@ assert chainCoder.decode_iid_categorical_symbols(1, 0, probs[2, :]) == [3]
 <dl>
 <dt id="constriction.stream.chain.ChainCoder"><code class="flex name class">
 <span>class <span class="ident">ChainCoder</span></span>
-<span>(</span><span>compressed, is_remaining=False, seal=False)</span>
+<span>(</span><span>compressed, is_remainders=False, seal=False)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>See <a href="#usage-for-bits-back-coding">above usage instructions</a> for explanation of
+constructor arguments.</p></div>
 <h3>Methods</h3>
 <dl>
-<dt id="constriction.stream.chain.ChainCoder.decode_custom_model"><code class="name flex">
-<span>def <span class="ident">decode_custom_model</span></span>(<span>model, model_parameters)</span>
+<dt id="constriction.stream.chain.ChainCoder.decode"><code class="name flex">
+<span>def <span class="ident">decode</span></span>(<span>model, optional_amt_or_model_params)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Decodes a sequence of symbols with parameterized custom models.</p>
-<ul>
-<li>For usage examples, see
-<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
-<li>If all symbols use the same entropy model (with identical model parameters) then
-you'll want to use
-<a href="#constriction.stream.chain.ChainCoder.decode_iid_custom_model"><code>decode_iid_custom_model</code></a>
-instead.</li>
-</ul></div>
+<div class="desc"><p>Decodes one or more symbols.</p>
+<p>Usage is analogous to <a href="stack.html#constriction.stream.stack.AnsCoder.decode"><code>AnsCoder.decode</code></a>.</p>
+<p>Decoding consumes the fixed amount of 24 bits per encoded symbol from the internal
+"compressed" buffer, regardless of the employed entropy model(s), and it appends (24
+bits - inf_content) per symbol to the internal "remainders" buffer (where
+"inf_content" is the information content of the decoded symbol under the employed
+entropy model).</p></div>
 </dd>
-<dt id="constriction.stream.chain.ChainCoder.decode_iid_categorical_symbols"><code class="name flex">
-<span>def <span class="ident">decode_iid_categorical_symbols</span></span>(<span>...)</span>
+<dt id="constriction.stream.chain.ChainCoder.encode_reverse"><code class="name flex">
+<span>def <span class="ident">encode_reverse</span></span>(<span>symbols, model, optional_model_params)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Decodes a sequence of categorically distributed symbols <em>in reverse order</em>.</p>
-<p>This method is analogous to the method <code>decode_leaky_gaussian_symbols</code> except that</p>
-<ul>
-<li>all symbols are decoded with the same entropy model; and</li>
-<li>the entropy model is a categorical rather than a Gaussian model.</li>
-</ul>
-<p>See documentation of <code>encode_iid_categorical_symbols_reverse</code> for details of the
-categorical entropy model. See documentation of <code>decode_leaky_gaussian_symbols</code> for a
-discussion of the reverse order of decoding, and for a related usage
-example.</p></div>
-</dd>
-<dt id="constriction.stream.chain.ChainCoder.decode_iid_custom_model"><code class="name flex">
-<span>def <span class="ident">decode_iid_custom_model</span></span>(<span>amt, model)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Decodes a sequence of symbols with identical custom models.</p>
-<ul>
-<li>For usage examples, see
-<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
-<li>If the model parameters are different for each symbol then you'll want to use
-<a href="#constriction.stream.chain.ChainCoder.decode_custom_model"><code>decode_custom_model</code></a>
-instead.</li>
-</ul></div>
-</dd>
-<dt id="constriction.stream.chain.ChainCoder.decode_leaky_gaussian_symbols"><code class="name flex">
-<span>def <span class="ident">decode_leaky_gaussian_symbols</span></span>(<span>...)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Decodes a sequence of symbols <em>in reverse order</em> using (leaky) Gaussian entropy
-models.</p>
-<p>The provided numpy arrays <code>means</code>, <code>stds</code>, and <code>symbols_out</code> must all have
-the same size. The provided <code>means</code>, <code>stds</code>, <code>min_supported_symbol</code>,
-<code>max_supported_symbol</code>, and <code>leaky</code> must be the exact same values that were
-used for encoding. Even a tiny modification of these arguments can cause the
-coder to decode <em>completely</em> different symbols.</p>
-<p>The symbols will be popped off the stack and written to the target array in
-reverse order so as to simplify usage.</p>
-<pre><code class="language-python">coder = constriction.AnsCoder()
-symbols = np.array([2, 8, -5], dtype=np.int32)
-decoded = np.empty((3,), dtype=np.int32)
-means = np.array([0.1, 10.3, -3.2], dtype=np.float64)
-stds = np.array([3.2, 1.3, 1.9], dtype=np.float64)
-
-# Push symbols on the stack:
-coder.encode_leaky_gaussian_symbols_reverse(symbols, -10, 10, means, stds, True)
-
-# Pop symbols off the stack in reverse order:
-coder.decode_leaky_gaussian_symbols(-10, 10, means, stds, decoded, True)
-
-# Verify that the decoded symbols match the encoded ones.
-assert np.all(symbols == decoded)
-assert coder.is_empty()
-</code></pre>
-<p>Arguments:
-min_supported_symbol &ndash; lower bound of the domain supported by the entropy
-model (inclusively). Must be the same value that was used for encoding.
-max_supported_symbol &ndash; upper bound of the domain supported by the entropy
-model (inclusively). Must be the same value that was used for encoding.
-means &ndash; the mean values of the Gaussian entropy models for each symbol.
-Must be a contiguous one-dimensional numpy array with dtype <code>float64</code>
-and with the exact same length as the argument <code>symbols_out</code>.
-stds &ndash; the standard deviations of the Gaussian entropy models for each
-symbol. Must be a contiguous one-dimensional numpy array with dtype
-<code>float64</code> and with the exact same length as the argument <code>symbols_out</code>.</p></div>
-</dd>
-<dt id="constriction.stream.chain.ChainCoder.encode_custom_model_reverse"><code class="name flex">
-<span>def <span class="ident">encode_custom_model_reverse</span></span>(<span>symbols, model, model_parameters)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Encodes a sequence of symbols with parameterized custom models.</p>
-<ul>
-<li>For usage examples, see
-<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
-<li>If all symbols use the same entropy model (with identical model parameters) then
-you'll want to use
-<a href="#constriction.stream.chain.ChainCoder.encode_iid_custom_model_reverse"><code>encode_iid_custom_model_reverse</code></a>
-instead.</li>
-</ul></div>
-</dd>
-<dt id="constriction.stream.chain.ChainCoder.encode_iid_categorical_symbols_reverse"><code class="name flex">
-<span>def <span class="ident">encode_iid_categorical_symbols_reverse</span></span>(<span>...)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Encodes a sequence of symbols using a fixed categorical entropy model.</p>
-<p>This method is analogous to the method <code>encode_leaky_gaussian_symbols_reverse</code> except that</p>
-<ul>
-<li>all symbols are encoded with the same entropy model; and</li>
-<li>the entropy model is a categorical rather than a Gaussian distribution.</li>
-</ul>
-<p>In detail, the categorical entropy model is constructed as follows:</p>
-<ul>
-<li>each symbol from <code>min_supported_symbol</code> to <code>max_supported_symbol</code>
-(inclusively) gets assigned at least the smallest nonzero probability
-that is representable within the internally used precision.</li>
-<li>the remaining probability mass is distributed among the symbols from
-<code>min_provided_symbol</code> to <code>min_provided_symbol + len(probabilities) - 1</code>
-(inclusively), in the proportions specified by the provided probabilities
-(as far as this is possible within the internally used fixed point
-accuracy). The provided probabilities do not need to be normalized (i.e.,
-the do not need to add up to one) but they must all be nonnegative.</li>
-</ul></div>
-</dd>
-<dt id="constriction.stream.chain.ChainCoder.encode_iid_custom_model_reverse"><code class="name flex">
-<span>def <span class="ident">encode_iid_custom_model_reverse</span></span>(<span>symbols, model)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Encodes a sequence of symbols with identical custom models.</p>
-<ul>
-<li>For usage examples, see
-<a href="model.html#constriction.stream.model.CustomModel"><code>CustomModel</code></a>.</li>
-<li>If the model parameters are different for each symbol then you'll want to use
-<a href="#constriction.stream.chain.ChainCoder.encode_custom_model_reverse"><code>encode_custom_model_reverse</code></a>
-instead.</li>
-</ul></div>
-</dd>
-<dt id="constriction.stream.chain.ChainCoder.encode_leaky_gaussian_symbols_reverse"><code class="name flex">
-<span>def <span class="ident">encode_leaky_gaussian_symbols_reverse</span></span>(<span>symbols, min_supported_symbol, max_supported_symbol, means, stds)</span>
-</code></dt>
-<dd>
-<div class="desc"><p>Encodes a sequence of symbols using (leaky) Gaussian entropy models.</p>
-<p>The provided numpy arrays <code>symbols</code>, <code>means</code>, and <code>stds</code> must all have the
-same size.</p>
-<p>See method <code>decode_leaky_gaussian_symbols</code> for a usage example.</p>
-<p>Arguments:
-min_supported_symbol &ndash; lower bound of the domain for argument <code>symbols</code>
-(inclusively).
-max_supported_symbol &ndash; upper bound of the domain for argument <code>symbols</code>
-(inclusively).
-symbols &ndash; the symbols to be encoded. Must be a contiguous one-dimensional
-numpy array (call <code>.copy()</code> on it if it is not contiguous) with dtype
-<code>np.int32</code>. Each value in the array must be no smaller than
-<code>min_supported_symbol</code> and no larger than <code>max_supported_symbol</code>.
-means &ndash; the mean values of the Gaussian entropy models for each symbol.
-Must be a contiguous one-dimensional numpy array with dtype <code>np.float64</code>
-and with the exact same length as the argument <code>symbols</code>.
-stds &ndash; the standard deviations of the Gaussian entropy models for each
-symbol. Must be a contiguous one-dimensional numpy array with dtype
-<code>np.float64</code> and with the exact same length as the argument <code>symbols</code>.
-All entries must be strictly positive (i.e., nonzero and nonnegative)
-and finite.</p></div>
+<div class="desc"><p>Encodes one or more symbols.</p>
+<p>Usage is analogous to <a href="stack.html#constriction.stream.stack.AnsCoder.encode_reverse"><code>AnsCoder.encode_reverse</code></a>.</p>
+<p>Encoding appends the fixed amount of 24 bits per encoded symbol to the internal "compressed"
+buffer, regardless of the employed entropy model(s), and it consumes (24 bits - inf_content)
+per symbol from the internal "remainders" buffer (where "inf_content" is the information
+content of the encoded symbol under the employed entropy model).</p></div>
 </dd>
 <dt id="constriction.stream.chain.ChainCoder.get_data"><code class="name flex">
-<span>def <span class="ident">get_data</span></span>(<span>...)</span>
+<span>def <span class="ident">get_data</span></span>(<span>unseal=False)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Returns a copy of the compressed data and the remainders.</p></div>
+<div class="desc"><p>Returns a copy of the compressed data after re-encoding symbols, split into two
+arrays that you may want to concatenate.</p>
+<p>See <a href="#usage-for-bits-back-coding">above usage instructions</a> for further explanation.</p></div>
 </dd>
-<dt id="constriction.stream.chain.ChainCoder.get_remaining"><code class="name flex">
-<span>def <span class="ident">get_remaining</span></span>(<span>...)</span>
+<dt id="constriction.stream.chain.ChainCoder.get_remainders"><code class="name flex">
+<span>def <span class="ident">get_remainders</span></span>(<span>)</span>
 </code></dt>
 <dd>
-<div class="desc"></div>
+<div class="desc"><p>Returns a copy of the remainders after decoding some symbols, split into two arrays
+that you may want to concatenate.</p>
+<p>See <a href="#usage-for-bits-back-coding">above usage instructions</a> for further explanation.</p></div>
 </dd>
 </dl>
 </dd>
@@ -293,6 +213,11 @@ and finite.</p></div>
 <ul>
 <li><a href="#motivation">Motivation</a></li>
 <li><a href="#how-does-this-work">How does this work?</a></li>
+<li><a href="#usage-for-bits-back-coding">Usage for Bits-Back Coding</a><ul>
+<li><a href="#when-compressing-data-using-the-bits-back-trick">When compressing data using the bits-back trick</a></li>
+<li><a href="#when-decompressing-the-data">When decompressing the data</a></li>
+</ul>
+</li>
 </ul>
 </div>
 <ul id="index">
@@ -306,16 +231,10 @@ and finite.</p></div>
 <li>
 <h4><code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code></h4>
 <ul class="">
-<li><code><a title="constriction.stream.chain.ChainCoder.decode_custom_model" href="#constriction.stream.chain.ChainCoder.decode_custom_model">decode_custom_model</a></code></li>
-<li><code><a title="constriction.stream.chain.ChainCoder.decode_iid_categorical_symbols" href="#constriction.stream.chain.ChainCoder.decode_iid_categorical_symbols">decode_iid_categorical_symbols</a></code></li>
-<li><code><a title="constriction.stream.chain.ChainCoder.decode_iid_custom_model" href="#constriction.stream.chain.ChainCoder.decode_iid_custom_model">decode_iid_custom_model</a></code></li>
-<li><code><a title="constriction.stream.chain.ChainCoder.decode_leaky_gaussian_symbols" href="#constriction.stream.chain.ChainCoder.decode_leaky_gaussian_symbols">decode_leaky_gaussian_symbols</a></code></li>
-<li><code><a title="constriction.stream.chain.ChainCoder.encode_custom_model_reverse" href="#constriction.stream.chain.ChainCoder.encode_custom_model_reverse">encode_custom_model_reverse</a></code></li>
-<li><code><a title="constriction.stream.chain.ChainCoder.encode_iid_categorical_symbols_reverse" href="#constriction.stream.chain.ChainCoder.encode_iid_categorical_symbols_reverse">encode_iid_categorical_symbols_reverse</a></code></li>
-<li><code><a title="constriction.stream.chain.ChainCoder.encode_iid_custom_model_reverse" href="#constriction.stream.chain.ChainCoder.encode_iid_custom_model_reverse">encode_iid_custom_model_reverse</a></code></li>
-<li><code><a title="constriction.stream.chain.ChainCoder.encode_leaky_gaussian_symbols_reverse" href="#constriction.stream.chain.ChainCoder.encode_leaky_gaussian_symbols_reverse">encode_leaky_gaussian_symbols_reverse</a></code></li>
+<li><code><a title="constriction.stream.chain.ChainCoder.decode" href="#constriction.stream.chain.ChainCoder.decode">decode</a></code></li>
+<li><code><a title="constriction.stream.chain.ChainCoder.encode_reverse" href="#constriction.stream.chain.ChainCoder.encode_reverse">encode_reverse</a></code></li>
 <li><code><a title="constriction.stream.chain.ChainCoder.get_data" href="#constriction.stream.chain.ChainCoder.get_data">get_data</a></code></li>
-<li><code><a title="constriction.stream.chain.ChainCoder.get_remaining" href="#constriction.stream.chain.ChainCoder.get_remaining">get_remaining</a></code></li>
+<li><code><a title="constriction.stream.chain.ChainCoder.get_remainders" href="#constriction.stream.chain.ChainCoder.get_remainders">get_remainders</a></code></li>
 </ul>
 </li>
 </ul>
