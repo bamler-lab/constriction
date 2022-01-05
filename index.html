@@ -192,11 +192,6 @@
       text-align: center;
     }
 
-    td.included>div {
-      font-size: 150%;
-      line-height: 0;
-    }
-
     td.included.yes {
       background: #def4d1;
     }
@@ -205,12 +200,31 @@
       background: #f7dfcf;
     }
 
-    td.included.yes>div::after {
-      content: "✓";
+    td.included>span {
+      line-height: 0;
+      font-size: 85%;
     }
 
-    td.included.no>div::after {
+    td.included>span::before {
+      font-size: 180%;
+      font-style: normal;
+      position: relative;
+      top: 0.15em;
+    }
+
+    td.included.yes>span::before {
+      content: "✓";
+      left: -0.1em;
+    }
+
+    td.included.yes>div>a {
+      font-size: 85%;
+    }
+
+    td.included.no>span::before {
+      font-size: 180%;
       content: "✗";
+      font-weight: normal;
     }
 
     .tabs {
@@ -603,58 +617,65 @@ constriction = "0.2.0"</pre>
     <tr>
       <td style="border-top-left-radius: 0.7em">Range Coding</td>
       <td class="included yes">
-        <div></div>
+        <span>(<a
+            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#example">example</a>)</span>
       </td>
       <td class="included yes">
-        <div></div>
+        <span>(<a href="https://docs.rs/constriction/latest/constriction/stream/queue/index.html">details</a>)</span>
       </td>
     </tr>
     <tr>
-      <td>Asym&shy;met&shy;ric Numeral Systems (ANS)<div></div>
+      <td>Asym&shy;met&shy;ric Numeral Systems (ANS)</td>
+      <td class="included yes">
+        <span>(<a
+            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/stack.html#example">example</a>)</span>
       </td>
       <td class="included yes">
-        <div></div>
-      </td>
-      <td class="included yes">
-        <div></div>
+        <span>(<a
+            href="https://docs.rs/constriction/latest/constriction/stream/stack/struct.AnsCoder.html#example">example</a>)</span>
       </td>
     </tr>
     <tr>
-      <td>Huffman Coding<div></div>
+      <td>Huffman Coding</td>
+      <td class="included yes">
+        <span>(<a
+            href="https://bamler-lab.github.io/constriction/apidoc/python/symbol.html#examples">example</a>)</span>
       </td>
       <td class="included yes">
-        <div></div>
-      </td>
-      <td class="included yes">
-        <div></div>
+        <span>(<a
+            href="https://github.com/bamler-lab/constriction/blob/701675eff6c5594b8226eea0598e5727fb286a1d/src/symbol/mod.rs#L861-L889">example</a>)</span>
       </td>
     </tr>
     <tr>
-      <td>Efficient and exactly invertible entropy models<div></div>
+      <td>Efficient and exactly invertible entropy models</td>
+      <td class="included yes">
+        <span>(<a
+            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#header-classes">list</a>)</span>
       </td>
       <td class="included yes">
-        <div></div>
-      </td>
-      <td class="included yes">
-        <div></div>
+        <span>(<a
+            href="https://docs.rs/constriction/latest/constriction/stream/model/index.html#structs">list</a>)</span>
       </td>
     </tr>
     <tr>
       <td>Adapters for custom entropy models</td>
       <td class="included yes">
-        <div></div>
+        <span>(<a
+            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel">details</a>)</span>
       </td>
       <td class="included yes">
-        <div></div>
+        <span>(<a
+            href="https://docs.rs/constriction/latest/constriction/stream/model/struct.LeakyQuantizer.html#examples">example</a>)</span>
       </td>
     </tr>
     <tr>
       <td>Compile-time configuration of coder details (optional)</td>
       <td class="included no">
-        <div></div>
+        <span></span>
       </td>
       <td class="included yes">
-        <div></div>
+        <span>(<a
+            href="https://docs.rs/constriction/latest/constriction/stream/index.html#highly-customizable-implementations-with-sane-presets">details</a>)</span>
       </td>
     </tr>
     <tr>
@@ -663,7 +684,7 @@ constriction = "0.2.0"</pre>
         n/a
       </td>
       <td class="included yes" style="border-bottom-right-radius: 0.7em">
-        <div></div>
+        <span>(<a href="https://robamler.github.io/linguistic-flux-capacitor/">demo</a>)</span>
       </td>
     </tr>
   </table>
