@@ -808,7 +808,6 @@ impl AnsCoder {
     /// stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
     ///
     /// # Decode a message from some example compressed data:
-    /// # (needs `len(symbols) == len(means) == len(stds)`)
     /// compressed = np.array([597775281, 3], dtype=np.uint32)
     /// coder = constriction.stream.stack.AnsCoder(compressed)
     /// symbols = coder.decode(model_family, means, stds)
@@ -903,7 +902,6 @@ impl AnsCoder {
     ///    stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
     ///
     ///    # Decode a message from some example compressed data:
-    ///    # (needs `len(symbols) == len(means) == len(stds)`)
     ///    compressed = np.array([597775281, 3], dtype=np.uint32)
     ///    coder = constriction.stream.stack.AnsCoder(compressed)
     ///    symbols = coder.decode(model_family, means, stds)

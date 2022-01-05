@@ -654,7 +654,6 @@ impl RangeDecoder {
     ///    stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
     ///
     ///    # Decode a message from some example compressed data:
-    ///    # (needs `len(symbols) == len(means) == len(stds)`)
     ///    compressed = np.array([2655472005], dtype=np.uint32)
     ///    decoder = constriction.stream.queue.RangeDecoder(compressed)
     ///    symbols = decoder.decode(model_family, means, stds)
@@ -861,7 +860,6 @@ impl RangeDecoder {
     /// stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
     ///
     /// # Decode a message from some example compressed data:
-    /// # (needs `len(symbols) == len(means) == len(stds)`)
     /// compressed = np.array([2655472005], dtype=np.uint32)
     /// decoder = constriction.stream.queue.RangeDecoder(compressed)
     /// symbols = decoder.decode(model_family, means, stds)
