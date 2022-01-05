@@ -1,6 +1,6 @@
 [project]
 dependencies = [
-  "numpy~=1.20",
+  "numpy~=1.19",
 ]
 name = "constriction"
 readme = "README-python.md"
@@ -18,7 +18,7 @@ repository = "https://github.com/bamler-lab/constriction/"
 version = "0.2.0"
 
 [tool.poetry.dependencies]
-numpy = "^1.20"
+numpy = "^1.19"
 python = "^3.7,<3.11"
 
 [tool.poetry.dev-dependencies]
