@@ -36,11 +36,12 @@ We currently provide implementations of the following entropy coding algorithms:
   essentially the same compression effectiveness as ANS Coding but operates as a queue
   ("first in first out"), which makes it preferable for autoregressive models.
 - **Chain Coding:** an experimental new entropy coder that combines the (net) effectiveness
-  of stream codes with the locality of symbol codes; it is meant for experimental new
-  compression approaches that perform joint inference, quantization, and bits-back coding in
-  an end-to-end optimization. This experimental coder is mainly provided to prove to
-  ourselves that the API for encoding and decoding, which is shared across all stream
-  coders, is flexible enough to express complex novel tasks.
+  of stream codes with the locality of symbol codes (for details, see Section&nbsp;4.3 in
+  [this paper](https://arxiv.org/pdf/2201.01741)]); it admits experimental new compression
+  techniques that perform joint inference, quantization, and bits-back coding in an
+  end-to-end optimization. This experimental coder is mainly provided to prove to ourselves
+  that the API for encoding and decoding, which is shared across all stream coders, is
+  flexible enough to express complex novel tasks.
 - **Huffman Coding:** a well-known symbol code, mainly provided here for teaching purpose;
   you'll usually want to use a stream code like ANS or Range Coding instead since symbol
   codes can have a considerable overhead on the bitrate, especially in the regime of low
@@ -52,25 +53,25 @@ codes. The library also provides adapters for turning custom probability distrib
 exactly invertible fixed-point arithmetic.
 
 The provided implementations of entropy coding algorithms and probability distributions are
-extensively tested and should be considered reliable (except for the still experimental
-Chain Coder). However, their APIs may change in future versions of `constriction` if more
-user experience reveals any shortcomings of the current APIs in terms of ergonomics. Please
-[file an issue](https://github.com/bamler-lab/constriction/issues) if you run into a
-scenario where the current APIs are suboptimal.
+continuously and extensively tested. We consider updates that can affect the encoder or
+decoder output in existing code as breaking changes that necessitate a bump in the leading
+nonzero number of the version string (this is a stronger guarantee than SemVer in that we
+apply it even to 0.y.z versions). Please [file an
+issue](https://github.com/bamler-lab/constriction/issues) if you find a bug, are missing a
+particular feature, or run into a scenario where the current APIs are confusing or
+unnecessarily limit what you can achieve with `constriction`.
 
 ## Quick Start Guides And Examples in Python and Rust
 
 ### Python
 
-The easiest way to install `constriction` for Python is via `pip` (the following command
-also installs `scipy`, which is not required but useful if you want to use `constriction`
-with custom probability distributions):
+Install `constriction` for Python:
 
 ```bash
-pip install constriction~=0.2.0
+pip install constriction~=0.2.1
 ```
 
-Then go ahead and use it:
+Then go ahead and encode and decode some data:
 
 ```python
 import constriction
@@ -78,10 +79,10 @@ import numpy as np
 
 message = np.array([6, 10, -4, 2, 5, 2, 1, 0, 2], dtype=np.int32)
 
-# Define an i.i.d. entropy model (see below for more complex models):
+# Define an i.i.d. entropy model (see links below for more complex models):
 entropy_model = constriction.stream.model.QuantizedGaussian(-50, 50, 3.2, 9.6)
 
-# Let's use an ANS coder in this example. See below for a Range Coder example.
+# Let's use an ANS coder in this example (see links below for Range Coding examples).
 encoder = constriction.stream.stack.AnsCoder()
 encoder.encode_reverse(message, entropy_model)
 
@@ -91,11 +92,12 @@ print(f"(in binary: {[bin(word) for word in compressed]})")
 
 decoder = constriction.stream.stack.AnsCoder(compressed)
 decoded = decoder.decode(entropy_model, 9) # (decodes 9 symbols)
-assert np.all(decoded == message)
+assert np.all(decoded == message) # (verifies correctness)
 ```
 
 There's a lot more you can do with `constriction`'s Python API. Please check out the [Python
-API Documentation](https://bamler-lab.github.io/constriction/apidoc/python/).
+API Documentation](https://bamler-lab.github.io/constriction/apidoc/python/) or our [example
+jupyter notebooks](https://github.com/bamler-lab/constriction/tree/main/examples/python).
 
 ### Rust
 
@@ -103,7 +105,7 @@ Add this line to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-constriction = "0.2.0"
+constriction = "0.2.1"
 probability = "0.17" # Not strictly required but used in many code examples.
 ```
 
@@ -115,7 +117,7 @@ features (and you can't use the `probability` crate):
 constriction = {version = "0.1.2", default-features = false} # for `no_std` mode
 ```
 
-Then go ahead and use it:
+Then go ahead and encode and decode some data:
 
 ```rust
 use constriction::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
@@ -146,13 +148,35 @@ let reconstructed = coder.decode_symbols(models).collect::<Result<Vec<_>, _>>().
 assert_eq!(reconstructed, symbols);
 ```
 
-There's a lot more you can do with `constriction`'s Rust API. Please check out the [Rust API
+There's a lot more you can do with `constriction`'s Rust API. d check out the [Rust API
 Documentation](https://docs.rs/constriction).
+
+## Citing
+
+I'd appreciate attribution if you use constriction in your scientific work. You can cite the
+following paper, which announces `constriction` (Section&nbsp;5.1) and analyzes its
+compression performance and runtime efficiency (Section&nbsp;5.2):
+
+- R. Bamler, Understanding Entropy Coding With Asymmetric Numeral Systems (ANS): a
+  Statistician's Perspective, arXiv preprint
+  [arXiv:2201.01741](https://arxiv.org/pdf/2201.01741).
+
+**BibTex:**
+
+```bibtex
+@article{bamler2022constriction,
+  title   = {Understanding Entropy Coding With Asymmetric Numeral Systems (ANS): a Statistician's Perspective},
+  author  = {Bamler, Robert},
+  journal = {arXiv preprint arXiv:2201.01741},
+  year    = {2022}
+}
+```
 
 ## Compiling From Source
 
 Users of `constriction` typically don't need to manually compile the library from source.
-Just install `constriction` via `pip` or `cargo` as described in the above [quick start guides](#quick-start-guides-and-examples-in-python-and-rust).
+Just install `constriction` via `pip` or `cargo` as described in the above [quick start
+guides](#quick-start-guides-and-examples-in-python-and-rust).
 
 Contributors can compile `constriction` manually as follows:
 
