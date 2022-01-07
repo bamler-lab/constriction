@@ -233,22 +233,6 @@ impl CustomModel {
 /// - **min_symbol_inclusive** and **max_symbol_inclusive** --- define the range of integer
 ///   symbols that you will be able to encode with this model, see "Guarantees And
 ///   Requirements" below.
-///
-/// ## Guarantees And Requirements
-///
-/// The `constriction` library takes care of ensuring that the resulting entropy model is
-/// *exactly* invertible, which is crucial for correct encoding/decoding, and which is
-/// nontrivial for probability distributions that are evaluated with a limited floating
-/// point precision. In addition, `constriction` ensures that all symbols within the
-/// provided range {`min_symbol_inclusive`, ..., `max_symbol_inclusive`} are assigned a
-/// nonzero probability (even if their actual probability under the provided model is
-/// smaller than the smallest representable probability), and that the probabilities of all
-/// symbols within this range add up to *exactly* one, without rounding errors. This is
-/// important to ensure that all symbols within the provided range can indeed be encoded,
-/// and that encoding with ANS is surjective.
-///
-/// All guarantees only hold as long as the provided CDF is nondecreasing, that it can be
-/// evaluated on mid-points between integers, its value is >= 0.0 and <= 1.0 everywhere.
 #[pyclass(extends=CustomModel)]
 #[pyo3(text_signature = "(scipy_model, min_symbol_inclusive, max_symbol_inclusive)")]
 #[derive(Debug)]
