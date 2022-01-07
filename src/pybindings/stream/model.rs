@@ -170,8 +170,8 @@ impl CustomModel {
 ///
 /// ## Compatibility Warning
 ///
-/// The `scipy` packages provides some of the same models for which constriction offers
-/// builtin models (e.g., Gaussian, Laplace, Binomial). While wrapping, e.g.,
+/// The `scipy` package provides some of the same models for which `constriction` offers
+/// builtin models too (e.g., Gaussian, Laplace, Binomial). While wrapping, e.g.,
 /// `scipy.stats.norm` in a `ScipyModel` will result in an entropy model that is *similar*
 /// to a `QuantizedGaussian` with the same parameters, the two models will differ slightly
 /// due to different rounding operations. Even such tiny differences can have catastrophic
@@ -229,20 +229,7 @@ impl CustomModel {
 /// scipy model may expect additional model parameters, which you can pass in at encoding or
 /// decoding time as in the second example below.
 ///
-/// - **cdf** --- the cumulative distribution function; a nondecreasing function that returns a scalar
-///   between 0.0 and 1.0 (both inclusive), and which will be evaluated by constriction on
-///   mid-points between integers in order to integrate the probability distribution over
-///   bins centered at each integer. The function signature must be
-///   `cdf(x, [param1, [param2, [param3, ...]]])` where `x` is the value at which
-///   `constriction` will evaluate the CDF and `paramX` will be provided if the
-///   `CustomModel` is used as a model *family*.
-/// - **approximate_inverse_cdf** --- the inverse of the CDF, also called quantile function
-///   or percent point function (PPF). This function does not have to return very precise
-///   results since `constriction` will use the provided `cdf` as the defining source of
-///   truth and invert it exactly; the provided `approximate_inverse_cdf` is only used to
-///   speed up this function inversion. The function signature must be analogous to above,
-///   `approximate_inverse_cdf(xi, [param1, [param2, [param3, ...]]])`, where you may rely
-///   on `0.0 <= xi <= 1.0`.
+/// - **model** --- a `scipy` model or model class as in the examples above.
 /// - **min_symbol_inclusive** and **max_symbol_inclusive** --- define the range of integer
 ///   symbols that you will be able to encode with this model, see "Guarantees And
 ///   Requirements" below.
