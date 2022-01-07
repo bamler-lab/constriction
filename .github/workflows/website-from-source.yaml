@@ -74,7 +74,6 @@ jobs:
           path: ./website
 
       - name: Deploy website to gh-pages branch
-        if: github.event_name == 'release'
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
