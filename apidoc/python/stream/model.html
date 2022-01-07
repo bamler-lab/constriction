@@ -482,20 +482,7 @@ decoding time as in the second example below.</p>
 <li><strong>min_symbol_inclusive</strong> and <strong>max_symbol_inclusive</strong> &mdash; define the range of integer
 symbols that you will be able to encode with this model, see "Guarantees And
 Requirements" below.</li>
-</ul>
-<h2 id="guarantees-and-requirements">Guarantees And Requirements</h2>
-<p>The <code><a title="constriction" href="../index.html">constriction</a></code> library takes care of ensuring that the resulting entropy model is
-<em>exactly</em> invertible, which is crucial for correct encoding/decoding, and which is
-nontrivial for probability distributions that are evaluated with a limited floating
-point precision. In addition, <code><a title="constriction" href="../index.html">constriction</a></code> ensures that all symbols within the
-provided range {<code>min_symbol_inclusive</code>, &hellip;, <code>max_symbol_inclusive</code>} are assigned a
-nonzero probability (even if their actual probability under the provided model is
-smaller than the smallest representable probability), and that the probabilities of all
-symbols within this range add up to <em>exactly</em> one, without rounding errors. This is
-important to ensure that all symbols within the provided range can indeed be encoded,
-and that encoding with ANS is surjective.</p>
-<p>All guarantees only hold as long as the provided CDF is nondecreasing, that it can be
-evaluated on mid-points between integers, its value is &gt;= 0.0 and &lt;= 1.0 everywhere.</p></div>
+</ul></div>
 <h3>Ancestors</h3>
 <ul class="hlist">
 <li>builtins.CustomModel</li>
