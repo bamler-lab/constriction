@@ -381,7 +381,11 @@ impl ChainCoder {
                 }
             }))
             .collect::<std::result::Result<Vec<_>, _>>()
-            .expect("We use constant `PRECISION`.");
+            .map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "Invalid model parameters (`std` must be strictly positive and both `std` and `mean` must be finite.).",
+                )
+            })?;
 
         Ok(PyArray1::from_vec(py, symbols))
     }

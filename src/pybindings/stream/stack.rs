@@ -1,3 +1,4 @@
+use core::convert::Infallible;
 use std::prelude::v1::*;
 
 use numpy::{PyArray1, PyReadonlyArray1};
@@ -7,9 +8,9 @@ use pyo3::{prelude::*, types::PyTuple};
 use crate::{
     stream::{
         model::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
-        Decode, Encode,
+        Decode, Encode, TryCodingError,
     },
-    Pos, Seek, UnwrapInfallible,
+    CoderError, Pos, Seek, UnwrapInfallible,
 };
 
 use super::model::{internals::EncoderDecoderModel, Model};
@@ -847,7 +848,7 @@ impl AnsCoder {
                     symbol = self
                         .inner
                         .decode_symbol(EncoderDecoderModel(model))
-                        .expect("We use constant `PRECISION`.");
+                        .unwrap_infallible();
                     Ok(())
                 })?;
                 return Ok(symbol.to_object(py));
@@ -860,8 +861,7 @@ impl AnsCoder {
                             .inner
                             .decode_iid_symbols(amt, EncoderDecoderModel(model))
                         {
-                            let symbol = symbol.expect("We use constant `PRECISION`.");
-                            symbols.push(symbol);
+                            symbols.push(symbol.unwrap_infallible());
                         }
                         Ok(())
                     })?;
@@ -876,7 +876,7 @@ impl AnsCoder {
             let symbol = self
                 .inner
                 .decode_symbol(EncoderDecoderModel(model))
-                .expect("We use constant `PRECISION`.");
+                .unwrap_infallible();
             symbols.push(symbol);
             Ok(())
         })?;
@@ -960,7 +960,11 @@ impl AnsCoder {
                 }
             }))
             .collect::<std::result::Result<Vec<_>, _>>()
-            .expect("We use constant `PRECISION`.");
+            .map_err(|_err:TryCodingError<CoderError<Infallible, Infallible>, ()>| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "Invalid model parameters (`std` must be strictly positive and both `std` and `mean` must be finite.).",
+                )
+            })?;
 
         Ok(PyArray1::from_vec(py, symbols))
     }
@@ -1031,8 +1035,7 @@ impl AnsCoder {
         Ok(PyArray1::from_iter(
             py,
             self.inner.decode_iid_symbols(amt, &model).map(|symbol| {
-                (symbol.expect("We use constant `PRECISION`.") as i32)
-                    .wrapping_add(min_supported_symbol)
+                (symbol.unwrap_infallible() as i32).wrapping_add(min_supported_symbol)
             }),
         ))
     }

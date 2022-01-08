@@ -741,6 +741,7 @@ pub trait UnwrapInfallible<T> {
 }
 
 impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
+    #[inline(always)]
     fn unwrap_infallible(self) -> T {
         match self {
             Ok(x) => x,

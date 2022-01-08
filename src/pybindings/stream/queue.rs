@@ -7,7 +7,7 @@ use pyo3::{prelude::*, types::PyTuple};
 use crate::{
     stream::{
         model::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
-        queue::RangeCoderState,
+        queue::{DecoderFrontendError, RangeCoderState},
         Decode, Encode,
     },
     Pos, Seek, UnwrapInfallible,
@@ -708,11 +708,14 @@ impl RangeDecoder {
                 if std > 0.0 && std.is_finite() && mean.is_finite() {
                     Ok(quantizer.quantize(Gaussian::new(mean, std)))
                 } else {
-                    Err(())
+                    Err(                pyo3::exceptions::PyValueError::new_err(
+                        "Invalid model parameters (`std` must be strictly positive and both `std` and `mean` must be finite.).",
+                    )
+    )
                 }
             }))
             .collect::<std::result::Result<Vec<_>, _>>()
-            .expect("We use constant `PRECISION`.");
+            ?;
 
         Ok(PyArray1::from_vec(py, symbols))
     }
@@ -783,8 +786,8 @@ impl RangeDecoder {
         Ok(PyArray1::from_iter(
             py,
             self.inner.decode_iid_symbols(amt, &model).map(|symbol| {
-                (symbol.expect("We use constant `PRECISION`.") as i32)
-                    .wrapping_add(min_supported_symbol)
+                let symbol = symbol.unwrap_or_else(|e| panic!("{}", e)) as i32;
+                symbol.wrapping_add(min_supported_symbol)
             }),
         ))
     }
@@ -896,10 +899,7 @@ impl RangeDecoder {
             0 => {
                 let mut symbol = 0;
                 model.0.as_parameterized(py, &mut |model| {
-                    symbol = self
-                        .inner
-                        .decode_symbol(EncoderDecoderModel(model))
-                        .expect("We use constant `PRECISION`.");
+                    symbol = self.inner.decode_symbol(EncoderDecoderModel(model))?;
                     Ok(())
                 })?;
                 return Ok(symbol.to_object(py));
@@ -912,8 +912,7 @@ impl RangeDecoder {
                             .inner
                             .decode_iid_symbols(amt, EncoderDecoderModel(model))
                         {
-                            let symbol = symbol.expect("We use constant `PRECISION`.");
-                            symbols.push(symbol);
+                            symbols.push(symbol?);
                         }
                         Ok(())
                     })?;
@@ -925,10 +924,7 @@ impl RangeDecoder {
 
         let mut symbols = Vec::with_capacity(model.0.len(&params[0])?);
         model.0.parameterize(py, params, false, &mut |model| {
-            let symbol = self
-                .inner
-                .decode_symbol(EncoderDecoderModel(model))
-                .expect("We use constant `PRECISION`.");
+            let symbol = self.inner.decode_symbol(EncoderDecoderModel(model))?;
             symbols.push(symbol);
             Ok(())
         })?;
@@ -995,5 +991,15 @@ impl RangeDecoder {
         let inner = crate::stream::queue::DefaultRangeDecoder::from_compressed(compressed)
             .unwrap_infallible();
         Self { inner }
+    }
+}
+
+impl From<DecoderFrontendError> for pyo3::PyErr {
+    fn from(err: DecoderFrontendError) -> Self {
+        match err {
+            DecoderFrontendError::InvalidData => {
+                pyo3::exceptions::PyAssertionError::new_err(err.to_string())
+            }
+        }
     }
 }

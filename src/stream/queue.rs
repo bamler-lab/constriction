@@ -833,9 +833,6 @@ where
         let scale = self.state.range.get() >> PRECISION;
         let quantile = self.point.wrapping_sub(&self.state.lower) / scale;
         if quantile >= State::one() << PRECISION {
-            // This can only happen if both of the following conditions apply:
-            // (i) we are decoding invalid compressed data; and
-            // (ii) we use entropy models with varying `PRECISION`s.
             return Err(CoderError::Frontend(DecoderFrontendError::InvalidData));
         }
 
@@ -1293,7 +1290,10 @@ pub enum DecoderFrontendError {
 impl Display for DecoderFrontendError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::InvalidData => write!(f, "Tried to decode invalid compressed data."),
+            Self::InvalidData => write!(
+                f,
+                "Tried to decode from compressed data that is invalid for the employed entropy model."
+            ),
         }
     }
 }
