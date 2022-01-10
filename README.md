@@ -1,4 +1,4 @@
-# Composable Entropy Coding Primitives for Research and Production
+# Entropy Coders for Research and Production
 
 ![test status](https://github.com/bamler-lab/constriction/workflows/test/badge.svg?branch=main)
 
