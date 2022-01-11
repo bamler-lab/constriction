@@ -114,6 +114,15 @@ buffer.</p>
 <p>See <a href="#example">module level example</a>.</p></div>
 <h3>Methods</h3>
 <dl>
+<dt id="constriction.stream.queue.RangeDecoder.clone"><code class="name flex">
+<span>def <span class="ident">clone</span></span>(<span>)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Creates a deep copy of the coder and returns it.</p>
+<p>The returned copy will initially encapsulate the identical compressed data as the
+original coder, but the two coders can be used independently without influencing
+other.</p></div>
+</dd>
 <dt id="constriction.stream.queue.RangeDecoder.decode"><code class="name flex">
 <span>def <span class="ident">decode</span></span>(<span>model, optional_amt_or_model_params)</span>
 </code></dt>
@@ -266,6 +275,15 @@ documentation of the method
 <div class="desc"><p>Resets the encoder to an empty state.</p>
 <p>This removes any existing compressed data on the coder. It is equivalent to replacing the
 coder with a new one but slightly more efficient.</p></div>
+</dd>
+<dt id="constriction.stream.queue.RangeEncoder.clone"><code class="name flex">
+<span>def <span class="ident">clone</span></span>(<span>)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Creates a deep copy of the coder and returns it.</p>
+<p>The returned copy will initially encapsulate the identical compressed data as the
+original coder, but the two coders can be used independently without influencing
+other.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.encode"><code class="name flex">
 <span>def <span class="ident">encode</span></span>(<span>symbols, model, optional_model_params)</span>
@@ -461,6 +479,7 @@ instead.</p>
 <li>
 <h4><code><a title="constriction.stream.queue.RangeDecoder" href="#constriction.stream.queue.RangeDecoder">RangeDecoder</a></code></h4>
 <ul class="">
+<li><code><a title="constriction.stream.queue.RangeDecoder.clone" href="#constriction.stream.queue.RangeDecoder.clone">clone</a></code></li>
 <li><code><a title="constriction.stream.queue.RangeDecoder.decode" href="#constriction.stream.queue.RangeDecoder.decode">decode</a></code></li>
 <li><code><a title="constriction.stream.queue.RangeDecoder.maybe_exhausted" href="#constriction.stream.queue.RangeDecoder.maybe_exhausted">maybe_exhausted</a></code></li>
 <li><code><a title="constriction.stream.queue.RangeDecoder.seek" href="#constriction.stream.queue.RangeDecoder.seek">seek</a></code></li>
@@ -470,6 +489,7 @@ instead.</p>
 <h4><code><a title="constriction.stream.queue.RangeEncoder" href="#constriction.stream.queue.RangeEncoder">RangeEncoder</a></code></h4>
 <ul class="two-column">
 <li><code><a title="constriction.stream.queue.RangeEncoder.clear" href="#constriction.stream.queue.RangeEncoder.clear">clear</a></code></li>
+<li><code><a title="constriction.stream.queue.RangeEncoder.clone" href="#constriction.stream.queue.RangeEncoder.clone">clone</a></code></li>
 <li><code><a title="constriction.stream.queue.RangeEncoder.encode" href="#constriction.stream.queue.RangeEncoder.encode">encode</a></code></li>
 <li><code><a title="constriction.stream.queue.RangeEncoder.get_compressed" href="#constriction.stream.queue.RangeEncoder.get_compressed">get_compressed</a></code></li>
 <li><code><a title="constriction.stream.queue.RangeEncoder.get_decoder" href="#constriction.stream.queue.RangeEncoder.get_decoder">get_decoder</a></code></li>

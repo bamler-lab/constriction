@@ -195,6 +195,15 @@ replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015
 <p>This removes any existing compressed data on the encoder. It is equivalent to replacing the
 encoder with a new one but slightly more efficient.</p></div>
 </dd>
+<dt id="constriction.stream.stack.AnsCoder.clone"><code class="name flex">
+<span>def <span class="ident">clone</span></span>(<span>)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Creates a deep copy of the coder and returns it.</p>
+<p>The returned copy will initially encapsulate the identical compressed data as the
+original coder, but the two coders can be used independently without influencing
+other.</p></div>
+</dd>
 <dt id="constriction.stream.stack.AnsCoder.decode"><code class="name flex">
 <span>def <span class="ident">decode</span></span>(<span>model, optional_amt_or_model_params)</span>
 </code></dt>
@@ -521,6 +530,7 @@ assert np.all(decoded_part2 == message_part2)
 <h4><code><a title="constriction.stream.stack.AnsCoder" href="#constriction.stream.stack.AnsCoder">AnsCoder</a></code></h4>
 <ul class="two-column">
 <li><code><a title="constriction.stream.stack.AnsCoder.clear" href="#constriction.stream.stack.AnsCoder.clear">clear</a></code></li>
+<li><code><a title="constriction.stream.stack.AnsCoder.clone" href="#constriction.stream.stack.AnsCoder.clone">clone</a></code></li>
 <li><code><a title="constriction.stream.stack.AnsCoder.decode" href="#constriction.stream.stack.AnsCoder.decode">decode</a></code></li>
 <li><code><a title="constriction.stream.stack.AnsCoder.encode_reverse" href="#constriction.stream.stack.AnsCoder.encode_reverse">encode_reverse</a></code></li>
 <li><code><a title="constriction.stream.stack.AnsCoder.get_compressed" href="#constriction.stream.stack.AnsCoder.get_compressed">get_compressed</a></code></li>
