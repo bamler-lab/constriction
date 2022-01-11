@@ -15,7 +15,7 @@ keywords = ["compression", "machine-learning", "entropy-coding", "range-coding",
 license = "MIT OR Apache-2.0 OR BSL-1.0"
 name = "constriction"
 repository = "https://github.com/bamler-lab/constriction/"
-version = "0.2.2"
+version = "0.2.3"
 
 [tool.poetry.dependencies]
 numpy = "^1.19"
