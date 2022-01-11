@@ -248,7 +248,6 @@
       margin: 0;
       background: #e8dacd;
       border-radius: 0.4em;
-      color: #000;
       text-decoration: none;
       display: block;
       text-align: center;
@@ -264,6 +263,11 @@
 
     .tabs>ul>li>a:hover {
       background: #f2eae2;
+      text-decoration: underline;
+    }
+
+    .tabs>ul>li.active>a:hover {
+      text-decoration: none;
     }
 
     #api-reference>li {
