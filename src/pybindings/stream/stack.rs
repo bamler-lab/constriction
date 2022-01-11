@@ -109,7 +109,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 #[pyclass]
 #[pyo3(text_signature = "([compressed], seal=False)")]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AnsCoder {
     inner: crate::stream::stack::DefaultAnsCoder,
 }
@@ -1091,5 +1091,15 @@ impl AnsCoder {
         );
 
         self.decode(py, model, PyTuple::new(py, [amt]))
+    }
+
+    /// Creates a deep copy of the coder and returns it.
+    ///
+    /// The returned copy will initially encapsulate the identical compressed data as the
+    /// original coder, but the two coders can be used independently without influencing
+    /// other.
+    #[pyo3(text_signature = "()")]
+    pub fn clone(&self) -> Self {
+        Clone::clone(self)
     }
 }

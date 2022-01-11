@@ -38,7 +38,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// See [module level example](#example).
 #[pyclass]
 #[pyo3(text_signature = "()")]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RangeEncoder {
     inner: crate::stream::queue::DefaultRangeEncoder,
 }
@@ -551,6 +551,16 @@ impl RangeEncoder {
 
         self.encode(py, &symbols, model, PyTuple::empty(py))
     }
+
+    /// Creates a deep copy of the coder and returns it.
+    ///
+    /// The returned copy will initially encapsulate the identical compressed data as the
+    /// original coder, but the two coders can be used independently without influencing
+    /// other.
+    #[pyo3(text_signature = "()")]
+    pub fn clone(&self) -> Self {
+        Clone::clone(self)
+    }
 }
 
 /// A decoder of data that was previously encoded with a `RangeEncoder`.
@@ -570,7 +580,7 @@ impl RangeEncoder {
 /// See [module level example](#example).
 #[pyclass]
 #[pyo3(text_signature = "(compressed)")]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RangeDecoder {
     inner: crate::stream::queue::DefaultRangeDecoder,
 }
@@ -983,6 +993,16 @@ impl RangeDecoder {
         );
 
         self.decode(py, model, PyTuple::new(py, [amt]))
+    }
+
+    /// Creates a deep copy of the coder and returns it.
+    ///
+    /// The returned copy will initially encapsulate the identical compressed data as the
+    /// original coder, but the two coders can be used independently without influencing
+    /// other.
+    #[pyo3(text_signature = "()")]
+    pub fn clone(&self) -> Self {
+        Clone::clone(self)
     }
 }
 

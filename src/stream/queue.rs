@@ -575,7 +575,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RangeDecoder<Word, State, Backend>
 where
     Word: BitArray,

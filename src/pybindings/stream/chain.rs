@@ -25,7 +25,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// constructor arguments.
 #[pyclass]
 #[pyo3(text_signature = "(compressed, is_remainders=False, seal=False)")]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChainCoder {
     inner: crate::stream::chain::DefaultChainCoder,
 }
@@ -449,6 +449,16 @@ impl ChainCoder {
         );
 
         self.decode(py, model, PyTuple::new(py, [amt]))
+    }
+
+    /// Creates a deep copy of the coder and returns it.
+    ///
+    /// The returned copy will initially encapsulate the identical compressed data and
+    /// remainders as the original coder, but the two coders can be used independently
+    /// without influencing other.
+    #[pyo3(text_signature = "()")]
+    pub fn clone(&self) -> Self {
+        Clone::clone(self)
     }
 }
 
