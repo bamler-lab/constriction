@@ -444,7 +444,7 @@
     @media (prefers-color-scheme: dark) {
       body {
         background: #171717;
-        color: #fff;
+        color: #dbdbdb;
       }
 
       a:visited {
@@ -471,13 +471,30 @@
         color: #ecd1b9;
       }
 
-      h2,
-      h3 {
+      h2 {
         color: #f2e7dd;
       }
 
       .tabs>ul>li>a {
         background: #302125;
+      }
+
+      .tabContent {
+        background: #48393d;
+      }
+
+      .tabs>ul>li>a:hover {
+        background: #48393d;
+      }
+
+      .tabs>ul>li.active>a {
+        background: #48393d;
+        color: #f2e7dd;
+      }
+
+      #api-reference>li>a:hover {
+        /* background: #e8dacd; */
+        background: #35282c;
       }
 
       td,
