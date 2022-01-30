@@ -80,7 +80,7 @@
 		{
 			"label": "Build Python module and start REPL",
 			"type": "shell",
-			"command": "poetry run maturin develop '--cargo-extra-args=--features pybindings' && poetry run ipython -ic 'import numpy as np; import constriction'",
+			"command": "poetry run maturin develop '--cargo-extra-args=--features pybindings' && poetry run ipython -i -c 'import numpy as np; import constriction'",
 			"group": "build",
 			"problemMatcher": [],
 			"presentation": {
