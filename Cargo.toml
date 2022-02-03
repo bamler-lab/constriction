@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0 OR BSL-1.0"
 name = "constriction"
 readme = "README-rust.md"
 repository = "https://github.com/bamler-lab/constriction/"
-version = "0.2.3"
+version = "0.2.4"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
