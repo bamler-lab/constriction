@@ -4,7 +4,7 @@ dependencies = [
 ]
 name = "constriction"
 readme = "README-python.md"
-requires-python = ">=3.7,<3.11"
+requires-python = ">=3.6,<3.11"
 
 [tool.poetry]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
