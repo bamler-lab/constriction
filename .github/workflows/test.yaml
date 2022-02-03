@@ -132,31 +132,37 @@ jobs:
 
     steps:
       - name: Checkout
+        if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
         uses: actions/checkout@v1
 
       - name: Set up Python ${{ matrix.python-version }}
+        if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
         uses: actions/setup-python@v2
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Python dependencies
+        if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
         run: |
           python -m pip install --upgrade pip
           python -m pip install poetry
           poetry install
 
       - name: Install latest stable Rust
+        if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
 
       - name: Get rust version
+        if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
         id: versions
         run: |
           echo "::set-output name=rustc::$(rustc --version | awk '{ print $2 }')"
 
       - name: Cache Rust dependencies
+        if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
         uses: actions/cache@v2
         with:
           path: |
@@ -168,9 +174,11 @@ jobs:
             ${{ runner.os }}-pybindings-rust-${{ steps.versions.outputs.rustc }}-
 
       - name: Build Python package
+        if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
         run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings'
 
       - name: pytest
+        if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
         run: poetry run pytest tests/python
 
   testall:
