@@ -115,11 +115,26 @@ where
     situation: EncoderSituation<Word>,
 }
 
+/// Keeps track of yet-to-be-finalized compressed words during encoding with a
+/// [`RangeEncoder`].
+///
+/// This type is mostly for internal use. It is only expsed via
+/// [`RangeEncoder::into_raw_parts`] and [`RangeEncoder::from_raw_parts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EncoderSituation<Word> {
+pub enum EncoderSituation<Word> {
+    /// In the `Normal` situation, all full `Words` of compressed data have been written to
+    /// the backend (or "bulk"), and the internal coder state holds less than one word of
+    /// additional information content.
     Normal,
 
-    /// Wraps `num_inverted` and `first_inverted_lower_word`
+    /// The `Inverted` situation occurs only rarely. In this situation, some full words of
+    /// compressed data have been held back and not yet written to the backend (or "bulk")
+    /// because their final values may still change depending on subsequently encoded
+    /// symbols.
+    ///
+    /// More precisely, a situation of `Inverted(num_subsequent, first_word)` means that the
+    /// held-back words can become either `first_word + 1` followed by `num_subsequent` zero
+    /// words, or `first_word` followed by `num_subsequent` words that have all bits set.
     Inverted(NonZeroUsize, Word),
 }
 
@@ -403,6 +418,39 @@ where
     pub fn bulk(&self) -> &Backend {
         &self.bulk
     }
+
+    /// Low-level constructor that assembles a `RangeEncoder` from its internal components.
+    ///
+    /// The arguments `bulk`, `state`, and `situation` correspond to the three return values
+    /// of the method [`into_raw_parts`](Self::into_raw_parts).
+    pub fn from_raw_parts(
+        bulk: Backend,
+        state: RangeCoderState<Word, State>,
+        situation: EncoderSituation<Word>,
+    ) -> Self {
+        assert!(State::BITS >= 2 * Word::BITS);
+        assert_eq!(State::BITS % Word::BITS, 0);
+        // The invariants for `state` are already enforced statically.
+
+        Self {
+            bulk,
+            state,
+            situation,
+        }
+    }
+
+    /// Low-level method that disassembles the `RangeEncoder` into its internal components.
+    ///
+    /// Can be used together with [`from_raw_parts`](Self::from_raw_parts).
+    pub fn into_raw_parts(
+        self,
+    ) -> (
+        Backend,
+        RangeCoderState<Word, State>,
+        EncoderSituation<Word>,
+    ) {
+        (self.bulk, self.state, self.situation)
+    }
 }
 
 impl<Word, State> RangeEncoder<Word, State>
@@ -666,18 +714,35 @@ where
         })
     }
 
+    /// Low-level constructor that assembles a `RangeDecoder` from its internal components.
+    ///
+    /// The arguments `bulk`, `state`, and `point` correspond to the three return values of
+    /// the method [`into_raw_parts`](Self::into_raw_parts).
+    ///
+    /// The construction fails if the argument `point` lies outside of the range represented
+    /// by `state`. In this case, the method returns the (unmodified) argument `bulk` back
+    /// to the caller, wrapped in an `Err` variant.
     pub fn from_raw_parts(
-        _bulk: Backend,
-        _state: State,
-    ) -> Result<Self, (Backend, RangeCoderState<Word, State>)> {
+        bulk: Backend,
+        state: RangeCoderState<Word, State>,
+        point: State,
+    ) -> Result<Self, Backend> {
         assert!(State::BITS >= 2 * Word::BITS);
         assert_eq!(State::BITS % Word::BITS, 0);
+        // The invariants for `state` are already enforced statically.
 
-        todo!()
+        if point.wrapping_sub(&state.lower) >= state.range.get() {
+            Err(bulk)
+        } else {
+            Ok(Self { bulk, state, point })
+        }
     }
 
-    pub fn into_raw_parts(self) -> (Backend, RangeCoderState<Word, State>) {
-        (self.bulk, self.state)
+    /// Low-level method that disassembles the `RangeDecoder` into its internal components.
+    ///
+    /// Can be used together with [`from_raw_parts`](Self::from_raw_parts).
+    pub fn into_raw_parts(self) -> (Backend, RangeCoderState<Word, State>, State) {
+        (self.bulk, self.state, self.point)
     }
 
     fn read_point<B: ReadWords<Word, Queue>>(bulk: &mut B) -> Result<State, B::ReadError> {

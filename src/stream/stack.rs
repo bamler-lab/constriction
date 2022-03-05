@@ -271,6 +271,10 @@ where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `from_raw_parts(Backend::default(), state)` instead."
+    )]
     pub fn with_state_and_empty_bulk(state: State) -> Self
     where
         Backend: Default,
@@ -282,11 +286,16 @@ where
         }
     }
 
-    /// # Safety
+    /// Low-level constructor that assembles an `AnsCoder` from its internal components.
+    ///
+    /// The arguments `bulk` and `state` correspond to the two return values of the method
+    /// [`into_raw_parts`](Self::into_raw_parts).
     ///
     /// The caller must ensure that `state >= State::one() << (State::BITS - Word::BITS)`
-    /// unless `bulk.is_empty()`.
-    pub unsafe fn from_raw_parts(bulk: Backend, state: State) -> Self {
+    /// unless `bulk` is empty. This cannot be checked by the method since not all
+    /// `Backend`s have an `is_empty` method. Violating this invariant is not a memory
+    /// safety issue but it will lead to incorrect behavior.
+    pub fn from_raw_parts(bulk: Backend, state: State) -> Self {
         Self {
             bulk,
             state,
@@ -398,6 +407,9 @@ where
         &self.bulk
     }
 
+    /// Low-level method that disassembles the `AnsCoder` into its internal components.
+    ///
+    /// Can be used together with [`from_raw_parts`](Self::from_raw_parts).
     pub fn into_raw_parts(self) -> (Backend, State) {
         (self.bulk, self.state)
     }
@@ -940,6 +952,8 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
+        assert!(State::BITS >= Word::BITS + PRECISION);
+
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
             .ok_or_else(|| DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
@@ -1002,6 +1016,8 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
+        assert!(State::BITS >= Word::BITS + PRECISION);
+
         let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
         let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
         let remainder = quantile - left_sided_cumulative;
