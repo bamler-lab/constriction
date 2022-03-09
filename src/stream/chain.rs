@@ -26,7 +26,6 @@
 //!   symbol; all subsequently decoded symbols remain unchanged.
 //!
 //! ```
-//! # #[cfg(not(miri))] {
 //! use constriction::stream::{
 //!     model::DefaultContiguousCategoricalEntropyModel,
 //!     stack::DefaultAnsCoder, chain::DefaultChainCoder, Decode
@@ -82,7 +81,6 @@
 //! // The only symbol that changed was the one whose entropy model we had changed.
 //! // --> In a `ChainCoder`, changes to entropy models (and also to compressed bits)
 //! //     only have a *local* effect on the decompressed symbols.
-//! # }
 //! ```
 //!
 //! # How does this work?

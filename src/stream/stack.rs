@@ -434,7 +434,6 @@ where
     /// # Example
     ///
     /// ```
-    /// # #[cfg(not(miri))] {
     /// use constriction::stream::{
     ///     model::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
     /// };
@@ -457,7 +456,6 @@ where
     ///     .collect::<Result<Vec<_>, _>>()
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
-    /// # }
     /// ```
     ///
     /// [`bulk`]: #method.bulk
@@ -761,7 +759,6 @@ where
     /// # Example
     ///
     /// ```
-    /// # #[cfg(not(miri))] {
     /// use constriction::stream::{
     ///     model::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
     /// };
@@ -788,7 +785,6 @@ where
     ///     .unwrap();
     /// assert_eq!(reconstructed, symbols);
     /// assert!(ans.is_empty())
-    /// # }
     /// ```
     pub fn into_compressed(mut self) -> Result<Backend, Backend::WriteError> {
         self.bulk
@@ -1291,7 +1287,12 @@ mod tests {
         f64: AsPrimitive<Probability>,
         i32: AsPrimitive<Probability>,
     {
+        #[cfg(not(miri))]
         const AMT: usize = 1000;
+
+        #[cfg(miri)]
+        const AMT: usize = 100;
+
         let mut symbols_gaussian = Vec::with_capacity(AMT);
         let mut means = Vec::with_capacity(AMT);
         let mut stds = Vec::with_capacity(AMT);
@@ -1318,43 +1319,33 @@ mod tests {
             stds.push(std_dev);
         }
 
-        #[cfg(not(miri))]
-        let (categorical, symbols_categorical) = {
-            // ContiguousCategoricalEntropyModel's constructor currently calls FFI.
-            let hist = [
-                1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772,
-                1657269, 896675, 922197, 930672, 916665, 0, 0, 0, 0, 0, 723031, 650522, 572300,
-                494702, 418703, 347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540,
-                39258, 27988, 54269,
-            ];
-            let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-            let categorical =
+        let hist = [
+            1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
+            896675, 922197, 930672, 916665, 0, 0, 0, 0, 0, 723031, 650522, 572300, 494702, 418703,
+            347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540, 39258, 27988, 54269,
+        ];
+        let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
+        let categorical =
             ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities(
                 &categorical_probabilities,
             )
             .unwrap();
-            let mut symbols_categorical = Vec::with_capacity(AMT);
-            let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-            for _ in 0..AMT {
-                let quantile = rng.next_u32().as_() & max_probability;
-                let symbol = categorical.quantile_function(quantile).0;
-                symbols_categorical.push(symbol);
-            }
-
-            (categorical, symbols_categorical)
-        };
+        let mut symbols_categorical = Vec::with_capacity(AMT);
+        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
+        for _ in 0..AMT {
+            let quantile = rng.next_u32().as_() & max_probability;
+            let symbol = categorical.quantile_function(quantile).0;
+            symbols_categorical.push(symbol);
+        }
 
         let mut ans = AnsCoder::<Word, State>::new();
 
-        #[cfg(not(miri))]
-        {
-            ans.encode_iid_symbols_reverse(&symbols_categorical, &categorical)
-                .unwrap();
-            dbg!(
-                ans.num_valid_bits(),
-                AMT as f64 * categorical.entropy_base2::<f64>()
-            );
-        }
+        ans.encode_iid_symbols_reverse(&symbols_categorical, &categorical)
+            .unwrap();
+        dbg!(
+            ans.num_valid_bits(),
+            AMT as f64 * categorical.entropy_base2::<f64>()
+        );
 
         let quantizer = LeakyQuantizer::<_, _, Probability, PRECISION>::new(-127..=127);
         ans.encode_symbols_reverse(symbols_gaussian.iter().zip(&means).zip(&stds).map(
@@ -1376,8 +1367,6 @@ mod tests {
             )
             .collect::<Result<Vec<_>, CoderError<Infallible, Infallible>>>()
             .unwrap();
-
-        #[cfg(not(miri))]
         let reconstructed_categorical = ans
             .decode_iid_symbols(AMT, &categorical)
             .collect::<Result<Vec<_>, CoderError<Infallible, Infallible>>>()
@@ -1386,7 +1375,6 @@ mod tests {
         assert!(ans.is_empty());
 
         assert_eq!(symbols_gaussian, reconstructed_gaussian);
-        #[cfg(not(miri))]
         assert_eq!(symbols_categorical, reconstructed_categorical);
     }
 

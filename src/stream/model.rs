@@ -129,6 +129,8 @@ use hashbrown::hash_map::{
     HashMap,
 };
 
+use special::FloatExt;
+
 use alloc::{boxed::Box, vec::Vec};
 use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::RangeInclusive};
 use num::{
@@ -311,7 +313,6 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// # Example
     ///
     /// ```
-    /// # #[cfg(not(miri))] {
     /// use constriction::stream::model::{
     ///     IterableEntropyModel, SmallNonContiguousCategoricalDecoderModel
     /// };
@@ -326,7 +327,6 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     ///
     /// // Create a lookup model. This method is provided by the trait `IterableEntropyModel`.
     /// let lookup_decoder_model = model.to_generic_lookup_decoder_model();
-    /// # }
     /// ```
     ///
     /// # See also
@@ -1977,7 +1977,6 @@ where
 /// # Example
 ///
 /// ```
-/// # #[cfg(not(miri))] {
 /// use constriction::{
 ///     stream::{stack::DefaultAnsCoder, model::DefaultContiguousCategoricalEntropyModel, Decode},
 ///     UnwrapInfallible,
@@ -2012,7 +2011,6 @@ where
 /// // `0..model.support_size()`, so trying to encode a message that contains such a symbol fails.
 /// assert!(ans_coder.encode_iid_symbols_reverse(&[2, 0, 5, 1], model.as_view()).is_err())
 /// // ERROR: symbol `5` is not in the support of `model`.
-/// # }
 /// ```
 ///
 /// # When Should I Use This Type of Entropy Model?
@@ -2851,7 +2849,6 @@ where
 /// # Example
 ///
 /// ```
-/// # #[cfg(not(miri))] {
 /// use constriction::{
 ///     stream::{stack::DefaultAnsCoder, Decode},
 ///     stream::model::DefaultNonContiguousCategoricalEncoderModel,
@@ -2894,7 +2891,6 @@ where
 /// // constructor, so trying to encode a message that contains such a symbol will fail.
 /// assert!(ans_coder.encode_iid_symbols_reverse("Mix".chars(), &encoder_model).is_err())
 /// // ERROR: symbol 'x' is not in the support of `encoder_model`.
-/// # }
 /// ```
 ///
 /// # When Should I Use This Type of Entropy Model?
@@ -3216,13 +3212,13 @@ where
             let weight = current_free_weight + Probability::one();
 
             // How much the cross entropy would decrease when increasing the weight by one.
-            let win = prob * (1.0f64 / weight.into()).ln_1p();
+            let win = prob * <f64 as FloatExt>::ln_1p(1.0f64 / weight.into());
 
             // How much the cross entropy would increase when decreasing the weight by one.
             let loss = if weight == Probability::one() {
                 f64::infinity()
             } else {
-                -prob * (-1.0f64 / weight.into()).ln_1p()
+                -prob * <f64 as FloatExt>::ln_1p(-1.0f64 / weight.into())
             };
 
             Ok(Slot {
@@ -3243,8 +3239,8 @@ where
         let batch_size = core::cmp::min(remaining_free_weight.as_(), slots.len());
         for slot in &mut slots[..batch_size] {
             slot.weight = slot.weight + Probability::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
-            slot.win = slot.prob * (1.0f64 / slot.weight.into()).ln_1p();
-            slot.loss = -slot.prob * (-1.0f64 / slot.weight.into()).ln_1p();
+            slot.win = slot.prob * <f64 as FloatExt>::ln_1p(1.0f64 / slot.weight.into());
+            slot.loss = -slot.prob * <f64 as FloatExt>::ln_1p(-1.0f64 / slot.weight.into());
         }
         remaining_free_weight = remaining_free_weight - batch_size.as_();
     }
@@ -3275,17 +3271,17 @@ where
         }
 
         seller.weight = seller.weight - Probability::one();
-        seller.win = seller.prob * (1.0f64 / seller.weight.into()).ln_1p();
+        seller.win = seller.prob * <f64 as FloatExt>::ln_1p(1.0f64 / seller.weight.into());
         seller.loss = if seller.weight == Probability::one() {
             f64::infinity()
         } else {
-            -seller.prob * (-1.0f64 / seller.weight.into()).ln_1p()
+            -seller.prob * <f64 as FloatExt>::ln_1p(-1.0f64 / seller.weight.into())
         };
 
         let buyer = &mut slots[buyer_index];
         buyer.weight = buyer.weight + Probability::one();
-        buyer.win = buyer.prob * (1.0f64 / buyer.weight.into()).ln_1p();
-        buyer.loss = -buyer.prob * (-1.0f64 / buyer.weight.into()).ln_1p();
+        buyer.win = buyer.prob * <f64 as FloatExt>::ln_1p(1.0f64 / buyer.weight.into());
+        buyer.loss = -buyer.prob * <f64 as FloatExt>::ln_1p(-1.0f64 / buyer.weight.into());
     }
 
     slots.sort_unstable_by_key(|slot| slot.original_index);
@@ -3919,7 +3915,6 @@ mod tests {
     /// Test that `optimal_weights` reproduces the same distribution when fed with an
     /// already quantized model.
     #[test]
-    #[cfg_attr(miri, ignore)] // `optimize_leaky_categorical` calls `ln_1p`, which currently uses FFI.
     fn trivial_optimal_weights() {
         let hist = [
             56319u32, 134860032, 47755520, 60775168, 75699200, 92529920, 111023616, 130420736,
@@ -3945,7 +3940,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // `optimize_leaky_categorical` calls `ln_1p`, which currently uses FFI.
     fn nontrivial_optimal_weights() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -3990,7 +3984,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // `optimize_leaky_categorical` calls `ln_1p`, which currently uses FFI.
     fn contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -4008,7 +4001,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // `optimize_leaky_categorical` calls `ln_1p`, which currently uses FFI.
     fn non_contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,

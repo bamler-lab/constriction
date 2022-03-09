@@ -1095,7 +1095,12 @@ mod tests {
         f64: AsPrimitive<Probability>,
         i32: AsPrimitive<Probability>,
     {
+        #[cfg(not(miri))]
         const AMT: usize = 1000;
+
+        #[cfg(miri)]
+        const AMT: usize = 100;
+
         let mut symbols_gaussian = Vec::with_capacity(AMT);
         let mut means = Vec::with_capacity(AMT);
         let mut stds = Vec::with_capacity(AMT);

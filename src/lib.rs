@@ -454,7 +454,6 @@ pub trait Pos: PosSeek {
 /// # Example
 ///
 /// ```
-/// # #[cfg(not(miri))] {
 /// use constriction::stream::{
 ///     model::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
 /// };
@@ -497,7 +496,6 @@ pub trait Pos: PosSeek {
 /// let decoded_both = seekable_decoder.decode_iid_symbols(7, &entropy_model).map(Result::unwrap);
 /// assert!(decoded_both.eq(symbols2.into_iter().chain(symbols1)));
 /// assert!(seekable_decoder.is_empty()); // <-- We've reached the end again.
-/// # }
 /// ```
 ///
 /// [`Encode`]: stream::Encode
