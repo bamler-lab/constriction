@@ -19,7 +19,15 @@ crate-type = ["rlib", "cdylib"]
 name = "constriction"
 
 [features]
-default = ["std"]
+default = ["std", "system_math"]
+
+# Features "system_math" is active by default. Deactivate it if your compilation
+# target has no system math C library (e.g., if you compile to WebAssembly).
+system_math = ["probability/system_math", "special/system_math"]
+
+# Feature "std" is active by default. Deactivate it if you want to compile
+# to a `no_std` target (e.g., a microcontroller). You'll likely want to
+# deactivate feature "system_math" as well in this case.
 std = ["probability/std", "special/std"]
 
 # Use feature `pybindings` to compile the python extension module that provides
@@ -33,9 +41,10 @@ hashbrown = "0.11"
 num = "0.4"
 smallvec = "1.6.1"
 
-probability = {path = "../probability", default-features = false}
-special = {path = "../special", default-features = false}# Only used if "std" is deactivated.
-# probability = {git = "https://github.com/robamler/probability.git", rev = "86704614ddf0780bb708e934fa548c6053310aa2", default-features = false}
+# special = {path = "../special", default-features = false}# Only used if "std" is deactivated.
+special = {git = "https://github.com/robamler/special.git", rev = "16708ea249ec56fbebfcc91b413142f01671ebd9", default-features = false}
+# probability = {path = "../probability", default-features = false}
+probability = {git = "https://github.com/robamler/probability.git", rev = "29c68c470990a9e5dbd13f8687f6bbe7edd61c00", default-features = false}
 
 ndarray = {version = "0.15", optional = true}
 numpy = {version = "0.15", optional = true}

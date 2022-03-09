@@ -268,6 +268,9 @@ extern crate std;
 #[cfg(feature = "pybindings")]
 mod pybindings;
 
+/// Re-export of the [`probability`] crate with compatible cargo features.
+pub use probability;
+
 pub mod backends;
 pub mod stream;
 pub mod symbol;

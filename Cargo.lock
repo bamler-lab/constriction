@@ -581,7 +581,8 @@ checksum = "eb9f9e6e233e5c4a35559a617bf40a4ec447db2e84c20b55a6f83167b7e57872"
 
 [[package]]
 name = "probability"
-version = "0.17.0"
+version = "0.18.0"
+source = "git+https://github.com/robamler/probability.git?rev=29c68c470990a9e5dbd13f8687f6bbe7edd61c00#29c68c470990a9e5dbd13f8687f6bbe7edd61c00"
 dependencies = [
  "random",
  "special",
@@ -857,7 +858,9 @@ checksum = "f2dd574626839106c320a323308629dcb1acfc96e32a8cba364ddc61ac23ee83"
 [[package]]
 name = "special"
 version = "0.8.1"
+source = "git+https://github.com/robamler/special.git?rev=16708ea249ec56fbebfcc91b413142f01671ebd9#16708ea249ec56fbebfcc91b413142f01671ebd9"
 dependencies = [
+ "libc",
  "libm",
 ]
 

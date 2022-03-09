@@ -46,7 +46,7 @@ jobs:
           command: clippy
           args: --all-targets --all-features
 
-      - name: Test in development mode
+      - name: Test in development mode with default features
         uses: actions-rs/cargo@v1.0.1
         env:
           RUSTFLAGS: "-D warnings"
@@ -54,7 +54,34 @@ jobs:
           command: test
           toolchain: stable
 
-      - name: Test in release mode
+      - name: Test in development mode with --no-default-features
+        uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
+        with:
+          command: test
+          toolchain: stable
+          args: --no-default-features
+
+      - name: Test in development mode with only "std" feature
+        uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
+        with:
+          command: test
+          toolchain: stable
+          args: --no-default-features --features=std
+
+      - name: Test in development mode with only "system_math" feature
+        uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
+        with:
+          command: test
+          toolchain: stable
+          args: --no-default-features --features=system_math
+
+      - name: Test in release mode with default features
         uses: actions-rs/cargo@v1.0.1
         env:
           RUSTFLAGS: "-D warnings"
