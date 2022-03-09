@@ -78,48 +78,23 @@ jobs:
           toolchain: stable
           args: --release
 
-  miri-test:
-    runs-on: ${{ matrix.os }}
-    needs: rust-test
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v1
-
-      - name: Get latest rust nightly version that has miri
-        id: versions
-        run: |
-          echo "::set-output name=rustc::nightly-$(curl -s https://rust-lang.github.io/rustup-components-history/x86_64-unknown-linux-gnu/miri)"
-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v2
-        with:
-          path: |
-            target
-            .cargo_home
-            .cargo
-          key: ${{ runner.os }}-no_pybindings-miri-${{ steps.versions.outputs.rustc }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-no_pybindings-miri-${{ steps.versions.outputs.rustc }}-
-
-      - name: Install rust ${{ steps.versions.outputs.rustc }}
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ steps.versions.outputs.rustc }}
-          profile: minimal
-          components: miri
-          override: true
-
-      - name: Run tests in miri
+      - name: Test in development mode (without default features)
+        uses: actions-rs/cargo@v1.0.1
         env:
-          RUSTFLAGS: "-Zrandomize-layout"
-          MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-check-number-validity -Zmiri-tag-raw-pointers -Zmiri-disable-isolation"
-        run: |
-          cargo miri test --no-fail-fast --all-targets
+          RUSTFLAGS: "-D warnings"
+        with:
+          command: test
+          toolchain: stable
+          args: --no-default-features
+
+      - name: Test in release mode (without default features)
+        uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
+        with:
+          command: test
+          toolchain: stable
+          args: --release --no-default-features
 
   python-test:
     runs-on: ${{ matrix.os }}
@@ -184,7 +159,7 @@ jobs:
   testall:
     runs-on: ubuntu-latest
     name: Meta job for all tests
-    needs: [rust-test, miri-test, python-test]
+    needs: [rust-test, python-test]
     steps:
       - name: Done
         run: echo "All tests successful."

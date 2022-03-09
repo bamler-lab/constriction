@@ -23,10 +23,7 @@ criterion_group!(
     round_trip_u16_u32_u16_12
 );
 
-#[cfg(not(miri))]
 criterion::criterion_main!(benches);
-#[cfg(miri)]
-fn main() {} // All benchmarks currently use FFI and therefore can't be tested in miri.
 
 fn round_trip_u32_u64_u16_12(c: &mut Criterion) {
     round_trip::<u32, u64, u16, 12>(c);

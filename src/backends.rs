@@ -1821,6 +1821,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(feature = "std"))]
+    extern crate std;
+
     use crate::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
     use probability::distribution::Gaussian;
@@ -1830,7 +1833,6 @@ mod tests {
     };
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn decode_on_the_fly_stack() {
         fn encode_to_file(amt: u32) {
             let quantizer = DefaultLeakyQuantizer::new(-256..=255);

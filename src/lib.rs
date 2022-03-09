@@ -257,7 +257,7 @@
 //! If you're still new to the concept of entropy coding then check out the [teaching
 //! material](https://robamler.github.io/teaching/compress21/).
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(rust_2018_idioms, missing_debug_implementations)]
 
 extern crate alloc;
@@ -454,6 +454,7 @@ pub trait Pos: PosSeek {
 /// # Example
 ///
 /// ```
+/// # #[cfg(not(miri))] {
 /// use constriction::stream::{
 ///     model::DefaultContiguousCategoricalEntropyModel, stack::DefaultAnsCoder, Decode
 /// };
@@ -496,6 +497,7 @@ pub trait Pos: PosSeek {
 /// let decoded_both = seekable_decoder.decode_iid_symbols(7, &entropy_model).map(Result::unwrap);
 /// assert!(decoded_both.eq(symbols2.into_iter().chain(symbols1)));
 /// assert!(seekable_decoder.is_empty()); // <-- We've reached the end again.
+/// # }
 /// ```
 ///
 /// [`Encode`]: stream::Encode

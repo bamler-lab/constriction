@@ -929,15 +929,10 @@ mod tests {
             })
         }
 
-        let amt;
         #[cfg(not(miri))]
-        {
-            amt = 1000;
-        }
+        let amt = 1000;
         #[cfg(miri)]
-        {
-            amt = 100; // miri would take forever if we used `amt = 1000` here.
-        }
+        let amt = 100; // miri would take forever if we used `amt = 1000` here.
 
         let mut compressed = DefaultQueueEncoder::new();
 

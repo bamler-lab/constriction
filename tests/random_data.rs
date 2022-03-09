@@ -130,13 +130,13 @@ fn compare(
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn grid() {
     let amts = [
         10,
         100,
+        #[cfg(not(miri))]
         1000,
-        #[cfg(not(debug_assertions))]
+        #[cfg(all(not(debug_assertions), not(miri)))]
         10000,
     ];
 

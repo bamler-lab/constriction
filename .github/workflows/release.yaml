@@ -63,10 +63,27 @@ jobs:
           toolchain: stable
           args: --release
 
+      - name: Test in development mode (without default features)
+        uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
+        with:
+          command: test
+          toolchain: stable
+          args: --no-default-features
+
+      - name: Test in release mode (without default features)
+        uses: actions-rs/cargo@v1.0.1
+        env:
+          RUSTFLAGS: "-D warnings"
+        with:
+          command: test
+          toolchain: stable
+          args: --release --no-default-features
+
   miri-test:
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
@@ -92,7 +109,7 @@ jobs:
           RUSTFLAGS: "-Zrandomize-layout"
           MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-check-number-validity -Zmiri-tag-raw-pointers -Zmiri-disable-isolation"
         run: |
-          cargo miri test --no-fail-fast --all-targets
+          cargo miri test --no-fail-fast --all-targets --no-default-features
 
   python-test:
     runs-on: ${{ matrix.os }}

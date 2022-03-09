@@ -20,7 +20,7 @@ name = "constriction"
 
 [features]
 default = ["std"]
-std = ["probability"]
+std = ["probability/std"]
 
 # Use feature `pybindings` to compile the python extension module that provides
 # access to this library from python. This feature is turned off by default
@@ -33,7 +33,7 @@ hashbrown = "0.11"
 num = "0.4"
 smallvec = "1.6.1"
 
-probability = {version = "0.17", optional = true}
+probability = {git = "https://github.com/robamler/probability.git", rev = "86704614ddf0780bb708e934fa548c6053310aa2", default-features = false}
 
 ndarray = {version = "0.15", optional = true}
 numpy = {version = "0.15", optional = true}

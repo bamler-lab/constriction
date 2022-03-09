@@ -26,6 +26,7 @@
 //!   symbol; all subsequently decoded symbols remain unchanged.
 //!
 //! ```
+//! # #[cfg(not(miri))] {
 //! use constriction::stream::{
 //!     model::DefaultContiguousCategoricalEntropyModel,
 //!     stack::DefaultAnsCoder, chain::DefaultChainCoder, Decode
@@ -81,6 +82,7 @@
 //! // The only symbol that changed was the one whose entropy model we had changed.
 //! // --> In a `ChainCoder`, changes to entropy models (and also to compressed bits)
 //! //     only have a *local* effect on the decompressed symbols.
+//! # }
 //! ```
 //!
 //! # How does this work?
@@ -1168,91 +1170,76 @@ mod tests {
     use alloc::vec;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_none() {
         generic_restore_many::<u32, u64, u32, 24>(4, 0);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_one() {
         generic_restore_many::<u32, u64, u32, 24>(5, 1);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_two() {
         generic_restore_many::<u32, u64, u32, 24>(5, 2);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_ten() {
         generic_restore_many::<u32, u64, u32, 24>(20, 10);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_twenty() {
         generic_restore_many::<u32, u64, u32, 24>(19, 20);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u32_u64_32() {
         generic_restore_many::<u32, u64, u32, 32>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u32_u64_24() {
         generic_restore_many::<u32, u64, u32, 24>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u32_u64_16() {
         generic_restore_many::<u32, u64, u16, 16>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u16_u64_16() {
         generic_restore_many::<u16, u64, u16, 16>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u32_u64_8() {
         generic_restore_many::<u32, u64, u8, 8>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u16_u64_8() {
         generic_restore_many::<u16, u64, u8, 8>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u8_u64_8() {
         generic_restore_many::<u8, u64, u8, 8>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u16_u32_16() {
         generic_restore_many::<u16, u32, u16, 16>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u16_u32_8() {
         generic_restore_many::<u16, u32, u8, 8>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u8_u32_8() {
         generic_restore_many::<u8, u32, u8, 8>(1024, 1000);
     }

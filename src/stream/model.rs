@@ -137,109 +137,23 @@ use num::{
     Float, One, PrimInt, Zero,
 };
 
-/// Re-export or replacement of [`probability::distribution::Distribution`].
-///
-/// Most users will never have to interact with this trait directly. When a method requires
-/// a type that implements `Distribution`, most users will likely use a predefined type from
-/// the [`probability`] crate. You only need to implement this trait if you want to use a
-/// probability distribution that is not (yet) provided by the `probability` crate.
-///
-/// # Technical Details
-///
-/// - For most users, this trait is just a re-export (similar to a type alias) of the
-///   [`Distribution` trait from the `probability` crate]. You'll need a type that
-///   implements `Distribution` when you call [`LeakyQuantizer::quantize`]. The
-///   `probability` crate provides implementations of several common `Distribution`s.
-/// - Unfortunately, the `probability` crate does not support `no_std` mode. Thus, if you
-///   compile `constriction` in `no_std` mode (by setting `default-features = false` for
-///   `constriction` in your `Cargo.toml`) then you can't use the `probability` crate . In
-///   this case, the present trait (`constriction::stream::model::Distribution`) is not a
-///   re-export but instead a literal copy of its definition in the `probability` trait.
-///
-/// # Advice for Implementors
-///
-/// If you implement your own probability distribution (rather than using a pre-defined
-/// distribution from the `probability` crate) then it is usually better to implement *this*
-/// trait rather than `probability::distribution::Distribution`. This way, your code will
-/// work as expected both in `std` and in `no_std` mode.
+/// Re-export of [`probability::distribution::Distribution`].
 ///
 /// # See Also
 ///
 /// - [`Inverse`]
 ///
-/// [`probability::distribution::Distribution`]:
-///     https://docs.rs/probability/latest/probability/distribution/trait.Distribution.html
-/// [`Distribution` trait from the `probability` crate]:
-///     https://docs.rs/probability/latest/probability/distribution/trait.Distribution.html
-/// [`probability`]: https://docs.rs/probability/latest/probability/
-#[cfg(feature = "probability")]
+/// # Original Documentation From `probability` Crate
 pub use probability::distribution::Distribution;
 
-/// Re-export or replacement of [`probability::distribution::Inverse`].
-///
-/// Most users will never have to interact with this trait directly. When a method requires
-/// a type that implements `Inverse`, most users will likely use a predefined type from
-/// the [`probability`] crate. You only need to implement this trait if you want to use a
-/// probability distribution that is not (yet) provided by the `probability` crate.
-///
-/// # Technical Details
-///
-/// - For most users, this trait is just a re-export (similar to a type alias) of the
-///   [`Inverse` trait from the `probability` crate]. You'll need a type that implements
-///   `Inverse` when you call [`LeakyQuantizer::quantize`] and then use the resulting
-///   [`LeakilyQuantizedDistribution`] for *decoding*. The `probability` crate provides
-///   implementations of `Inverse` for several common probability distributions.
-/// - Unfortunately, the `probability` crate does not support `no_std` mode. Thus, if you
-///   compile `constriction` in `no_std` mode (by setting `default-features = false` for
-///   `constriction` in your `Cargo.toml`) then you can't use the `probability` crate . In
-///   this case, the present trait (`constriction::stream::model::Inverse`) is not a
-///   re-export but instead a literal copy of its definition in the `probability` trait.
-///
-/// # Advice for Implementors
-///
-/// If you implement your own probability distribution (rather than using a pre-defined
-/// distribution from the `probability` crate) then it is usually better to implement *this*
-/// trait rather than `probability::distribution::Inverse`. This way, your code will
-/// work as expected both in `std` and in `no_std` mode.
+/// Re-export of [`probability::distribution::Inverse`].
 ///
 /// # See Also
 ///
 /// - [`Distribution`]
 ///
-/// [`probability::distribution::Inverse`]:
-///     https://docs.rs/probability/latest/probability/distribution/trait.Inverse.html
-/// [`Inverse` trait from the `probability` crate]:
-///     https://docs.rs/probability/latest/probability/distribution/trait.Inverse.html
-/// [`probability`]: https://docs.rs/probability/latest/probability/
-#[cfg(feature = "probability")]
+/// # Original Documentation From `probability` Crate
 pub use probability::distribution::Inverse;
-
-/// Mock replacement for [`probability::distribution::Distribution`] in a `no_std` context
-///
-/// This trait is only exported if `constriction` is used in a `no_std` context (i.e., with
-/// `default-features = false`). In this case, we can't use the `probability` crate because
-/// it uses a lot of FFI calls. However, for many things, we really only need the trait
-/// definitions for `Distribution` and for [`Inverse`], so we copy them here.
-#[cfg(not(feature = "probability"))]
-pub trait Distribution {
-    /// The type of outcomes.
-    type Value;
-
-    /// Compute the cumulative distribution function.
-    fn distribution(&self, x: f64) -> f64;
-}
-
-/// Mock replacement for [`probability::distribution::Distribution`] in a `no_std` context
-///
-/// This trait is only exported if `constriction` is used in a `no_std` context (i.e., with
-/// `default-features = false`). In this case, we can't use the `probability` crate because
-/// it uses a lot of FFI calls. However, for many things, we really only need the trait
-/// definitions for [`Distribution`] and for `Inverse`, so we copy them here.
-#[cfg(not(feature = "probability"))]
-pub trait Inverse: Distribution {
-    /// Compute the inverse of the cumulative distribution function.
-    fn inverse(&self, p: f64) -> Self::Value;
-}
 
 use crate::{wrapping_pow2, BitArray, NonZeroBitArray};
 
@@ -397,6 +311,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// # Example
     ///
     /// ```
+    /// # #[cfg(not(miri))] {
     /// use constriction::stream::model::{
     ///     IterableEntropyModel, SmallNonContiguousCategoricalDecoderModel
     /// };
@@ -411,6 +326,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     ///
     /// // Create a lookup model. This method is provided by the trait `IterableEntropyModel`.
     /// let lookup_decoder_model = model.to_generic_lookup_decoder_model();
+    /// # }
     /// ```
     ///
     /// # See also
@@ -2061,6 +1977,7 @@ where
 /// # Example
 ///
 /// ```
+/// # #[cfg(not(miri))] {
 /// use constriction::{
 ///     stream::{stack::DefaultAnsCoder, model::DefaultContiguousCategoricalEntropyModel, Decode},
 ///     UnwrapInfallible,
@@ -2095,6 +2012,7 @@ where
 /// // `0..model.support_size()`, so trying to encode a message that contains such a symbol fails.
 /// assert!(ans_coder.encode_iid_symbols_reverse(&[2, 0, 5, 1], model.as_view()).is_err())
 /// // ERROR: symbol `5` is not in the support of `model`.
+/// # }
 /// ```
 ///
 /// # When Should I Use This Type of Entropy Model?
@@ -2933,6 +2851,7 @@ where
 /// # Example
 ///
 /// ```
+/// # #[cfg(not(miri))] {
 /// use constriction::{
 ///     stream::{stack::DefaultAnsCoder, Decode},
 ///     stream::model::DefaultNonContiguousCategoricalEncoderModel,
@@ -2975,6 +2894,7 @@ where
 /// // constructor, so trying to encode a message that contains such a symbol will fail.
 /// assert!(ans_coder.encode_iid_symbols_reverse("Mix".chars(), &encoder_model).is_err())
 /// // ERROR: symbol 'x' is not in the support of `encoder_model`.
+/// # }
 /// ```
 ///
 /// # When Should I Use This Type of Entropy Model?
@@ -3931,7 +3851,6 @@ mod tests {
     use probability::distribution::{Binomial, Gaussian};
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn leakily_quantized_normal() {
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
         for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
@@ -3943,10 +3862,19 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn leakily_quantized_binomial() {
-        for &n in &[1, 2, 10, 100, 1000, 10_000] {
-            for &p in &[1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9] {
+        #[cfg(not(miri))]
+        let (ns, ps) = (
+            [1, 2, 10, 100, 1000, 10_000],
+            [1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9],
+        );
+
+        // Use a smaller parameter range when testing in miri to avoid excessive test times.
+        #[cfg(miri)]
+        let (ns, ps) = ([1, 2, 10, 100], [0.1, 0.4, 0.9]);
+
+        for &n in &ns {
+            for &p in &ps {
                 if n < 1000 || p >= 0.1 {
                     // In the excluded situations, `<Binomial as Inverse>::inverse` currently doesn't terminate.
                     // TODO: file issue to `probability` repo.
@@ -3975,7 +3903,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn entropy() {
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-1000..=1000);
         for &std_dev in &[100., 200., 300.] {
@@ -3992,7 +3919,7 @@ mod tests {
     /// Test that `optimal_weights` reproduces the same distribution when fed with an
     /// already quantized model.
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(miri, ignore)] // `optimize_leaky_categorical` calls `ln_1p`, which currently uses FFI.
     fn trivial_optimal_weights() {
         let hist = [
             56319u32, 134860032, 47755520, 60775168, 75699200, 92529920, 111023616, 130420736,
@@ -4018,7 +3945,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(miri, ignore)] // `optimize_leaky_categorical` calls `ln_1p`, which currently uses FFI.
     fn nontrivial_optimal_weights() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -4063,7 +3990,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(miri, ignore)] // `optimize_leaky_categorical` calls `ln_1p`, which currently uses FFI.
     fn contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -4081,7 +4008,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(miri, ignore)] // `optimize_leaky_categorical` calls `ln_1p`, which currently uses FFI.
     fn non_contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
