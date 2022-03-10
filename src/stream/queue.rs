@@ -953,7 +953,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(feature = "std"))]
     extern crate std;
+
     use std::dbg;
 
     use super::super::model::{

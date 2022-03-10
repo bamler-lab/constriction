@@ -1143,12 +1143,14 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(feature = "std"))]
+    extern crate std;
+
     use super::super::model::{
         ContiguousCategoricalEntropyModel, DefaultLeakyQuantizer, IterableEntropyModel,
         LeakyQuantizer,
     };
     use super::*;
-    extern crate std;
     use std::dbg;
 
     use probability::distribution::{Gaussian, Inverse};

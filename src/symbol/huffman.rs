@@ -329,11 +329,14 @@ impl std::error::Error for NanError {}
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(feature = "std"))]
+    extern crate std;
+
     use super::{
         super::{SmallBitStack, WriteBitStream},
         *,
     };
-    extern crate std;
+
     use std::string::String;
 
     #[test]
