@@ -324,7 +324,7 @@ impl Display for NanError {
     }
 }
 
-#[cfg(std)]
+#[cfg(feature = "std")]
 impl std::error::Error for NanError {}
 
 #[cfg(test)]
