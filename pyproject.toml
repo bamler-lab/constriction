@@ -19,7 +19,7 @@ version = "0.2.4"
 
 [tool.poetry.dependencies]
 numpy = "^1.19"
-python = "^3.7,<3.11"
+python = "^3.8,<3.11"
 
 [tool.poetry.dev-dependencies]
 autopep8 = "*"
