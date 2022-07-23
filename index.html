@@ -188,7 +188,12 @@
       text-align: center;
     }
 
-    th>img {
+    th>a{
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    th>a>img {
       height: 2.5em;
       display: block;
       margin: 0 auto 0.3em auto;
@@ -603,7 +608,7 @@
         <p>Install <code class="constriction">constriction</code> for Python:</p>
         <pre>pip install --upgrade pip
 pip install constriction</pre>
-        <p>Then try out <a href="https://bamler-lab.github.io/constriction/apidoc/python/#hello-world">this example</a>.
+        <p>Then try out <a href="apidoc/python/#hello-world">this example</a>.
         </p>
       </div>
       <div class="sep"></div>
@@ -676,7 +681,7 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
       <li><a href="apidoc/python/"><img src="python.svg" alt="Python logo">
           <div>Python API<br>reference</div>
         </a></li>
-      <li><a href="https://docs.rs/constriction"><img src="rust.svg" alt="Rust logo">
+      <li><a href="https://docs.rs/constriction/latest/constriction/"><img src="rust.svg" alt="Rust logo">
           <div>Rust API<br>reference</div>
         </a>
       </li>
@@ -698,18 +703,20 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
   <table class="features">
     <tr>
       <th></th>
-      <th style="border-top-left-radius: 0.7em"><img src="python.svg" alt="Python logo"><code
+      <th style="border-top-left-radius: 0.7em">
+        <a href="apidoc/python/"><img src="python.svg" alt="Python logo"><code
           class="constriction">constriction</code><br>for
-        Python</th>
-      <th style="border-top-right-radius: 0.7em"><img src="rust.svg" alt="Rust logo"><code
+        Python</a></th>
+      <th style="border-top-right-radius: 0.7em">
+        <a href="https://docs.rs/constriction/latest/constriction/"><img src="rust.svg" alt="Rust logo"><code
           class="constriction">constriction</code><br>for
-        Rust</th>
+        Rust</a></th>
     </tr>
     <tr>
       <td style="border-top-left-radius: 0.7em">Range Coding</td>
       <td class="included yes">
         <span>(<a
-            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/queue.html#example">example</a>)</span>
+            href="apidoc/python/stream/queue.html#example">example</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a href="https://docs.rs/constriction/latest/constriction/stream/queue/index.html">details</a>)</span>
@@ -719,7 +726,7 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
       <td>Asym&shy;met&shy;ric Numeral Systems (ANS)</td>
       <td class="included yes">
         <span>(<a
-            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/stack.html#example">example</a>)</span>
+            href="apidoc/python/stream/stack.html#example">example</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -730,7 +737,7 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
       <td>Chain Coding (experimental new method, see <a href="https://arxiv.org/pdf/2201.01741">proposal</a>)</td>
       <td class="included yes">
         <span>(<a
-            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/chain.html#motivation">example</a>)</span>
+            href="apidoc/python/stream/chain.html#motivation">example</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -741,7 +748,7 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
       <td>Huffman Coding</td>
       <td class="included yes">
         <span>(<a
-            href="https://bamler-lab.github.io/constriction/apidoc/python/symbol.html#examples">example</a>)</span>
+            href="apidoc/python/symbol.html#examples">example</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -752,7 +759,7 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
       <td>Efficient and exactly invertible entropy models</td>
       <td class="included yes">
         <span>(<a
-            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#header-classes">list</a>)</span>
+            href="apidoc/python/stream/model.html#header-classes">list</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -763,7 +770,7 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
       <td>Adapters for custom entropy models</td>
       <td class="included yes">
         <span>(<a
-            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel">details</a>)</span>
+            href="apidoc/python/stream/model.html#constriction.stream.model.CustomModel">details</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -774,7 +781,7 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
       <td>Compatible with <code>scipy&#8203;.stats</code></td>
       <td class="included yes">
         <span>(<a
-            href="https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.ScipyModel">details</a>)</span>
+            href="apidoc/python/stream/model.html#constriction.stream.model.ScipyModel">details</a>)</span>
       </td>
       <td class="included">
         n/a
