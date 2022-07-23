@@ -1378,7 +1378,7 @@ pub struct LeakilyQuantizedDistribution<F, Symbol, Probability, D, const PRECISI
     quantizer: LeakyQuantizer<F, Symbol, Probability, PRECISION>,
 }
 
-impl<'q, F, Symbol, Probability, D, const PRECISION: usize>
+impl<F, Symbol, Probability, D, const PRECISION: usize>
     LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION>
 where
     Probability: BitArray + Into<F>,
@@ -1469,7 +1469,7 @@ where
     symbol.borrow().wrapping_sub(&min_symbol_inclusive).as_() & mask
 }
 
-impl<'q, F, Symbol, Probability, D, const PRECISION: usize> EntropyModel<PRECISION>
+impl<F, Symbol, Probability, D, const PRECISION: usize> EntropyModel<PRECISION>
     for LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION>
 where
     Probability: BitArray,
@@ -1478,7 +1478,7 @@ where
     type Symbol = Symbol;
 }
 
-impl<'q, Symbol, Probability, D, const PRECISION: usize> EncoderModel<PRECISION>
+impl<Symbol, Probability, D, const PRECISION: usize> EncoderModel<PRECISION>
     for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
 where
     f64: AsPrimitive<Probability>,
@@ -1551,7 +1551,7 @@ where
     }
 }
 
-impl<'q, Symbol, Probability, D, const PRECISION: usize> DecoderModel<PRECISION>
+impl<Symbol, Probability, D, const PRECISION: usize> DecoderModel<PRECISION>
     for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
 where
     f64: AsPrimitive<Probability>,
@@ -1786,7 +1786,7 @@ pub struct LeakilyQuantizedDistributionIter<Symbol, Probability, M, const PRECIS
     left_sided_cumulative: Probability,
 }
 
-impl<'m, 'q, Symbol, Probability, D, const PRECISION: usize> Iterator
+impl<'m, Symbol, Probability, D, const PRECISION: usize> Iterator
     for LeakilyQuantizedDistributionIter<
         Symbol,
         Probability,
@@ -2013,7 +2013,7 @@ impl<Symbol, Probability, Table> SymbolTableIter<Symbol, Probability, Table> {
     }
 }
 
-impl<'a, Symbol, Probability, Table> Iterator for SymbolTableIter<Symbol, Probability, Table>
+impl<Symbol, Probability, Table> Iterator for SymbolTableIter<Symbol, Probability, Table>
 where
     Probability: BitArray,
     Table: SymbolTable<Symbol, Probability>,

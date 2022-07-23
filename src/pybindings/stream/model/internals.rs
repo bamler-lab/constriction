@@ -274,9 +274,9 @@ impl Model for UnspecializedPythonModel {
                 .map(|&param| {
                     let param = param.extract::<&PyArray1<f64>>()?;
                     if param.len() != len {
-                        return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                        return Err(pyo3::exceptions::PyAttributeError::new_err(
                             "Model parameters have unequal lengths.",
-                        )));
+                        ));
                     };
                     Ok(param
                         .as_cell_slice()
@@ -310,9 +310,9 @@ impl Model for UnspecializedPythonModel {
                 .map(|&param| {
                     let param = param.extract::<PyReadonlyArray1<'_, f64>>()?;
                     if param.len() != len {
-                        return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                        return Err(pyo3::exceptions::PyAttributeError::new_err(
                             "Model parameters have unequal lengths.",
-                        )));
+                        ));
                     };
                     param.iter()
                 })
