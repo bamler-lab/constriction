@@ -18,6 +18,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<Uniform>()?;
     module.add_class::<QuantizedGaussian>()?;
     module.add_class::<QuantizedLaplace>()?;
+    module.add_class::<QuantizedCauchy>()?;
     module.add_class::<Binomial>()?;
     module.add_class::<Bernoulli>()?;
     Ok(())
@@ -565,6 +566,94 @@ impl QuantizedLaplace {
                 );
                 let model = internals::ParameterizableModel::new(move |(mean,): (f64,)| {
                     let distribution = probability::distribution::Laplace::new(mean, scale);
+                    quantizer.quantize(distribution)
+                });
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+        };
+
+        Ok((Self, Model(model)))
+    }
+}
+
+/// A Cauchy distribution, quantized over bins of size 1 centered at integer values.
+///
+/// Analogous to [`QuantizedGaussian`](#constriction.stream.model.QuantizedGaussian), just
+/// starting from a Cauchy distribution rather than a Gaussian.
+///
+/// Before quantization, the probability density function of a Cauchy distribution is:
+///
+/// `p(x) = 1 / (pi * gamma * (1 + ((x - loc) / gamma)^2))`
+///
+/// where the parameters `loc` and `scale` parameterize the location of the mode and the
+/// width of the distribution.
+///
+/// ## Fixed Arguments
+///
+/// The following arguments always have to be provided directly to the constructor of the
+/// model. They cannot be delayed until encoding or decoding.
+///
+/// - **min_symbol_inclusive** and **max_symbol_inclusive** --- specify the integer range on
+///   which the model is defined.
+///
+/// ## Model Parameters
+///
+/// Each of the following model parameters can either be specified as a scalar when
+/// constructing the model, or as a rank-1 numpy array (with `dtype=np.float64`) when
+/// calling the entropy coder's encode or decode method.
+///
+/// - **loc** --- the location (mode) of the Cauchy distribution before quantization.
+/// - **scale** --- the scale parameter `gamma` of the Cauchy distribution before
+///   quantization (resulting in a full width at half maximum of `2 * scale`).
+#[pyclass(extends=Model)]
+#[pyo3(text_signature = "(min_symbol_inclusive, max_symbol_inclusive, loc=None, scale=None)")]
+#[derive(Debug)]
+struct QuantizedCauchy;
+
+#[pymethods]
+impl QuantizedCauchy {
+    #[new]
+    pub fn new(
+        min_symbol_inclusive: i32,
+        max_symbol_inclusive: i32,
+        loc: Option<f64>,
+        scale: Option<f64>,
+    ) -> PyResult<(Self, Model)> {
+        let model = match (loc, scale) {
+            (None, None) => {
+                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
+                    min_symbol_inclusive..=max_symbol_inclusive,
+                );
+                let model =
+                    internals::ParameterizableModel::new(move |(loc, scale): (f64, f64)| {
+                        let distribution = probability::distribution::Cauchy::new(loc, scale);
+                        quantizer.quantize(distribution)
+                    });
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+            (Some(loc), Some(scale)) => {
+                let distribution = probability::distribution::Cauchy::new(loc, scale);
+                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
+                    min_symbol_inclusive..=max_symbol_inclusive,
+                );
+                Arc::new(quantizer.quantize(distribution)) as Arc<dyn internals::Model>
+            }
+            (Some(loc), None) => {
+                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
+                    min_symbol_inclusive..=max_symbol_inclusive,
+                );
+                let model = internals::ParameterizableModel::new(move |(scale,): (f64,)| {
+                    let distribution = probability::distribution::Cauchy::new(loc, scale);
+                    quantizer.quantize(distribution)
+                });
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+            (None, Some(scale)) => {
+                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
+                    min_symbol_inclusive..=max_symbol_inclusive,
+                );
+                let model = internals::ParameterizableModel::new(move |(loc,): (f64,)| {
+                    let distribution = probability::distribution::Cauchy::new(loc, scale);
                     quantizer.quantize(distribution)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
