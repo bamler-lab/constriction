@@ -1,10 +1,26 @@
 [project]
+classifiers = [
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+  "Topic :: System :: Archiving :: Compression",
+  "Intended Audience :: Science/Research",
+]
 dependencies = [
   "numpy~=1.19",
+]
+maintainers = [
+  {name = "Robert Bamler", email = "robert.bamler@uni-tuebingen.de"},
 ]
 name = "constriction"
 readme = "README-python.md"
 requires-python = ">=3.6,<3.11"
+
+[project.urls]
+changelog = "https://github.com/bamler-lab/constriction/releases"
+documentation = "https://bamler-lab.github.io/constriction/apidoc/python/"
+homepage = "https://bamler-lab.github.io/constriction/"
+repository = "https://github.com/bamler-lab/constriction"
 
 [tool.poetry]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
@@ -24,7 +40,7 @@ python = "^3.7,<3.11"
 [tool.poetry.dev-dependencies]
 autopep8 = "*"
 flake8 = "^3.5"
-maturin = "^0.12.5"
+maturin = "^0.13.2"
 pdoc3 = "^0.9.2"
 pylint = "^2.6"
 pytest = "^6.1"
@@ -37,11 +53,4 @@ wheel = "*"
 [build-system]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
 build-backend = "maturin"
-classifiers = [
-  "Programming Language :: Rust",
-  "Programming Language :: Python :: Implementation :: CPython",
-  "Programming Language :: Python :: Implementation :: PyPy",
-  "Topic :: System :: Archiving :: Compression",
-  "Intended Audience :: Science/Research",
-]
 requires = ["maturin>=0.12,<0.13"]

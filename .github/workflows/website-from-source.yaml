@@ -62,7 +62,7 @@ jobs:
 
       - name: generate python API reference
         run: |
-          poetry run maturin develop --cargo-extra-args=--features=pybindings
+          poetry run maturin develop --features pybindings
           poetry run python pythondoc.py website/apidoc/python
           mv website/apidoc/python/constriction/* website/apidoc/python/
           rmdir website/apidoc/python/constriction

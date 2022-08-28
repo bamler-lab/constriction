@@ -172,8 +172,8 @@ use pyo3::{prelude::*, wrap_pymodule};
 #[pymodule]
 #[pyo3(name = "constriction")]
 fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
-    module.add_wrapped(wrap_pymodule!(stream))?;
-    module.add_wrapped(wrap_pymodule!(symbol))?;
+    module.add_wrapped(wrap_pymodule!(init_stream))?;
+    module.add_wrapped(wrap_pymodule!(init_symbol))?;
     Ok(())
 }
 
@@ -216,7 +216,8 @@ fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// [4] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 #[pymodule]
-fn stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+#[pyo3(name = "stream")]
+fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     stream::init_module(py, module)
 }
 
@@ -309,6 +310,7 @@ fn stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// assert decoded == message # (verifies correctness)
 /// ```
 #[pymodule]
-fn symbol(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+#[pyo3(name = "symbol")]
+fn init_symbol(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     symbol::init_module(py, module)
 }

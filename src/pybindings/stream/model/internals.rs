@@ -2,7 +2,7 @@ use core::{cell::RefCell, marker::PhantomData, num::NonZeroU32};
 use std::prelude::v1::*;
 
 use alloc::vec;
-use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use probability::distribution::{Distribution, Inverse};
 use pyo3::{prelude::*, types::PyTuple};
 
@@ -171,11 +171,13 @@ macro_rules! impl_model_for_parameterizable_model {
                 }
 
                 let $p0 = params[0].extract::<PyReadonlyArray1<'_, $ty0>>()?;
+                let $p0 = $p0.as_array();
 
                 #[allow(unused_variables)] // (`len` remains unused when macro is invoked with only one parameter.)
                 let len = $p0.len();
                 $(
                     let $ps = params[1].extract::<PyReadonlyArray1<'_, $tys>>()?;
+                    let $ps = $ps.as_array();
                     if $ps.len() != len {
                         return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
                             "Model parameters have unequal shape",
@@ -185,9 +187,9 @@ macro_rules! impl_model_for_parameterizable_model {
 
                 if reverse{
                     $(
-                        let mut $ps = $ps.as_slice()?.iter().rev();
+                        let mut $ps = $ps.iter().rev();
                     )*
-                    for &$p0 in $p0.as_slice()?.iter().rev() {
+                    for &$p0 in $p0.iter().rev() {
                         $(
                             let $ps = *$ps.next().expect("We checked that all params have same length.");
                         )*
@@ -195,9 +197,9 @@ macro_rules! impl_model_for_parameterizable_model {
                     }
                 } else {
                     $(
-                        let mut $ps = $ps.iter()?;
+                        let mut $ps = $ps.iter();
                     )*
-                    for &$p0 in $p0.iter()? {
+                    for &$p0 in $p0.iter() {
                         $(
                             let $ps = *$ps.next().expect("We checked that all params have same length.");
                         )*
@@ -264,76 +266,46 @@ impl Model for UnspecializedPythonModel {
         callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
         let params = params.as_slice();
-        let p0 = params[0].extract::<PyReadonlyArray1<'_, f64>>()?;
-        let len = p0.len();
+        let params = params
+            .iter()
+            .map(|param| param.extract::<PyReadonlyArray1<'_, f64>>())
+            .collect::<Result<Vec<_>, _>>()?;
+        let len = params[0].len();
+
+        for param in &params[1..] {
+            if param.len() != len {
+                return Err(pyo3::exceptions::PyAttributeError::new_err(
+                    "Model parameters have unequal lengths.",
+                ));
+            }
+        }
 
         let mut value_and_params = vec![0.0f64; params.len() + 1];
+
+        let mut iteration_step = |i: usize| {
+            for (src, dst) in params.iter().zip(&mut value_and_params[1..]) {
+                *dst = *src
+                    .get(i)
+                    .expect("We checked that all arrays have the same size.");
+            }
+
+            let distribution = SpecializedPythonDistribution {
+                cdf: &self.cdf,
+                approximate_inverse_cdf: &self.approximate_inverse_cdf,
+                value_and_params: RefCell::new(&mut value_and_params),
+                py,
+            };
+
+            (callback)(&self.quantizer.quantize(distribution))
+        };
+
         if reverse {
-            let mut remaining_params = params[1..]
-                .iter()
-                .map(|&param| {
-                    let param = param.extract::<&PyArray1<f64>>()?;
-                    if param.len() != len {
-                        return Err(pyo3::exceptions::PyAttributeError::new_err(
-                            "Model parameters have unequal lengths.",
-                        ));
-                    };
-                    Ok(param
-                        .as_cell_slice()
-                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
-                        .iter()
-                        .rev())
-                })
-                .collect::<PyResult<Vec<_>>>()?;
-
-            for &p0 in p0.as_slice()?.iter().rev() {
-                value_and_params[1] = p0;
-                for (src, dst) in remaining_params.iter_mut().zip(&mut value_and_params[2..]) {
-                    *dst = src
-                        .next()
-                        .expect("We checked that all arrays have the same size.")
-                        .get();
-                }
-
-                let distribution = SpecializedPythonDistribution {
-                    cdf: &self.cdf,
-                    approximate_inverse_cdf: &self.approximate_inverse_cdf,
-                    value_and_params: RefCell::new(&mut value_and_params),
-                    py,
-                };
-
-                (callback)(&self.quantizer.quantize(distribution))?;
+            for i in (0..len).rev() {
+                iteration_step(i)?;
             }
         } else {
-            let mut remaining_params = params[1..]
-                .iter()
-                .map(|&param| {
-                    let param = param.extract::<PyReadonlyArray1<'_, f64>>()?;
-                    if param.len() != len {
-                        return Err(pyo3::exceptions::PyAttributeError::new_err(
-                            "Model parameters have unequal lengths.",
-                        ));
-                    };
-                    param.iter()
-                })
-                .collect::<PyResult<Vec<_>>>()?;
-
-            for &p0 in p0.iter()? {
-                value_and_params[1] = p0;
-                for (src, dst) in remaining_params.iter_mut().zip(&mut value_and_params[2..]) {
-                    *dst = *src
-                        .next()
-                        .expect("We checked that all arrays have the same size.");
-                }
-
-                let distribution = SpecializedPythonDistribution {
-                    cdf: &self.cdf,
-                    approximate_inverse_cdf: &self.approximate_inverse_cdf,
-                    value_and_params: RefCell::new(&mut value_and_params),
-                    py,
-                };
-
-                (callback)(&self.quantizer.quantize(distribution))?;
+            for i in 0..len {
+                iteration_step(i)?;
             }
         }
 

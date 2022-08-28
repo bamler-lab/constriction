@@ -10,10 +10,10 @@ use std::prelude::v1::*;
 use crate::{stream::TryCodingError, CoderError, DefaultEncoderFrontendError};
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
-    module.add_wrapped(wrap_pymodule!(model))?;
-    module.add_wrapped(wrap_pymodule!(queue))?;
-    module.add_wrapped(wrap_pymodule!(stack))?;
-    module.add_wrapped(wrap_pymodule!(chain))?;
+    module.add_wrapped(wrap_pymodule!(init_model))?;
+    module.add_wrapped(wrap_pymodule!(init_queue))?;
+    module.add_wrapped(wrap_pymodule!(init_stack))?;
+    module.add_wrapped(wrap_pymodule!(init_chain))?;
     Ok(())
 }
 
@@ -99,7 +99,8 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 ///
 #[pymodule]
-fn model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+#[pyo3(name = "model")]
+fn init_model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     model::init_module(py, module)
 }
 
@@ -177,7 +178,8 @@ fn model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// [3] Rissanen, Jorma, and Glen G. Langdon. "Arithmetic coding." IBM Journal of research
 /// and development 23.2 (1979): 149-162.
 #[pymodule]
-fn queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+#[pyo3(name = "queue")]
+fn init_queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     queue::init_module(py, module)
 }
 
@@ -270,7 +272,8 @@ fn queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 #[pymodule]
-fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+#[pyo3(name = "stack")]
+fn init_stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     stack::init_module(py, module)
 }
 
@@ -412,7 +415,8 @@ fn stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///    `unseal=False` now). The method returns two arrays, which you may concatenate in
 ///    order.
 #[pymodule]
-fn chain(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+#[pyo3(name = "chain")]
+fn init_chain(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     chain::init_module(py, module)
 }
 

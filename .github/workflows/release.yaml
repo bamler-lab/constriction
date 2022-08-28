@@ -130,7 +130,7 @@ jobs:
 
       - name: Build Python package
         if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
-        run: poetry run maturin develop --release --cargo-extra-args=--features=pybindings
+        run: poetry run maturin develop --release --features pybindings
 
       - name: pytest
         if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
@@ -184,7 +184,7 @@ jobs:
 
       - name: generate python API reference
         run: |
-          poetry run maturin develop --cargo-extra-args=--features=pybindings
+          poetry run maturin develop --features pybindings
           poetry run python pythondoc.py website/apidoc/python
           mv website/apidoc/python/constriction/* website/apidoc/python/
           rmdir website/apidoc/python/constriction
@@ -270,7 +270,7 @@ jobs:
         with:
           command: build
           manylinux: 2014
-          args: --release --no-sdist --strip --cargo-extra-args=--features=pybindings
+          args: --release --strip --features pybindings
 
       # For some reason, manyliniux builds create wheels owned by the root user,
       # which breaks our attempts to add the license file below.
@@ -283,7 +283,7 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --no-sdist --strip --cargo-extra-args=--features=pybindings
+          args: --release --strip --features pybindings
 
       - name: Cross-build wheels for Apple Silicon
         if: matrix.os == 'macos-latest'
@@ -291,14 +291,14 @@ jobs:
         with:
           target: aarch64-apple-darwin
           command: build
-          args: --release --no-sdist --strip --cargo-extra-args=--features=pybindings
+          args: --release --strip --features pybindings
 
       - name: Build universal2 wheels
         if: matrix.os == 'macos-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --no-sdist --strip --cargo-extra-args=--features=pybindings --universal2
+          args: --release --strip --features pybindings --universal2
 
       - name: List wheels (unix)
         if: matrix.os != 'windows-latest'

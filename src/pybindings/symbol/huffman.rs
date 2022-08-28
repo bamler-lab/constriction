@@ -36,7 +36,7 @@ impl EncoderHuffmanTree {
     #[new]
     pub fn new(probabilities: PyReadonlyArray1<'_, f64>) -> PyResult<Self> {
         let inner = huffman::EncoderHuffmanTree::from_float_probabilities::<f64, _>(
-            probabilities.iter().unwrap(),
+            probabilities.as_array(),
         )?;
 
         Ok(Self { inner })
@@ -68,7 +68,7 @@ impl DecoderHuffmanTree {
     #[new]
     pub fn new(probabilities: PyReadonlyArray1<'_, f64>) -> PyResult<Self> {
         let inner = huffman::DecoderHuffmanTree::from_float_probabilities::<f64, _>(
-            probabilities.iter().unwrap(),
+            probabilities.as_array(),
         )?;
 
         Ok(Self { inner })
