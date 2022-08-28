@@ -373,7 +373,7 @@ impl ChainCoder {
         let quantizer = DefaultLeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
         let symbols = self
             .inner
-            .try_decode_symbols(means.iter()?.zip(stds.iter()?).map(|(&mean, &std)| {
+            .try_decode_symbols(means.as_array().iter().zip(stds.as_array()).map(|(&mean, &std)| {
                 if std > 0.0 && std.is_finite() && mean.is_finite() {
                     Ok(quantizer.quantize(Gaussian::new(mean, std)))
                 } else {
