@@ -37,7 +37,7 @@ We currently provide implementations of the following entropy coding algorithms:
   ("first in first out"), which makes it preferable for autoregressive models.
 - **Chain Coding:** an experimental new entropy coder that combines the (net) effectiveness
   of stream codes with the locality of symbol codes (for details, see Section&nbsp;4.3 in
-  [this paper](https://arxiv.org/pdf/2201.01741)]); it admits experimental new compression
+  [this paper](https://arxiv.org/pdf/2201.01741)); it admits experimental new compression
   techniques that perform joint inference, quantization, and bits-back coding in an
   end-to-end optimization. This experimental coder is mainly provided to prove to ourselves
   that the API for encoding and decoding, which is shared across all stream coders, is
