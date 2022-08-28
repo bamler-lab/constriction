@@ -188,7 +188,7 @@
       text-align: center;
     }
 
-    th>a{
+    th>a {
       text-decoration: none;
       display: inline-block;
     }
@@ -526,6 +526,7 @@
         color: #ecd1b9;
       }
     }
+
   </style>
   <script>
     function toggleTab(event) {
@@ -664,15 +665,19 @@ constriction = "0.2.4"</pre>
       </li>
       <li>Defining a custom entropy model: <a
           href="https://github.com/bamler-lab/constriction/blob/main/examples/python/02-custom-entropy-models.ipynb">Python&nbsp;example</a>
-        | Rust&nbsp;example (coming soon)
+        | <a
+          href="https://docs.rs/constriction/latest/constriction/stream/model/struct.NonContiguousCategoricalEncoderModel.html#example">Rust
+          example&nbsp;1</a> | <a
+          href="https://docs.rs/constriction/latest/constriction/stream/model/struct.LeakyQuantizer.html#quantizing-continuous-distributions">Rust
+          example&nbsp;2</a>
         <!-- TODO -->
       </li>
       <li>Compressing natural language with an autoregressive machine learning model: <a
           href="https://github.com/bamler-lab/constriction/blob/main/examples/python/03-tutorial-autoregressive-nlp-compression.ipynb">Python&nbsp;tutorial</a>
       </li>
       <li>Bits-back coding with a latent variable model: <a
-          href="https://robamler.github.io/teaching/compress21/problem-set-05.zip">Python&nbsp;Problem&nbsp;Set</a> | <a
-          href="https://robamler.github.io/teaching/compress21/problem-set-05-solutions.zip">Solutions</a>
+          href="https://robamler.github.io/teaching/compress22/problem-set-07.zip">Python&nbsp;Problem&nbsp;Set</a> | <a
+          href="https://robamler.github.io/teaching/compress22/problem-set-07-solutions.zip">Solutions</a>
       </li>
       <!-- TODO:  <li>Deploying your compression method on the web using WebAssembly: <a href="TODO">Rust&nbsp;tutorial</a> | <a
           href="https://robamler.github.io/linguistic-flux-capacitor/" target="_blank">finished&nbsp;demo</a></li> -->
@@ -687,10 +692,9 @@ constriction = "0.2.4"</pre>
       </li>
     </ul>
     <ul id="background">
-      <li><a href="https://robamler.github.io/teaching/compress21/">Lecture notes</a> from a university course on data
+      <li><a href="https://robamler.github.io/teaching/compress22/">Lecture notes</a> from a university course on data
         compression with and
-        without deep probabilistic models (includes video recordings, whiteboard screenshots, and problem sets with
-        solutions).</li>
+        without deep probabilistic models (includes problem sets with solutions).</li>
       <li><a href="https://www.youtube.com/playlist?list=PL05umP7R6ij0Mp1dW2HuXlb-UQIYnv8xK">YouTube playlist</a> of
         the above university course.</li>
       <li>Paper with benchmark results of <code class="constriction">constriction</code>'s entropy coders (in
@@ -705,18 +709,19 @@ constriction = "0.2.4"</pre>
       <th></th>
       <th style="border-top-left-radius: 0.7em">
         <a href="apidoc/python/"><img src="python.svg" alt="Python logo"><code
-          class="constriction">constriction</code><br>for
-        Python</a></th>
+            class="constriction">constriction</code><br>for
+          Python</a>
+      </th>
       <th style="border-top-right-radius: 0.7em">
         <a href="https://docs.rs/constriction/latest/constriction/"><img src="rust.svg" alt="Rust logo"><code
-          class="constriction">constriction</code><br>for
-        Rust</a></th>
+            class="constriction">constriction</code><br>for
+          Rust</a>
+      </th>
     </tr>
     <tr>
       <td style="border-top-left-radius: 0.7em">Range Coding</td>
       <td class="included yes">
-        <span>(<a
-            href="apidoc/python/stream/queue.html#example">example</a>)</span>
+        <span>(<a href="apidoc/python/stream/queue.html#example">example</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a href="https://docs.rs/constriction/latest/constriction/stream/queue/index.html">details</a>)</span>
@@ -725,8 +730,7 @@ constriction = "0.2.4"</pre>
     <tr>
       <td>Asym&shy;met&shy;ric Numeral Systems (ANS)</td>
       <td class="included yes">
-        <span>(<a
-            href="apidoc/python/stream/stack.html#example">example</a>)</span>
+        <span>(<a href="apidoc/python/stream/stack.html#example">example</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -736,8 +740,7 @@ constriction = "0.2.4"</pre>
     <tr>
       <td>Chain Coding (experimental new method, see <a href="https://arxiv.org/pdf/2201.01741">proposal</a>)</td>
       <td class="included yes">
-        <span>(<a
-            href="apidoc/python/stream/chain.html#motivation">example</a>)</span>
+        <span>(<a href="apidoc/python/stream/chain.html#motivation">example</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -747,8 +750,7 @@ constriction = "0.2.4"</pre>
     <tr>
       <td>Huffman Coding</td>
       <td class="included yes">
-        <span>(<a
-            href="apidoc/python/symbol.html#examples">example</a>)</span>
+        <span>(<a href="apidoc/python/symbol.html#examples">example</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -758,8 +760,7 @@ constriction = "0.2.4"</pre>
     <tr>
       <td>Efficient and exactly invertible entropy models</td>
       <td class="included yes">
-        <span>(<a
-            href="apidoc/python/stream/model.html#header-classes">list</a>)</span>
+        <span>(<a href="apidoc/python/stream/model.html#header-classes">list</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -769,8 +770,7 @@ constriction = "0.2.4"</pre>
     <tr>
       <td>Adapters for custom entropy models</td>
       <td class="included yes">
-        <span>(<a
-            href="apidoc/python/stream/model.html#constriction.stream.model.CustomModel">details</a>)</span>
+        <span>(<a href="apidoc/python/stream/model.html#constriction.stream.model.CustomModel">details</a>)</span>
       </td>
       <td class="included yes">
         <span>(<a
@@ -780,8 +780,7 @@ constriction = "0.2.4"</pre>
     <tr>
       <td>Compatible with <code>scipy&#8203;.stats</code></td>
       <td class="included yes">
-        <span>(<a
-            href="apidoc/python/stream/model.html#constriction.stream.model.ScipyModel">details</a>)</span>
+        <span>(<a href="apidoc/python/stream/model.html#constriction.stream.model.ScipyModel">details</a>)</span>
       </td>
       <td class="included">
         n/a
