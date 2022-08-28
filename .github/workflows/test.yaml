@@ -175,7 +175,7 @@ jobs:
 
       - name: Build Python package
         if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
-        run: poetry run maturin develop --release '--cargo-extra-args=--features pybindings'
+        run: poetry run maturin develop --release --features pybindings
 
       - name: pytest
         if: matrix.os != 'windows-latest' || matrix.python-version != '3.6'
