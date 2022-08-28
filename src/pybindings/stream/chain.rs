@@ -146,7 +146,7 @@ impl ChainCoder {
         // Don't use an `else` branch here because, if the following `extract` fails, the returned
         // error message is actually pretty user friendly.
         let symbols = symbols.extract::<PyReadonlyArray1<'_, i32>>()?;
-        let symbols = symbols.as_slice()?;
+        let symbols = symbols.as_array();
 
         if params.is_empty() {
             model.0.as_parameterized(py, &mut |model| {
@@ -194,7 +194,7 @@ impl ChainCoder {
             None
         );
 
-        let (symbols, means, stds) = (symbols.as_slice()?, means.as_slice()?, stds.as_slice()?);
+        let (symbols, means, stds) = (symbols.as_array(), means.as_array(), stds.as_array());
         if symbols.len() != means.len() || symbols.len() != stds.len() {
             return Err(pyo3::exceptions::PyAttributeError::new_err(
                 "`symbols`, `means`, and `stds` must all have the same length.",
@@ -250,7 +250,7 @@ impl ChainCoder {
 
         self.inner.encode_iid_symbols_reverse(
             symbols
-                .as_slice()?
+                .as_array()
                 .iter()
                 .map(|s| s.wrapping_sub(min_supported_symbol) as usize),
             &model,
