@@ -53,4 +53,4 @@ wheel = "*"
 [build-system]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
 build-backend = "maturin"
-requires = ["maturin>=0.12,<0.13"]
+requires = ["maturin>=0.13,<0.14"]
