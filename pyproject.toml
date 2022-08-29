@@ -14,7 +14,7 @@ maintainers = [
 ]
 name = "constriction"
 readme = "README-python.md"
-requires-python = ">=3.6,<3.11"
+requires-python = ">=3.7,<3.11"
 
 [project.urls]
 changelog = "https://github.com/bamler-lab/constriction/releases"
@@ -53,4 +53,4 @@ wheel = "*"
 [build-system]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
 build-backend = "maturin"
-requires = ["maturin>=0.12,<0.13"]
+requires = ["maturin>=0.13,<0.14"]
