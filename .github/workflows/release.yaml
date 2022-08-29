@@ -128,7 +128,35 @@ jobs:
         run: poetry run maturin develop --release --features pybindings
 
       - name: pytest
-        run: poetry run pytest tests/python
+        run: poetry run pytest tests/python | tee pytest.out
+
+      - name: Verify that pytest used correct python version (unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
+          echo "Expected python version: ${{ matrix.python-version }}"
+          echo "Found python version:    $USED_PYTHON_VERSION"
+          if [ "x${{ matrix.python-version }}y" == "x${USED_PYTHON_VERSION}y" ]; then
+            echo "Versions match."
+          else
+            echo "ERROR: versions don't match."
+            exit 1
+          fi
+
+      - name: Verify that pytest used correct python version (windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          $USED_PYTHON_VERSION = grep -A1 -iE '^=+ test session starts =+$' pytest.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }'
+          echo "Expected python version: ${{ matrix.python-version }}"
+          echo "Found python version:    $USED_PYTHON_VERSION"
+          if ( "x${{ matrix.python-version }}y" -eq "x${USED_PYTHON_VERSION}y" )
+          {
+            echo "Versions match."
+          }
+          else
+          {
+            throw "ERROR: versions don't match."
+          }
 
   testall:
     runs-on: ubuntu-latest
