@@ -463,9 +463,9 @@ where
     /// [`from_compressed`]: #method.from_compressed
     /// [`iter_compressed`]: #method.iter_compressed
     /// [`into_compressed`]: #method.into_compressed
-    pub fn get_compressed<'a>(
-        &'a mut self,
-    ) -> Result<impl Deref<Target = Backend> + Debug + Drop + 'a, Backend::WriteError>
+    pub fn get_compressed(
+        &mut self,
+    ) -> Result<impl Deref<Target = Backend> + Debug + Drop + '_, Backend::WriteError>
     where
         Backend: ReadWords<Word, Stack> + WriteWords<Word> + Debug,
     {
@@ -475,9 +475,9 @@ where
         })
     }
 
-    pub fn get_binary<'a>(
-        &'a mut self,
-    ) -> Result<impl Deref<Target = Backend> + Debug + Drop + 'a, CoderError<(), Backend::WriteError>>
+    pub fn get_binary(
+        &mut self,
+    ) -> Result<impl Deref<Target = Backend> + Debug + Drop + '_, CoderError<(), Backend::WriteError>>
     where
         Backend: ReadWords<Word, Stack> + WriteWords<Word> + Debug,
     {
