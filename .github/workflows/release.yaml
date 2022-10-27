@@ -76,6 +76,7 @@ jobs:
 
       - name: Get latest rust nightly version that has miri
         id: versions
+        shell: bash
         run: |
           case ${{ matrix.os }} in
             ubuntu-latest)
