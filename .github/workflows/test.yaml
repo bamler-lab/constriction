@@ -33,8 +33,11 @@ jobs:
 
       - name: Get rust version
         id: versions
+        shell: bash
         run: |
-          echo "::set-output name=rustc::$(rustc --version | awk '{ print $2 }')"
+          version=$(rustc --version | awk '{ print $2 }')
+          echo "Found version: $version"
+          echo "rustc=$version" >> $GITHUB_OUTPUT
 
       - name: Cache Rust dependencies
         uses: actions/cache@v2
@@ -92,8 +95,25 @@ jobs:
 
       - name: Get latest rust nightly version that has miri
         id: versions
+        shell: bash
         run: |
-          echo "::set-output name=rustc::nightly-$(curl -s https://rust-lang.github.io/rustup-components-history/x86_64-unknown-linux-gnu/miri)"
+          case ${{ matrix.os }} in
+            ubuntu-latest)
+              arch="x86_64-unknown-linux-gnu"
+              ;;
+
+            macos-latest)
+              arch="x86_64-apple-darwin"
+              ;;
+
+            windows-latest)
+              arch="x86_64-pc-windows-msvc"
+              ;;
+          esac
+
+          version="nightly-$(curl -s https://rust-lang.github.io/rustup-components-history/$arch/miri)"
+          echo "Found version: $version"
+          echo "rustc=$version" >> $GITHUB_OUTPUT
 
       - name: Cache Rust dependencies
         uses: actions/cache@v2
@@ -117,7 +137,7 @@ jobs:
       - name: Run tests in miri
         env:
           RUSTFLAGS: "-Zrandomize-layout"
-          MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-check-number-validity -Zmiri-tag-raw-pointers -Zmiri-disable-isolation"
+          MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-disable-isolation"
         run: |
           cargo miri test --no-fail-fast --all-targets
 
@@ -127,7 +147,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.7", "3.8", "3.9", "3.10"]
+        python-version: ["3.7", "3.8", "3.9", "3.10", "3.11"]
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
@@ -153,8 +173,11 @@ jobs:
 
       - name: Get rust version
         id: versions
+        shell: bash
         run: |
-          echo "::set-output name=rustc::$(rustc --version | awk '{ print $2 }')"
+          version=$(rustc --version | awk '{ print $2 }')
+          echo "Found version: $version"
+          echo "rustc=$version" >> $GITHUB_OUTPUT
 
       - name: Cache Rust dependencies
         uses: actions/cache@v2

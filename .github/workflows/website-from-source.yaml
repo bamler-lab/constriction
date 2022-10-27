@@ -12,10 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v1
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.11
         uses: actions/setup-python@v2
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install Python dependencies
         run: |
@@ -33,7 +33,9 @@ jobs:
       - name: Get rust version
         id: versions
         run: |
-          echo "::set-output name=rustc::$(rustc --version | awk '{ print $2 }')"
+          version=$(rustc --version | awk '{ print $2 }')
+          echo "Found version: $version"
+          echo "rustc=$version" >> $GITHUB_OUTPUT
 
       - name: Cache Rust dependencies
         uses: actions/cache@v2
