@@ -77,7 +77,23 @@ jobs:
       - name: Get latest rust nightly version that has miri
         id: versions
         run: |
-          echo "::set-output name=rustc::nightly-$(curl -s https://rust-lang.github.io/rustup-components-history/x86_64-unknown-linux-gnu/miri)"
+          case ${{ matrix.os }} in
+            ubuntu-latest)
+              arch="x86_64-unknown-linux-gnu"
+              ;;
+
+            macos-latest)
+              arch="x86_64-apple-darwin"
+              ;;
+
+            windows-latest)
+              arch="x86_64-pc-windows-msvc"
+              ;;
+          esac
+
+          version="nightly-$(curl -s https://rust-lang.github.io/rustup-components-history/$arch/miri)"
+          echo "Found version: $version"
+          echo "rustc=$version" >> $GITHUB_OUTPUT
 
       - name: Install rust ${{ steps.versions.outputs.rustc }}
         uses: actions-rs/toolchain@v1
@@ -90,7 +106,7 @@ jobs:
       - name: Run tests in miri
         env:
           RUSTFLAGS: "-Zrandomize-layout"
-          MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-check-number-validity -Zmiri-tag-raw-pointers -Zmiri-disable-isolation"
+          MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-disable-isolation"
         run: |
           cargo miri test --no-fail-fast --all-targets
 
@@ -293,7 +309,7 @@ jobs:
           manylinux: 2014
           args: --release --strip --features pybindings
 
-      # For some reason, manyliniux builds create wheels owned by the root user,
+      # For some reason, manylinux builds create wheels owned by the root user,
       # which breaks our attempts to add the license file below.
       - name: Fix wheel ownership on linux
         if: matrix.os == 'ubuntu-latest'

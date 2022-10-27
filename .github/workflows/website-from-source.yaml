@@ -33,7 +33,7 @@ jobs:
       - name: Get rust version
         id: versions
         run: |
-          echo "::set-output name=rustc::$(rustc --version | awk '{ print $2 }')"
+          echo "rustc=$(rustc --version | awk '{ print $2 }')" >> $GITHUB_OUTPUT
 
       - name: Cache Rust dependencies
         uses: actions/cache@v2
