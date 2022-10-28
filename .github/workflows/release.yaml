@@ -302,8 +302,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build wheels for linux
-        if: matrix.os == 'ubuntu-latest'
+      - name: Build wheels (unix)
+        if: matrix.os != 'windows-latest'
+        uses: messense/maturin-action@v1
+        with:
+          command: build
+          manylinux: 2014
+          args: --release --strip --features pybindings -i python3.7 python3.8 python3.9 python3.10 python3.11
+
+      - name: Build wheels (windows)
+        if: matrix.os == 'windows-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
@@ -316,27 +324,20 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo chown -R runner:docker target
 
-      - name: Build wheels for ${{ matrix.os }}
-        if: matrix.os != 'ubuntu-latest'
-        uses: messense/maturin-action@v1
-        with:
-          command: build
-          args: --release --strip --features pybindings
-
       - name: Cross-build wheels for Apple Silicon
         if: matrix.os == 'macos-latest'
         uses: messense/maturin-action@v1
         with:
           target: aarch64-apple-darwin
           command: build
-          args: --release --strip --features pybindings
+          args: --release --strip --features pybindings -i python3.7 python3.8 python3.9 python3.10 python3.11
 
       - name: Build universal2 wheels
         if: matrix.os == 'macos-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --strip --features pybindings --universal2
+          args: --release --strip --features pybindings --universal2 -i python3.7 python3.8 python3.9 python3.10 python3.11
 
       - name: List wheels (unix)
         if: matrix.os != 'windows-latest'
