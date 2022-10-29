@@ -278,26 +278,31 @@ jobs:
           override: true
 
       - name: Set up Python 3.7
+        id: setup-python-3-7
         uses: actions/setup-python@v2
         with:
           python-version: 3.7
 
       - name: Set up Python 3.8
+        id: setup-python-3-8
         uses: actions/setup-python@v2
         with:
           python-version: 3.8
 
       - name: Set up Python 3.9
+        id: setup-python-3-9
         uses: actions/setup-python@v2
         with:
           python-version: 3.9
 
       - name: Set up Python 3.10
+        id: setup-python-3-10
         uses: actions/setup-python@v2
         with:
           python-version: "3.10"
 
       - name: Set up Python 3.11
+        id: setup-python-3-11
         uses: actions/setup-python@v2
         with:
           python-version: "3.11"
@@ -315,8 +320,7 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           command: build
-          manylinux: 2014
-          args: --release --strip --features pybindings
+          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-7.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe
 
       # For some reason, manylinux builds create wheels owned by the root user,
       # which breaks our attempts to add the license file below.
