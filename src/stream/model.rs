@@ -2319,6 +2319,7 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// TODO: should also return an error if support is too large to support leaky
     /// distribution
     #[allow(clippy::result_unit_err)]
+    #[cfg(feature = "std")]
     pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: FloatCore + core::iter::Sum<F> + Into<f64>,
@@ -2514,6 +2515,7 @@ where
     /// TODO: should also return an error if support is too large to support leaky
     /// distribution
     #[allow(clippy::result_unit_err)]
+    #[cfg(feature = "std")]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
         probabilities: &[F],
@@ -3051,6 +3053,7 @@ where
     /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities`]
     /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
     #[allow(clippy::result_unit_err)]
+    #[cfg(feature = "std")]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: impl IntoIterator<Item = Symbol>,
         probabilities: &[F],
@@ -3202,6 +3205,7 @@ where
     }
 }
 
+#[cfg(feature = "std")]
 struct Slot<Probability> {
     original_index: usize,
     prob: f64,
@@ -3257,6 +3261,7 @@ where
     Ok(symbols)
 }
 
+#[cfg(feature = "std")]
 fn optimize_leaky_categorical<Probability, F, const PRECISION: usize>(
     probabilities: &[F],
 ) -> Result<Vec<Slot<Probability>>, ()>
@@ -3496,6 +3501,7 @@ where
     ///
     /// TODO: example
     #[allow(clippy::result_unit_err)]
+    #[cfg(feature = "std")]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
         probabilities: &[F],
@@ -3610,6 +3616,7 @@ where
     ///
     /// TODO: example
     #[allow(clippy::result_unit_err)]
+    #[cfg(feature = "std")]
     pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: FloatCore + core::iter::Sum<F> + Into<f64>,

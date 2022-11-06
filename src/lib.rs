@@ -276,7 +276,7 @@ use core::{
     convert::Infallible,
     fmt::{Binary, Debug, Display, LowerHex, UpperHex},
     hash::Hash,
-    num::{NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
+    num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
 };
 
 use num_traits::{AsPrimitive, PrimInt, Unsigned, WrappingAdd, WrappingMul, WrappingSub};
@@ -731,9 +731,11 @@ unsafe_impl_bit_array!(
     (u16, NonZeroU16),
     (u32, NonZeroU32),
     (u64, NonZeroU64),
-    (u128, NonZeroU128),
     (usize, NonZeroUsize),
 );
+
+#[cfg(feature = "std")]
+unsafe_impl_bit_array!((u128, core::num::NonZeroU128),);
 
 pub trait UnwrapInfallible<T> {
     fn unwrap_infallible(self) -> T;
