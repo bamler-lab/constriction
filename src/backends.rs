@@ -89,6 +89,7 @@
 //! demultiplexing for some container format.
 //!
 //! ```
+//! #[cfg(not(miri))] {
 //! use constriction::{
 //!     backends::{FallibleCallbackWriteWords, FallibleIteratorReadWords},
 //!     stream::{
@@ -172,6 +173,7 @@
 //!
 //! encode_to_file_on_the_fly(1000);
 //! decode_from_file_on_the_fly(1000);
+//! # } // (cfg(not(miri)))
 //! ```
 //!
 //! [`BitArray`]: crate::BitArray
@@ -1819,7 +1821,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -1830,7 +1832,6 @@ mod tests {
     };
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn decode_on_the_fly_stack() {
         fn encode_to_file(amt: u32) {
             let quantizer = DefaultLeakyQuantizer::new(-256..=255);

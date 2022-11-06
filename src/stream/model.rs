@@ -137,31 +137,12 @@ use num::{
     Float, One, PrimInt, Zero,
 };
 
-/// Re-export or replacement of [`probability::distribution::Distribution`].
+/// Re-export of [`probability::distribution::Distribution`].
 ///
 /// Most users will never have to interact with this trait directly. When a method requires
 /// a type that implements `Distribution`, most users will likely use a predefined type from
 /// the [`probability`] crate. You only need to implement this trait if you want to use a
 /// probability distribution that is not (yet) provided by the `probability` crate.
-///
-/// # Technical Details
-///
-/// - For most users, this trait is just a re-export (similar to a type alias) of the
-///   [`Distribution` trait from the `probability` crate]. You'll need a type that
-///   implements `Distribution` when you call [`LeakyQuantizer::quantize`]. The
-///   `probability` crate provides implementations of several common `Distribution`s.
-/// - Unfortunately, the `probability` crate does not support `no_std` mode. Thus, if you
-///   compile `constriction` in `no_std` mode (by setting `default-features = false` for
-///   `constriction` in your `Cargo.toml`) then you can't use the `probability` crate . In
-///   this case, the present trait (`constriction::stream::model::Distribution`) is not a
-///   re-export but instead a literal copy of its definition in the `probability` trait.
-///
-/// # Advice for Implementors
-///
-/// If you implement your own probability distribution (rather than using a pre-defined
-/// distribution from the `probability` crate) then it is usually better to implement *this*
-/// trait rather than `probability::distribution::Distribution`. This way, your code will
-/// work as expected both in `std` and in `no_std` mode.
 ///
 /// # See Also
 ///
@@ -169,38 +150,15 @@ use num::{
 ///
 /// [`probability::distribution::Distribution`]:
 ///     https://docs.rs/probability/latest/probability/distribution/trait.Distribution.html
-/// [`Distribution` trait from the `probability` crate]:
-///     https://docs.rs/probability/latest/probability/distribution/trait.Distribution.html
 /// [`probability`]: https://docs.rs/probability/latest/probability/
-#[cfg(feature = "probability")]
 pub use probability::distribution::Distribution;
 
-/// Re-export or replacement of [`probability::distribution::Inverse`].
+/// Re-export of [`probability::distribution::Inverse`].
 ///
 /// Most users will never have to interact with this trait directly. When a method requires
 /// a type that implements `Inverse`, most users will likely use a predefined type from
 /// the [`probability`] crate. You only need to implement this trait if you want to use a
 /// probability distribution that is not (yet) provided by the `probability` crate.
-///
-/// # Technical Details
-///
-/// - For most users, this trait is just a re-export (similar to a type alias) of the
-///   [`Inverse` trait from the `probability` crate]. You'll need a type that implements
-///   `Inverse` when you call [`LeakyQuantizer::quantize`] and then use the resulting
-///   [`LeakilyQuantizedDistribution`] for *decoding*. The `probability` crate provides
-///   implementations of `Inverse` for several common probability distributions.
-/// - Unfortunately, the `probability` crate does not support `no_std` mode. Thus, if you
-///   compile `constriction` in `no_std` mode (by setting `default-features = false` for
-///   `constriction` in your `Cargo.toml`) then you can't use the `probability` crate . In
-///   this case, the present trait (`constriction::stream::model::Inverse`) is not a
-///   re-export but instead a literal copy of its definition in the `probability` trait.
-///
-/// # Advice for Implementors
-///
-/// If you implement your own probability distribution (rather than using a pre-defined
-/// distribution from the `probability` crate) then it is usually better to implement *this*
-/// trait rather than `probability::distribution::Inverse`. This way, your code will
-/// work as expected both in `std` and in `no_std` mode.
 ///
 /// # See Also
 ///
@@ -208,38 +166,8 @@ pub use probability::distribution::Distribution;
 ///
 /// [`probability::distribution::Inverse`]:
 ///     https://docs.rs/probability/latest/probability/distribution/trait.Inverse.html
-/// [`Inverse` trait from the `probability` crate]:
-///     https://docs.rs/probability/latest/probability/distribution/trait.Inverse.html
 /// [`probability`]: https://docs.rs/probability/latest/probability/
-#[cfg(feature = "probability")]
 pub use probability::distribution::Inverse;
-
-/// Mock replacement for [`probability::distribution::Distribution`] in a `no_std` context
-///
-/// This trait is only exported if `constriction` is used in a `no_std` context (i.e., with
-/// `default-features = false`). In this case, we can't use the `probability` crate because
-/// it uses a lot of FFI calls. However, for many things, we really only need the trait
-/// definitions for `Distribution` and for [`Inverse`], so we copy them here.
-#[cfg(not(feature = "probability"))]
-pub trait Distribution {
-    /// The type of outcomes.
-    type Value;
-
-    /// Compute the cumulative distribution function.
-    fn distribution(&self, x: f64) -> f64;
-}
-
-/// Mock replacement for [`probability::distribution::Distribution`] in a `no_std` context
-///
-/// This trait is only exported if `constriction` is used in a `no_std` context (i.e., with
-/// `default-features = false`). In this case, we can't use the `probability` crate because
-/// it uses a lot of FFI calls. However, for many things, we really only need the trait
-/// definitions for [`Distribution`] and for `Inverse`, so we copy them here.
-#[cfg(not(feature = "probability"))]
-pub trait Inverse: Distribution {
-    /// Compute the inverse of the cumulative distribution function.
-    fn inverse(&self, p: f64) -> Self::Value;
-}
 
 use crate::{wrapping_pow2, BitArray, NonZeroBitArray};
 
