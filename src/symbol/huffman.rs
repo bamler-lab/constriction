@@ -5,7 +5,7 @@
 //! Huffman, David A. "A method for the construction of minimum-redundancy codes."
 //! Proceedings of the IRE 40.9 (1952): 1098-1101.
 
-use num_traits::Float;
+use num_traits::float::FloatCore;
 
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
 use core::{
@@ -50,14 +50,14 @@ impl EncoderHuffmanTree {
 
     pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, NanError>
     where
-        P: Float + Clone + Add<Output = P>,
+        P: FloatCore + Clone + Add<Output = P>,
         I: IntoIterator,
         I::Item: Borrow<P>,
     {
         Self::try_from_probabilities(
             probabilities
                 .into_iter()
-                .map(|p| NonNanFloat::new(*p.borrow())),
+                .map(|p| NonNanFloatCore::new(*p.borrow())),
         )
     }
 
@@ -185,14 +185,14 @@ impl DecoderHuffmanTree {
 
     pub fn from_float_probabilities<P, I>(probabilities: I) -> Result<Self, NanError>
     where
-        P: Float + Clone + Add<Output = P>,
+        P: FloatCore + Clone + Add<Output = P>,
         I: IntoIterator,
         I::Item: Borrow<P>,
     {
         Self::try_from_probabilities(
             probabilities
                 .into_iter()
-                .map(|p| NonNanFloat::new(*p.borrow())),
+                .map(|p| NonNanFloatCore::new(*p.borrow())),
         )
     }
 
@@ -270,11 +270,11 @@ impl DecoderCodebook for DecoderHuffmanTree {
 }
 
 #[derive(PartialOrd, Clone, Copy)]
-struct NonNanFloat<F: Float> {
+struct NonNanFloatCore<F: FloatCore> {
     inner: F,
 }
 
-impl<F: Float> NonNanFloat<F> {
+impl<F: FloatCore> NonNanFloatCore<F> {
     fn new(x: F) -> Result<Self, NanError> {
         if x.is_nan() {
             Err(NanError::NaN)
@@ -284,28 +284,28 @@ impl<F: Float> NonNanFloat<F> {
     }
 }
 
-impl<F: Float> PartialEq for NonNanFloat<F> {
+impl<F: FloatCore> PartialEq for NonNanFloatCore<F> {
     fn eq(&self, other: &Self) -> bool {
         self.inner.eq(&other.inner)
     }
 }
 
-impl<F: Float> Eq for NonNanFloat<F> {}
+impl<F: FloatCore> Eq for NonNanFloatCore<F> {}
 
 #[allow(clippy::derive_ord_xor_partial_ord)]
-impl<F: Float> Ord for NonNanFloat<F> {
+impl<F: FloatCore> Ord for NonNanFloatCore<F> {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.inner
             .partial_cmp(&other.inner)
-            .expect("NonNanFloat::inner is not NaN.")
+            .expect("NonNanFloatCore::inner is not NaN.")
     }
 }
 
-impl<F: Float> Add for NonNanFloat<F> {
+impl<F: FloatCore> Add for NonNanFloatCore<F> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        NonNanFloat {
+        NonNanFloatCore {
             inner: self.inner + rhs.inner,
         }
     }
@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(tree.nodes, [12, 13, 15, 10, 11, 14, 16, 17, 0]);
         assert_eq!(encode_all_symbols(&tree), ["00", "01", "11", "100", "101"]);
 
-        // Let's not test ties of sums in floating point probabilities since they'll depend
+        // Let's not test ties of sums in floatCoreing point probabilities since they'll depend
         // on rounding errors (but should still be deterministic).
         let tree =
             EncoderHuffmanTree::from_float_probabilities::<f32, _>(&[0.19, 0.2, 0.41, 0.1, 0.1])
@@ -438,7 +438,7 @@ mod tests {
             &EncoderHuffmanTree::from_probabilities::<u32, _>(&[2, 2, 4, 1, 1]),
         );
 
-        // Let's not test ties of sums in floating point probabilities since they'll depend
+        // Let's not test ties of sums in floatCoreing point probabilities since they'll depend
         // on rounding errors (but should still be deterministic).
         let tree =
             DecoderHuffmanTree::from_float_probabilities::<f32, _>(&[0.19, 0.2, 0.41, 0.1, 0.1])

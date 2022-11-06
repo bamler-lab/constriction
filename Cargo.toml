@@ -20,7 +20,8 @@ name = "constriction"
 
 [features]
 default = ["std"]
-std = ["probability"]
+libm = ["num-traits/libm"]
+std = ["probability", "num-traits/std"]
 
 # Use feature `pybindings` to compile the python extension module that provides
 # access to this library from python. This feature is turned off by default
@@ -30,7 +31,7 @@ pybindings = ["ndarray", "numpy", "pyo3"]
 
 [dependencies]
 hashbrown = "0.12.3"
-num-traits = {version = "0.2.15", default-features = false, features = ["libm"]}
+num-traits = {version = "0.2.15", default-features = false}
 smallvec = "1.6.1"
 
 probability = {version = "0.19.1", optional = true}
@@ -42,6 +43,7 @@ pyo3 = {version = "0.17.1", features = ["extension-module"], optional = true}
 [dev-dependencies]
 byteorder = "1.4.2"
 criterion = "0.3"
+probability = "0.19.1"
 rand = "0.8.3"
 rand_pcg = "0.3"
 rand_xoshiro = "0.6"

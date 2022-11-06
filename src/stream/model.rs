@@ -131,7 +131,7 @@ use hashbrown::hash_map::{
 
 use alloc::{boxed::Box, vec::Vec};
 use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::RangeInclusive};
-use num_traits::{AsPrimitive, Float, One, PrimInt, WrappingAdd, WrappingSub, Zero};
+use num_traits::{float::FloatCore, AsPrimitive, One, PrimInt, WrappingAdd, WrappingSub, Zero};
 
 /// Re-export or replacement of [`probability::distribution::Distribution`].
 ///
@@ -441,9 +441,10 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// Note that calling this method on a [`LeakilyQuantizedDistribution`] will return the
     /// entropy *after quantization*, not the differential entropy of the underlying
     /// continuous probability distribution.
+    #[cfg(any(feature = "std", feature = "libm"))]
     fn entropy_base2<F>(&'m self) -> F
     where
-        F: Float + core::iter::Sum,
+        F: num_traits::Float + core::iter::Sum,
         Self::Probability: Into<F>,
     {
         let entropy_scaled = self
@@ -545,7 +546,7 @@ pub struct FloatingPointSymbolTable<F, I, const PRECISION: usize> {
 impl<F, Symbol, Probability, I, const PRECISION: usize> Iterator
     for FloatingPointSymbolTable<F, I, PRECISION>
 where
-    F: Float,
+    F: FloatCore,
     Probability: BitArray + Into<F>,
     I: Iterator<Item = (Symbol, Probability, <Probability as BitArray>::NonZero)>,
 {
@@ -570,7 +571,7 @@ where
 impl<F, Symbol, Probability, I, const PRECISION: usize> ExactSizeIterator
     for FloatingPointSymbolTable<F, I, PRECISION>
 where
-    F: Float,
+    F: FloatCore,
     Probability: BitArray + Into<F>,
     I: ExactSizeIterator<Item = (Symbol, Probability, <Probability as BitArray>::NonZero)>,
 {
@@ -678,7 +679,7 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     #[inline]
     fn floating_point_probability<F>(&self, symbol: Self::Symbol) -> F
     where
-        F: Float,
+        F: FloatCore,
         Self::Probability: Into<F>,
     {
         // This gets compiled to a single floating point multiplication rather than a (slow)
@@ -788,9 +789,10 @@ where
         (*self).symbol_table()
     }
 
+    #[cfg(any(feature = "std", feature = "libm"))]
     fn entropy_base2<F>(&'m self) -> F
     where
-        F: Float + core::iter::Sum,
+        F: num_traits::Float + core::iter::Sum,
         Self::Probability: Into<F>,
     {
         (*self).entropy_base2()
@@ -1249,7 +1251,7 @@ impl<F, Symbol, Probability, const PRECISION: usize>
 where
     Probability: BitArray + Into<F>,
     Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
-    F: Float,
+    F: FloatCore,
 {
     /// Constructs a `LeakyQuantizer` with a finite support.
     ///
@@ -1379,7 +1381,7 @@ impl<F, Symbol, Probability, D, const PRECISION: usize>
 where
     Probability: BitArray + Into<F>,
     Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
-    F: Float,
+    F: FloatCore,
 {
     /// Returns the quantizer that was used to create this entropy model.
     ///
@@ -2319,7 +2321,7 @@ impl<Probability: BitArray, const PRECISION: usize>
     #[allow(clippy::result_unit_err)]
     pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -2517,7 +2519,7 @@ where
         probabilities: &[F],
     ) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -3054,7 +3056,7 @@ where
         probabilities: &[F],
     ) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -3142,9 +3144,10 @@ where
     /// - because the order in which entries are stored will generally be different on each
     ///   program execution, rounding errors will be slightly different across multiple
     ///   program executions.
+    #[cfg(any(feature = "std", feature = "libm"))]
     pub fn entropy_base2<F>(&self) -> F
     where
-        F: Float + core::iter::Sum,
+        F: num_traits::Float + core::iter::Sum,
         Probability: Into<F>,
     {
         let entropy_scaled = self
@@ -3258,7 +3261,7 @@ fn optimize_leaky_categorical<Probability, F, const PRECISION: usize>(
     probabilities: &[F],
 ) -> Result<Vec<Slot<Probability>>, ()>
 where
-    F: Float + core::iter::Sum<F> + Into<f64>,
+    F: FloatCore + core::iter::Sum<F> + Into<f64>,
     Probability: BitArray + Into<f64> + AsPrimitive<usize>,
     f64: AsPrimitive<Probability>,
     usize: AsPrimitive<Probability>,
@@ -3498,7 +3501,7 @@ where
         probabilities: &[F],
     ) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -3609,7 +3612,7 @@ where
     #[allow(clippy::result_unit_err)]
     pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
