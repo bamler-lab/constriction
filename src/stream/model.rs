@@ -3863,22 +3863,44 @@ mod tests {
     use probability::distribution::{Binomial, Gaussian};
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn leakily_quantized_normal() {
-        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
-        for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
-            for &mean in &[-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0] {
+        #[cfg(not(miri))]
+        let (support, std_devs, means) = (
+            -127..=127,
+            [0.0001, 0.1, 3.5, 123.45, 1234.56],
+            [-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0],
+        );
+
+        // We use different settings when testing on miri so that the test time stays reasonable.
+        #[cfg(miri)]
+        let (support, std_devs, means) = (-50..=50, [0.0001, 3.5, 1234.56], [-300.6, -5.2, 2000.0]);
+
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
+        for &std_dev in &std_devs {
+            for &mean in &means {
                 let distribution = Gaussian::new(mean, std_dev);
-                test_entropy_model(&quantizer.quantize(distribution), -127..128);
+                test_entropy_model(
+                    &quantizer.quantize(distribution),
+                    *support.start()..*support.end() + 1,
+                );
             }
         }
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn leakily_quantized_binomial() {
-        for &n in &[1, 2, 10, 100, 1000, 10_000] {
-            for &p in &[1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9] {
+        #[cfg(not(miri))]
+        let (ns, ps) = (
+            [1, 2, 10, 100, 1000, 10_000],
+            [1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9],
+        );
+
+        // We use different settings when testing on miri so that the test time stays reasonable.
+        #[cfg(miri)]
+        let (ns, ps) = ([1, 2, 100], [1e-30, 0.1, 0.4]);
+
+        for &n in &ns {
+            for &p in &ps {
                 if n < 1000 || p >= 0.1 {
                     // In the excluded situations, `<Binomial as Inverse>::inverse` currently doesn't terminate.
                     // TODO: file issue to `probability` repo.
@@ -3907,11 +3929,17 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn entropy() {
-        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-1000..=1000);
-        for &std_dev in &[100., 200., 300.] {
-            for &mean in &[-10., 2.3, 50.1] {
+        #[cfg(not(miri))]
+        let (support, std_devs, means) = (-1000..=1000, [100., 200., 300.], [-10., 2.3, 50.1]);
+
+        // We use different settings when testing on miri so that the test time stays reasonable.
+        #[cfg(miri)]
+        let (support, std_devs, means) = (-100..=100, [10., 20., 30.], [-1., 0.23, 5.01]);
+
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support);
+        for &std_dev in &std_devs {
+            for &mean in &means {
                 let distribution = Gaussian::new(mean, std_dev);
                 let model = quantizer.quantize(distribution);
                 let entropy = model.entropy_base2::<f64>();
@@ -3924,7 +3952,6 @@ mod tests {
     /// Test that `optimal_weights` reproduces the same distribution when fed with an
     /// already quantized model.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn trivial_optimal_weights() {
         let hist = [
             56319u32, 134860032, 47755520, 60775168, 75699200, 92529920, 111023616, 130420736,
@@ -3950,7 +3977,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn nontrivial_optimal_weights() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -4031,7 +4057,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -4049,7 +4074,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn non_contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,

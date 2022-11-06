@@ -1,7 +1,6 @@
 //! This is the example from `README.md`
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn example() {
     use constriction::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Decode};
 
