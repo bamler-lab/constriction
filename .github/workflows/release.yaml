@@ -54,6 +54,18 @@ jobs:
           command: test
           toolchain: stable
 
+      - name: Install latest nightly Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+
+      - name: Test `no_std` compatibility
+        shell: bash
+        working-directory: ensure_no_std
+        run: cargo +nightly rustc -- -C link-arg=-nostartfiles
+
       - name: Test in release mode
         uses: actions-rs/cargo@v1.0.1
         env:

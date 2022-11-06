@@ -1,0 +1,23 @@
+# This is a small helper subcrate whose only purpose is to test whether the parent crate is
+# `no_std` compatible. The implementation of this subcrate follows Danilo Bargen's blog post:
+# https://blog.dbrgn.ch/2019/12/24/testing-for-no-std-compatibility/
+#
+# Note that the potentially more elegant solution using `cargo-nono` doesn't work as of
+# `cargo-nono` version 0.1.9: it reports spurious `std`-dependencies behind deactivated features.
+
+[package]
+edition = "2021"
+name = "ensure_no_std"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+constriction = {path = "..", default-features = false}
+wee_alloc = "0.4.5"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
