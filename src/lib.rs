@@ -279,11 +279,7 @@ use core::{
     num::{NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
 };
 
-use num::{
-    cast::AsPrimitive,
-    traits::{WrappingAdd, WrappingMul, WrappingSub},
-    PrimInt, Unsigned,
-};
+use num_traits::{AsPrimitive, PrimInt, Unsigned, WrappingAdd, WrappingMul, WrappingSub};
 
 // READ WRITE SEMANTICS =======================================================
 
@@ -718,7 +714,7 @@ macro_rules! unsafe_impl_bit_array {
                         // have a significant impact on performance, but it doesn't seem to
                         // anymore as of rust version 1.58.0 (although the check itself is
                         // still there).
-                        if non_zero == num::zero::<Self::Base>() {
+                        if non_zero == num_traits::zero::<Self::Base>() {
                             core::hint::unreachable_unchecked();
                         } else {
                             non_zero

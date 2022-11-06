@@ -131,11 +131,7 @@ use hashbrown::hash_map::{
 
 use alloc::{boxed::Box, vec::Vec};
 use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::RangeInclusive};
-use num::{
-    cast::AsPrimitive,
-    traits::{WrappingAdd, WrappingSub},
-    Float, One, PrimInt, Zero,
-};
+use num_traits::{AsPrimitive, Float, One, PrimInt, WrappingAdd, WrappingSub, Zero};
 
 /// Re-export of [`probability::distribution::Distribution`].
 ///
@@ -3860,7 +3856,7 @@ mod tests {
     use super::super::{stack::DefaultAnsCoder, Decode};
 
     use alloc::{string::String, vec};
-    use probability::distribution::{Binomial, Gaussian};
+    use probability::distribution::{Binomial, Cauchy, Gaussian};
 
     #[test]
     fn leakily_quantized_normal() {
@@ -3879,6 +3875,31 @@ mod tests {
         for &std_dev in &std_devs {
             for &mean in &means {
                 let distribution = Gaussian::new(mean, std_dev);
+                test_entropy_model(
+                    &quantizer.quantize(distribution),
+                    *support.start()..*support.end() + 1,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn leakily_quantized_cauchy() {
+        #[cfg(not(miri))]
+        let (support, gammas, means) = (
+            -127..=127,
+            [0.0001, 0.1, 3.5, 123.45, 1234.56],
+            [-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0],
+        );
+
+        // We use different settings when testing on miri so that the test time stays reasonable.
+        #[cfg(miri)]
+        let (support, gammas, means) = (-50..=50, [0.0001, 3.5, 1234.56], [-300.6, -5.2, 2000.0]);
+
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
+        for &gamma in &gammas {
+            for &mean in &means {
+                let distribution = Cauchy::new(mean, gamma);
                 test_entropy_model(
                     &quantizer.quantize(distribution),
                     *support.start()..*support.end() + 1,

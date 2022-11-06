@@ -40,7 +40,7 @@ use core::{
     ops::Deref,
 };
 
-use num::cast::AsPrimitive;
+use num_traits::AsPrimitive;
 
 use super::{
     model::{DecoderModel, EncoderModel},

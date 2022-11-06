@@ -2,7 +2,7 @@
 
 use std::{cmp::max, cmp::min, ops::RangeInclusive};
 
-use num::cast::AsPrimitive;
+use num_traits::AsPrimitive;
 use probability::{
     distribution::{Gaussian, Sample},
     source::{Source, Xorshift128Plus},

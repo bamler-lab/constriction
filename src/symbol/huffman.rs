@@ -5,7 +5,7 @@
 //! Huffman, David A. "A method for the construction of minimum-redundancy codes."
 //! Proceedings of the IRE 40.9 (1952): 1098-1101.
 
-use num::Float;
+use num_traits::Float;
 
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
 use core::{

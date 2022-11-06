@@ -1,9 +1,6 @@
 use core::{borrow::Borrow, marker::PhantomData};
 
-use num::{
-    traits::{WrappingAdd, WrappingSub},
-    PrimInt, Unsigned,
-};
+use num_traits::{PrimInt, Unsigned, WrappingAdd, WrappingSub};
 
 use super::{Codebook, DecoderCodebook, EncoderCodebook, SymbolCodeError};
 use crate::{CoderError, DefaultEncoderError};

@@ -1,4 +1,4 @@
-use core::{cell::RefCell, marker::PhantomData, num::NonZeroU32};
+use core::{cell::RefCell, marker::PhantomData, num_traits::NonZeroU32};
 use std::prelude::v1::*;
 
 use alloc::vec;

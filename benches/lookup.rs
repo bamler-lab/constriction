@@ -10,7 +10,7 @@ use constriction::{
     BitArray, Pos, Seek,
 };
 use criterion::{black_box, criterion_group, Criterion};
-use num::cast::AsPrimitive;
+use num_traits::AsPrimitive;
 use rand::{RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 

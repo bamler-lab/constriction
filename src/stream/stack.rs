@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use core::{
     borrow::Borrow, convert::Infallible, fmt::Debug, iter::Fuse, marker::PhantomData, ops::Deref,
 };
-use num::cast::AsPrimitive;
+use num_traits::AsPrimitive;
 
 use super::{
     model::{DecoderModel, EncoderModel},
