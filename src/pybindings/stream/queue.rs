@@ -149,7 +149,7 @@ impl RangeEncoder {
     /// ```
     #[pyo3(text_signature = "()")]
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> &'p PyArray1<u32> {
-        PyArray1::from_slice(py, &*self.inner.get_compressed())
+        PyArray1::from_slice(py, &self.inner.get_compressed())
     }
 
     /// Returns a `RangeDecoder` that is initialized with a copy of the compressed data currently on

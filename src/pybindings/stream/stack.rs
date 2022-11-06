@@ -337,11 +337,11 @@ impl AnsCoder {
                 pyo3::exceptions::PyAssertionError::new_err(
                     "Cannot unseal compressed data because it doesn't fit into integer number of words. Did you create the encoder with `seal=True` and restore its original state?",
                 ))?;
-            Ok(PyArray1::from_slice(py, &*binary))
+            Ok(PyArray1::from_slice(py, &binary))
         } else {
             Ok(PyArray1::from_slice(
                 py,
-                &*self.inner.get_compressed().unwrap_infallible(),
+                &self.inner.get_compressed().unwrap_infallible(),
             ))
         }
     }
