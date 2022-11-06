@@ -1160,7 +1160,12 @@ mod tests {
         f64: AsPrimitive<Probability>,
         i32: AsPrimitive<Probability>,
     {
+        #[cfg(not(miri))]
         const AMT: usize = 1000;
+
+        #[cfg(miri)]
+        const AMT: usize = 100;
+
         let mut symbols_gaussian = Vec::with_capacity(AMT);
         let mut means = Vec::with_capacity(AMT);
         let mut stds = Vec::with_capacity(AMT);
@@ -1239,8 +1244,11 @@ mod tests {
 
     #[test]
     fn seek() {
-        const NUM_CHUNKS: usize = 100;
-        const SYMBOLS_PER_CHUNK: usize = 100;
+        #[cfg(not(miri))]
+        let (num_chunks, symbols_per_chunk) = (100, 100);
+
+        #[cfg(miri)]
+        let (num_chunks, symbols_per_chunk) = (10, 10);
 
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-100..=100);
         let model = quantizer.quantize(Gaussian::new(0.0, 10.0));
@@ -1248,12 +1256,12 @@ mod tests {
         let mut encoder = DefaultRangeEncoder::new();
 
         let mut rng = Xoshiro256StarStar::seed_from_u64(123);
-        let mut symbols = Vec::with_capacity(NUM_CHUNKS);
-        let mut jump_table = Vec::with_capacity(NUM_CHUNKS);
+        let mut symbols = Vec::with_capacity(num_chunks);
+        let mut jump_table = Vec::with_capacity(num_chunks);
 
-        for _ in 0..NUM_CHUNKS {
+        for _ in 0..num_chunks {
             jump_table.push(encoder.pos());
-            let chunk = (0..SYMBOLS_PER_CHUNK)
+            let chunk = (0..symbols_per_chunk)
                 .map(|_| model.quantile_function(rng.next_u32() % (1 << 24)).0)
                 .collect::<Vec<_>>();
             encoder.encode_iid_symbols(&chunk, &model).unwrap();
@@ -1268,7 +1276,7 @@ mod tests {
         // implement `Pos` due to complications at the stream end.)
         for (chunk, _) in symbols.iter().zip(&jump_table) {
             let decoded = decoder
-                .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                .decode_iid_symbols(symbols_per_chunk, &model)
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
             assert_eq!(&decoded, chunk);
@@ -1281,13 +1289,13 @@ mod tests {
                 // Make sure we test jumping to beginning at least once.
                 0
             } else {
-                rng.next_u32() as usize % NUM_CHUNKS
+                rng.next_u32() as usize % num_chunks
             };
 
             let pos_and_state = jump_table[chunk_index];
             decoder.seek(pos_and_state).unwrap();
             let decoded = decoder
-                .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                .decode_iid_symbols(symbols_per_chunk, &model)
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
             assert_eq!(&decoded, &symbols[chunk_index])

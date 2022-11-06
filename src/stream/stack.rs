@@ -1303,7 +1303,12 @@ mod tests {
         f64: AsPrimitive<Probability>,
         i32: AsPrimitive<Probability>,
     {
+        #[cfg(not(miri))]
         const AMT: usize = 1000;
+
+        #[cfg(miri)]
+        const AMT: usize = 100;
+
         let mut symbols_gaussian = Vec::with_capacity(AMT);
         let mut means = Vec::with_capacity(AMT);
         let mut stds = Vec::with_capacity(AMT);
@@ -1388,8 +1393,11 @@ mod tests {
 
     #[test]
     fn seek() {
-        const NUM_CHUNKS: usize = 100;
-        const SYMBOLS_PER_CHUNK: usize = 100;
+        #[cfg(not(miri))]
+        let (num_chunks, symbols_per_chunk) = (100, 100);
+
+        #[cfg(miri)]
+        let (num_chunks, symbols_per_chunk) = (10, 10);
 
         let quantizer = DefaultLeakyQuantizer::new(-100..=100);
         let model = quantizer.quantize(Gaussian::new(0.0, 10.0));
@@ -1397,12 +1405,12 @@ mod tests {
         let mut encoder = DefaultAnsCoder::new();
 
         let mut rng = Xoshiro256StarStar::seed_from_u64(123);
-        let mut symbols = Vec::with_capacity(NUM_CHUNKS);
-        let mut jump_table = Vec::with_capacity(NUM_CHUNKS);
+        let mut symbols = Vec::with_capacity(num_chunks);
+        let mut jump_table = Vec::with_capacity(num_chunks);
         let (initial_pos, initial_state) = encoder.pos();
 
-        for _ in 0..NUM_CHUNKS {
-            let chunk = (0..SYMBOLS_PER_CHUNK)
+        for _ in 0..num_chunks {
+            let chunk = (0..symbols_per_chunk)
                 .map(|_| model.quantile_function(rng.next_u32() % (1 << 24)).0)
                 .collect::<Vec<_>>();
             encoder.encode_iid_symbols_reverse(&chunk, &model).unwrap();
@@ -1418,7 +1426,7 @@ mod tests {
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
                 assert_eq!(seekable_decoder.pos(), (pos, state));
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                    .decode_iid_symbols(symbols_per_chunk, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, chunk)
@@ -1428,11 +1436,11 @@ mod tests {
 
             // Seek to some random offsets in the jump table and decode one chunk
             for _ in 0..100 {
-                let chunk_index = rng.next_u32() as usize % NUM_CHUNKS;
+                let chunk_index = rng.next_u32() as usize % num_chunks;
                 let (pos, state) = jump_table[chunk_index];
                 seekable_decoder.seek((pos, state)).unwrap();
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                    .decode_iid_symbols(symbols_per_chunk, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, &symbols[chunk_index])
@@ -1455,7 +1463,7 @@ mod tests {
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
                 assert_eq!(seekable_decoder.pos(), (pos, state));
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                    .decode_iid_symbols(symbols_per_chunk, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, chunk)
@@ -1465,11 +1473,11 @@ mod tests {
 
             // Seek to some random offsets in the jump table and decode one chunk each time.
             for _ in 0..100 {
-                let chunk_index = rng.next_u32() as usize % NUM_CHUNKS;
+                let chunk_index = rng.next_u32() as usize % num_chunks;
                 let (pos, state) = jump_table[chunk_index];
                 seekable_decoder.seek((pos, state)).unwrap();
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                    .decode_iid_symbols(symbols_per_chunk, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, &symbols[chunk_index])

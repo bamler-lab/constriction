@@ -134,8 +134,9 @@ fn grid() {
     let amts = [
         10,
         100,
+        #[cfg(not(miri))]
         1000,
-        #[cfg(not(debug_assertions))]
+        #[cfg(not(any(miri, debug_assertions)))]
         10000,
     ];
 

@@ -1255,6 +1255,10 @@ mod tests {
         f64: AsPrimitive<Probability>,
         i32: AsPrimitive<Probability>,
     {
+        #[cfg(miri)]
+        let (amt_compressed_words, amt_symbols) =
+            (amt_compressed_words.min(128), amt_symbols.min(100));
+
         let mut rng = Xoshiro256StarStar::seed_from_u64(
             (amt_compressed_words as u64).rotate_left(32) ^ amt_symbols as u64,
         );
