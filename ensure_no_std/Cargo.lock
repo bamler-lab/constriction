@@ -31,6 +31,7 @@ version = "0.2.5"
 dependencies = [
  "hashbrown",
  "num-traits",
+ "probability",
  "smallvec",
 ]
 
@@ -110,6 +111,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86f0b0d4bf799edbc74508c1e8bf170ff5f41238e5f8225603ca7caaae2b7860"
 
 [[package]]
+name = "probability"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d5506784a003ab90372c5ce00c4b5d68a14d2b90b7170de1be0dfe3faa43bb6"
+dependencies = [
+ "random",
+ "special",
+]
+
+[[package]]
+name = "random"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "474c42c904f04dfe2a595a02f71e1a0e5e92ffb5761cc9a4c02140b93b8dd504"
+
+[[package]]
 name = "scopeguard"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -131,6 +148,15 @@ name = "smallvec"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
+
+[[package]]
+name = "special"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d256a3d3497ee65685b3c0267cf13eb9d32920e58eac5bf0e457cb12c3c4f5bb"
+dependencies = [
+ "libm",
+]
 
 [[package]]
 name = "spin"

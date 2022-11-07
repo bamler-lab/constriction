@@ -496,9 +496,9 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "probability"
-version = "0.19.1"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52bcca6a0257cb7ea4599f2d3bd8141f63a4becee52230c040a4d815bea66f2a"
+checksum = "1d5506784a003ab90372c5ce00c4b5d68a14d2b90b7170de1be0dfe3faa43bb6"
 dependencies = [
  "random",
  "special",
@@ -632,9 +632,9 @@ dependencies = [
 
 [[package]]
 name = "random"
-version = "0.12.2"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97d13a3485349981c90c79112a11222c3e6e75de1d52b87a7525b3bf5361420f"
+checksum = "474c42c904f04dfe2a595a02f71e1a0e5e92ffb5761cc9a4c02140b93b8dd504"
 
 [[package]]
 name = "rawpointer"
@@ -761,9 +761,9 @@ checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
 
 [[package]]
 name = "special"
-version = "0.9.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f70115e5d5fe08b5f02f7c709c4bf72dc299528bca63e46183e0389a12a0a645"
+checksum = "d256a3d3497ee65685b3c0267cf13eb9d32920e58eac5bf0e457cb12c3c4f5bb"
 dependencies = [
  "libm",
 ]
