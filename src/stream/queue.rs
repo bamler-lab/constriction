@@ -1123,10 +1123,7 @@ mod tests {
             let std_dev = (10.0 / u32::MAX as f64) * rng.next_u32() as f64 + 0.001;
             let quantile = (rng.next_u32() as f64 + 0.5) / (1u64 << 32) as f64;
             let dist = Gaussian::new(mean, std_dev);
-            let symbol = core::cmp::max(
-                -127,
-                core::cmp::min(127, dist.inverse(quantile).round() as i32),
-            );
+            let symbol = (dist.inverse(quantile).round() as i32).clamp(-127, 127);
 
             symbols_gaussian.push(symbol);
             means.push(mean);
