@@ -3354,8 +3354,12 @@ where
             break;
         }
 
+        // Setting `seller.win = -infinity` and `buyer.loss = infinity` below ensures that the
+        // iteration converges even in the presence of rounding errors because each weight can
+        // only be continuously increased or continuously decreased, and the range of allowed
+        // weights is bounded from both above and below. See unit test `categorical_converges`.
         seller.weight = seller.weight - Probability::one();
-        seller.win = seller.prob * (1.0f64 / seller.weight.into()).ln_1p();
+        seller.win = f64::neg_infinity(); // Once a weight gets reduced it may never be increased again.
         seller.loss = if seller.weight == Probability::one() {
             f64::infinity()
         } else {
@@ -3364,8 +3368,8 @@ where
 
         let buyer = &mut slots[buyer_index];
         buyer.weight = buyer.weight + Probability::one();
+        buyer.loss = f64::infinity(); // Once a weight gets increased it may never be decreased again.
         buyer.win = buyer.prob * (1.0f64 / buyer.weight.into()).ln_1p();
-        buyer.loss = -buyer.prob * (-1.0f64 / buyer.weight.into()).ln_1p();
     }
 
     slots.sort_unstable_by_key(|slot| slot.original_index);
@@ -4060,6 +4064,42 @@ mod tests {
             assert!(hist >= previous);
             previous = hist;
         }
+    }
+
+    /// Regression test for convergence of `optimize_leaky_categorical`.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn categorical_converges() {
+        // Two example probability distributions that lead to an infinite loop in constriction 0.2.5
+        // (see <https://github.com/bamler-lab/constriction/issues/20>).
+        let example1 = [0.15, 0.69, 0.15];
+        let example2 = [
+            1.34673042e-04,
+            6.52306480e-04,
+            3.14999325e-03,
+            1.49921896e-02,
+            6.67127371e-02,
+            2.26679876e-01,
+            3.75356406e-01,
+            2.26679876e-01,
+            6.67127594e-02,
+            1.49922138e-02,
+            3.14990873e-03,
+            6.52299321e-04,
+            1.34715927e-04,
+        ];
+
+        let categorical =
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&example1)
+                .unwrap();
+        let prob0 = categorical.left_cumulative_and_probability(0).unwrap().1;
+        let prob2 = categorical.left_cumulative_and_probability(2).unwrap().1;
+        assert!((-1..=1).contains(&(prob0.get() as i64 - prob2.get() as i64)));
+
+        let _ =
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&example2)
+                .unwrap();
+        // Nothing to test here. As long as the above line didn't cause an infinite loop we're good.
     }
 
     #[test]
