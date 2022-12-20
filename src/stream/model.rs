@@ -4070,7 +4070,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn categorical_converges() {
-        // Two example probability distributions that lead to an infinite loop in constriction 0.2.5
+        // Two example probability distributions that lead to an infinite loop in constriction 0.2.6
         // (see <https://github.com/bamler-lab/constriction/issues/20>).
         let example1 = [0.15, 0.69, 0.15];
         let example2 = [
