@@ -276,14 +276,10 @@ use core::{
     convert::Infallible,
     fmt::{Binary, Debug, Display, LowerHex, UpperHex},
     hash::Hash,
-    num::{NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
+    num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
 };
 
-use num::{
-    cast::AsPrimitive,
-    traits::{WrappingAdd, WrappingMul, WrappingSub},
-    PrimInt, Unsigned,
-};
+use num_traits::{AsPrimitive, PrimInt, Unsigned, WrappingAdd, WrappingMul, WrappingSub};
 
 // READ WRITE SEMANTICS =======================================================
 
@@ -340,8 +336,8 @@ impl<BackendError: Display, FrontendError: Display> Display
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Frontend(err) => write!(f, "Invalid compressed data: {}", err),
-            Self::Backend(err) => write!(f, "Error while reading compressed data: {}", err),
+            Self::Frontend(err) => write!(f, "Invalid compressed data: {err}"),
+            Self::Backend(err) => write!(f, "Error while reading compressed data: {err}"),
         }
     }
 }
@@ -718,7 +714,7 @@ macro_rules! unsafe_impl_bit_array {
                         // have a significant impact on performance, but it doesn't seem to
                         // anymore as of rust version 1.58.0 (although the check itself is
                         // still there).
-                        if non_zero == num::zero::<Self::Base>() {
+                        if non_zero == num_traits::zero::<Self::Base>() {
                             core::hint::unreachable_unchecked();
                         } else {
                             non_zero
@@ -735,9 +731,11 @@ unsafe_impl_bit_array!(
     (u16, NonZeroU16),
     (u32, NonZeroU32),
     (u64, NonZeroU64),
-    (u128, NonZeroU128),
     (usize, NonZeroUsize),
 );
+
+#[cfg(feature = "std")]
+unsafe_impl_bit_array!((u128, core::num::NonZeroU128),);
 
 pub trait UnwrapInfallible<T> {
     fn unwrap_infallible(self) -> T;

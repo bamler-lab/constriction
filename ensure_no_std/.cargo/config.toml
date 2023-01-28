@@ -1,0 +1,21 @@
+# We need to cross-compile the core library.
+[unstable]
+build-std = [
+  "alloc",
+  "compiler_builtins",
+  "core",
+]
+build-std-features = ["compiler-builtins-mem"]
+
+[build]
+rustflags = [
+  # See https://doc.rust-lang.org/rustc/codegen-options/index.html for possible rustflags
+  # use custom linker script
+  "-C",
+  "link-args=-n -T src/link.ld", # The default of the x86_64-unknown-none built-in Rust compiler target is "pic".
+  # See: https://github.com/rust-lang/rust/blob/1.62.1/compiler/rustc_target/src/spec/x86_64_unknown_none.rs
+  # This is not supported by Hedron.
+  "-C",
+  "relocation-model=static",
+]
+target = "x86_64-unknown-none"

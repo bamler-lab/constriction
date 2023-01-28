@@ -265,9 +265,9 @@ impl ChainCoder {
     ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
     ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel) model class.
     #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn encode_iid_custom_model_reverse<'py>(
+    pub fn encode_iid_custom_model_reverse(
         &mut self,
-        py: Python<'py>,
+        py: Python<'_>,
         symbols: PyReadonlyArray1<'_, i32>,
         model: &Model,
     ) -> PyResult<()> {
@@ -293,9 +293,9 @@ impl ChainCoder {
     /// entropy model).
     #[pyo3(text_signature = "(model, optional_amt_or_model_params)")]
     #[args(symbols, model, params = "*")]
-    pub fn decode<'py>(
+    pub fn decode(
         &mut self,
-        py: Python<'py>,
+        py: Python<'_>,
         model: &Model,
         params: &PyTuple,
     ) -> PyResult<PyObject> {
@@ -434,9 +434,9 @@ impl ChainCoder {
     ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
     ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel) model class.
     #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn decode_iid_custom_model<'py>(
+    pub fn decode_iid_custom_model(
         &mut self,
-        py: Python<'py>,
+        py: Python<'_>,
         amt: usize,
         model: &Model,
     ) -> PyResult<PyObject> {

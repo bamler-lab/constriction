@@ -318,7 +318,7 @@ use core::{
 
 use crate::{BitArray, CoderError};
 use model::{DecoderModel, EncoderModel, EntropyModel};
-use num::cast::AsPrimitive;
+use num_traits::AsPrimitive;
 
 /// Base trait for stream encoders and decoders
 ///
@@ -1078,7 +1078,7 @@ pub trait Decode<const PRECISION: usize>: Code {
 ///     Encoder: Encode<PRECISION> + IntoDecoder<PRECISION>, // <-- Different trait bound.
 ///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32>,
 ///     D::Probability: Into<Encoder::Word>,
-///     Encoder::Word: num::cast::AsPrimitive<D::Probability>
+///     Encoder::Word: num_traits::AsPrimitive<D::Probability>
 /// {
 ///     encoder.encode_symbol(137, &model);
 ///     let mut decoder = encoder.into_decoder();
@@ -1137,7 +1137,7 @@ pub trait IntoDecoder<const PRECISION: usize>: Encode<PRECISION> {
 ///     for<'a> Encoder: AsDecoder<'a, PRECISION>, // <-- Different trait bound.
 ///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32>,
 ///     D::Probability: Into<Encoder::Word>,
-///     Encoder::Word: num::cast::AsPrimitive<D::Probability>
+///     Encoder::Word: num_traits::AsPrimitive<D::Probability>
 /// {
 ///     encoder.encode_symbol(137, &model);
 ///     let mut decoder = encoder.as_decoder();
@@ -1330,10 +1330,10 @@ impl<CodingError: Display, ModelError: Display> Display
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidEntropyModel(err) => {
-                write!(f, "Error while constructing entropy model or data: {}", err)
+                write!(f, "Error while constructing entropy model or data: {err}")
             }
             Self::CodingError(err) => {
-                write!(f, "Error while entropy coding: {}", err)
+                write!(f, "Error while entropy coding: {err}")
             }
         }
     }

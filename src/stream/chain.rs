@@ -93,7 +93,7 @@ use alloc::vec::Vec;
 
 use core::{borrow::Borrow, convert::Infallible, fmt::Display};
 
-use num::cast::AsPrimitive;
+use num_traits::AsPrimitive;
 
 use super::{
     model::{DecoderModel, EncoderModel},
@@ -841,10 +841,10 @@ impl<CompressedBackendError: Display, RemaindersBackendError: Display> core::fmt
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Compressed(err) => {
-                write!(f, "Read/write error when accessing compressed: {}", err)
+                write!(f, "Read/write error when accessing compressed: {err}")
             }
             Self::Remainders(err) => {
-                write!(f, "Read/write error when accessing remainders: {}", err)
+                write!(f, "Read/write error when accessing remainders: {err}")
             }
         }
     }
@@ -884,18 +884,10 @@ where
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ChangePrecisionError::Increase(err) => {
-                write!(
-                    f,
-                    "Error while increasing precision of chain coder: {}",
-                    err
-                )
+                write!(f, "Error while increasing precision of chain coder: {err}")
             }
             ChangePrecisionError::Decrease(err) => {
-                write!(
-                    f,
-                    "Error while decreasing precision of chain coder: {}",
-                    err
-                )
+                write!(f, "Error while decreasing precision of chain coder: {err}")
             }
         }
     }
@@ -1168,91 +1160,76 @@ mod tests {
     use alloc::vec;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_none() {
         generic_restore_many::<u32, u64, u32, 24>(4, 0);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_one() {
         generic_restore_many::<u32, u64, u32, 24>(5, 1);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_two() {
         generic_restore_many::<u32, u64, u32, 24>(5, 2);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_ten() {
         generic_restore_many::<u32, u64, u32, 24>(20, 10);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_twenty() {
         generic_restore_many::<u32, u64, u32, 24>(19, 20);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u32_u64_32() {
         generic_restore_many::<u32, u64, u32, 32>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u32_u64_24() {
         generic_restore_many::<u32, u64, u32, 24>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u32_u64_16() {
         generic_restore_many::<u32, u64, u16, 16>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u16_u64_16() {
         generic_restore_many::<u16, u64, u16, 16>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u32_u64_8() {
         generic_restore_many::<u32, u64, u8, 8>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u16_u64_8() {
         generic_restore_many::<u16, u64, u8, 8>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u8_u64_8() {
         generic_restore_many::<u8, u64, u8, 8>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u16_u32_16() {
         generic_restore_many::<u16, u32, u16, 16>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u16_u32_8() {
         generic_restore_many::<u16, u32, u8, 8>(1024, 1000);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn restore_many_u8_u32_8() {
         generic_restore_many::<u8, u32, u8, 8>(1024, 1000);
     }
@@ -1270,6 +1247,10 @@ mod tests {
         f64: AsPrimitive<Probability>,
         i32: AsPrimitive<Probability>,
     {
+        #[cfg(miri)]
+        let (amt_compressed_words, amt_symbols) =
+            (amt_compressed_words.min(128), amt_symbols.min(100));
+
         let mut rng = Xoshiro256StarStar::seed_from_u64(
             (amt_compressed_words as u64).rotate_left(32) ^ amt_symbols as u64,
         );

@@ -10,7 +10,7 @@ use constriction::{
     BitArray, Pos, Seek,
 };
 use criterion::{black_box, criterion_group, Criterion};
-use num::cast::AsPrimitive;
+use num_traits::AsPrimitive;
 use rand::{RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 
@@ -26,7 +26,7 @@ criterion_group!(
 #[cfg(not(miri))]
 criterion::criterion_main!(benches);
 #[cfg(miri)]
-fn main() {} // All benchmarks currently use FFI and therefore can't be tested in miri.
+fn main() {} // miri currently doesn't seem to be able to run criterion benchmarks as tests.
 
 fn round_trip_u32_u64_u16_12(c: &mut Criterion) {
     round_trip::<u32, u64, u16, 12>(c);
@@ -87,7 +87,7 @@ where
         type_name::<Probability>(),
         PRECISION
     );
-    c.bench_function(&format!("ans_encoding_{}", label_suffix), |b| {
+    c.bench_function(&format!("ans_encoding_{label_suffix}"), |b| {
         b.iter(|| {
             encoder.clear();
             encoder
@@ -109,7 +109,7 @@ where
     let mut backward_decoder = encoder.into_seekable_decoder();
     let reset_snapshot = backward_decoder.pos();
 
-    c.bench_function(&format!("ans_backward_decoding_{}", label_suffix), |b| {
+    c.bench_function(&format!("ans_backward_decoding_{label_suffix}"), |b| {
         b.iter(|| {
             backward_decoder.seek(black_box(reset_snapshot)).unwrap();
             let mut checksum = 1234u16;
@@ -132,7 +132,7 @@ where
     let mut forward_decoder = backward_decoder.into_reversed();
     let reset_snapshot = forward_decoder.pos();
 
-    c.bench_function(&format!("ans_forward_decoding_{}", label_suffix), |b| {
+    c.bench_function(&format!("ans_forward_decoding_{label_suffix}"), |b| {
         b.iter(|| {
             forward_decoder.seek(black_box(reset_snapshot)).unwrap();
             let mut checksum = 1234u16;
@@ -179,7 +179,7 @@ where
         type_name::<Probability>(),
         PRECISION
     );
-    c.bench_function(&format!("range_encoding_{}", label_suffix), |b| {
+    c.bench_function(&format!("range_encoding_{label_suffix}"), |b| {
         b.iter(|| {
             encoder.clear();
             encoder
@@ -200,7 +200,7 @@ where
 
     let mut decoder = encoder.into_decoder().unwrap();
 
-    c.bench_function(&format!("range_decoding_{}", label_suffix), |b| {
+    c.bench_function(&format!("range_decoding_{label_suffix}"), |b| {
         b.iter(|| {
             decoder.seek(black_box(reset_snapshot)).unwrap();
             let mut checksum = 1234u16;

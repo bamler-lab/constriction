@@ -2,7 +2,7 @@
 
 use std::{cmp::max, cmp::min, ops::RangeInclusive};
 
-use num::cast::AsPrimitive;
+use num_traits::AsPrimitive;
 use probability::{
     distribution::{Gaussian, Sample},
     source::{Source, Xorshift128Plus},
@@ -130,13 +130,13 @@ fn compare(
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn grid() {
     let amts = [
         10,
         100,
+        #[cfg(not(miri))]
         1000,
-        #[cfg(not(debug_assertions))]
+        #[cfg(not(any(miri, debug_assertions)))]
         10000,
     ];
 

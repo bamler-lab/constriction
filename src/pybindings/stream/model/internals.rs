@@ -258,9 +258,9 @@ impl Model for UnspecializedPythonModel {
         (callback)(&self.quantizer.quantize(distribution))
     }
 
-    fn parameterize<'py>(
+    fn parameterize(
         &self,
-        py: Python<'py>,
+        py: Python<'_>,
         params: &PyTuple,
         reverse: bool,
         callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,

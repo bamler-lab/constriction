@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use core::{
     borrow::Borrow, convert::Infallible, fmt::Debug, iter::Fuse, marker::PhantomData, ops::Deref,
 };
-use num::cast::AsPrimitive;
+use num_traits::AsPrimitive;
 
 use super::{
     model::{DecoderModel, EncoderModel},
@@ -271,6 +271,10 @@ where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `from_raw_parts(Backend::default(), state)` instead."
+    )]
     pub fn with_state_and_empty_bulk(state: State) -> Self
     where
         Backend: Default,
@@ -282,11 +286,16 @@ where
         }
     }
 
-    /// # Safety
+    /// Low-level constructor that assembles an `AnsCoder` from its internal components.
+    ///
+    /// The arguments `bulk` and `state` correspond to the two return values of the method
+    /// [`into_raw_parts`](Self::into_raw_parts).
     ///
     /// The caller must ensure that `state >= State::one() << (State::BITS - Word::BITS)`
-    /// unless `bulk.is_empty()`.
-    pub unsafe fn from_raw_parts(bulk: Backend, state: State) -> Self {
+    /// unless `bulk` is empty. This cannot be checked by the method since not all
+    /// `Backend`s have an `is_empty` method. Violating this invariant is not a memory
+    /// safety issue but it will lead to incorrect behavior.
+    pub fn from_raw_parts(bulk: Backend, state: State) -> Self {
         Self {
             bulk,
             state,
@@ -398,6 +407,9 @@ where
         &self.bulk
     }
 
+    /// Low-level method that disassembles the `AnsCoder` into its internal components.
+    ///
+    /// Can be used together with [`from_raw_parts`](Self::from_raw_parts).
     pub fn into_raw_parts(self) -> (Backend, State) {
         (self.bulk, self.state)
     }
@@ -940,6 +952,8 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
+        assert!(State::BITS >= Word::BITS + PRECISION);
+
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
             .ok_or_else(|| DefaultEncoderFrontendError::ImpossibleSymbol.into_coder_error())?;
@@ -1002,6 +1016,8 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
+        assert!(State::BITS >= Word::BITS + PRECISION);
+
         let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
         let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
         let remainder = quantile - left_sided_cumulative;
@@ -1169,25 +1185,21 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_one() {
         generic_compress_few(core::iter::once(5), 1)
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_two() {
         generic_compress_few([2, 8].iter().cloned(), 1)
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_ten() {
         generic_compress_few(0..10, 2)
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_twenty() {
         generic_compress_few(-10..10, 4)
     }
@@ -1217,79 +1229,66 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u32_u64_32() {
         generic_compress_many::<u32, u64, u32, 32>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u32_u64_24() {
         generic_compress_many::<u32, u64, u32, 24>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u32_u64_16() {
         generic_compress_many::<u32, u64, u16, 16>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u32_u64_8() {
         generic_compress_many::<u32, u64, u8, 8>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u64_16() {
         generic_compress_many::<u16, u64, u16, 16>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u64_12() {
         generic_compress_many::<u16, u64, u16, 12>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u64_8() {
         generic_compress_many::<u16, u64, u8, 8>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u8_u64_8() {
         generic_compress_many::<u8, u64, u8, 8>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u32_16() {
         generic_compress_many::<u16, u32, u16, 16>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u32_12() {
         generic_compress_many::<u16, u32, u16, 12>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u16_u32_8() {
         generic_compress_many::<u16, u32, u8, 8>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u8_u32_8() {
         generic_compress_many::<u8, u32, u8, 8>();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn compress_many_u8_u16_8() {
         generic_compress_many::<u8, u16, u8, 8>();
     }
@@ -1304,7 +1303,12 @@ mod tests {
         f64: AsPrimitive<Probability>,
         i32: AsPrimitive<Probability>,
     {
+        #[cfg(not(miri))]
         const AMT: usize = 1000;
+
+        #[cfg(miri)]
+        const AMT: usize = 100;
+
         let mut symbols_gaussian = Vec::with_capacity(AMT);
         let mut means = Vec::with_capacity(AMT);
         let mut stds = Vec::with_capacity(AMT);
@@ -1388,10 +1392,12 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn seek() {
-        const NUM_CHUNKS: usize = 100;
-        const SYMBOLS_PER_CHUNK: usize = 100;
+        #[cfg(not(miri))]
+        let (num_chunks, symbols_per_chunk) = (100, 100);
+
+        #[cfg(miri)]
+        let (num_chunks, symbols_per_chunk) = (10, 10);
 
         let quantizer = DefaultLeakyQuantizer::new(-100..=100);
         let model = quantizer.quantize(Gaussian::new(0.0, 10.0));
@@ -1399,12 +1405,12 @@ mod tests {
         let mut encoder = DefaultAnsCoder::new();
 
         let mut rng = Xoshiro256StarStar::seed_from_u64(123);
-        let mut symbols = Vec::with_capacity(NUM_CHUNKS);
-        let mut jump_table = Vec::with_capacity(NUM_CHUNKS);
+        let mut symbols = Vec::with_capacity(num_chunks);
+        let mut jump_table = Vec::with_capacity(num_chunks);
         let (initial_pos, initial_state) = encoder.pos();
 
-        for _ in 0..NUM_CHUNKS {
-            let chunk = (0..SYMBOLS_PER_CHUNK)
+        for _ in 0..num_chunks {
+            let chunk = (0..symbols_per_chunk)
                 .map(|_| model.quantile_function(rng.next_u32() % (1 << 24)).0)
                 .collect::<Vec<_>>();
             encoder.encode_iid_symbols_reverse(&chunk, &model).unwrap();
@@ -1420,7 +1426,7 @@ mod tests {
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
                 assert_eq!(seekable_decoder.pos(), (pos, state));
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                    .decode_iid_symbols(symbols_per_chunk, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, chunk)
@@ -1430,11 +1436,11 @@ mod tests {
 
             // Seek to some random offsets in the jump table and decode one chunk
             for _ in 0..100 {
-                let chunk_index = rng.next_u32() as usize % NUM_CHUNKS;
+                let chunk_index = rng.next_u32() as usize % num_chunks;
                 let (pos, state) = jump_table[chunk_index];
                 seekable_decoder.seek((pos, state)).unwrap();
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                    .decode_iid_symbols(symbols_per_chunk, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, &symbols[chunk_index])
@@ -1457,7 +1463,7 @@ mod tests {
             for (chunk, &(pos, state)) in symbols.iter().zip(&jump_table).rev() {
                 assert_eq!(seekable_decoder.pos(), (pos, state));
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                    .decode_iid_symbols(symbols_per_chunk, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, chunk)
@@ -1467,11 +1473,11 @@ mod tests {
 
             // Seek to some random offsets in the jump table and decode one chunk each time.
             for _ in 0..100 {
-                let chunk_index = rng.next_u32() as usize % NUM_CHUNKS;
+                let chunk_index = rng.next_u32() as usize % num_chunks;
                 let (pos, state) = jump_table[chunk_index];
                 seekable_decoder.seek((pos, state)).unwrap();
                 let decoded = seekable_decoder
-                    .decode_iid_symbols(SYMBOLS_PER_CHUNK, &model)
+                    .decode_iid_symbols(symbols_per_chunk, &model)
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 assert_eq!(&decoded, &symbols[chunk_index])

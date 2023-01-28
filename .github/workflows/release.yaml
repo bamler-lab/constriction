@@ -64,6 +64,7 @@ jobs:
           args: --release
 
   miri-test:
+    name: no_std and miri
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -101,8 +102,13 @@ jobs:
         with:
           toolchain: ${{ steps.versions.outputs.rustc }}
           profile: minimal
-          components: miri
+          components: miri, rust-src
           override: true
+
+      - name: Test `no_std` compatibility
+        shell: bash
+        working-directory: ensure_no_std
+        run: cargo +${{ steps.versions.outputs.rustc }} build
 
       - name: Run tests in miri
         env:

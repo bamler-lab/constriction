@@ -131,37 +131,15 @@ use hashbrown::hash_map::{
 
 use alloc::{boxed::Box, vec::Vec};
 use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::RangeInclusive};
-use num::{
-    cast::AsPrimitive,
-    traits::{WrappingAdd, WrappingSub},
-    Float, One, PrimInt, Zero,
-};
+use libm::log1p;
+use num_traits::{float::FloatCore, AsPrimitive, One, PrimInt, WrappingAdd, WrappingSub, Zero};
 
-/// Re-export or replacement of [`probability::distribution::Distribution`].
+/// Re-export of [`probability::distribution::Distribution`].
 ///
 /// Most users will never have to interact with this trait directly. When a method requires
 /// a type that implements `Distribution`, most users will likely use a predefined type from
 /// the [`probability`] crate. You only need to implement this trait if you want to use a
 /// probability distribution that is not (yet) provided by the `probability` crate.
-///
-/// # Technical Details
-///
-/// - For most users, this trait is just a re-export (similar to a type alias) of the
-///   [`Distribution` trait from the `probability` crate]. You'll need a type that
-///   implements `Distribution` when you call [`LeakyQuantizer::quantize`]. The
-///   `probability` crate provides implementations of several common `Distribution`s.
-/// - Unfortunately, the `probability` crate does not support `no_std` mode. Thus, if you
-///   compile `constriction` in `no_std` mode (by setting `default-features = false` for
-///   `constriction` in your `Cargo.toml`) then you can't use the `probability` crate . In
-///   this case, the present trait (`constriction::stream::model::Distribution`) is not a
-///   re-export but instead a literal copy of its definition in the `probability` trait.
-///
-/// # Advice for Implementors
-///
-/// If you implement your own probability distribution (rather than using a pre-defined
-/// distribution from the `probability` crate) then it is usually better to implement *this*
-/// trait rather than `probability::distribution::Distribution`. This way, your code will
-/// work as expected both in `std` and in `no_std` mode.
 ///
 /// # See Also
 ///
@@ -169,38 +147,15 @@ use num::{
 ///
 /// [`probability::distribution::Distribution`]:
 ///     https://docs.rs/probability/latest/probability/distribution/trait.Distribution.html
-/// [`Distribution` trait from the `probability` crate]:
-///     https://docs.rs/probability/latest/probability/distribution/trait.Distribution.html
 /// [`probability`]: https://docs.rs/probability/latest/probability/
-#[cfg(feature = "probability")]
 pub use probability::distribution::Distribution;
 
-/// Re-export or replacement of [`probability::distribution::Inverse`].
+/// Re-export of [`probability::distribution::Inverse`].
 ///
 /// Most users will never have to interact with this trait directly. When a method requires
 /// a type that implements `Inverse`, most users will likely use a predefined type from
 /// the [`probability`] crate. You only need to implement this trait if you want to use a
 /// probability distribution that is not (yet) provided by the `probability` crate.
-///
-/// # Technical Details
-///
-/// - For most users, this trait is just a re-export (similar to a type alias) of the
-///   [`Inverse` trait from the `probability` crate]. You'll need a type that implements
-///   `Inverse` when you call [`LeakyQuantizer::quantize`] and then use the resulting
-///   [`LeakilyQuantizedDistribution`] for *decoding*. The `probability` crate provides
-///   implementations of `Inverse` for several common probability distributions.
-/// - Unfortunately, the `probability` crate does not support `no_std` mode. Thus, if you
-///   compile `constriction` in `no_std` mode (by setting `default-features = false` for
-///   `constriction` in your `Cargo.toml`) then you can't use the `probability` crate . In
-///   this case, the present trait (`constriction::stream::model::Inverse`) is not a
-///   re-export but instead a literal copy of its definition in the `probability` trait.
-///
-/// # Advice for Implementors
-///
-/// If you implement your own probability distribution (rather than using a pre-defined
-/// distribution from the `probability` crate) then it is usually better to implement *this*
-/// trait rather than `probability::distribution::Inverse`. This way, your code will
-/// work as expected both in `std` and in `no_std` mode.
 ///
 /// # See Also
 ///
@@ -208,38 +163,8 @@ pub use probability::distribution::Distribution;
 ///
 /// [`probability::distribution::Inverse`]:
 ///     https://docs.rs/probability/latest/probability/distribution/trait.Inverse.html
-/// [`Inverse` trait from the `probability` crate]:
-///     https://docs.rs/probability/latest/probability/distribution/trait.Inverse.html
 /// [`probability`]: https://docs.rs/probability/latest/probability/
-#[cfg(feature = "probability")]
 pub use probability::distribution::Inverse;
-
-/// Mock replacement for [`probability::distribution::Distribution`] in a `no_std` context
-///
-/// This trait is only exported if `constriction` is used in a `no_std` context (i.e., with
-/// `default-features = false`). In this case, we can't use the `probability` crate because
-/// it uses a lot of FFI calls. However, for many things, we really only need the trait
-/// definitions for `Distribution` and for [`Inverse`], so we copy them here.
-#[cfg(not(feature = "probability"))]
-pub trait Distribution {
-    /// The type of outcomes.
-    type Value;
-
-    /// Compute the cumulative distribution function.
-    fn distribution(&self, x: f64) -> f64;
-}
-
-/// Mock replacement for [`probability::distribution::Distribution`] in a `no_std` context
-///
-/// This trait is only exported if `constriction` is used in a `no_std` context (i.e., with
-/// `default-features = false`). In this case, we can't use the `probability` crate because
-/// it uses a lot of FFI calls. However, for many things, we really only need the trait
-/// definitions for [`Distribution`] and for `Inverse`, so we copy them here.
-#[cfg(not(feature = "probability"))]
-pub trait Inverse: Distribution {
-    /// Compute the inverse of the cumulative distribution function.
-    fn inverse(&self, p: f64) -> Self::Value;
-}
 
 use crate::{wrapping_pow2, BitArray, NonZeroBitArray};
 
@@ -447,7 +372,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// continuous probability distribution.
     fn entropy_base2<F>(&'m self) -> F
     where
-        F: Float + core::iter::Sum,
+        F: num_traits::Float + core::iter::Sum,
         Self::Probability: Into<F>,
     {
         let entropy_scaled = self
@@ -549,7 +474,7 @@ pub struct FloatingPointSymbolTable<F, I, const PRECISION: usize> {
 impl<F, Symbol, Probability, I, const PRECISION: usize> Iterator
     for FloatingPointSymbolTable<F, I, PRECISION>
 where
-    F: Float,
+    F: FloatCore,
     Probability: BitArray + Into<F>,
     I: Iterator<Item = (Symbol, Probability, <Probability as BitArray>::NonZero)>,
 {
@@ -574,7 +499,7 @@ where
 impl<F, Symbol, Probability, I, const PRECISION: usize> ExactSizeIterator
     for FloatingPointSymbolTable<F, I, PRECISION>
 where
-    F: Float,
+    F: FloatCore,
     Probability: BitArray + Into<F>,
     I: ExactSizeIterator<Item = (Symbol, Probability, <Probability as BitArray>::NonZero)>,
 {
@@ -682,7 +607,7 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     #[inline]
     fn floating_point_probability<F>(&self, symbol: Self::Symbol) -> F
     where
-        F: Float,
+        F: FloatCore,
         Self::Probability: Into<F>,
     {
         // This gets compiled to a single floating point multiplication rather than a (slow)
@@ -794,7 +719,7 @@ where
 
     fn entropy_base2<F>(&'m self) -> F
     where
-        F: Float + core::iter::Sum,
+        F: num_traits::Float + core::iter::Sum,
         Self::Probability: Into<F>,
     {
         (*self).entropy_base2()
@@ -1253,7 +1178,7 @@ impl<F, Symbol, Probability, const PRECISION: usize>
 where
     Probability: BitArray + Into<F>,
     Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
-    F: Float,
+    F: FloatCore,
 {
     /// Constructs a `LeakyQuantizer` with a finite support.
     ///
@@ -1383,7 +1308,7 @@ impl<F, Symbol, Probability, D, const PRECISION: usize>
 where
     Probability: BitArray + Into<F>,
     Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
-    F: Float,
+    F: FloatCore,
 {
     /// Returns the quantizer that was used to create this entropy model.
     ///
@@ -2321,9 +2246,10 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// TODO: should also return an error if support is too large to support leaky
     /// distribution
     #[allow(clippy::result_unit_err)]
+    #[cfg(feature = "std")]
     pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -2521,7 +2447,7 @@ where
         probabilities: &[F],
     ) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -3058,7 +2984,7 @@ where
         probabilities: &[F],
     ) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -3148,7 +3074,7 @@ where
     ///   program executions.
     pub fn entropy_base2<F>(&self) -> F
     where
-        F: Float + core::iter::Sum,
+        F: num_traits::Float + core::iter::Sum,
         Probability: Into<F>,
     {
         let entropy_scaled = self
@@ -3262,7 +3188,7 @@ fn optimize_leaky_categorical<Probability, F, const PRECISION: usize>(
     probabilities: &[F],
 ) -> Result<Vec<Slot<Probability>>, ()>
 where
-    F: Float + core::iter::Sum<F> + Into<f64>,
+    F: FloatCore + core::iter::Sum<F> + Into<f64>,
     Probability: BitArray + Into<f64> + AsPrimitive<usize>,
     f64: AsPrimitive<Probability>,
     usize: AsPrimitive<Probability>,
@@ -3296,13 +3222,13 @@ where
             let weight = current_free_weight + Probability::one();
 
             // How much the cross entropy would decrease when increasing the weight by one.
-            let win = prob * (1.0f64 / weight.into()).ln_1p();
+            let win = prob * log1p(1.0f64 / weight.into());
 
             // How much the cross entropy would increase when decreasing the weight by one.
             let loss = if weight == Probability::one() {
                 f64::infinity()
             } else {
-                -prob * (-1.0f64 / weight.into()).ln_1p()
+                -prob * log1p(-1.0f64 / weight.into())
             };
 
             Ok(Slot {
@@ -3323,8 +3249,8 @@ where
         let batch_size = core::cmp::min(remaining_free_weight.as_(), slots.len());
         for slot in &mut slots[..batch_size] {
             slot.weight = slot.weight + Probability::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
-            slot.win = slot.prob * (1.0f64 / slot.weight.into()).ln_1p();
-            slot.loss = -slot.prob * (-1.0f64 / slot.weight.into()).ln_1p();
+            slot.win = slot.prob * log1p(1.0f64 / slot.weight.into());
+            slot.loss = -slot.prob * log1p(-1.0f64 / slot.weight.into());
         }
         remaining_free_weight = remaining_free_weight - batch_size.as_();
     }
@@ -3363,13 +3289,13 @@ where
         seller.loss = if seller.weight == Probability::one() {
             f64::infinity()
         } else {
-            -seller.prob * (-1.0f64 / seller.weight.into()).ln_1p()
+            -seller.prob * log1p(-1.0f64 / seller.weight.into())
         };
 
         let buyer = &mut slots[buyer_index];
         buyer.weight = buyer.weight + Probability::one();
         buyer.loss = f64::infinity(); // Once a weight gets increased it may never be decreased again.
-        buyer.win = buyer.prob * (1.0f64 / buyer.weight.into()).ln_1p();
+        buyer.win = buyer.prob * log1p(1.0f64 / buyer.weight.into());
     }
 
     slots.sort_unstable_by_key(|slot| slot.original_index);
@@ -3502,7 +3428,7 @@ where
         probabilities: &[F],
     ) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -3613,7 +3539,7 @@ where
     #[allow(clippy::result_unit_err)]
     pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
     where
-        F: Float + core::iter::Sum<F> + Into<f64>,
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
         Probability: Into<f64> + AsPrimitive<usize>,
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
@@ -3932,25 +3858,72 @@ mod tests {
     use super::super::{stack::DefaultAnsCoder, Decode};
 
     use alloc::{string::String, vec};
-    use probability::distribution::{Binomial, Gaussian};
+    use probability::distribution::{Binomial, Cauchy, Gaussian};
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn leakily_quantized_normal() {
-        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
-        for &std_dev in &[0.0001, 0.1, 3.5, 123.45, 1234.56] {
-            for &mean in &[-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0] {
+        #[cfg(not(miri))]
+        let (support, std_devs, means) = (
+            -127..=127,
+            [0.0001, 0.1, 3.5, 123.45, 1234.56],
+            [-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0],
+        );
+
+        // We use different settings when testing on miri so that the test time stays reasonable.
+        #[cfg(miri)]
+        let (support, std_devs, means) = (-50..=50, [0.0001, 3.5, 1234.56], [-300.6, -5.2, 2000.0]);
+
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
+        for &std_dev in &std_devs {
+            for &mean in &means {
                 let distribution = Gaussian::new(mean, std_dev);
-                test_entropy_model(&quantizer.quantize(distribution), -127..128);
+                test_entropy_model(
+                    &quantizer.quantize(distribution),
+                    *support.start()..*support.end() + 1,
+                );
             }
         }
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
+    fn leakily_quantized_cauchy() {
+        #[cfg(not(miri))]
+        let (support, gammas, means) = (
+            -127..=127,
+            [0.0001, 0.1, 3.5, 123.45, 1234.56],
+            [-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0],
+        );
+
+        // We use different settings when testing on miri so that the test time stays reasonable.
+        #[cfg(miri)]
+        let (support, gammas, means) = (-50..=50, [0.0001, 3.5, 1234.56], [-300.6, -5.2, 2000.0]);
+
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
+        for &gamma in &gammas {
+            for &mean in &means {
+                let distribution = Cauchy::new(mean, gamma);
+                test_entropy_model(
+                    &quantizer.quantize(distribution),
+                    *support.start()..*support.end() + 1,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn leakily_quantized_binomial() {
-        for &n in &[1, 2, 10, 100, 1000, 10_000] {
-            for &p in &[1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9] {
+        #[cfg(not(miri))]
+        let (ns, ps) = (
+            [1, 2, 10, 100, 1000, 10_000],
+            [1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9],
+        );
+
+        // We use different settings when testing on miri so that the test time stays reasonable.
+        #[cfg(miri)]
+        let (ns, ps) = ([1, 2, 100], [1e-30, 0.1, 0.4]);
+
+        for &n in &ns {
+            for &p in &ps {
                 if n < 1000 || p >= 0.1 {
                     // In the excluded situations, `<Binomial as Inverse>::inverse` currently doesn't terminate.
                     // TODO: file issue to `probability` repo.
@@ -3979,11 +3952,17 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn entropy() {
-        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-1000..=1000);
-        for &std_dev in &[100., 200., 300.] {
-            for &mean in &[-10., 2.3, 50.1] {
+        #[cfg(not(miri))]
+        let (support, std_devs, means) = (-1000..=1000, [100., 200., 300.], [-10., 2.3, 50.1]);
+
+        // We use different settings when testing on miri so that the test time stays reasonable.
+        #[cfg(miri)]
+        let (support, std_devs, means) = (-100..=100, [10., 20., 30.], [-1., 0.23, 5.01]);
+
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support);
+        for &std_dev in &std_devs {
+            for &mean in &means {
                 let distribution = Gaussian::new(mean, std_dev);
                 let model = quantizer.quantize(distribution);
                 let entropy = model.entropy_base2::<f64>();
@@ -3996,7 +3975,6 @@ mod tests {
     /// Test that `optimal_weights` reproduces the same distribution when fed with an
     /// already quantized model.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn trivial_optimal_weights() {
         let hist = [
             56319u32, 134860032, 47755520, 60775168, 75699200, 92529920, 111023616, 130420736,
@@ -4022,7 +4000,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn nontrivial_optimal_weights() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -4068,7 +4045,6 @@ mod tests {
 
     /// Regression test for convergence of `optimize_leaky_categorical`.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn categorical_converges() {
         // Two example probability distributions that lead to an infinite loop in constriction 0.2.6
         // (see <https://github.com/bamler-lab/constriction/issues/20>).
@@ -4103,7 +4079,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
@@ -4121,7 +4096,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn non_contiguous_categorical() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
