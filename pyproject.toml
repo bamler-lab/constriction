@@ -50,7 +50,7 @@ pytest = "^6.1"
 pytest-runner = "*"
 scipy = [
   {version = "^1.7.3", python = "<3.8"},
-  {version = ">=1.8,<1.10", python = ">=3.8"},
+  {version = "^1.8", python = ">=3.8"},
 ]
 toml = "^0.10.2"
 twine = "^3.7.1"
