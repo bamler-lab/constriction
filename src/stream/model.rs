@@ -131,6 +131,7 @@ use hashbrown::hash_map::{
 
 use alloc::{boxed::Box, vec::Vec};
 use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::RangeInclusive};
+use libm::log1p;
 use num_traits::{float::FloatCore, AsPrimitive, One, PrimInt, WrappingAdd, WrappingSub, Zero};
 
 /// Re-export of [`probability::distribution::Distribution`].
@@ -2441,7 +2442,6 @@ where
     /// TODO: should also return an error if support is too large to support leaky
     /// distribution
     #[allow(clippy::result_unit_err)]
-    #[cfg(feature = "std")]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
         probabilities: &[F],
@@ -2979,7 +2979,6 @@ where
     /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities`]
     /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
     #[allow(clippy::result_unit_err)]
-    #[cfg(feature = "std")]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: impl IntoIterator<Item = Symbol>,
         probabilities: &[F],
@@ -3130,7 +3129,6 @@ where
     }
 }
 
-#[cfg(feature = "std")]
 struct Slot<Probability> {
     original_index: usize,
     prob: f64,
@@ -3186,7 +3184,6 @@ where
     Ok(symbols)
 }
 
-#[cfg(feature = "std")]
 fn optimize_leaky_categorical<Probability, F, const PRECISION: usize>(
     probabilities: &[F],
 ) -> Result<Vec<Slot<Probability>>, ()>
@@ -3225,13 +3222,13 @@ where
             let weight = current_free_weight + Probability::one();
 
             // How much the cross entropy would decrease when increasing the weight by one.
-            let win = prob * (1.0f64 / weight.into()).ln_1p();
+            let win = prob * log1p(1.0f64 / weight.into());
 
             // How much the cross entropy would increase when decreasing the weight by one.
             let loss = if weight == Probability::one() {
                 f64::infinity()
             } else {
-                -prob * (-1.0f64 / weight.into()).ln_1p()
+                -prob * log1p(-1.0f64 / weight.into())
             };
 
             Ok(Slot {
@@ -3252,8 +3249,8 @@ where
         let batch_size = core::cmp::min(remaining_free_weight.as_(), slots.len());
         for slot in &mut slots[..batch_size] {
             slot.weight = slot.weight + Probability::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
-            slot.win = slot.prob * (1.0f64 / slot.weight.into()).ln_1p();
-            slot.loss = -slot.prob * (-1.0f64 / slot.weight.into()).ln_1p();
+            slot.win = slot.prob * log1p(1.0f64 / slot.weight.into());
+            slot.loss = -slot.prob * log1p(-1.0f64 / slot.weight.into());
         }
         remaining_free_weight = remaining_free_weight - batch_size.as_();
     }
@@ -3292,13 +3289,13 @@ where
         seller.loss = if seller.weight == Probability::one() {
             f64::infinity()
         } else {
-            -seller.prob * (-1.0f64 / seller.weight.into()).ln_1p()
+            -seller.prob * log1p(-1.0f64 / seller.weight.into())
         };
 
         let buyer = &mut slots[buyer_index];
         buyer.weight = buyer.weight + Probability::one();
         buyer.loss = f64::infinity(); // Once a weight gets increased it may never be decreased again.
-        buyer.win = buyer.prob * (1.0f64 / buyer.weight.into()).ln_1p();
+        buyer.win = buyer.prob * log1p(1.0f64 / buyer.weight.into());
     }
 
     slots.sort_unstable_by_key(|slot| slot.original_index);
@@ -3426,7 +3423,6 @@ where
     ///
     /// TODO: example
     #[allow(clippy::result_unit_err)]
-    #[cfg(feature = "std")]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
         probabilities: &[F],
@@ -3541,7 +3537,6 @@ where
     ///
     /// TODO: example
     #[allow(clippy::result_unit_err)]
-    #[cfg(feature = "std")]
     pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: FloatCore + core::iter::Sum<F> + Into<f64>,
