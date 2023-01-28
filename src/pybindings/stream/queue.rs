@@ -435,7 +435,7 @@ impl RangeDecoder {
     /// model = constriction.stream.model.Categorical(probabilities)
     ///
     /// # Decode a single symbol from some example compressed data:
-    /// compressed = np.array([3089773345, 6189162893], dtype=np.uint32)
+    /// compressed = np.array([3089773345, 1894195597], dtype=np.uint32)
     /// decoder = constriction.stream.queue.RangeDecoder(compressed)
     /// symbol = decoder.decode(model)
     /// print(symbol) # (prints: 2)

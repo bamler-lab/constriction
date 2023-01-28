@@ -21,10 +21,8 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// with python bindings.
 ///
 /// Note that this entropy coder is a stack (a "last in first out" data
-/// structure). You can push symbols on the stack using the methods
-/// `encode_leaky_gaussian_symbols_reverse` or `encode_iid_categorical_symbols_reverse`, and then pop
-/// them off *in reverse order* using the methods `decode_leaky_gaussian_symbols` or
-/// `decode_iid_categorical_symbols`, respectively.
+/// structure). You can push symbols on the stack using the method`encode_reverse`,
+/// and then pop them off *in reverse order* using the method `decode`.
 ///
 /// To copy out the compressed data that is currently on the stack, call
 /// `get_compressed`. You would typically want write this to a binary file in some
@@ -44,15 +42,16 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// import constriction
 /// import numpy as np
 ///
-/// ans = constriction.stream.stack.AnsCoder()  # No arguments => empty ANS coder
+/// ans = constriction.stream.stack.AnsCoder()  # No args => empty ANS coder
 ///
-/// symbols = np.array([2, -1, 0, 2, 3], dtype = np.int32)
+/// symbols = np.array([2, -1, 0, 2, 3], dtype=np.int32)
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
+/// model = constriction.stream.model.QuantizedGaussian(
+///     min_supported_symbol, max_supported_symbol)
+/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float64)
+/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float64)
 ///
-/// ans.encode_leaky_gaussian_symbols_reverse(
-///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
+/// ans.encode_reverse(symbols, model, means, stds)
 ///
 /// print(f"Compressed size: {ans.num_valid_bits()} bits")
 ///
@@ -75,14 +74,14 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///     # Convert little endian byte order to native byte order.
 ///     compressed.byteswap(inplace=True)
 ///
-/// ans = constriction.stream.stack.AnsCoder(compressed)
-///
+/// ans = constriction.stream.stack.AnsCoder( compressed )
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
+/// model = constriction.stream.model.QuantizedGaussian(
+///     min_supported_symbol, max_supported_symbol)
+/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float64)
+/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float64)
 ///
-/// reconstructed = ans.decode_leaky_gaussian_symbols(
-///     min_supported_symbol, max_supported_symbol, means, stds)
+/// reconstructed = ans.decode(model, means, stds)
 /// assert ans.is_empty()
 /// print(reconstructed)  # Should print [2, -1, 0, 2, 3]
 /// ```

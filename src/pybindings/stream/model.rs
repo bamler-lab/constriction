@@ -54,7 +54,7 @@ pub struct Model(pub Arc<dyn internals::Model>);
 /// Using a *concrete* (i.e., fully parameterized) custom model:
 ///
 /// ```python
-/// model = constriction.stream.model.ScipyModel(
+/// model = constriction.stream.model.CustomModel(
 ///     lambda x: ... TODO ...,  # define your CDF here
 ///     lambda xi: ... TODO ..., # provide an approximate inverse of the CDF
 ///    -100, 100) # (or whichever range your model has)
@@ -73,9 +73,9 @@ pub struct Model(pub Arc<dyn internals::Model>);
 /// encoded or decoded symbol:
 ///
 /// ```python
-/// model = constriction.stream.model.ScipyModel(
+/// model_family = constriction.stream.model.CustomModel(
 ///     lambda x, model_param1, model_param2: ... TODO ...,  # CDF
-///     lambda xi: model_param1, model_param2: ... TODO ..., # PPF
+///     lambda xi, model_param1, model_param2: ... TODO ..., # PPF
 ///    -100, 100) # (or whichever range your model has)
 ///
 /// # Encode and decode an example message with per-symbol model parameters:
