@@ -1330,10 +1330,10 @@ impl<CodingError: Display, ModelError: Display> Display
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidEntropyModel(err) => {
-                write!(f, "Error while constructing entropy model or data: {}", err)
+                write!(f, "Error while constructing entropy model or data: {err}")
             }
             Self::CodingError(err) => {
-                write!(f, "Error while entropy coding: {}", err)
+                write!(f, "Error while entropy coding: {err}")
             }
         }
     }

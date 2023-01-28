@@ -841,10 +841,10 @@ impl<CompressedBackendError: Display, RemaindersBackendError: Display> core::fmt
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Compressed(err) => {
-                write!(f, "Read/write error when accessing compressed: {}", err)
+                write!(f, "Read/write error when accessing compressed: {err}")
             }
             Self::Remainders(err) => {
-                write!(f, "Read/write error when accessing remainders: {}", err)
+                write!(f, "Read/write error when accessing remainders: {err}")
             }
         }
     }
@@ -884,18 +884,10 @@ where
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ChangePrecisionError::Increase(err) => {
-                write!(
-                    f,
-                    "Error while increasing precision of chain coder: {}",
-                    err
-                )
+                write!(f, "Error while increasing precision of chain coder: {err}")
             }
             ChangePrecisionError::Decrease(err) => {
-                write!(
-                    f,
-                    "Error while decreasing precision of chain coder: {}",
-                    err
-                )
+                write!(f, "Error while decreasing precision of chain coder: {err}")
             }
         }
     }

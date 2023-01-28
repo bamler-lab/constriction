@@ -336,8 +336,8 @@ impl<BackendError: Display, FrontendError: Display> Display
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Frontend(err) => write!(f, "Invalid compressed data: {}", err),
-            Self::Backend(err) => write!(f, "Error while reading compressed data: {}", err),
+            Self::Frontend(err) => write!(f, "Invalid compressed data: {err}"),
+            Self::Backend(err) => write!(f, "Error while reading compressed data: {err}"),
         }
     }
 }

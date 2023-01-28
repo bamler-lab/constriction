@@ -698,7 +698,7 @@ impl<InvalidCodeword: Display> Display for SymbolCodeError<InvalidCodeword> {
                 f,
                 "The compressed data ended before the current codeword was complete."
             ),
-            Self::InvalidCodeword(err) => write!(f, "Invalid codeword for this codebook: {}", err),
+            Self::InvalidCodeword(err) => write!(f, "Invalid codeword for this codebook: {err}"),
         }
     }
 }
