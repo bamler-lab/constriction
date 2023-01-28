@@ -30,8 +30,8 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-constriction = "0.2.6"
-probability = "0.17" # Not strictly required but used in many examples.
+constriction = "0.3.0"
+probability = "0.20.3" # Not strictly required but used in many examples.
 ```
 
 ### Encoding Example
