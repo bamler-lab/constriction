@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
-<meta name="generator" content="pdoc 0.9.2" />
+<meta name="generator" content="pdoc 0.10.0" />
 <title>constriction.stream.stack API documentation</title>
 <meta name="description" content="Asymmetric Numeral Systems (ANS): a stream code with stack semantics
 (i.e., &#34;last in first out&#34;) [1] …" />
@@ -122,10 +122,8 @@ replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015
 <p>This is a wrapper around the Rust type [<code>constriction::stream::stack::DefaultAnsCoder</code>]
 with python bindings.</p>
 <p>Note that this entropy coder is a stack (a "last in first out" data
-structure). You can push symbols on the stack using the methods
-<code>encode_leaky_gaussian_symbols_reverse</code> or <code>encode_iid_categorical_symbols_reverse</code>, and then pop
-them off <em>in reverse order</em> using the methods <code>decode_leaky_gaussian_symbols</code> or
-<code>decode_iid_categorical_symbols</code>, respectively.</p>
+structure). You can push symbols on the stack using the method<code>encode_reverse</code>,
+and then pop them off <em>in reverse order</em> using the method <code>decode</code>.</p>
 <p>To copy out the compressed data that is currently on the stack, call
 <code>get_compressed</code>. You would typically want write this to a binary file in some
 well-documented byte order. After reading it back in at a later time, you can
@@ -139,15 +137,16 @@ be cheaper as it won't actually copy out the compressed data.</p>
 import constriction
 import numpy as np
 
-ans = constriction.stream.stack.AnsCoder()  # No arguments =&gt; empty ANS coder
+ans = constriction.stream.stack.AnsCoder()  # No args =&gt; empty ANS coder
 
-symbols = np.array([2, -1, 0, 2, 3], dtype = np.int32)
+symbols = np.array([2, -1, 0, 2, 3], dtype=np.int32)
 min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
-stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
+model = constriction.stream.model.QuantizedGaussian(
+    min_supported_symbol, max_supported_symbol)
+means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float64)
+stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float64)
 
-ans.encode_leaky_gaussian_symbols_reverse(
-    symbols, min_supported_symbol, max_supported_symbol, means, stds)
+ans.encode_reverse(symbols, model, means, stds)
 
 print(f&quot;Compressed size: {ans.num_valid_bits()} bits&quot;)
 
@@ -167,14 +166,14 @@ if sys.byteorder == &quot;big&quot;:
     # Convert little endian byte order to native byte order.
     compressed.byteswap(inplace=True)
 
-ans = constriction.stream.stack.
-
+ans = constriction.stream.stack.AnsCoder( compressed )
 min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
-stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
+model = constriction.stream.model.QuantizedGaussian(
+    min_supported_symbol, max_supported_symbol)
+means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float64)
+stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float64)
 
-reconstructed = ans.decode_leaky_gaussian_symbols(
-    min_supported_symbol, max_supported_symbol, means, stds)
+reconstructed = ans.decode(model, means, stds)
 assert ans.is_empty()
 print(reconstructed)  # Should print [2, -1, 0, 2, 3]
 </code></pre>
@@ -188,7 +187,7 @@ replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.stream.stack.AnsCoder.clear"><code class="name flex">
-<span>def <span class="ident">clear</span></span>(<span>)</span>
+<span>def <span class="ident">clear</span></span>(<span>self)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Resets the encoder to an empty state.</p>
@@ -196,7 +195,7 @@ replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015
 encoder with a new one but slightly more efficient.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.clone"><code class="name flex">
-<span>def <span class="ident">clone</span></span>(<span>)</span>
+<span>def <span class="ident">clone</span></span>(<span>self)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Creates a deep copy of the coder and returns it.</p>
@@ -205,7 +204,7 @@ original coder, but the two coders can be used independently without influencing
 other.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.decode"><code class="name flex">
-<span>def <span class="ident">decode</span></span>(<span>model, optional_amt_or_model_params)</span>
+<span>def <span class="ident">decode</span></span>(<span>self, model, *optional_amt_or_model_params)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Decodes one or more symbols, consuming them from the encapsulated compressed data.</p>
@@ -286,7 +285,7 @@ print(symbols) # (prints: [3, 1])
 </code></pre></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.encode_reverse"><code class="name flex">
-<span>def <span class="ident">encode_reverse</span></span>(<span>symbols, model, optional_model_params)</span>
+<span>def <span class="ident">encode_reverse</span></span>(<span>self, symbols, model, *optional_model_params)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Encodes one or more symbols, appending them to the encapsulated compressed data.</p>
@@ -369,7 +368,7 @@ print(coder.get_compressed()) # (prints: [45298483])
 </code></pre></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.get_compressed"><code class="name flex">
-<span>def <span class="ident">get_compressed</span></span>(<span>unseal=False)</span>
+<span>def <span class="ident">get_compressed</span></span>(<span>self, unseal=False)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns a copy of the compressed data.</p>
@@ -419,7 +418,7 @@ trailing zero words are conserved since an <code><a title="constriction.stream.s
 state.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.is_empty"><code class="name flex">
-<span>def <span class="ident">is_empty</span></span>(<span>)</span>
+<span>def <span class="ident">is_empty</span></span>(<span>self)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns <code>True</code> iff the coder is in its default initial state.</p>
@@ -428,7 +427,7 @@ called without arguments, or the state to which the coder is set when
 calling <code>clear</code>.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.num_bits"><code class="name flex">
-<span>def <span class="ident">num_bits</span></span>(<span>)</span>
+<span>def <span class="ident">num_bits</span></span>(<span>self)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns the current size of the compressed data, in bits, rounded up to full words.</p>
@@ -436,14 +435,14 @@ calling <code>clear</code>.</p></div>
 would return.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.num_valid_bits"><code class="name flex">
-<span>def <span class="ident">num_valid_bits</span></span>(<span>)</span>
+<span>def <span class="ident">num_valid_bits</span></span>(<span>self)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>The current size of the compressed data, in bits, not rounded up to full words.</p>
 <p>This can be at most 32 smaller than <code>.num_bits()</code>.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.num_words"><code class="name flex">
-<span>def <span class="ident">num_words</span></span>(<span>)</span>
+<span>def <span class="ident">num_words</span></span>(<span>self)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns the current size of the encapsulated compressed data, in <code>np.uint32</code> words.</p>
@@ -452,7 +451,7 @@ you called <a href="#constriction.stream.queue.RangeEncoder.get_compressed"><cod
 without arguments.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.pos"><code class="name flex">
-<span>def <span class="ident">pos</span></span>(<span>)</span>
+<span>def <span class="ident">pos</span></span>(<span>self)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Records a checkpoint to which you can jump during decoding using
@@ -468,7 +467,7 @@ instead.</p>
 <p>See <a href="#constriction.stream.stack.AnsCoder.seek"><code>seek</code></a>.</p></div>
 </dd>
 <dt id="constriction.stream.stack.AnsCoder.seek"><code class="name flex">
-<span>def <span class="ident">seek</span></span>(<span>position, state)</span>
+<span>def <span class="ident">seek</span></span>(<span>self, position, state)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Jumps to a checkpoint recorded with method
@@ -548,7 +547,7 @@ assert np.all(decoded_part2 == message_part2)
 </nav>
 </main>
 <footer id="footer">
-<p>Generated by <a href="https://pdoc3.github.io/pdoc"><cite>pdoc</cite> 0.9.2</a>.</p>
+<p>Generated by <a href="https://pdoc3.github.io/pdoc" title="pdoc: Python API documentation generator"><cite>pdoc</cite> 0.10.0</a>.</p>
 </footer>
 </body>
 </html>
