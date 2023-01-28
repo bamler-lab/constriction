@@ -103,7 +103,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 #[pyclass]
-#[pyo3(text_signature = "([compressed], seal=False)")]
+#[pyo3(text_signature = "(self, [compressed], seal=False)")]
 #[derive(Debug, Clone)]
 pub struct AnsCoder {
     inner: crate::stream::stack::DefaultAnsCoder,
@@ -168,7 +168,7 @@ impl AnsCoder {
     /// ## Example
     ///
     /// See [`seek`](#constriction.stream.stack.AnsCoder.seek).
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn pos(&mut self) -> (usize, u64) {
         self.inner.pos()
     }
@@ -210,7 +210,7 @@ impl AnsCoder {
     /// decoded_part2 = coder.decode(model, 5)
     /// assert np.all(decoded_part2 == message_part2)
     /// ```
-    #[pyo3(text_signature = "(position, state)")]
+    #[pyo3(text_signature = "(self, position, state)")]
     pub fn seek(&mut self, position: usize, state: u64) -> PyResult<()> {
         self.inner.seek((position, state)).map_err(|()| {
             pyo3::exceptions::PyAttributeError::new_err(
@@ -225,7 +225,7 @@ impl AnsCoder {
     ///
     /// This removes any existing compressed data on the encoder. It is equivalent to replacing the
     /// encoder with a new one but slightly more efficient.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn clear(&mut self) {
         self.inner.clear();
     }
@@ -235,7 +235,7 @@ impl AnsCoder {
     /// Thus, the number returned by this method is the length of the array that you would get if
     /// you called [`get_compressed`](#constriction.stream.queue.RangeEncoder.get_compressed)
     /// without arguments.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn num_words(&self) -> usize {
         self.inner.num_words()
     }
@@ -244,7 +244,7 @@ impl AnsCoder {
     ///
     /// This is 32 times the result of what [`num_words`](#constriction.stream.queue.RangeEncoder.num_words)
     /// would return.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn num_bits(&self) -> usize {
         self.inner.num_bits()
     }
@@ -252,7 +252,7 @@ impl AnsCoder {
     /// The current size of the compressed data, in bits, not rounded up to full words.
     ///
     /// This can be at most 32 smaller than `.num_bits()`.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn num_valid_bits(&self) -> usize {
         self.inner.num_valid_bits()
     }
@@ -262,7 +262,7 @@ impl AnsCoder {
     /// The default initial state is the state returned by the constructor when
     /// called without arguments, or the state to which the coder is set when
     /// calling `clear`.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
@@ -321,7 +321,7 @@ impl AnsCoder {
     ///
     /// Note that calling `.get_compressed(unseal=True)` fails if the coder is not in a "sealed"
     /// state.
-    #[pyo3(text_signature = "(unseal=False)")]
+    #[pyo3(text_signature = "(self, unseal=False)")]
     pub fn get_compressed<'p>(
         &mut self,
         py: Python<'p>,
@@ -439,8 +439,7 @@ impl AnsCoder {
     /// coder.encode_reverse(symbols, model_family, probabilities)
     /// print(coder.get_compressed()) # (prints: [45298483])
     /// ```
-    #[pyo3(text_signature = "(symbols, model, optional_model_params)")]
-    #[args(symbols, model, params = "*")]
+    #[pyo3(signature = (symbols, model, *params), text_signature = "(self, symbols, model, *optional_model_params)")]
     pub fn encode_reverse(
         &mut self,
         py: Python<'_>,
@@ -591,8 +590,7 @@ impl AnsCoder {
     /// symbols = coder.decode(model_family, probabilities)
     /// print(symbols) # (prints: [3, 1])
     /// ```
-    #[pyo3(text_signature = "(model, optional_amt_or_model_params)")]
-    #[args(symbols, model, params = "*")]
+    #[pyo3(signature = (model, *params), text_signature = "(self, model, *optional_amt_or_model_params)")]
     pub fn decode(
         &mut self,
         py: Python<'_>,
@@ -647,7 +645,7 @@ impl AnsCoder {
     /// The returned copy will initially encapsulate the identical compressed data as the
     /// original coder, but the two coders can be used independently without influencing
     /// other.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn clone(&self) -> Self {
         Clone::clone(self)
     }

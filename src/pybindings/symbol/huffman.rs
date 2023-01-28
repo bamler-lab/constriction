@@ -25,7 +25,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// See [examples](../symbol.html#examples) in parent module.
 #[pyclass]
-#[pyo3(text_signature = "(probabilities)")]
+#[pyo3(text_signature = "(self, probabilities)")]
 #[derive(Debug)]
 pub struct EncoderHuffmanTree {
     pub(crate) inner: huffman::EncoderHuffmanTree,
@@ -57,7 +57,7 @@ impl EncoderHuffmanTree {
 ///
 /// See [examples](../symbol.html#examples) in parent module.
 #[pyclass]
-#[pyo3(text_signature = "(probabilities)")]
+#[pyo3(text_signature = "(self, probabilities)")]
 #[derive(Debug)]
 pub struct DecoderHuffmanTree {
     pub(crate) inner: huffman::DecoderHuffmanTree,

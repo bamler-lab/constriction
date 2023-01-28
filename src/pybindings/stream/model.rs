@@ -28,7 +28,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// This class cannot be instantiated. Instantiate one of its concrete subclasses instead.
 #[pyclass(subclass)]
-#[pyo3(text_signature = "(NOT_INSTANTIABLE)")]
+#[pyo3(text_signature = "(self, NOT_INSTANTIABLE)")]
 #[allow(missing_debug_implementations)]
 pub struct Model(pub Arc<dyn internals::Model>);
 
@@ -134,7 +134,7 @@ pub struct Model(pub Arc<dyn internals::Model>);
 /// everywhere.
 #[pyclass(extends=Model, subclass)]
 #[pyo3(
-    text_signature = "(cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)"
+    text_signature = "(self, cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)"
 )]
 #[derive(Debug)]
 pub struct CustomModel;
@@ -235,7 +235,7 @@ impl CustomModel {
 ///   symbols that you will be able to encode with this model, see "Guarantees And
 ///   Requirements" below.
 #[pyclass(extends=CustomModel)]
-#[pyo3(text_signature = "(scipy_model, min_symbol_inclusive, max_symbol_inclusive)")]
+#[pyo3(text_signature = "(self, scipy_model, min_symbol_inclusive, max_symbol_inclusive)")]
 #[derive(Debug)]
 pub struct ScipyModel;
 
@@ -328,7 +328,7 @@ impl ScipyModel {
 /// `model_family = constriction.stream.model.Categorical()` --- note the empty parentheses
 /// `()` at the end.
 #[pyclass(extends=Model)]
-#[pyo3(text_signature = "(probabilities=None)")]
+#[pyo3(text_signature = "(self, probabilities=None)")]
 #[derive(Debug)]
 struct Categorical;
 
@@ -376,7 +376,7 @@ impl Categorical {
 ///   `constriction` cannot model delta distributions. Must be smaller than
 ///   `2**24` ≈ 17 millions.
 #[pyclass(extends=Model)]
-#[pyo3(text_signature = "(size=None)")]
+#[pyo3(text_signature = "(self, size=None)")]
 #[derive(Debug)]
 struct Uniform;
 
@@ -438,7 +438,7 @@ impl Uniform {
 /// - **mean** --- the mean of the Gaussian distribution before quantization.
 /// - **std** --- the standard deviation of the Gaussian distribution before quantization.
 #[pyclass(extends=Model)]
-#[pyo3(text_signature = "(min_symbol_inclusive, max_symbol_inclusive, mean=None, std=None)")]
+#[pyo3(text_signature = "(self, min_symbol_inclusive, max_symbol_inclusive, mean=None, std=None)")]
 #[derive(Debug)]
 struct QuantizedGaussian;
 
@@ -518,7 +518,9 @@ impl QuantizedGaussian {
 /// - **scale** --- the scale parameter `b` of the Laplace distribution before quantization
 ///   (resulting in a variance of `2 * scale**2`).
 #[pyclass(extends=Model)]
-#[pyo3(text_signature = "(min_symbol_inclusive, max_symbol_inclusive, mean=None, scale=None)")]
+#[pyo3(
+    text_signature = "(self, min_symbol_inclusive, max_symbol_inclusive, mean=None, scale=None)"
+)]
 #[derive(Debug)]
 struct QuantizedLaplace;
 
@@ -606,7 +608,7 @@ impl QuantizedLaplace {
 /// - **scale** --- the scale parameter `gamma` of the Cauchy distribution before
 ///   quantization (resulting in a full width at half maximum of `2 * scale`).
 #[pyclass(extends=Model)]
-#[pyo3(text_signature = "(min_symbol_inclusive, max_symbol_inclusive, loc=None, scale=None)")]
+#[pyo3(text_signature = "(self, min_symbol_inclusive, max_symbol_inclusive, loc=None, scale=None)")]
 #[derive(Debug)]
 struct QuantizedCauchy;
 
@@ -686,7 +688,7 @@ impl QuantizedCauchy {
 ///   set `p = 0.0` or `p = 1.0` so that all symbols in this range can in principle be
 ///   encoded, albeit possibly at a high bitrate.
 #[pyclass(extends=Model)]
-#[pyo3(text_signature = "(n=None, p=None)")]
+#[pyo3(text_signature = "(self, n=None, p=None)")]
 #[derive(Debug)]
 struct Binomial;
 
@@ -746,7 +748,7 @@ impl Binomial {
 ///   symbols `0` and `1` can always be encoded, albeit at a potentially large cost in
 ///   bitrate.
 #[pyclass(extends=Model)]
-#[pyo3(text_signature = "(p=None)")]
+#[pyo3(text_signature = "(self, p=None)")]
 #[derive(Debug)]
 struct Bernoulli;
 
