@@ -6,13 +6,12 @@ import scipy.stats
 def test_queue_gaussian():
     encoder = constriction.stream.queue.RangeEncoder()
 
-    min_supported_symbol, max_supported_symbol = -100, 100
+    model = constriction.stream.model.QuantizedGaussian(-100, 100)
     symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)
     means = np.array([35.2, -1.7, 30.1, 71.2, -75.1], dtype=np.float64)
     stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
 
-    encoder.encode_leaky_gaussian_symbols(
-        symbols, min_supported_symbol, max_supported_symbol, means, stds)
+    encoder.encode(symbols, model, means, stds)
     assert encoder.num_bits() == 64
     compressed = encoder.get_compressed()
     print(compressed)
@@ -20,14 +19,12 @@ def test_queue_gaussian():
         [473034731, 2276733146], dtype=np.uint32))
 
     decoder1 = constriction.stream.queue.RangeDecoder(compressed)
-    reconstructed1 = decoder1.decode_leaky_gaussian_symbols(
-        min_supported_symbol, max_supported_symbol, means, stds)
+    reconstructed1 = decoder1.decode(model, means, stds)
     assert decoder1.maybe_exhausted()
     assert np.all(reconstructed1 == symbols)
 
     decoder2 = encoder.get_decoder()
-    reconstructed2 = decoder2.decode_leaky_gaussian_symbols(
-        min_supported_symbol, max_supported_symbol, means, stds)
+    reconstructed2 = decoder2.decode(model, means, stds)
     assert decoder2.maybe_exhausted()
     assert np.all(reconstructed2 == symbols)
 
@@ -35,13 +32,12 @@ def test_queue_gaussian():
 def test_stack_gaussian():
     encoder = constriction.stream.stack.AnsCoder()
 
-    min_supported_symbol, max_supported_symbol = -100, 100
+    model = constriction.stream.model.QuantizedGaussian(-100, 100)
     symbols = np.array([23, -15, 78, 43, -69], dtype=np.int32)
     means = np.array([35.2, -1.7, 30.1, 71.2, -75.1], dtype=np.float64)
     stds = np.array([10.1, 25.3, 23.8, 35.4, 3.9], dtype=np.float64)
 
-    encoder.encode_leaky_gaussian_symbols_reverse(
-        symbols, min_supported_symbol, max_supported_symbol, means, stds)
+    encoder.encode_reverse(symbols, model, means, stds)
     assert encoder.num_bits() == 64
     assert encoder.num_valid_bits() == 51
     compressed = encoder.get_compressed()
@@ -49,14 +45,12 @@ def test_stack_gaussian():
         [1109163715, 757457], dtype=np.uint32))
 
     decoder1 = constriction.stream.stack.AnsCoder(compressed)
-    reconstructed1 = decoder1.decode_leaky_gaussian_symbols(
-        min_supported_symbol, max_supported_symbol, means, stds)
+    reconstructed1 = decoder1.decode(model, means, stds)
     assert decoder1.is_empty()
     assert np.all(reconstructed1 == symbols)
 
     decoder2 = encoder
-    reconstructed2 = decoder2.decode_leaky_gaussian_symbols(
-        min_supported_symbol, max_supported_symbol, means, stds)
+    reconstructed2 = decoder2.decode(model, means, stds)
     assert decoder2.is_empty()
     assert np.all(reconstructed2 == symbols)
 
@@ -66,12 +60,11 @@ def test_chain_gaussian():
     original_data = rng.randint(2**32, size=100, dtype=np.uint32)
     decoder = constriction.stream.chain.ChainCoder(original_data, seal=True)
 
-    min_supported_symbol, max_supported_symbol = -100, 100
+    model = constriction.stream.model.QuantizedGaussian(-100, 100)
     means = np.arange(50, dtype=np.float64)
     stds = np.array([10.0] * 50, dtype=np.float64)
 
-    symbols = decoder.decode_leaky_gaussian_symbols(
-        min_supported_symbol, max_supported_symbol, means, stds)
+    symbols = decoder.decode(model, means, stds)
 
     remainders_prefix, remainders_suffix = decoder.get_remainders()
     print(len(remainders_prefix), len(remainders_suffix), len(original_data))
@@ -80,8 +73,7 @@ def test_chain_gaussian():
     # Variant 1: treat `remainders_prefix` and `remainders_suffix` separately
     encoder1 = constriction.stream.chain.ChainCoder(
         remainders_suffix, is_remainders=True)
-    encoder1.encode_leaky_gaussian_symbols_reverse(
-        symbols, min_supported_symbol, max_supported_symbol, means, stds)
+    encoder1.encode_reverse(symbols, model, means, stds)
     recovered_prefix1, recovered_suffix1 = encoder1.get_data(unseal=True)
     print(len(recovered_prefix1), len(recovered_suffix1), len(original_data))
     assert len(recovered_prefix1) == 0
@@ -92,8 +84,7 @@ def test_chain_gaussian():
     remainders = np.concatenate((remainders_prefix, remainders_suffix))
     encoder2 = constriction.stream.chain.ChainCoder(
         remainders, is_remainders=True)
-    encoder2.encode_leaky_gaussian_symbols_reverse(
-        symbols, min_supported_symbol, max_supported_symbol, means, stds)
+    encoder2.encode_reverse(symbols, model, means, stds)
     recovered_prefix2, recovered_suffix2 = encoder2.get_data(unseal=True)
     print(len(recovered_prefix2), len(recovered_suffix2), len(original_data))
     recovered2 = np.concatenate((recovered_prefix2, recovered_suffix2))
@@ -101,8 +92,7 @@ def test_chain_gaussian():
 
     # Variant 3: directly re-encode onto original coder
     encoder3 = decoder
-    encoder3.encode_leaky_gaussian_symbols_reverse(
-        symbols, min_supported_symbol, max_supported_symbol, means, stds)
+    encoder3.encode_reverse(symbols, model, means, stds)
     recovered_prefix3, recovered_suffix3 = encoder3.get_data(unseal=True)
     print(len(recovered_prefix3), len(recovered_suffix3), len(original_data))
     assert len(recovered_prefix3) == 0
@@ -117,45 +107,34 @@ def test_chain_independence():
         [0.2, 0.2, 0.1, 0.5],
         [0.2, 0.1, 0.4, 0.3],
     ])
+    model = constriction.stream.model.Categorical()
 
     ansCoder = constriction.stream.stack.AnsCoder(data, True)
-    assert ansCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[0, :]) == [0]
-    assert ansCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[1, :]) == [0]
-    assert ansCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[2, :]) == [1]
+    assert ansCoder.decode(model, probabilities[0, None, :]) == [0]
+    assert ansCoder.decode(model, probabilities[1, None, :]) == [0]
+    assert ansCoder.decode(model, probabilities[2, None, :]) == [1]
 
     probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
     ansCoder = constriction.stream.stack.AnsCoder(data, True)
-    assert ansCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[0, :]) == [1]
-    assert ansCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[1, :]) == [0]
-    assert ansCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[2, :]) == [3]
+    assert ansCoder.decode(model, probabilities[0, None, :]) == [1]
+    assert ansCoder.decode(model, probabilities[1, None, :]) == [0]
+    assert ansCoder.decode(model, probabilities[2, None, :]) == [3]
 
     probabilities[0, :] = np.array([0.1, 0.7, 0.1, 0.1])
     chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
-    assert chainCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[0, :]) == [0]
-    assert chainCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[1, :]) == [3]
-    assert chainCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[2, :]) == [3]
+    assert chainCoder.decode(model, probabilities[0, None, :]) == [0]
+    assert chainCoder.decode(model, probabilities[1, None, :]) == [3]
+    assert chainCoder.decode(model, probabilities[2, None, :]) == [3]
 
     probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
     chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
-    assert chainCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[0, :]) == [1]
-    assert chainCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[1, :]) == [3]
-    assert chainCoder.decode_iid_categorical_symbols(
-        1, 0, probabilities[2, :]) == [3]
+    assert chainCoder.decode(model, probabilities[0, None, :]) == [1]
+    assert chainCoder.decode(model, probabilities[1, None, :]) == [3]
+    assert chainCoder.decode(model, probabilities[2, None, :]) == [3]
 
 
 def test_custom_model():
-    #### Begin sketch new test --------------------------------------
+    # Begin sketch new test --------------------------------------
     import constriction
     import numpy as np
     import scipy.stats
@@ -255,7 +234,7 @@ def test_custom_model():
     decoded = decoder.decode(model, 3)
     print(decoded)
     assert np.all(decoded == symbols)
-    #### End sketch new test ----------------------------------------
+    # End sketch new test ----------------------------------------
 
     symbols = np.array([3, 2, 6, -51, -19, 5, 87], dtype=np.int32)
 
@@ -269,7 +248,7 @@ def test_custom_model():
     model_parameters2 = np.array([4.9]*len(symbols), dtype=np.float64)
     model = constriction.stream.model.CustomModel(
         lambda x, loc, scale: scipy.stats.norm.cdf(x, loc, scale),
-        scipy.stats.norm.ppf, # (try providing member function as callback.)
+        scipy.stats.norm.ppf,  # (try providing member function as callback.)
         -100, 100)
 
     def test_coder(Encoder, Decoder, encode_iid, encode, expected_compressed_iid, expected_compressed):
@@ -284,13 +263,13 @@ def test_custom_model():
         print(compressed)
         assert np.all(compressed == expected_compressed_iid)
         decoder = Decoder(compressed)
-        reconstructed = decoder.decode_iid_custom_model(
-            len(symbols), model_iid)
+        reconstructed = decoder.decode(model_iid, len(symbols))
         assert np.all(reconstructed == symbols)
 
         # Encode and decode i.i.d. symbols, but with parameterized custom model.
         encoder = Encoder()
-        encode(encoder, symbols, model, model_parameters_iid1, model_parameters_iid2)
+        encode(encoder, symbols, model,
+               model_parameters_iid1, model_parameters_iid2)
         compressed = encoder.get_compressed()
         print(compressed)
         assert np.all(compressed == expected_compressed_iid)
@@ -306,13 +285,14 @@ def test_custom_model():
         print(compressed)
         assert np.all(compressed == expected_compressed)
         decoder = Decoder(compressed)
-        reconstructed = decoder.decode(model, model_parameters1, model_parameters2)
+        reconstructed = decoder.decode(
+            model, model_parameters1, model_parameters2)
         assert np.all(reconstructed == symbols)
 
     test_coder(
         constriction.stream.stack.AnsCoder,
         constriction.stream.stack.AnsCoder,
-        lambda encoder, symbols, model: encoder.encode_iid_custom_model_reverse(
+        lambda encoder, symbols, model: encoder.encode_reverse(
             symbols, model),
         lambda encoder, symbols, model, params1, params2: encoder.encode_reverse(
             symbols, model, params1, params2),
@@ -321,7 +301,7 @@ def test_custom_model():
     test_coder(
         constriction.stream.queue.RangeEncoder,
         constriction.stream.queue.RangeDecoder,
-        lambda encoder, symbols, model: encoder.encode_iid_custom_model(
+        lambda encoder, symbols, model: encoder.encode(
             symbols, model),
         lambda encoder, symbols, model, params1, params2: encoder.encode(
             symbols, model, params1, params2),

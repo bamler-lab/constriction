@@ -67,7 +67,7 @@ fn init_huffman(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// See second [module level example](#examples).
 #[pyclass]
-#[pyo3(text_signature = "(compressed)")]
+#[pyo3(text_signature = "(self, compressed)")]
 #[derive(Debug)]
 pub struct StackCoder {
     inner: DefaultStackCoder,
@@ -102,7 +102,7 @@ impl StackCoder {
     /// - **codebook** --- an encoder code book for a symbol code. Currently,
     ///   [`EncoderHuffmanTree`](symbol/huffman.html#constriction.symbol.huffman.EncoderHuffmanTree)
     ///   is the only implemented encoder code book.
-    #[pyo3(text_signature = "(symbol, codebook)")]
+    #[pyo3(text_signature = "(self, symbol, codebook)")]
     pub fn encode_symbol(
         &mut self,
         symbol: usize,
@@ -120,7 +120,7 @@ impl StackCoder {
     /// - **codebook** --- a decoder code book for a symbol code. Currently,
     ///   [`DecoderHuffmanTree`](symbol/huffman.html#constriction.symbol.huffman.DecoderHuffmanTree)
     ///   is the only implemented decoder code book.
-    #[pyo3(text_signature = "(codebook)")]
+    #[pyo3(text_signature = "(self, codebook)")]
     pub fn decode_symbol(&mut self, codebook: &huffman::DecoderHuffmanTree) -> PyResult<usize> {
         Ok(self.inner.decode_symbol(&codebook.inner)?)
     }
@@ -133,7 +133,7 @@ impl StackCoder {
     /// `compressed.tofile("filename")`), read it back in at a later point (with
     /// `compressed = np.fromfile("filename")`) and then reconstruct a coder (for decoding)
     /// py passing `compressed` to the constructor of `StackCoder`.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
         let len = self.inner.len();
         (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
@@ -141,7 +141,7 @@ impl StackCoder {
 }
 
 #[pyclass]
-#[pyo3(text_signature = "(compressed)")]
+#[pyo3(text_signature = "(self, compressed)")]
 #[derive(Debug, Default)]
 pub struct QueueEncoder {
     inner: DefaultQueueEncoder,
@@ -182,7 +182,7 @@ impl QueueEncoder {
     /// - **codebook** --- an encoder code book for a symbol code. Currently,
     ///   [`EncoderHuffmanTree`](symbol/huffman.html#constriction.symbol.huffman.EncoderHuffmanTree)
     ///   is the only implemented encoder code book.
-    #[pyo3(text_signature = "(symbol, codebook)")]
+    #[pyo3(text_signature = "(self, symbol, codebook)")]
     pub fn encode_symbol(
         &mut self,
         symbol: usize,
@@ -198,7 +198,7 @@ impl QueueEncoder {
     /// You can write the compressed data to a file (by calling
     /// `compressed.tofile("filename")`), read it back in at a later point (with
     /// `compressed = np.fromfile("filename")`) and then construct a `QueueDecoder` from.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
         let len = self.inner.len();
         (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
@@ -210,7 +210,7 @@ impl QueueEncoder {
     /// Copies the compressed data out of the encoder. Thus, if you continue to encode
     /// symbols on the encoder, those won't affect what you will be able to decode on the
     /// decoder.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn get_decoder(&mut self) -> QueueDecoder {
         let compressed = self.inner.get_compressed().to_vec();
         QueueDecoder::from_vec(compressed)
@@ -227,7 +227,7 @@ impl QueueEncoder {
 ///
 /// See first [module level example](#examples).
 #[pyclass]
-#[pyo3(text_signature = "(compressed)")]
+#[pyo3(text_signature = "(self, compressed)")]
 #[derive(Debug)]
 pub struct QueueDecoder {
     inner: DefaultQueueDecoder,
@@ -249,7 +249,7 @@ impl QueueDecoder {
     /// - **codebook** --- a decoder code book for a symbol code. Currently,
     ///   [`DecoderHuffmanTree`](symbol/huffman.html#constriction.symbol.huffman.DecoderHuffmanTree)
     ///   is the only implemented decoder code book.
-    #[pyo3(text_signature = "(codebook)")]
+    #[pyo3(text_signature = "(self, codebook)")]
     pub fn decode_symbol(&mut self, codebook: &huffman::DecoderHuffmanTree) -> PyResult<usize> {
         Ok(self.inner.decode_symbol(&codebook.inner)?)
     }

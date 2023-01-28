@@ -271,21 +271,6 @@ where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use `from_raw_parts(Backend::default(), state)` instead."
-    )]
-    pub fn with_state_and_empty_bulk(state: State) -> Self
-    where
-        Backend: Default,
-    {
-        Self {
-            state,
-            bulk: Default::default(),
-            phantom: PhantomData,
-        }
-    }
-
     /// Low-level constructor that assembles an `AnsCoder` from its internal components.
     ///
     /// The arguments `bulk` and `state` correspond to the two return values of the method

@@ -1,16 +1,11 @@
-use core::convert::Infallible;
 use std::prelude::v1::*;
 
 use numpy::{PyArray1, PyReadonlyArray1};
-use probability::distribution::Gaussian;
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
-    stream::{
-        model::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
-        Decode, Encode, TryCodingError,
-    },
-    CoderError, Pos, Seek, UnwrapInfallible,
+    stream::{Decode, Encode},
+    Pos, Seek, UnwrapInfallible,
 };
 
 use super::model::{internals::EncoderDecoderModel, Model};
@@ -26,10 +21,8 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// with python bindings.
 ///
 /// Note that this entropy coder is a stack (a "last in first out" data
-/// structure). You can push symbols on the stack using the methods
-/// `encode_leaky_gaussian_symbols_reverse` or `encode_iid_categorical_symbols_reverse`, and then pop
-/// them off *in reverse order* using the methods `decode_leaky_gaussian_symbols` or
-/// `decode_iid_categorical_symbols`, respectively.
+/// structure). You can push symbols on the stack using the method`encode_reverse`,
+/// and then pop them off *in reverse order* using the method `decode`.
 ///
 /// To copy out the compressed data that is currently on the stack, call
 /// `get_compressed`. You would typically want write this to a binary file in some
@@ -49,15 +42,16 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// import constriction
 /// import numpy as np
 ///
-/// ans = constriction.stream.stack.AnsCoder()  # No arguments => empty ANS coder
+/// ans = constriction.stream.stack.AnsCoder()  # No args => empty ANS coder
 ///
-/// symbols = np.array([2, -1, 0, 2, 3], dtype = np.int32)
+/// symbols = np.array([2, -1, 0, 2, 3], dtype=np.int32)
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
+/// model = constriction.stream.model.QuantizedGaussian(
+///     min_supported_symbol, max_supported_symbol)
+/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float64)
+/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float64)
 ///
-/// ans.encode_leaky_gaussian_symbols_reverse(
-///     symbols, min_supported_symbol, max_supported_symbol, means, stds)
+/// ans.encode_reverse(symbols, model, means, stds)
 ///
 /// print(f"Compressed size: {ans.num_valid_bits()} bits")
 ///
@@ -80,14 +74,14 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///     # Convert little endian byte order to native byte order.
 ///     compressed.byteswap(inplace=True)
 ///
-/// ans = constriction.stream.stack.AnsCoder(compressed)
-///
+/// ans = constriction.stream.stack.AnsCoder( compressed )
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
-/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype = np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype = np.float64)
+/// model = constriction.stream.model.QuantizedGaussian(
+///     min_supported_symbol, max_supported_symbol)
+/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float64)
+/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float64)
 ///
-/// reconstructed = ans.decode_leaky_gaussian_symbols(
-///     min_supported_symbol, max_supported_symbol, means, stds)
+/// reconstructed = ans.decode(model, means, stds)
 /// assert ans.is_empty()
 /// print(reconstructed)  # Should print [2, -1, 0, 2, 3]
 /// ```
@@ -108,7 +102,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 #[pyclass]
-#[pyo3(text_signature = "([compressed], seal=False)")]
+#[pyo3(text_signature = "(self, [compressed], seal=False)")]
 #[derive(Debug, Clone)]
 pub struct AnsCoder {
     inner: crate::stream::stack::DefaultAnsCoder,
@@ -173,7 +167,7 @@ impl AnsCoder {
     /// ## Example
     ///
     /// See [`seek`](#constriction.stream.stack.AnsCoder.seek).
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn pos(&mut self) -> (usize, u64) {
         self.inner.pos()
     }
@@ -215,7 +209,7 @@ impl AnsCoder {
     /// decoded_part2 = coder.decode(model, 5)
     /// assert np.all(decoded_part2 == message_part2)
     /// ```
-    #[pyo3(text_signature = "(position, state)")]
+    #[pyo3(text_signature = "(self, position, state)")]
     pub fn seek(&mut self, position: usize, state: u64) -> PyResult<()> {
         self.inner.seek((position, state)).map_err(|()| {
             pyo3::exceptions::PyAttributeError::new_err(
@@ -230,7 +224,7 @@ impl AnsCoder {
     ///
     /// This removes any existing compressed data on the encoder. It is equivalent to replacing the
     /// encoder with a new one but slightly more efficient.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn clear(&mut self) {
         self.inner.clear();
     }
@@ -240,7 +234,7 @@ impl AnsCoder {
     /// Thus, the number returned by this method is the length of the array that you would get if
     /// you called [`get_compressed`](#constriction.stream.queue.RangeEncoder.get_compressed)
     /// without arguments.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn num_words(&self) -> usize {
         self.inner.num_words()
     }
@@ -249,7 +243,7 @@ impl AnsCoder {
     ///
     /// This is 32 times the result of what [`num_words`](#constriction.stream.queue.RangeEncoder.num_words)
     /// would return.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn num_bits(&self) -> usize {
         self.inner.num_bits()
     }
@@ -257,7 +251,7 @@ impl AnsCoder {
     /// The current size of the compressed data, in bits, not rounded up to full words.
     ///
     /// This can be at most 32 smaller than `.num_bits()`.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn num_valid_bits(&self) -> usize {
         self.inner.num_valid_bits()
     }
@@ -267,7 +261,7 @@ impl AnsCoder {
     /// The default initial state is the state returned by the constructor when
     /// called without arguments, or the state to which the coder is set when
     /// calling `clear`.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
@@ -326,7 +320,7 @@ impl AnsCoder {
     ///
     /// Note that calling `.get_compressed(unseal=True)` fails if the coder is not in a "sealed"
     /// state.
-    #[pyo3(text_signature = "(unseal=False)")]
+    #[pyo3(text_signature = "(self, unseal=False)")]
     pub fn get_compressed<'p>(
         &mut self,
         py: Python<'p>,
@@ -344,13 +338,6 @@ impl AnsCoder {
                 &self.inner.get_compressed().unwrap_infallible(),
             ))
         }
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    Superseded by `.get_compressed(unseal=True)`.
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn get_binary<'p>(&mut self, py: Python<'p>) -> PyResult<&'p PyArray1<u32>> {
-        self.get_compressed(py, Some(true))
     }
 
     /// Encodes one or more symbols, appending them to the encapsulated compressed data.
@@ -451,8 +438,7 @@ impl AnsCoder {
     /// coder.encode_reverse(symbols, model_family, probabilities)
     /// print(coder.get_compressed()) # (prints: [45298483])
     /// ```
-    #[pyo3(text_signature = "(symbols, model, optional_model_params)")]
-    #[args(symbols, model, params = "*")]
+    #[pyo3(signature = (symbols, model, *params), text_signature = "(self, symbols, model, *optional_model_params)")]
     pub fn encode_reverse(
         &mut self,
         py: Python<'_>,
@@ -506,236 +492,6 @@ impl AnsCoder {
         }
 
         Ok(())
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`encode_reverse`](#constriction.stream.stack.AnsCoder.encode_reverse) method in conjunction with the
-    ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
-    ///
-    ///    To encode an array of symbols with an individual quantized Gaussian distribution for each
-    ///    symbol, do the following now:
-    ///
-    ///    ```python
-    ///    # Define a generic quantized Gaussian distribution for all integers
-    ///    # in the range from -100 to 100 (both ends inclusive):
-    ///    model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
-    ///
-    ///    # Specify the model parameters for each symbol:
-    ///    means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
-    ///    stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
-    ///
-    ///    # Encode an example message:
-    ///    # (needs `len(symbols) == len(means) == len(stds)`)
-    ///    symbols = np.array([12, -13, 25], dtype=np.int32)
-    ///    coder = constriction.stream.stack.AnsCoder()
-    ///    coder.encode_reverse(symbols, model_family, means, stds)
-    ///    print(coder.get_compressed()) # (prints: [597775281, 3])
-    ///    ```
-    ///
-    ///    If all symbols have the same entropy model (i.e., the same mean and standard deviation),
-    ///    then you can use the following shortcut, which is also more computationally efficient:
-    ///
-    ///    ```python
-    ///    # Define a *concrete* quantized Gaussian distribution for all
-    ///    # integers in the range from -100 to 100 (both ends inclusive),
-    ///    # with a fixed mean of 16.7 and a fixed standard deviation of 9.3:
-    ///    model = constriction.stream.model.QuantizedGaussian(
-    ///        -100, 100, 16.7, 9.3)
-    ///
-    ///    # Encode an example message using the above `model` for all symbols:
-    ///    symbols = np.array([18, 43, 25, 20, 8, 11], dtype=np.int32)
-    ///    coder = constriction.stream.stack.AnsCoder()
-    ///    coder.encode_reverse(symbols, model)
-    ///    print(coder.get_compressed()) # (prints: [4119848034, 921135])
-    ///    ```
-    ///
-    ///    For more information, see [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian).
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn encode_leaky_gaussian_symbols_reverse(
-        &mut self,
-        py: Python<'_>,
-        symbols: PyReadonlyArray1<'_, i32>,
-        min_supported_symbol: i32,
-        max_supported_symbol: i32,
-        means: PyReadonlyArray1<'_, f64>,
-        stds: PyReadonlyArray1<'_, f64>,
-    ) -> PyResult<()> {
-        let _ = py.run(
-            "print('WARNING: the method `encode_leaky_gaussian_symbols_reverse` is deprecated. Use method\\n\
-            \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
-            None,
-            None
-        );
-
-        let (symbols, means, stds) = (symbols.as_array(), means.as_array(), stds.as_array());
-        if symbols.len() != means.len() || symbols.len() != stds.len() {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(
-                "`symbols`, `means`, and `stds` must all have the same length.",
-            ));
-        }
-
-        let quantizer = DefaultLeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
-        self.inner.try_encode_symbols_reverse(
-            symbols
-                .iter()
-                .zip(means.iter())
-                .zip(stds.iter())
-                .map(|((&symbol, &mean), &std)| {
-                    if std > 0.0 && std.is_finite() && mean.is_finite() {
-                        Ok((symbol, quantizer.quantize(Gaussian::new(mean, std))))
-                    } else {
-                        Err(())
-                    }
-                }),
-        )?;
-
-        Ok(())
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`encode_reverse`](#constriction.stream.stack.AnsCoder.encode_reverse) method in conjunction with the
-    ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
-    ///
-    ///    To encode an array of i.i.d. symbols with a fixed categorical entropy model, do the
-    ///    following now:
-    ///
-    ///    ```python
-    ///    # Define a categorical model over the (implied) alphabet {0, 1, 2}:
-    ///    probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    ///    model = constriction.stream.model.Categorical(probabilities)
-    ///
-    ///    # Encode an example message using the above `model` for all symbols:
-    ///    symbols = np.array([0, 2, 1, 2, 0, 2, 0, 2, 1], dtype=np.int32)
-    ///    coder = constriction.stream.stack.AnsCoder()
-    ///    coder.encode_reverse(symbols, model)
-    ///    print(coder.get_compressed()) # (prints: [1276728145, 172])
-    ///    ```
-    ///
-    ///    This new API also allows you to use an *individual* entropy model for each encoded symbol
-    ///    (although this is less computationally efficient):
-    ///
-    ///    ```python
-    ///    # Define 2 categorical models over the alphabet {0, 1, 2, 3, 4}:
-    ///    probabilities = np.array(
-    ///        [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for symbols[0])
-    ///         [0.3, 0.2, 0.2, 0.2, 0.1]], # (for symbols[1])
-    ///        dtype=np.float64)
-    ///    model_family = constriction.stream.model.Categorical()
-    ///
-    ///    # Encode 2 symbols (needs `len(symbols) == probabilities.shape[0]`):
-    ///    symbols = np.array([3, 1], dtype=np.int32)
-    ///    coder = constriction.stream.stack.AnsCoder()
-    ///    coder.encode_reverse(symbols, model_family, probabilities)
-    ///    print(coder.get_compressed()) # (prints: [45298483])
-    ///    ```
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn encode_iid_categorical_symbols_reverse(
-        &mut self,
-        py: Python<'_>,
-        symbols: PyReadonlyArray1<'_, i32>,
-        min_supported_symbol: i32,
-        probabilities: PyReadonlyArray1<'_, f64>,
-    ) -> PyResult<()> {
-        let _ = py.run(
-            "print('WARNING: the method `encode_iid_categorical_symbols_reverse` is deprecated. Use method\\n\
-            \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
-            None,
-            None
-        );
-
-        let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-            probabilities.as_slice()?,
-        )
-        .map_err(|()| {
-            pyo3::exceptions::PyValueError::new_err(
-                "Probability model is either degenerate or not normalizable.",
-            )
-        })?;
-
-        self.inner.encode_iid_symbols_reverse(
-            symbols
-                .as_array()
-                .iter()
-                .map(|s| s.wrapping_sub(min_supported_symbol) as usize),
-            &model,
-        )?;
-
-        Ok(())
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`encode_reverse`](#constriction.stream.stack.AnsCoder.encode_reverse) method in conjunction with the
-    ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
-    ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel) model class.
-    ///
-    ///    To encode an array of symbols with a custom entropy model, do the following now:
-    ///
-    ///    ```python
-    ///    # Define the cumulative distribution function (CDF) and (approximate)
-    ///    # inverse of it (sometimes called the percent point function or PPF):
-    ///    def cdf(x, model_param1, model_param2):
-    ///        # TODO (note: you may also leave out the `model_param`s)
-    ///    def ppf(xi, model_param1, model_param2):
-    ///        # TODO
-    ///
-    ///    # Wrap them in a `CustomModel`:
-    ///    model = constriction.stream.model.CustomModel(cdf, ppf, -100, 100)
-    ///
-    ///    # Encode an example message using the above `model` for all symbols:
-    ///    message      = np.array([... TODO ...], dtype=np.int32)
-    ///    model_prams1 = np.array([... TODO ...], dtype=np.float64)
-    ///    model_prams2 = np.array([... TODO ...], dtype=np.float64)
-    ///    coder = constriction.stream.stack.AnsCoder()
-    ///    coder.encode_reverse(message, model, model_params1, model_params2)
-    ///    ```
-    ///
-    ///    **Hint:** the `scipy` python package provides a number of predefined models, and
-    ///    `constriction` offers a convenient wrapper around `scipy` models:
-    ///
-    ///    ```python
-    ///    import scipy.stats
-    ///
-    ///    coder = constriction.stream.stack.AnsCoder()
-    ///
-    ///    # Encode an example message with an i.i.d. entropy model from scipy:
-    ///    scipy_model = scipy.stats.cauchy(10.2, 16.8)
-    ///    constriction_model = constriction.stream.model.ScipyModel(
-    ///        scipy_model, -100, 100)
-    ///    message_part1 = np.array([-4, 41, 30, 23, -15], dtype=np.int32)
-    ///    coder.encode_reverse(message_part1, constriction_model)
-    ///
-    ///    # Append some more symbols with per-symbol model parameters:
-    ///    scipy_model_family = scipy.stats.cauchy
-    ///    model_family = constriction.stream.model.ScipyModel(
-    ///        scipy_model_family, -100, 100)
-    ///    message_part2 = np.array([11,    2,   -18  ], dtype=np.int32)
-    ///    means         = np.array([13.2, -5.7, -21.2], dtype=np.float64)
-    ///    scales        = np.array([ 4.6, 13.4,   5.7], dtype=np.float64)
-    ///    coder.encode_reverse(message_part2, model_family, means, scales)
-    ///
-    ///    print(coder.get_compressed()) # (prints: [609762275, 3776398430])
-    ///    ```
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn encode_iid_custom_model_reverse(
-        &mut self,
-        py: Python<'_>,
-        symbols: PyReadonlyArray1<'_, i32>,
-        model: &Model,
-    ) -> PyResult<()> {
-        let _ = py.run(
-            "print('WARNING: the method `encode_iid_custom_model_reverse` is deprecated. Use method\\n\
-            \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
-            None,
-            None
-        );
-
-        self.encode_reverse(py, &symbols, model, PyTuple::empty(py))
     }
 
     /// Decodes one or more symbols, consuming them from the encapsulated compressed data.
@@ -833,8 +589,7 @@ impl AnsCoder {
     /// symbols = coder.decode(model_family, probabilities)
     /// print(symbols) # (prints: [3, 1])
     /// ```
-    #[pyo3(text_signature = "(model, optional_amt_or_model_params)")]
-    #[args(symbols, model, params = "*")]
+    #[pyo3(signature = (model, *params), text_signature = "(self, model, *optional_amt_or_model_params)")]
     pub fn decode(
         &mut self,
         py: Python<'_>,
@@ -884,221 +639,12 @@ impl AnsCoder {
         Ok(PyArray1::from_vec(py, symbols).to_object(py))
     }
 
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`decode`](#constriction.stream.stack.AnsCoder.decode) method in conjunction with the
-    ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
-    ///
-    ///    To decode an array of symbols with an individual quantized Gaussian distribution for each
-    ///    symbol, do the following now:
-    ///
-    ///    ```python
-    ///    # Define a generic quantized Gaussian distribution for all integers
-    ///    # in the range from -100 to 100 (both ends inclusive):
-    ///    model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
-    ///
-    ///    # Specify the model parameters for each symbol:
-    ///    means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
-    ///    stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
-    ///
-    ///    # Decode a message from some example compressed data:
-    ///    compressed = np.array([597775281, 3], dtype=np.uint32)
-    ///    coder = constriction.stream.stack.AnsCoder(compressed)
-    ///    symbols = coder.decode(model_family, means, stds)
-    ///    print(symbols) # (prints: [12, -13, 25])
-    ///    ```
-    ///
-    ///    If all symbols have the same entropy model (i.e., the same mean and standard deviation),
-    ///    then you can use the following shortcut, which is also more computationally efficient:
-    ///
-    ///    ```python
-    ///    # Define a *concrete* quantized Gaussian distribution for all
-    ///    # integers in the range from -100 to 100 (both ends inclusive),
-    ///    # with a fixed mean of 16.7 and a fixed standard deviation of 9.3:
-    ///    model = constriction.stream.model.QuantizedGaussian(
-    ///        -100, 100, 16.7, 9.3)
-    ///
-    ///    # Decode a message from some example compressed data:
-    ///    compressed = np.array([4119848034, 921135], dtype=np.uint32)
-    ///    coder = constriction.stream.stack.AnsCoder(compressed)
-    ///    symbols = coder.decode(model, 6) # (decodes 6 symbols)
-    ///    print(symbols) # (prints: [18, 43, 25, 20, 8, 11])
-    ///    ```
-    ///
-    ///    For more information, see [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian).
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn decode_leaky_gaussian_symbols<'p>(
-        &mut self,
-        min_supported_symbol: i32,
-        max_supported_symbol: i32,
-        means: PyReadonlyArray1<'_, f64>,
-        stds: PyReadonlyArray1<'_, f64>,
-        py: Python<'p>,
-    ) -> PyResult<&'p PyArray1<i32>> {
-        let _ = py.run(
-            "print('WARNING: the method `decode_leaky_gaussian_symbols` is deprecated. Use method\\n\
-            \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
-            None,
-            None
-        );
-
-        if means.len() != stds.len() {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(
-                "`means`, and `stds` must have the same length.",
-            ));
-        }
-
-        let quantizer = DefaultLeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
-        let symbols = self
-            .inner
-            .try_decode_symbols(means.as_array().iter().zip(stds.as_array()).map(|(&mean, &std)| {
-                if std > 0.0 && std.is_finite() && mean.is_finite() {
-                    Ok(quantizer.quantize(Gaussian::new(mean, std)))
-                } else {
-                    Err(())
-                }
-            }))
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|_err:TryCodingError<CoderError<Infallible, Infallible>, ()>| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "Invalid model parameters (`std` must be strictly positive and both `std` and `mean` must be finite.).",
-                )
-            })?;
-
-        Ok(PyArray1::from_vec(py, symbols))
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`decode`](#constriction.stream.stack.AnsCoder.decode) method in conjunction with the
-    ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
-    ///
-    ///    To decode an array of i.i.d. symbols with a fixed categorical entropy model, do the
-    ///    following now:
-    ///
-    ///    ```python
-    ///    # Define a categorical model over the (implied) alphabet {0, 1, 2}:
-    ///    probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    ///    model = constriction.stream.model.Categorical(probabilities)
-    ///
-    ///    # Decode 9 symbols from some example compressed data, using the
-    ///    # same (fixed) entropy model defined above for all symbols:
-    ///    compressed = np.array([1276728145, 172], dtype=np.uint32)
-    ///    coder = constriction.stream.stack.AnsCoder(compressed)
-    ///    symbols = coder.decode(model, 9) # (decodes 9 symbols)
-    ///    print(symbols) # (prints: [0, 2, 1, 2, 0, 2, 0, 2, 1])
-    ///    ```
-    ///
-    ///    This new API also allows you to use an *individual* entropy model for each decoded symbol
-    ///    (although this is less computationally efficient):
-    ///
-    ///    ```python
-    ///    # Define 2 categorical models over the alphabet {0, 1, 2, 3, 4}:
-    ///    probabilities = np.array(
-    ///        [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first decoded symbol)
-    ///         [0.3, 0.2, 0.2, 0.2, 0.1]], # (for second decoded symbol)
-    ///        dtype=np.float64)
-    ///    model_family = constriction.stream.model.Categorical()
-    ///
-    ///    # Decode 2 symbols:
-    ///    compressed = np.array([45298483], dtype=np.uint32)
-    ///    coder = constriction.stream.stack.AnsCoder(compressed)
-    ///    symbols = coder.decode(model_family, probabilities)
-    ///    print(symbols) # (prints: [3, 1])
-    ///    ```
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn decode_iid_categorical_symbols<'py>(
-        &mut self,
-        amt: usize,
-        min_supported_symbol: i32,
-        probabilities: PyReadonlyArray1<'_, f64>,
-        py: Python<'py>,
-    ) -> PyResult<&'py PyArray1<i32>> {
-        let _ = py.run(
-            "print('WARNING: the method `decode_iid_categorical_symbols` is deprecated. Use method\\n\
-            \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
-            None,
-            None
-        );
-
-        let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-            probabilities.as_slice()?,
-        )
-        .map_err(|()| {
-            pyo3::exceptions::PyValueError::new_err(
-                "Probability distribution is either degenerate or not normalizable.",
-            )
-        })?;
-
-        Ok(PyArray1::from_iter(
-            py,
-            self.inner.decode_iid_symbols(amt, &model).map(|symbol| {
-                (symbol.unwrap_infallible() as i32).wrapping_add(min_supported_symbol)
-            }),
-        ))
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`decode`](#constriction.stream.stack.AnsCoder.decode) method in conjunction with the
-    ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
-    ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel) model class.
-    ///
-    ///    Note that the new API expects the parameters in opposite order. So, to transition,
-    ///    replace
-    ///
-    ///    ```python
-    ///    coder.decode_iid_custom_model(amt, model) # DEPRECATED
-    ///    ```
-    ///
-    ///    with
-    ///
-    ///    ```python
-    ///    coder.decode(model, amt) # new API
-    ///    ```
-    ///
-    ///    The new API also allows you to provide additional per-symbol model parameters to the
-    ///    `decode` method (instead of an `amt` parameter):
-    ///
-    ///    ```python
-    ///    coder.decode(model, params1, params2, ...) # new API
-    ///    ```
-    ///
-    ///    Here, the `paramsX` arguments must be rank-1 numpy arrays with `dtype=np.float64`. The
-    ///    parameters will be passed to your custom model's CDF and PPF as individual additional
-    ///    scalar arguments. (This is a breaking change to the pre-1.0 method `decode_custom_model`,
-    ///    which served the same purpose but passed additional model parameters to the CDF and PPF
-    ///    as a single numpy array, which turned out to be cumbersome to deal with.)
-    ///
-    ///    For more information and code examples, see
-    ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) and
-    ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel).
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn decode_iid_custom_model(
-        &mut self,
-        py: Python<'_>,
-        amt: usize,
-        model: &Model,
-    ) -> PyResult<PyObject> {
-        let _ = py.run(
-            "print('WARNING: the method `decode_iid_custom_model` is deprecated. Use method\\n\
-            \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
-            None,
-            None
-        );
-
-        self.decode(py, model, PyTuple::new(py, [amt]))
-    }
-
     /// Creates a deep copy of the coder and returns it.
     ///
     /// The returned copy will initially encapsulate the identical compressed data as the
     /// original coder, but the two coders can be used independently without influencing
     /// other.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn clone(&self) -> Self {
         Clone::clone(self)
     }

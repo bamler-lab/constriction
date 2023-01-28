@@ -1,14 +1,12 @@
 use std::prelude::v1::*;
 
 use numpy::{PyArray1, PyReadonlyArray1};
-use probability::distribution::Gaussian;
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
     pybindings::stream::model::Model,
     stream::{
         chain::{BackendError, DecoderFrontendError, EncoderFrontendError},
-        model::{DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer},
         Decode, Encode,
     },
     UnwrapInfallible,
@@ -24,7 +22,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// See [above usage instructions](#usage-for-bits-back-coding) for explanation of
 /// constructor arguments.
 #[pyclass]
-#[pyo3(text_signature = "(compressed, is_remainders=False, seal=False)")]
+#[pyo3(text_signature = "(self, compressed, is_remainders=False, seal=False)")]
 #[derive(Debug, Clone)]
 pub struct ChainCoder {
     inner: crate::stream::chain::DefaultChainCoder,
@@ -69,7 +67,7 @@ impl ChainCoder {
     /// arrays that you may want to concatenate.
     ///
     /// See [above usage instructions](#usage-for-bits-back-coding) for further explanation.
-    #[pyo3(text_signature = "(unseal=False)")]
+    #[pyo3(text_signature = "(self, unseal=False)")]
     pub fn get_data<'p>(
         &self,
         unseal: Option<bool>,
@@ -96,7 +94,7 @@ impl ChainCoder {
     /// that you may want to concatenate.
     ///
     /// See [above usage instructions](#usage-for-bits-back-coding) for further explanation.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn get_remainders<'p>(
         &self,
         py: Python<'p>,
@@ -115,8 +113,7 @@ impl ChainCoder {
     /// buffer, regardless of the employed entropy model(s), and it consumes (24 bits - inf_content)
     /// per symbol from the internal "remainders" buffer (where "inf_content" is the information
     /// content of the encoded symbol under the employed entropy model).
-    #[pyo3(text_signature = "(symbols, model, optional_model_params)")]
-    #[args(symbols, model, params = "*")]
+    #[pyo3(signature = (symbols, model, *params), text_signature = "(self, symbols, model, *optional_model_params)")]
     pub fn encode_reverse(
         &mut self,
         py: Python<'_>,
@@ -172,116 +169,6 @@ impl ChainCoder {
         Ok(())
     }
 
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`encode_reverse`](#constriction.stream.chain.ChainCoder.encode_reverse) method in conjunction with the
-    ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn encode_leaky_gaussian_symbols_reverse(
-        &mut self,
-        py: Python<'_>,
-        symbols: PyReadonlyArray1<'_, i32>,
-        min_supported_symbol: i32,
-        max_supported_symbol: i32,
-        means: PyReadonlyArray1<'_, f64>,
-        stds: PyReadonlyArray1<'_, f64>,
-    ) -> PyResult<()> {
-        let _ = py.run(
-            "print('WARNING: the method `encode_leaky_gaussian_symbols_reverse` is deprecated. Use method\\n\
-            \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
-            None,
-            None
-        );
-
-        let (symbols, means, stds) = (symbols.as_array(), means.as_array(), stds.as_array());
-        if symbols.len() != means.len() || symbols.len() != stds.len() {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(
-                "`symbols`, `means`, and `stds` must all have the same length.",
-            ));
-        }
-
-        let quantizer = DefaultLeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
-        self.inner.try_encode_symbols_reverse(
-            symbols
-                .iter()
-                .zip(means.iter())
-                .zip(stds.iter())
-                .map(|((&symbol, &mean), &std)| {
-                    if std > 0.0 && std.is_finite() && mean.is_finite() {
-                        Ok((symbol, quantizer.quantize(Gaussian::new(mean, std))))
-                    } else {
-                        Err(())
-                    }
-                }),
-        )?;
-
-        Ok(())
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`encode_reverse`](#constriction.stream.chain.ChainCoder.encode_reverse) method in conjunction with the
-    ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn encode_iid_categorical_symbols_reverse(
-        &mut self,
-        py: Python<'_>,
-        symbols: PyReadonlyArray1<'_, i32>,
-        min_supported_symbol: i32,
-        probabilities: PyReadonlyArray1<'_, f64>,
-    ) -> PyResult<()> {
-        let _ = py.run(
-            "print('WARNING: the method `encode_iid_categorical_symbols_reverse` is deprecated. Use method\\n\
-            \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
-            None,
-            None
-        );
-
-        let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-            probabilities.as_slice()?,
-        )
-        .map_err(|()| {
-            pyo3::exceptions::PyValueError::new_err(
-                "Probability model is either degenerate or not normalizable.",
-            )
-        })?;
-
-        self.inner.encode_iid_symbols_reverse(
-            symbols
-                .as_array()
-                .iter()
-                .map(|s| s.wrapping_sub(min_supported_symbol) as usize),
-            &model,
-        )?;
-
-        Ok(())
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`encode_reverse`](#constriction.stream.chain.ChainCoder.encode_reverse) method in conjunction with the
-    ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
-    ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel) model class.
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn encode_iid_custom_model_reverse(
-        &mut self,
-        py: Python<'_>,
-        symbols: PyReadonlyArray1<'_, i32>,
-        model: &Model,
-    ) -> PyResult<()> {
-        let _ = py.run(
-            "print('WARNING: the method `encode_iid_custom_model_reverse` is deprecated. Use method\\n\
-            \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
-            None,
-            None
-        );
-
-        self.encode_reverse(py, &symbols, model, PyTuple::empty(py))
-    }
-
     /// Decodes one or more symbols.
     ///
     /// Usage is analogous to [`AnsCoder.decode`](stack.html#constriction.stream.stack.AnsCoder.decode).
@@ -291,8 +178,7 @@ impl ChainCoder {
     /// bits - inf_content) per symbol to the internal "remainders" buffer (where
     /// "inf_content" is the information content of the decoded symbol under the employed
     /// entropy model).
-    #[pyo3(text_signature = "(model, optional_amt_or_model_params)")]
-    #[args(symbols, model, params = "*")]
+    #[pyo3(signature = (model, *params), text_signature = "(self, model, *optional_amt_or_model_params)")]
     pub fn decode(
         &mut self,
         py: Python<'_>,
@@ -343,120 +229,12 @@ impl ChainCoder {
         Ok(PyArray1::from_vec(py, symbols).to_object(py))
     }
 
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`decode`](#constriction.stream.chain.ChainCoder.decode) method in conjunction with the
-    ///    [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model.
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn decode_leaky_gaussian_symbols<'p>(
-        &mut self,
-        min_supported_symbol: i32,
-        max_supported_symbol: i32,
-        means: PyReadonlyArray1<'_, f64>,
-        stds: PyReadonlyArray1<'_, f64>,
-        py: Python<'p>,
-    ) -> PyResult<&'p PyArray1<i32>> {
-        let _ = py.run(
-            "print('WARNING: the method `decode_leaky_gaussian_symbols` is deprecated. Use method\\n\
-            \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#examples')",
-            None,
-            None
-        );
-
-        if means.len() != stds.len() {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(
-                "`means`, and `stds` must have the same length.",
-            ));
-        }
-
-        let quantizer = DefaultLeakyQuantizer::new(min_supported_symbol..=max_supported_symbol);
-        let symbols = self
-            .inner
-            .try_decode_symbols(means.as_array().iter().zip(stds.as_array()).map(|(&mean, &std)| {
-                if std > 0.0 && std.is_finite() && mean.is_finite() {
-                    Ok(quantizer.quantize(Gaussian::new(mean, std)))
-                } else {
-                    Err(())
-                }
-            }))
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "Invalid model parameters (`std` must be strictly positive and both `std` and `mean` must be finite.).",
-                )
-            })?;
-
-        Ok(PyArray1::from_vec(py, symbols))
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`decode`](#constriction.stream.chain.ChainCoder.decode) method in conjunction with the
-    ///    [`Categorical`](model.html#constriction.stream.model.Categorical) model.
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn decode_iid_categorical_symbols<'py>(
-        &mut self,
-        amt: usize,
-        min_supported_symbol: i32,
-        probabilities: PyReadonlyArray1<'_, f64>,
-        py: Python<'py>,
-    ) -> PyResult<&'py PyArray1<i32>> {
-        let _ = py.run(
-            "print('WARNING: the method `decode_iid_categorical_symbols` is deprecated. Use method\\n\
-            \x20        `decode` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.Categorical')",
-            None,
-            None
-        );
-
-        let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-            probabilities.as_slice()?,
-        )
-        .map_err(|()| {
-            pyo3::exceptions::PyValueError::new_err(
-                "Probability distribution is either degenerate or not normalizable.",
-            )
-        })?;
-
-        Ok(PyArray1::from_iter(
-            py,
-            self.inner.decode_iid_symbols(amt, &model).map(|symbol| {
-                (symbol.expect("We use constant `PRECISION`.") as i32)
-                    .wrapping_add(min_supported_symbol)
-            }),
-        ))
-    }
-
-    /// .. deprecated:: 0.2.0
-    ///    This method has been superseded by the new and more powerful generic
-    ///    [`decode`](#constriction.stream.chain.ChainCoder.decode) method in conjunction with the
-    ///    [`CustomModel`](model.html#constriction.stream.model.CustomModel) or
-    ///    [`ScipyModel`](model.html#constriction.stream.model.ScipyModel) model class.
-    #[pyo3(text_signature = "(DEPRECATED)")]
-    pub fn decode_iid_custom_model(
-        &mut self,
-        py: Python<'_>,
-        amt: usize,
-        model: &Model,
-    ) -> PyResult<PyObject> {
-        let _ = py.run(
-            "print('WARNING: the method `decode_iid_custom_model` is deprecated. Use method\\n\
-            \x20        `encode_reverse` instead. For transition instructions with code examples, see:\\n\
-            https://bamler-lab.github.io/constriction/apidoc/python/stream/model.html#constriction.stream.model.CustomModel')",
-            None,
-            None
-        );
-
-        self.decode(py, model, PyTuple::new(py, [amt]))
-    }
-
     /// Creates a deep copy of the coder and returns it.
     ///
     /// The returned copy will initially encapsulate the identical compressed data and
     /// remainders as the original coder, but the two coders can be used independently
     /// without influencing other.
-    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = "(self)")]
     pub fn clone(&self) -> Self {
         Clone::clone(self)
     }
