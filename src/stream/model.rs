@@ -2246,7 +2246,6 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// TODO: should also return an error if support is too large to support leaky
     /// distribution
     #[allow(clippy::result_unit_err)]
-    #[cfg(feature = "std")]
     pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: FloatCore + core::iter::Sum<F> + Into<f64>,
