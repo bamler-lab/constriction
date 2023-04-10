@@ -377,7 +377,6 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     {
         let entropy_scaled = self
             .symbol_table()
-            .into_iter()
             .map(|(_, _, probability)| {
                 let probability = probability.get().into();
                 probability * probability.log2() // probability is guaranteed to be nonzero.
