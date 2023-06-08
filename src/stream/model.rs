@@ -1390,7 +1390,7 @@ where
     // will be optimized away.
     let mask = wrapping_pow2::<Probability>(8 * core::mem::size_of::<Symbol>())
         .wrapping_sub(&Probability::one());
-    symbol.borrow().wrapping_sub(&min_symbol_inclusive).as_() & mask
+    symbol.wrapping_sub(&min_symbol_inclusive).as_() & mask
 }
 
 impl<F, Symbol, Probability, D, const PRECISION: usize> EntropyModel<PRECISION>
