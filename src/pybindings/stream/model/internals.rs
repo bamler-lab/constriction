@@ -1,14 +1,17 @@
 use core::{cell::RefCell, marker::PhantomData, num::NonZeroU32};
 use std::prelude::v1::*;
 
-use alloc::vec;
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+use alloc::{borrow::Cow, vec};
+use numpy::PyReadonlyArray1;
 use probability::distribution::{Distribution, Inverse};
 use pyo3::{prelude::*, types::PyTuple};
 
-use crate::stream::model::{
-    DecoderModel, DefaultContiguousCategoricalEntropyModel, EncoderModel, EntropyModel,
-    LeakyQuantizer, UniformModel,
+use crate::{
+    pybindings::{PyReadonlyFloatArray1, PyReadonlyFloatArray2},
+    stream::model::{
+        DecoderModel, DefaultContiguousCategoricalEntropyModel, EncoderModel, EntropyModel,
+        LeakyQuantizer, UniformModel,
+    },
 };
 
 /// Workaround for the fact that rust for some reason cannot create
@@ -146,12 +149,46 @@ where
     }
 }
 
+trait ParameterExtract<'source, Target: numpy::Element + 'source> {
+    type Extracted: pyo3::FromPyObject<'source> + 'source;
+    fn cast(param: &Self::Extracted) -> PyResult<Cow<'_, PyReadonlyArray1<'_, Target>>>;
+    fn len(param: &'source PyAny) -> PyResult<usize>;
+}
+
+struct ParameterExtractor<Target>(PhantomData<Target>);
+
+impl<'source> ParameterExtract<'source, i32> for ParameterExtractor<i32> {
+    type Extracted = PyReadonlyArray1<'source, i32>;
+
+    fn cast(param: &Self::Extracted) -> PyResult<Cow<'_, PyReadonlyArray1<'_, i32>>> {
+        Ok(Cow::Borrowed(param))
+    }
+
+    fn len(param: &'source PyAny) -> PyResult<usize> {
+        Ok(param.extract::<Self::Extracted>()?.len())
+    }
+}
+
+impl<'source> ParameterExtract<'source, f64> for ParameterExtractor<f64> {
+    type Extracted = PyReadonlyFloatArray1<'source>;
+
+    fn cast(param: &Self::Extracted) -> PyResult<Cow<'_, PyReadonlyArray1<'_, f64>>> {
+        param.cast_f64()
+    }
+
+    fn len(param: &'source PyAny) -> PyResult<usize> {
+        Ok(param.extract::<Self::Extracted>()?.len())
+    }
+}
+
 macro_rules! impl_model_for_parameterizable_model {
     {$expected_len: literal, $p0:ident: $ty0:tt $(, $ps:ident: $tys:tt)* $(,)?} => {
         impl<$ty0, $($tys,)* M, F> Model for ParameterizableModel<($ty0, $($tys,)*), M, F>
         where
             $ty0: numpy::Element + Copy + Send + Sync,
             $($tys: numpy::Element + Copy + Send + Sync,)*
+            for<'py> ParameterExtractor<$ty0>: ParameterExtract<'py, $ty0>,
+            $(for<'py> ParameterExtractor<$tys>: ParameterExtract<'py, $tys>,)*
             M: DefaultEntropyModel,
             F: Fn(($ty0, $($tys,)*)) -> M + Send + Sync,
         {
@@ -170,14 +207,20 @@ macro_rules! impl_model_for_parameterizable_model {
                     )));
                 }
 
-                let $p0 = params[0].extract::<PyReadonlyArray1<'_, $ty0>>()?;
+                let $p0 = params[0].extract::<<ParameterExtractor<$ty0> as ParameterExtract<'_, $ty0>>::Extracted>()?;
+                let $p0 = <ParameterExtractor<$ty0> as ParameterExtract<'_, $ty0>>::cast(&$p0)?;
                 let $p0 = $p0.as_array();
 
                 #[allow(unused_variables)] // (`len` remains unused when macro is invoked with only one parameter.)
                 let len = $p0.len();
+                #[allow(unused_variables)] // (`i` remains unused when macro is invoked with only one parameter.)
+                let i = 0;
                 $(
-                    let $ps = params[1].extract::<PyReadonlyArray1<'_, $tys>>()?;
+                    let i = i + 1;
+                    let $ps = params[i].extract::<<ParameterExtractor<$tys> as ParameterExtract<'_, $tys>>::Extracted>()?;
+                    let $ps = <ParameterExtractor<$tys> as ParameterExtract<'_, $tys>>::cast(&$ps)?;
                     let $ps = $ps.as_array();
+
                     if $ps.len() != len {
                         return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
                             "Model parameters have unequal shape",
@@ -211,7 +254,7 @@ macro_rules! impl_model_for_parameterizable_model {
             }
 
             fn len(&self, $p0: &PyAny) -> PyResult<usize> {
-                Ok($p0.extract::<PyReadonlyArray1<'_, $ty0>>()?.len())
+                $p0.len()
             }
         }
     }
@@ -268,7 +311,7 @@ impl Model for UnspecializedPythonModel {
         let params = params.as_slice();
         let params = params
             .iter()
-            .map(|param| param.extract::<PyReadonlyArray1<'_, f64>>())
+            .map(|param| param.extract::<PyReadonlyFloatArray1<'_>>())
             .collect::<Result<Vec<_>, _>>()?;
         let len = params[0].len();
 
@@ -284,8 +327,8 @@ impl Model for UnspecializedPythonModel {
 
         let mut iteration_step = |i: usize| {
             for (src, dst) in params.iter().zip(&mut value_and_params[1..]) {
-                *dst = *src
-                    .get(i)
+                *dst = src
+                    .get_f64(i)
                     .expect("We checked that all arrays have the same size.");
             }
 
@@ -313,7 +356,7 @@ impl Model for UnspecializedPythonModel {
     }
 
     fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.extract::<PyReadonlyArray1<'_, f64>>()?.len())
+        Ok(param0.extract::<PyReadonlyFloatArray1<'_>>()?.len())
     }
 }
 
@@ -377,7 +420,8 @@ impl Model for UnparameterizedCategoricalDistribution {
             )));
         }
 
-        let probabilities = params[0].extract::<PyReadonlyArray2<'_, f64>>()?;
+        let probabilities = params[0].extract::<PyReadonlyFloatArray2<'_>>()?;
+        let probabilities = probabilities.cast_f64()?;
         let range = probabilities.shape()[1];
         let probabilities = probabilities.as_slice()?;
 
@@ -415,7 +459,7 @@ impl Model for UnparameterizedCategoricalDistribution {
     }
 
     fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.extract::<PyReadonlyArray2<'_, f64>>()?.shape()[0])
+        Ok(param0.extract::<PyReadonlyFloatArray2<'_>>()?.shape()[0])
     }
 }
 

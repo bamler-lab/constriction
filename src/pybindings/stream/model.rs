@@ -3,11 +3,11 @@ pub mod internals;
 use std::prelude::v1::*;
 
 use alloc::sync::Arc;
-use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 
-use crate::stream::model::{
-    DefaultContiguousCategoricalEntropyModel, LeakyQuantizer, UniformModel,
+use crate::{
+    pybindings::PyReadonlyFloatArray1,
+    stream::model::{DefaultContiguousCategoricalEntropyModel, LeakyQuantizer, UniformModel},
 };
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
@@ -335,14 +335,14 @@ struct Categorical;
 #[pymethods]
 impl Categorical {
     #[new]
-    pub fn new(probabilities: Option<PyReadonlyArray1<'_, f64>>) -> PyResult<(Self, Model)> {
+    pub fn new(probabilities: Option<PyReadonlyFloatArray1<'_>>) -> PyResult<(Self, Model)> {
         let model = match probabilities {
             None => Arc::new(internals::UnparameterizedCategoricalDistribution)
                 as Arc<dyn internals::Model>,
             Some(probabilities) => {
                 let model =
                     DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-                        probabilities.as_slice()?,
+                        probabilities.cast_f64()?.as_slice()?,
                     )
                     .map_err(|()| {
                         pyo3::exceptions::PyValueError::new_err(

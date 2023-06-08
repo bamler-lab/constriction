@@ -3,6 +3,8 @@ pub mod symbol;
 
 use std::prelude::v1::*;
 
+use alloc::borrow::Cow;
+use numpy::PyReadonlyArray;
 use pyo3::{prelude::*, wrap_pymodule};
 
 /// ## Entropy Coders for Research and Production
@@ -313,4 +315,55 @@ fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 #[pyo3(name = "symbol")]
 fn init_symbol(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     symbol::init_module(py, module)
+}
+
+#[derive(Debug, Clone)]
+pub enum PyReadonlyFloatArray<'py, D: ndarray::Dimension> {
+    F32(PyReadonlyArray<'py, f32, D>),
+    F64(PyReadonlyArray<'py, f64, D>),
+}
+
+pub type PyReadonlyFloatArray1<'py> = PyReadonlyFloatArray<'py, numpy::Ix1>;
+pub type PyReadonlyFloatArray2<'py> = PyReadonlyFloatArray<'py, numpy::Ix2>;
+
+impl<'py, D: ndarray::Dimension> FromPyObject<'py> for PyReadonlyFloatArray<'py, D> {
+    fn extract(ob: &'py PyAny) -> PyResult<Self> {
+        if let Ok(x) = ob.extract::<PyReadonlyArray<'_, f32, D>>() {
+            Ok(PyReadonlyFloatArray::F32(x))
+        } else {
+            // This should also return a well crafted error in case it fails.
+            ob.extract::<PyReadonlyArray<'_, f64, D>>()
+                .map(PyReadonlyFloatArray::F64)
+        }
+    }
+}
+
+impl<'py, D: ndarray::Dimension> PyReadonlyFloatArray<'py, D> {
+    fn cast_f64(&'py self) -> PyResult<Cow<'py, PyReadonlyArray<'py, f64, D>>> {
+        match self {
+            PyReadonlyFloatArray::F32(x) => Ok(Cow::Owned(x.cast::<f64>(false)?.readonly())),
+            PyReadonlyFloatArray::F64(x) => Ok(Cow::Borrowed(x)),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            PyReadonlyFloatArray::F32(x) => x.len(),
+            PyReadonlyFloatArray::F64(x) => x.len(),
+        }
+    }
+
+    fn shape(&self) -> &[usize] {
+        match self {
+            PyReadonlyFloatArray::F32(x) => x.shape(),
+            PyReadonlyFloatArray::F64(x) => x.shape(),
+        }
+    }
+
+    fn get_f64<I: numpy::NpyIndex<Dim = D>>(&self, index: I) -> Option<f64> {
+        match self {
+            PyReadonlyFloatArray::F32(x) => x.get(index).map(|&x| x as f64),
+            PyReadonlyFloatArray::F64(x) => x.get(index).copied(),
+        }
+    }
 }

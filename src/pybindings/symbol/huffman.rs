@@ -1,9 +1,11 @@
 use std::prelude::v1::*;
 
-use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 
-use crate::symbol::huffman::{self, NanError};
+use crate::{
+    pybindings::PyReadonlyFloatArray1,
+    symbol::huffman::{self, NanError},
+};
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<EncoderHuffmanTree>()?;
@@ -34,9 +36,9 @@ pub struct EncoderHuffmanTree {
 #[pymethods]
 impl EncoderHuffmanTree {
     #[new]
-    pub fn new(probabilities: PyReadonlyArray1<'_, f64>) -> PyResult<Self> {
+    pub fn new(probabilities: PyReadonlyFloatArray1<'_>) -> PyResult<Self> {
         let inner = huffman::EncoderHuffmanTree::from_float_probabilities::<f64, _>(
-            probabilities.as_array(),
+            probabilities.cast_f64()?.as_array(),
         )?;
 
         Ok(Self { inner })
@@ -66,9 +68,9 @@ pub struct DecoderHuffmanTree {
 #[pymethods]
 impl DecoderHuffmanTree {
     #[new]
-    pub fn new(probabilities: PyReadonlyArray1<'_, f64>) -> PyResult<Self> {
+    pub fn new(probabilities: PyReadonlyFloatArray1<'_>) -> PyResult<Self> {
         let inner = huffman::DecoderHuffmanTree::from_float_probabilities::<f64, _>(
-            probabilities.as_array(),
+            probabilities.cast_f64()?.as_array(),
         )?;
 
         Ok(Self { inner })
