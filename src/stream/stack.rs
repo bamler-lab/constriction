@@ -1202,7 +1202,7 @@ mod tests {
 
         // We don't reuse the same encoder for decoding because we want to test
         // if exporting and re-importing of compressed data works.
-        encoder.encode_iid_symbols(symbols.clone(), &model).unwrap();
+        encoder.encode_iid_symbols(symbols.clone(), model).unwrap();
         let compressed = encoder.into_compressed().unwrap();
         assert_eq!(compressed.len(), expected_size);
 

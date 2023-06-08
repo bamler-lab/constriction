@@ -31,6 +31,22 @@
 		},
 		{
 			"type": "cargo",
+			"command": "clippy",
+			"args": [
+				"--all-targets",
+				"--all-features"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "cargo clippy --all-targets --all-features",
+			"presentation": {
+				"clear": true
+			},
+		},
+		{
+			"type": "cargo",
 			"command": "build",
 			"args": [
 				"--no-default-features"

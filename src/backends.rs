@@ -1842,7 +1842,7 @@ mod tests {
             });
 
             let mut encoder = DefaultAnsCoder::new();
-            encoder.encode_iid_symbols_reverse(symbols, &model).unwrap();
+            encoder.encode_iid_symbols_reverse(symbols, model).unwrap();
             let compressed = encoder.into_compressed().unwrap();
 
             let mut file = BufWriter::new(File::create("backend_stack_example.tmp").unwrap());

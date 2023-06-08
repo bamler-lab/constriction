@@ -1074,7 +1074,7 @@ mod tests {
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(-127..=127);
         let model = quantizer.quantize(Gaussian::new(3.2, 5.1));
 
-        encoder.encode_iid_symbols(symbols.clone(), &model).unwrap();
+        encoder.encode_iid_symbols(symbols.clone(), model).unwrap();
         let compressed = encoder.into_compressed().unwrap();
         assert_eq!(compressed.len(), expected_size);
 
