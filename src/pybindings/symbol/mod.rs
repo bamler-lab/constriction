@@ -67,7 +67,6 @@ fn init_huffman(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// See second [module level example](#examples).
 #[pyclass]
-#[pyo3(text_signature = "(self, compressed)")]
 #[derive(Debug)]
 pub struct StackCoder {
     inner: DefaultStackCoder,
@@ -76,6 +75,7 @@ pub struct StackCoder {
 #[pymethods]
 impl StackCoder {
     #[new]
+    #[pyo3(text_signature = "(self, compressed)")]
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = match compressed {
             None => DefaultStackCoder::new(),
@@ -141,7 +141,6 @@ impl StackCoder {
 }
 
 #[pyclass]
-#[pyo3(text_signature = "(self, compressed)")]
 #[derive(Debug, Default)]
 pub struct QueueEncoder {
     inner: DefaultQueueEncoder,
@@ -165,6 +164,7 @@ pub struct QueueEncoder {
 #[pymethods]
 impl QueueEncoder {
     #[new]
+    #[pyo3(text_signature = "(self, compressed)")]
     pub fn new() -> Self {
         Self {
             inner: DefaultQueueEncoder::new(),
@@ -227,7 +227,6 @@ impl QueueEncoder {
 ///
 /// See first [module level example](#examples).
 #[pyclass]
-#[pyo3(text_signature = "(self, compressed)")]
 #[derive(Debug)]
 pub struct QueueDecoder {
     inner: DefaultQueueDecoder,
@@ -236,6 +235,7 @@ pub struct QueueDecoder {
 #[pymethods]
 impl QueueDecoder {
     #[new]
+    #[pyo3(text_signature = "(self, compressed)")]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
         Ok(Self::from_vec(compressed.to_vec()?))
     }

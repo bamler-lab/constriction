@@ -22,7 +22,6 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// See [above usage instructions](#usage-for-bits-back-coding) for explanation of
 /// constructor arguments.
 #[pyclass]
-#[pyo3(text_signature = "(self, compressed, is_remainders=False, seal=False)")]
 #[derive(Debug, Clone)]
 pub struct ChainCoder {
     inner: crate::stream::chain::DefaultChainCoder,
@@ -31,6 +30,7 @@ pub struct ChainCoder {
 #[pymethods]
 impl ChainCoder {
     #[new]
+    #[pyo3(text_signature = "(self, compressed, is_remainders=False, seal=False)")]
     pub fn new(
         data: PyReadonlyArray1<'_, u32>,
         is_remainders: Option<bool>,

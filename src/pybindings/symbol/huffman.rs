@@ -27,7 +27,6 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// See [examples](../symbol.html#examples) in parent module.
 #[pyclass]
-#[pyo3(text_signature = "(self, probabilities)")]
 #[derive(Debug)]
 pub struct EncoderHuffmanTree {
     pub(crate) inner: huffman::EncoderHuffmanTree,
@@ -36,6 +35,7 @@ pub struct EncoderHuffmanTree {
 #[pymethods]
 impl EncoderHuffmanTree {
     #[new]
+    #[pyo3(text_signature = "(self, probabilities)")]
     pub fn new(probabilities: PyReadonlyFloatArray1<'_>) -> PyResult<Self> {
         let inner = huffman::EncoderHuffmanTree::from_float_probabilities::<f64, _>(
             probabilities.cast_f64()?.as_array(),
@@ -59,7 +59,6 @@ impl EncoderHuffmanTree {
 ///
 /// See [examples](../symbol.html#examples) in parent module.
 #[pyclass]
-#[pyo3(text_signature = "(self, probabilities)")]
 #[derive(Debug)]
 pub struct DecoderHuffmanTree {
     pub(crate) inner: huffman::DecoderHuffmanTree,
@@ -68,6 +67,7 @@ pub struct DecoderHuffmanTree {
 #[pymethods]
 impl DecoderHuffmanTree {
     #[new]
+    #[pyo3(text_signature = "(self, probabilities)")]
     pub fn new(probabilities: PyReadonlyFloatArray1<'_>) -> PyResult<Self> {
         let inner = huffman::DecoderHuffmanTree::from_float_probabilities::<f64, _>(
             probabilities.cast_f64()?.as_array(),

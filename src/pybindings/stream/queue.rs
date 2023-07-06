@@ -35,7 +35,6 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// See [module level example](#example).
 #[pyclass]
-#[pyo3(text_signature = "(self)")]
 #[derive(Debug, Default, Clone)]
 pub struct RangeEncoder {
     inner: crate::stream::queue::DefaultRangeEncoder,
@@ -45,6 +44,7 @@ pub struct RangeEncoder {
 impl RangeEncoder {
     /// Constructs a new (empty) range encoder.
     #[new]
+    #[pyo3(text_signature = "(self)")]
     pub fn new() -> Self {
         let inner = crate::stream::queue::DefaultRangeEncoder::new();
         Self { inner }
@@ -349,7 +349,6 @@ impl RangeEncoder {
 ///
 /// See [module level example](#example).
 #[pyclass]
-#[pyo3(text_signature = "(self, compressed)")]
 #[derive(Debug, Clone)]
 pub struct RangeDecoder {
     inner: crate::stream::queue::DefaultRangeDecoder,
@@ -358,6 +357,7 @@ pub struct RangeDecoder {
 #[pymethods]
 impl RangeDecoder {
     #[new]
+    #[pyo3(text_signature = "(self, compressed)")]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
         Ok(Self::from_vec(compressed.to_vec()?))
     }

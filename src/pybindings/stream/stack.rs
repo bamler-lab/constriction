@@ -102,7 +102,6 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 #[pyclass]
-#[pyo3(text_signature = "(self, [compressed], seal=False)")]
 #[derive(Debug, Clone)]
 pub struct AnsCoder {
     inner: crate::stream::stack::DefaultAnsCoder,
@@ -125,6 +124,7 @@ impl AnsCoder {
     ///   decoded and re-encoded some symbols, you can get back the original `compressed` data by
     ///   calling `.get_compressed(unseal=True)`.
     #[new]
+    #[pyo3(text_signature = "(self, [compressed], seal=False)")]
     pub fn new(
         compressed: Option<PyReadonlyArray1<'_, u32>>,
         seal: Option<bool>,
