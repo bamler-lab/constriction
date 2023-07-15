@@ -28,11 +28,11 @@ into a web app by using `constriction` in a WebAssembly module).
 
 ## Project Status
 
-We currently provide implementations of the following entropy coding algorithms:
+We currently provide implementations of the following entropy coding algorithms (see also [benchmarks](#benchmarks) below):
 
 - **Asymmetric Numeral Systems (ANS):** a fast modern entropy coder with near-optimal
   compression effectiveness that supports advanced use cases like bits-back coding.
-- **Range Coding:** a computationally efficient variant of Arithmetic Coding, that has
+- **Range Coding:** a computationally efficient variant of Arithmetic Coding that has
   essentially the same compression effectiveness as ANS Coding but operates as a queue
   ("first in first out"), which makes it preferable for autoregressive models.
 - **Chain Coding:** an experimental new entropy coder that combines the (net) effectiveness
@@ -44,7 +44,7 @@ We currently provide implementations of the following entropy coding algorithms:
   flexible enough to express complex novel tasks.
 - **Huffman Coding:** a well-known symbol code, mainly provided here for teaching purpose;
   you'll usually want to use a stream code like ANS or Range Coding instead since symbol
-  codes can have a considerable overhead on the bitrate, especially in the regime of low
+  codes can have a considerable overhead on the bit rate, especially in the regime of low
   entropy per symbol, which is common in machine-learning based compression methods.
 
 Further, `constriction` provides implementations of common probability distributions in
@@ -150,6 +150,59 @@ assert_eq!(reconstructed, symbols);
 
 There's a lot more you can do with `constriction`'s Rust API. d check out the [Rust API
 Documentation](https://docs.rs/constriction).
+
+## Benchmarks
+
+The following results show empirical bit rates and run-time performances of the two main entropy coding algorithms provided by `constriction`: *Range Coding* (RC) and *Asymmetric Numeral Systems* (ANS).
+We also compare to *Arithmetic Coding* (AC), using the implementation in the [arcode crate](https://github.com/cgbur/arcode-rs).
+We ran the experiments with data that came up in [a real-world application](https://robamler.github.io/linguistic-flux-capacitor/).
+Each message that we compressed for these experiments consists of 3 million symbols, which we modeled as i.i.d. within each message.
+The messages span a wide range of entropy from about 0.001 to 10 bits per symbol.
+Reported run times for encoding and decoding were observed on an Intel Core i7-7500U CPU (2.70 GHz) using `constriction`s Rust API (runtimes of `constriction`'s Python bindings in any real-world scenario will almost certainly be dwarfed by any additionally necessary python operations).
+More experimental details are explained in Section 5.2 of [this paper](https://arxiv.org/abs/2201.01741), and in the [benchmarking code](https://github.com/bamler-lab/understanding-ans).
+
+### Aggregated Benchmark Results
+
+The table below shows bit rates and run times for each tested entropy coder, aggregated over all tested messages.
+For RC and ANS, the numbers in brackets for the entropy coder name denote advanced coder settings that are only exposed in `constriction`'s Rust API.
+The most relevant settings are the ones labeled as "default".
+These settings are the only ones exposed by `constriction`'s Python API, and they are generally recommended for prototyping.
+The table reports bit rates as relative overhead over the information content.
+Thus, e.g., the 0.02&nbsp;% overhead reported for Range Coding (RC) means that `constriction`'s range coder compresses the entire benchmark data to a bit string that is 1.0002 times as long as the bit rate that a hypothetical optimal lossless compression code would achieve.
+
+| Entropy Coder | bit rate overhead | encoder / decoder runtime |
+|---|---|---|
+| **ANS (24/32/64) *("default")*** | **0.0015&nbsp;%** | **24.2 / 6.1 ns/symbol** |
+| ANS (32/32/64) | 0.0593&nbsp;% | 24.2 / 6.9 ns/symbol |
+| ANS (16/16/32) | 0.2402&nbsp;% | 19.8 / 6.4 ns/symbol |
+| ANS (12/16/32) *("small")* | 3.9567&nbsp;% | 19.8 / 6.9 ns/symbol |
+| **RC (24/32/64) *("default")*** | **0.0237&nbsp;%** | **16.6 / 14.3 ns/symbol** |
+| RC (32/32/64) | 1.6089&nbsp;% | 16.7 / 14.8 ns/symbol |
+| RC (16/16/32) | 3.4950&nbsp;% | 16.9 / 9.4 ns/symbol |
+| RC (12/16/32) *("small")* |  4.5807&nbsp;% | 16.8 / 9.4 ns/symbol |
+| **Arithmetic Coding (AC; for comparison, using [arcode crate](https://github.com/cgbur/arcode-rs))** | **0.0004&nbsp;%** | **43.2 / 85.6 ns/symbol** |
+
+We observe that the "default" ANS and RC coders, as well as the Arithmetic Coding baseline all essentially achieve the optimal bit rate (all with less than 0.1&nbsp;% overhead).
+When choosing an entropy coder for a practical application, the decision should therefore typically not be based on the bit rate but rather on run time performance and ergonomics.
+Concerning run time, `constriction`'s ANS and RC coders are both considerably faster than AC.
+When comparing ANS to RC, the main difference is in ergonomics: ANS operates as a stack ("last in first out"), which is good for bits-back coding with latent variable models, while RC operates as a queue ("first in first out"), which is good for autoregressive models.
+
+### Detailed Benchmark Results
+
+The plots below break down how each coder's performance changes as a function of the information content of the message that we compress.
+Each data point corresponds to a single message (consisting of 3&nbsp;million symbols each), and the horizontal axis shows the information content of the message.
+
+The most important results are again for entropy coders with the "default" settings (red plus signs), which are the ones that are also exposed in the Python API.
+Note the logarithmic scale on both axes.
+
+#### Bit Rates
+
+![empirical bit rates](bitrates.svg)
+
+#### Run Times
+
+![empirical run times](runtimes.svg)
+
 
 ## Citing
 
