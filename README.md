@@ -264,8 +264,8 @@ for improvement and are open to consider respectfully phrased opinions of other 
 ## License
 
 This work is licensed under the terms of the MIT license, Apache License Version 2.0, or
-Boost Software License Version 1.0. You can choose between one of them if you use this work.
-See the files whose name start with `LICENSE` in this directory. The compiled python
+Boost Software License Version 1.0. You can choose between these licenses if you use this work.
+See the files whose names start with `LICENSE` in this directory. The compiled python
 extension module is linked with a number of third party libraries. Binary distributions of
 the `constriction` python extension module contain a file `LICENSE.html` that includes all
 licenses of all dependencies (the file is also available
