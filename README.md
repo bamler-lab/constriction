@@ -165,13 +165,13 @@ More experimental details are explained in Section 5.2 of [this paper](https://a
 ### Aggregated Benchmark Results
 
 The table below shows bit rates and run times for each tested entropy coder, aggregated over all tested messages.
-For RC and ANS, the numbers in brackets after the entropy coder name denote advanced coder settings that are only exposed in `constriction`'s Rust API.
+For RC and ANS, the numbers in brackets after the entropy coder name denote advanced coder settings that are only exposed in `constriction`'s Rust API (see [documentation](https://docs.rs/constriction/latest/constriction/stream/index.html#highly-customizable-implementations-with-sane-presets)).
 The most relevant settings are the ones labeled as "default" (bold).
 These settings are the only ones exposed by `constriction`'s Python API, and they are generally recommended for prototyping.
 The table reports bit rates as relative overhead over the information content.
 Thus, e.g., the 0.02&nbsp;% overhead reported for Range Coding (RC) means that `constriction`'s range coder compresses the entire benchmark data to a bit string that is 1.0002 times as long as the bit rate that a hypothetical *optimal* lossless compression code would achieve.
 
-| Entropy Coder (precision / word size / head capacity) | bit rate overhead | encoder / decoder runtime |
+| Entropy Coder (precision / word size / state size) | bit rate overhead | encoder / decoder runtime |
 |---|---|---|
 | **ANS (24/32/64) *("default")*** | **0.0015&nbsp;%** | **24.2 / 6.1 ns/symbol** |
 | ANS (32/32/64) | 0.0593&nbsp;% | 24.2 / 6.9 ns/symbol |
