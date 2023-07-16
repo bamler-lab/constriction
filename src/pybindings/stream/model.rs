@@ -97,12 +97,12 @@ pub struct Model(pub Arc<dyn internals::Model>);
 /// parameters, which you then pass in as numpy arrays when calling the entropy coder's
 /// encode or decode method, see second example above.
 ///
-/// - **cdf** --- the cumulative distribution function; a nondecreasing function that
-///   returns a scalar between 0.0 and 1.0 (both inclusive), and which `constriction` will
-///   evaluate on mid-points between integers in order to integrate the probability
-///   distribution over bins centered at each integer. The function signature must be
+/// - **cdf** --- the cumulative distribution function; must be  a nondecreasing function
+///   that returns a scalar between 0.0 and 1.0 (both inclusive) when evaluated at any
+///   mid-point between two consecutive integers within the inclusive range from
+///   `min_symbol_inclusive` to `max_symbol_inclusive`. The function signature must be
 ///   `cdf(x, [param1, [param2, [param3, ...]]])` where `x` is the value at which
-///   `constriction` will evaluate the CDF and `paramX` will be provided if the
+///   `constriction` will evaluate the CDF, and `paramX` will be provided if the
 ///   `CustomModel` is used as a model *family*, as in the second example above.
 /// - **approximate_inverse_cdf** --- the inverse of the CDF, also called quantile function
 ///   or percent point function (PPF). This function does not have to return very precise

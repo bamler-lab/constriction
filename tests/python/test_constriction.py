@@ -307,6 +307,26 @@ def test_custom_model():
             symbols, model, params1, params2),
         [2789142295, 3128556965, 414280666], [2147484271])
 
+def test_custom_model_probing_range():
+    # See issue 27.
+    def cdf(x, mu, sigma):
+        assert x >= 0
+        return scipy.stats.lognorm.cdf(x, mu, sigma)
+
+    def inverse_cdf(q, mu, sigma):
+        return scipy.stats.lognorm.ppf(q, mu, sigma)
+
+    rng = np.random.RandomState(20230716)
+    mus = rng.randn(100)
+    sigmas = rng.randn(100)**2 +1
+    dummy_entropy_model = constriction.stream.model.CustomModel(cdf, inverse_cdf, 0, 10)
+
+    message = (rng.randn(100)**2).round().astype(np.int32)
+
+    coder = constriction.stream.stack.AnsCoder()
+    coder.encode_reverse(message, dummy_entropy_model, mus, sigmas)
+    decoded = coder.decode(dummy_entropy_model, mus, sigmas)
+    assert np.all(decoded == message)
 
 def test_huffman_queue():
     probabilities = np.array([0.3, 0.28, 0.12, 0.1, 0.2], dtype=np.float64)
