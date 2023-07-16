@@ -1127,9 +1127,12 @@ impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
 /// met:
 ///
 /// - The cumulative distribution function (CDF) [`Distribution::distribution`] is defined
-///   on all finite non-NaN floating point numbers, monotonically nondecreasing, and its
-///   values do not exceed the closed interval `[0.0, 1.0]`. It is OK if, due to rounding
-///   errors, the CDF does not cover the entire interval from `0.0` to `1.0`.
+///   on all mid points between integers that lie within the range that is provided as
+///   argument `support` to the `new` method; it is monotonically nondecreasing, and its
+///   values do not exceed the closed interval `[0.0, 1.0]`. It is OK if the CDF does not
+///   cover the entire interval from `0.0` to `1.0` (e.g., due to rounding errors or
+///   clipping); any remaining probability mass on the tails is added to the probability
+///   of the symbols at the respective ends of the `support`.
 /// - The quantile function or inverse CDF [`Inverse::inverse`] evaluates to a finite
 ///   non-NaN value everywhere on the open interval `(0.0, 1.0)`, and it is monotonically
 ///   nondecreasing on this interval. It does not have to be defined at the boundaries `0.0`
@@ -1445,8 +1448,9 @@ where
 
         // Round both cumulatives *independently* to fixed point precision.
         let left_sided_cumulative = if symbol.borrow() == &min_symbol_inclusive {
-            // Corner case: only makes a difference if we're cutting off a fairly significant
-            // left tail of the distribution.
+            // Corner case: make sure that the probabilities add up to one. The generic
+            // calculation in the `else` branch may lead to a lower total probability
+            // because we're cutting off the left tail of the distribution.
             Probability::zero()
         } else {
             let non_leaky: Probability =
@@ -1522,7 +1526,7 @@ where
 
         // SAFETY: We have to ensure that all paths lead to a state where
         // `right_sided_cumulative != left_sided_cumulative`.
-        let mut step = Self::Symbol::one(); // `diff` will always be a power of 2.
+        let mut step = Self::Symbol::one(); // `step` will always be a power of 2.
         let right_sided_cumulative = if left_sided_cumulative > quantile {
             // Our initial guess for `symbol` was too high. Reduce it until we're good.
             symbol = symbol - step;
@@ -1531,17 +1535,19 @@ where
             loop {
                 let old_left_sided_cumulative = left_sided_cumulative;
 
-                if symbol == min_symbol_inclusive && step <= Symbol::one() {
+                if symbol == min_symbol_inclusive {
                     left_sided_cumulative = Probability::zero();
-                    // This can only be reached from a downward search, so `old_left_sided_cumulative`
-                    // is the right sided cumulative since the step size is one.
-                    // SAFETY: `old_left_sided_cumulative > quantile >= 0 = left_sided_cumulative`
-                    break old_left_sided_cumulative;
+                    if step <= Symbol::one() {
+                        // This can only be reached from a downward search, so `old_left_sided_cumulative`
+                        // is the right sided cumulative since the step size is one.
+                        // SAFETY: `old_left_sided_cumulative > quantile >= 0 = left_sided_cumulative`
+                        break old_left_sided_cumulative;
+                    }
+                } else {
+                    let non_leaky: Probability =
+                        (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
+                    left_sided_cumulative = non_leaky + slack(symbol, min_symbol_inclusive);
                 }
-
-                let non_leaky: Probability =
-                    (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
-                left_sided_cumulative = non_leaky + slack(symbol, min_symbol_inclusive);
 
                 if left_sided_cumulative <= quantile {
                     found_lower_bound = true;
@@ -1575,14 +1581,18 @@ where
                         step = step << 1;
                     }
 
+                    // Find a smaller `symbol` that is still `>= min_symbol_inclusive`.
                     symbol = loop {
                         let new_symbol = symbol.wrapping_sub(&step);
                         if new_symbol >= min_symbol_inclusive && new_symbol <= symbol {
-                            // We can't reach this point if the subtraction wrapped because that would
-                            // mean that `step = 1` and therefore the old `symbol` was `Symbol::min_value()`,
-                            // so se would have ended up in the `left_sided_cumulative <= quantile` branch.
                             break new_symbol;
                         }
+                        // The following cannot set `step` to zero because this would mean that
+                        // `step == 1` and thus either the above `if` branch would have been
+                        // chosen, or `symbol == min_symbol_inclusive` (which would imply
+                        // `left_sided_cumulative <= quantile`), or `symbol` would be the
+                        // lowest representable symbol (which would also require
+                        // `symbol == min_symbol_inclusive`).
                         step = step >> 1;
                     };
                 }
@@ -1595,7 +1605,7 @@ where
 
             loop {
                 let right_sided_cumulative = if symbol == max_symbol_inclusive {
-                    let right_sided_cumulative = max_probability.wrapping_add(&Probability::one());
+                    let right_sided_cumulative = wrapping_pow2(PRECISION);
                     if step <= Symbol::one() {
                         let non_leaky: Probability =
                             (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
@@ -1656,11 +1666,14 @@ where
                     symbol = loop {
                         let new_symbol = symbol.wrapping_add(&step);
                         if new_symbol <= max_symbol_inclusive && new_symbol >= symbol {
-                            // We can't reach this point if the addition wrapped because that would
-                            // mean that `step = 1` and therefore the old `symbol` was `Symbol::max_value()`,
-                            // so se would have ended up in the `symbol == max_symbol_inclusive` branch.
                             break new_symbol;
                         }
+                        // The following cannot set `step` to zero because this would mean that
+                        // `step == 1` and thus either the above `if` branch would have been
+                        // chosen, or `symbol == max_symbol_inclusive` (which would imply
+                        // `right_sided_cumulative > quantile || right_sided_cumulative == 0`),
+                        // or `symbol` would be the largest representable symbol (which would
+                        // also require `symbol == max_symbol_inclusive`).
                         step = step >> 1;
                     };
                 }
