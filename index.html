@@ -860,17 +860,18 @@ constriction = "0.3.1"</pre>
   </table>
   <h3>Benchmarks</h3>
   <p>
-    See readme file for <a href="https://github.com/bamler-lab/constriction#benchmarks">detailed benchmark results</a>.
+    See <a href="https://github.com/bamler-lab/constriction#benchmarks">detailed benchmark results</a> in the readme.
   </p>
   <p>
     In brief, <code class="constriction">constriction</code>'s stream codes are optimized for low bit rate and fast
     encoding and decoding.
     With default settings in a real-world scenario, the provided stream codes (both Range Coding and Asymmetric Numeral
     Systems) achieve a bit rate that is <a href="https://github.com/bamler-lab/constriction#benchmarks">less than
-      0.1&nbsp;% above the theoretically achievable minimum</a> while being considerably faster than arithmetic coding.
+      0.1&nbsp;% above the theoretically achievable minimum bit rate while being considerably faster than arithmetic
+      coding</a>.
     Users of <code class="constriction">constriction</code>'s Rust API can optionally specify more advanced coder and
-    model settings at compile time to trade off between compression effectiveness, memory usage, and run time, see <a
-      href="https://docs.rs/constriction/latest/constriction/stream/index.html#highly-customizable-implementations-with-sane-presets">documentation</a>.
+    model settings at compile time to trade off between bit rate, memory usage, and run time (see <a
+      href="https://docs.rs/constriction/latest/constriction/stream/index.html#highly-customizable-implementations-with-sane-presets">documentation</a>).
   </p>
   <h3>Cite</h3>
   <p>
