@@ -184,6 +184,23 @@
       font-weight: normal;
     }
 
+    .top-left-round {
+      border-top-left-radius: 0.7em;
+    }
+
+    .top-right-round {
+      border-top-right-radius: 0.7em;
+    }
+
+    .bottom-left-round {
+      border-bottom-left-radius: 0.7em;
+    }
+
+    .bottom-right-round {
+      border-bottom-right-radius: 0.7em;
+    }
+
+
     th {
       text-align: center;
     }
@@ -315,10 +332,10 @@
     }
 
     .tabContent {
-      display: none;
+      display: inline-block;
       width: 100%;
-      border-bottom-left-radius: 0.7em;
-      border-bottom-right-radius: 0.7em;
+      border-bottom-left-radius: 0.4em;
+      border-bottom-right-radius: 0.4em;
       background: #f2eae2;
     }
 
@@ -430,19 +447,54 @@
         animation: none
       }
 
-      th>* {
-        font-weight: normal;
-        font-size: 80%;
-      }
-
       #api-reference {
+        font-size: 90%;
         margin-left: 0;
         margin-right: 0;
         text-align: center;
       }
 
+      #api-reference>li>a {
+        padding: 0 0.8em;
+      }
+
+      #api-reference>li>a>img {
+        margin-right: 0.2em;
+      }
+
       #api-reference>li:first-child {
         margin-right: 0;
+      }
+
+      .features {
+        font-size: 90%;
+      }
+
+      th>* {
+        font-weight: normal;
+        font-size: 90%;
+      }
+
+      td,
+      th:not(:empty) {
+        border-width: 0.2em;
+        padding: 0.4em;
+      }
+
+      .top-left-round {
+        border-top-left-radius: 0.5em;
+      }
+
+      .top-right-round {
+        border-top-right-radius: 0.5em;
+      }
+
+      .bottom-left-round {
+        border-bottom-left-radius: 0.5em;
+      }
+
+      .bottom-right-round {
+        border-bottom-right-radius: 0.5em;
       }
     }
 
@@ -504,7 +556,7 @@
 
       td,
       th:not(:empty) {
-        border: 0.3em #171717 solid;
+        border-color: #171717;
         background: #302125;
       }
 
@@ -644,12 +696,12 @@ constriction = "0.3.1"</pre>
   <h3>Documentation</h3>
   <div class="tabs">
     <ul>
-      <li>
-        <a href="#tutorials">Examples &amp; Tutorials</a>
+      <li class="active">
+        <a href="#api-reference">API Reference</a>
       </li>
       <li>&nbsp;</li>
       <li>
-        <a href="#api-reference">API Reference</a>
+        <a href="#tutorials">Examples &amp; Tutorials</a>
       </li>
       <li>&nbsp;</li>
       <li>
@@ -658,6 +710,15 @@ constriction = "0.3.1"</pre>
     </ul>
   </div>
   <div class="tabContent">
+    <ul id="api-reference" class="active">
+      <li><a href="apidoc/python/"><img src="python.svg" alt="Python logo">
+          <div>Python API<br>reference</div>
+        </a></li>
+      <li><a href="https://docs.rs/constriction/latest/constriction/"><img src="rust.svg" alt="Rust logo">
+          <div>Rust API<br>reference</div>
+        </a>
+      </li>
+    </ul>
     <ul id="tutorials">
       <li>Simple encoding and decoding: <a
           href="https://github.com/bamler-lab/constriction/blob/main/examples/python/01-hello-world.ipynb">Python&nbsp;example</a>
@@ -682,15 +743,6 @@ constriction = "0.3.1"</pre>
       <!-- TODO:  <li>Deploying your compression method on the web using WebAssembly: <a href="TODO">Rust&nbsp;tutorial</a> | <a
           href="https://robamler.github.io/linguistic-flux-capacitor/" target="_blank">finished&nbsp;demo</a></li> -->
     </ul>
-    <ul id="api-reference">
-      <li><a href="apidoc/python/"><img src="python.svg" alt="Python logo">
-          <div>Python API<br>reference</div>
-        </a></li>
-      <li><a href="https://docs.rs/constriction/latest/constriction/"><img src="rust.svg" alt="Rust logo">
-          <div>Rust API<br>reference</div>
-        </a>
-      </li>
-    </ul>
     <ul id="background">
       <li><a href="https://robamler.github.io/teaching/compress22/">Lecture notes</a> from a university course on data
         compression with and
@@ -707,19 +759,19 @@ constriction = "0.3.1"</pre>
   <table class="features">
     <tr>
       <th></th>
-      <th style="border-top-left-radius: 0.7em">
+      <th class="top-left-round">
         <a href="apidoc/python/"><img src="python.svg" alt="Python logo"><code
             class="constriction">constriction</code><br>for
           Python</a>
       </th>
-      <th style="border-top-right-radius: 0.7em">
+      <th class="top-right-round">
         <a href="https://docs.rs/constriction/latest/constriction/"><img src="rust.svg" alt="Rust logo"><code
             class="constriction">constriction</code><br>for
           Rust</a>
       </th>
     </tr>
     <tr>
-      <td style="border-top-left-radius: 0.7em">Range Coding</td>
+      <td class="top-left-round">Range Coding</td>
       <td class="included yes">
         <span>(<a href="apidoc/python/stream/queue.html#example">example</a>)</span>
       </td>
@@ -797,15 +849,29 @@ constriction = "0.3.1"</pre>
       </td>
     </tr>
     <tr>
-      <td style="border-bottom-left-radius: 0.7em"><code>no_std</code> support (e.g., for Web&shy;Assembly)</td>
+      <td class="bottom-left-round"><code>no_std</code> support (e.g., for Web&shy;Assembly)</td>
       <td class="included">
         n/a
       </td>
-      <td class="included yes" style="border-bottom-right-radius: 0.7em">
+      <td class="included yes bottom-right-round">
         <span>(<a href="https://robamler.github.io/linguistic-flux-capacitor/">demo</a>)</span>
       </td>
     </tr>
   </table>
+  <h3>Benchmarks</h3>
+  <p>
+    See readme file for <a href="https://github.com/bamler-lab/constriction#benchmarks">detailed benchmark results</a>.
+  </p>
+  <p>
+    In brief, <code class="constriction">constriction</code>'s stream codes are optimized for low bit rate and fast
+    encoding and decoding.
+    With default settings in a real-world scenario, the provided stream codes (both Range Coding and Asymmetric Numeral
+    Systems) achieve a bit rate that is <a href="https://github.com/bamler-lab/constriction#benchmarks">less than
+      0.1&nbsp;% above the theoretically achievable minimum</a> while being considerably faster than arithmetic coding.
+    Users of <code class="constriction">constriction</code>'s Rust API can optionally specify more advanced coder and
+    model settings at compile time to trade off between compression effectiveness, memory usage, and run time, see <a
+      href="https://docs.rs/constriction/latest/constriction/stream/index.html#highly-customizable-implementations-with-sane-presets">documentation</a>.
+  </p>
   <h3>Cite</h3>
   <p>
     I'd appreciate attribution if you use <code class="constriction">constriction</code> in
