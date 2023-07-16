@@ -377,9 +377,9 @@ impl<'py, 'p> Distribution for SpecializedPythonDistribution<'py, 'p> {
                 self.py,
                 PyTuple::new(self.py, &**self.value_and_params.borrow()),
             )
-            .expect("TODO")
+            .expect("Calling the provided cdf raised an exception.")
             .extract::<f64>(self.py)
-            .expect("TODO")
+            .expect("The provided cdf did not return a number.")
     }
 }
 
@@ -391,9 +391,9 @@ impl<'py, 'p> Inverse for SpecializedPythonDistribution<'py, 'p> {
                 self.py,
                 PyTuple::new(self.py, &**self.value_and_params.borrow()),
             )
-            .expect("TODO")
+            .expect("Calling the provided ppf raised an exception.")
             .extract::<f64>(self.py)
-            .expect("TODO")
+            .expect("The provided ppf did not return a number.")
     }
 }
 
