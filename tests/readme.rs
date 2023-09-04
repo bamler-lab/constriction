@@ -10,10 +10,10 @@ fn example() {
 
     // Define some data and a sequence of entropy models. We use quantized Gaussians
     // here, but you could also use other models or even implement your own.
-    let symbols = vec![23i32, -15, 78, 43, -69];
+    let symbols = [23i32, -15, 78, 43, -69];
     let quantizer = DefaultLeakyQuantizer::new(-100..=100);
-    let means = vec![35.2f64, -1.7, 30.1, 71.2, -75.1];
-    let stds = vec![10.1f64, 25.3, 23.8, 35.4, 3.9];
+    let means = [35.2f64, -1.7, 30.1, 71.2, -75.1];
+    let stds = [10.1f64, 25.3, 23.8, 35.4, 3.9];
     let models = means.iter().zip(&stds).map(|(&mean, &std)| {
         quantizer.quantize(probability::distribution::Gaussian::new(mean, std))
     });

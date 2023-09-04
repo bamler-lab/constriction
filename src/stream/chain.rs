@@ -1297,7 +1297,7 @@ mod tests {
         let coder2 = ChainCoder::from_remainders(remainders).unwrap();
         let coder3 = ChainCoder::from_remainders(remainders_suffix).unwrap();
 
-        for (mut coder, prefix) in vec![
+        for (mut coder, prefix) in [
             (coder, vec![]),
             (coder2, vec![]),
             (coder3, remainders_prefix),

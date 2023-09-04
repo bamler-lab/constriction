@@ -4246,7 +4246,7 @@ mod tests {
     #[test]
     fn lookup_noncontiguous() {
         let symbols = "axcy";
-        let probabilities = vec![3u8, 18, 1, 42];
+        let probabilities = [3u8, 18, 1, 42];
         let encoder_model = NonContiguousCategoricalEncoderModel::<_, u8, 6>::from_symbols_and_nonzero_fixed_point_probabilities(
             symbols.chars(),probabilities.iter(),false
         )
