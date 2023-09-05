@@ -114,7 +114,7 @@ features (and you can't use the `probability` crate):
 
 ```toml
 [dependencies]
-constriction = {version = "0.1.2", default-features = false} # for `no_std` mode
+constriction = {version = "0.3.1", default-features = false} # for `no_std` mode
 ```
 
 Then go ahead and encode and decode some data:
