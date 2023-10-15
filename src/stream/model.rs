@@ -166,7 +166,7 @@ pub use probability::distribution::Distribution;
 /// [`probability`]: https://docs.rs/probability/latest/probability/
 pub use probability::distribution::Inverse;
 
-use crate::{wrapping_pow2, BitArray, NonZeroBitArray};
+use crate::{generic_asserts, wrapping_pow2, BitArray, NonZeroBitArray};
 
 /// Base trait for probabilistic models of a data source.
 ///
@@ -1209,7 +1209,11 @@ where
     ///
     /// [`quantize`]: #method.quantize
     pub fn new(support: RangeInclusive<Symbol>) -> Self {
-        assert!(PRECISION > 0 && PRECISION <= Probability::BITS);
+        generic_asserts!(
+            (Probability: BitArray; const PRECISION: usize);
+            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+        );
 
         // We don't support degenerate probability distributions (i.e., distributions that
         // place all probability mass on a single symbol).
@@ -1803,7 +1807,12 @@ pub trait SymbolTable<Symbol, Probability: BitArray> {
         &self,
         quantile: Probability,
     ) -> (Symbol, Probability, Probability::NonZero) {
-        assert!(PRECISION <= Probability::BITS);
+        generic_asserts!(
+            (Probability: BitArray; const PRECISION: usize);
+            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+        );
+
         let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
         assert!(quantile <= max_probability);
 
@@ -3163,8 +3172,11 @@ where
     P::Item: Borrow<Probability>,
     Op: FnMut(Symbol, Probability, Probability) -> Result<(), ()>,
 {
-    assert!(PRECISION > 0);
-    assert!(PRECISION <= Probability::BITS);
+    generic_asserts!(
+        (Probability: BitArray; const PRECISION: usize);
+        PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+        PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+    );
 
     // We accumulate all validity checks into single branches at the end in order to
     // keep the loop itself branchless.
@@ -3204,7 +3216,11 @@ where
     f64: AsPrimitive<Probability>,
     usize: AsPrimitive<Probability>,
 {
-    assert!(PRECISION > 0 && PRECISION <= Probability::BITS);
+    generic_asserts!(
+        (Probability: BitArray; const PRECISION: usize);
+        PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+        PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+    );
 
     if probabilities.len() < 2 || probabilities.len() > Probability::max_value().as_() {
         return Err(());
@@ -3470,9 +3486,12 @@ where
         P: IntoIterator,
         P::Item: Borrow<Probability>,
     {
-        assert!(PRECISION > 0);
-        assert!(PRECISION <= Probability::BITS);
-        assert!(PRECISION < <usize as BitArray>::BITS);
+        generic_asserts!(
+            (Probability: BitArray; const PRECISION: usize);
+            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+            USIZE_MUST_STRICTLY_SUPPORT_PRECISION: PRECISION < <usize as BitArray>::BITS;
+        );
 
         let mut lookup_table = Vec::with_capacity(1 << PRECISION);
         let symbols = symbols.into_iter();
@@ -3508,9 +3527,12 @@ where
     where
         M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
     {
-        assert!(PRECISION > 0);
-        assert!(PRECISION <= Probability::BITS);
-        assert!(PRECISION < <usize as BitArray>::BITS);
+        generic_asserts!(
+            (Probability: BitArray; const PRECISION: usize);
+            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+            USIZE_MUST_STRICTLY_SUPPORT_PRECISION: PRECISION < <usize as BitArray>::BITS;
+        );
 
         let mut lookup_table = Vec::with_capacity(1 << PRECISION);
         let symbol_table = model.symbol_table();
@@ -3576,9 +3598,12 @@ where
         I: IntoIterator,
         I::Item: Borrow<Probability>,
     {
-        assert!(PRECISION > 0);
-        assert!(PRECISION <= Probability::BITS);
-        assert!(PRECISION < <usize as BitArray>::BITS);
+        generic_asserts!(
+            (Probability: BitArray; const PRECISION: usize);
+            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+            USIZE_MUST_STRICTLY_SUPPORT_PRECISION: PRECISION < <usize as BitArray>::BITS;
+        );
 
         let mut lookup_table = Vec::with_capacity(1 << PRECISION);
         let probabilities = probabilities.into_iter();
@@ -3725,10 +3750,16 @@ where
         &self,
         quantile: Probability,
     ) -> (Symbol, Probability, Probability::NonZero) {
+        generic_asserts!(
+            (Probability: BitArray; const PRECISION: usize);
+            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+        );
+
         if Probability::BITS != PRECISION {
             // It would be nice if we could avoid this but we currently don't statically enforce
             // `quantile` to fit into `PRECISION` bits.
-            assert!(PRECISION == Probability::BITS || quantile < Probability::one() << PRECISION);
+            assert!(quantile < Probability::one() << PRECISION);
         }
 
         let (left_sided_cumulative, symbol, next_cumulative) = unsafe {

@@ -38,7 +38,7 @@ use crate::{
         self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, FallibleIteratorReadWords,
         IntoReadWords, IntoSeekReadWords, ReadWords, Reverse, WriteWords,
     },
-    bit_array_to_chunks_truncated, BitArray, CoderError, DefaultEncoderError,
+    bit_array_to_chunks_truncated, generic_asserts, BitArray, CoderError, DefaultEncoderError,
     DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack, UnwrapInfallible,
 };
 
@@ -256,7 +256,10 @@ where
     Backend: Default,
 {
     fn default() -> Self {
-        assert!(State::BITS >= 2 * Word::BITS);
+        generic_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
 
         Self {
             state: State::zero(),
@@ -307,7 +310,10 @@ where
     where
         Backend: ReadWords<Word, Stack>,
     {
-        assert!(State::BITS >= 2 * Word::BITS);
+        generic_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
 
         let state = match Self::read_initial_state(|| compressed.read()) {
             Ok(state) => state,
@@ -937,7 +943,12 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        assert!(State::BITS >= Word::BITS + PRECISION);
+        generic_asserts!(
+            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
+            NON_ZERO_PRECISION: PRECISION > 0;
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
@@ -1001,7 +1012,12 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        assert!(State::BITS >= Word::BITS + PRECISION);
+        generic_asserts!(
+            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
+            NON_ZERO_PRECISION: PRECISION > 0;
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
 
         let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
         let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
