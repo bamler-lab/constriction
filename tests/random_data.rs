@@ -1,6 +1,12 @@
 #![warn(rust_2018_idioms)]
 
-use std::{cmp::max, cmp::min, ops::RangeInclusive};
+use std::{
+    cmp::max,
+    cmp::min,
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    ops::RangeInclusive,
+};
 
 use num_traits::AsPrimitive;
 use probability::{
@@ -17,9 +23,17 @@ fn make_random_normal(
     amt: usize,
     domain: RangeInclusive<i32>,
 ) -> impl Iterator<Item = (i32, Gaussian)> + DoubleEndedIterator + Clone {
+    let mut hasher = DefaultHasher::new();
+    (amt as u64).hash(&mut hasher);
+
     (0..amt).map(move |i| {
         // Generate random numbers that can also be reproduced when iterating in reverse direction.
-        let mut rng = Xorshift128Plus::new([i as u64 + 123, i as u64 + 456]);
+        let mut hasher = hasher.clone();
+        (i as u64).hash(&mut hasher);
+        let seed1 = hasher.finish();
+        (amt as u64).hash(&mut hasher); // Add arbitrary additional data to make `seed2` different from `seed1`.
+        let seed2 = hasher.finish();
+        let mut rng = Xorshift128Plus::new([seed1, seed2]);
 
         let mean = 200.0 * rng.read_f64() - 100.0;
         let std_dev = 30.0 * rng.read_f64() + 0.01;
