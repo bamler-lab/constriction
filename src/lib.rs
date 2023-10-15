@@ -289,7 +289,7 @@ use num_traits::{AsPrimitive, PrimInt, Unsigned, WrappingAdd, WrappingMul, Wrapp
 /// `constriction` may expand its use to frontends.
 pub trait Semantics: Default {}
 
-/// Zero sized marker trait for last-in-first-out read/write [`Semantics`]
+/// Zero sized marker struct for last-in-first-out read/write [`Semantics`]
 ///
 /// This type typically only comes up in advanced use cases that are generic over read/write
 /// semantics. If you are looking for an entropy coder that operates as a stack, check out
@@ -298,7 +298,7 @@ pub trait Semantics: Default {}
 pub struct Stack {}
 impl Semantics for Stack {}
 
-/// Zero sized marker trait for first-in-first-out read/write [`Semantics`]
+/// Zero sized marker struct for first-in-first-out read/write [`Semantics`]
 ///
 /// This type typically only comes up in advanced use cases that are generic over read/write
 /// semantics. If you are looking for an entropy coder that operates as a queue, check out
