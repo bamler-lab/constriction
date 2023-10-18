@@ -66,11 +66,14 @@ impl EncoderHuffmanTree {
         P: Ord + Clone + Add<Output = P>,
         I: IntoIterator<Item = Result<P, E>>,
     {
-        let mut heap = probabilities
+        // Collecting into a Vec first and then creating a binary heap is O(n)
+        // whereas collecting directly into a binary heap would be O(n log(n)).
+        let heap = probabilities
             .into_iter()
             .enumerate()
             .map(|(i, s)| s.map(|s| (Reverse((s, i)))))
-            .collect::<Result<BinaryHeap<_>, E>>()?;
+            .collect::<Result<Vec<_>, E>>()?;
+        let mut heap = BinaryHeap::from(heap);
 
         if heap.is_empty() || heap.len() > usize::max_value() / 4 {
             panic!();
@@ -201,11 +204,14 @@ impl DecoderHuffmanTree {
         P: Ord + Clone + Add<Output = P>,
         I: IntoIterator<Item = Result<P, E>>,
     {
-        let mut heap = probabilities
+        // Collecting into a Vec first and then creating a binary heap is O(n)
+        // whereas collecting directly into a binary heap would be O(n log(n)).
+        let heap = probabilities
             .into_iter()
             .enumerate()
             .map(|(i, s)| s.map(|s| (Reverse((s, i)))))
-            .collect::<Result<BinaryHeap<_>, E>>()?;
+            .collect::<Result<Vec<_>, E>>()?;
+        let mut heap = BinaryHeap::from(heap);
 
         if heap.is_empty() || heap.len() > usize::max_value() / 2 {
             panic!();
