@@ -282,12 +282,13 @@ callback functions <code>cdf</code> and <code>approximate_inverse_cdf</code> tha
 parameters, which you then pass in as numpy arrays when calling the entropy coder's
 encode or decode method, see second example above.</p>
 <ul>
-<li><strong>cdf</strong> &mdash; the cumulative distribution function; a nondecreasing function that
-returns a scalar between 0.0 and 1.0 (both inclusive), and which <code><a title="constriction" href="../index.html">constriction</a></code> will
-evaluate on mid-points between integers in order to integrate the probability
-distribution over bins centered at each integer. The function signature must be
+<li><strong>cdf</strong> &mdash; the cumulative distribution function; must be
+a nondecreasing function
+that returns a scalar between 0.0 and 1.0 (both inclusive) when evaluated at any
+mid-point between two consecutive integers within the inclusive range from
+<code>min_symbol_inclusive</code> to <code>max_symbol_inclusive</code>. The function signature must be
 <code>cdf(x, [param1, [param2, [param3, &hellip;]]])</code> where <code>x</code> is the value at which
-<code><a title="constriction" href="../index.html">constriction</a></code> will evaluate the CDF and <code>paramX</code> will be provided if the
+<code><a title="constriction" href="../index.html">constriction</a></code> will evaluate the CDF, and <code>paramX</code> will be provided if the
 <code><a title="constriction.stream.model.CustomModel" href="#constriction.stream.model.CustomModel">CustomModel</a></code> is used as a model <em>family</em>, as in the second example above.</li>
 <li><strong>approximate_inverse_cdf</strong> &mdash; the inverse of the CDF, also called quantile function
 or percent point function (PPF). This function does not have to return very precise
@@ -325,7 +326,7 @@ everywhere.</p></div>
 </dd>
 <dt id="constriction.stream.model.Model"><code class="flex name class">
 <span>class <span class="ident">Model</span></span>
-<span>(</span><span>self, NOT_INSTANTIABLE)</span>
+<span>(</span><span>...)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Abstract base class for all entropy models.</p>
