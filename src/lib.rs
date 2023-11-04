@@ -74,7 +74,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! constriction = "0.3.1"
+//! constriction = "0.3.2"
 //! ```
 //!
 //! ## System Requirements
