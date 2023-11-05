@@ -335,7 +335,7 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-7.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe
+          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-7.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe
 
       # For some reason, manylinux builds create wheels owned by the root user,
       # which breaks our attempts to add the license file below.
@@ -349,14 +349,14 @@ jobs:
         with:
           target: aarch64-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.7 python3.8 python3.9 python3.10 python3.11
+          args: --release --strip --features pybindings -i python3.7 python3.8 python3.9 python3.10 python3.11 python3.12
 
       - name: Build universal2 wheels
         if: matrix.os == 'macos-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --strip --features pybindings --universal2 -i python3.7 python3.8 python3.9 python3.10 python3.11
+          args: --release --strip --features pybindings --universal2 -i python3.7 python3.8 python3.9 python3.10 python3.11 python3.12
 
       - name: List wheels (unix)
         if: matrix.os != 'windows-latest'
