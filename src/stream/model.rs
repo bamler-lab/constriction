@@ -972,8 +972,8 @@ impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
 ///
 /// // Use the entropy models with an entropy coder.
 /// let mut ans_coder = DefaultAnsCoder::new();
-/// ans_coder.encode_symbol(4, &entropy_model1).unwrap();
-/// ans_coder.encode_symbol(-3, &entropy_model2).unwrap();
+/// ans_coder.encode_symbol(4, entropy_model1).unwrap();
+/// ans_coder.encode_symbol(-3, entropy_model2).unwrap();
 ///
 /// // Decode symbols (in reverse order, since the `AnsCoder` is a stack) and verify correctness.
 /// assert_eq!(ans_coder.decode_symbol(entropy_model2).unwrap_infallible(), -3);
@@ -1005,16 +1005,16 @@ impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
 /// let mut range_encoder = DefaultRangeEncoder::new();
 ///
 /// // Encode a "typical" symbol from the distribution (i.e., one with non-negligible probability).
-/// range_encoder.encode_symbol(107, &entropy_model).unwrap();
+/// range_encoder.encode_symbol(107, entropy_model).unwrap();
 ///
 /// // Due to the "leakiness" of the quantizer, the following still works despite the fact that
 /// // the symbol `1000` has a ridiculously low probability under the binomial distribution.
-/// range_encoder.encode_symbol(1000, &entropy_model).unwrap();
+/// range_encoder.encode_symbol(1000, entropy_model).unwrap();
 ///
 /// // Decode symbols (in forward order, since range coding operates as a queue) and verify.
 /// let mut range_decoder = range_encoder.into_decoder().unwrap();
-/// assert_eq!(range_decoder.decode_symbol(&entropy_model).unwrap(), 107);
-/// assert_eq!(range_decoder.decode_symbol(&entropy_model).unwrap(), 1000);
+/// assert_eq!(range_decoder.decode_symbol(entropy_model).unwrap(), 107);
+/// assert_eq!(range_decoder.decode_symbol(entropy_model).unwrap(), 1000);
 /// assert!(range_decoder.maybe_exhausted());
 /// ```
 ///

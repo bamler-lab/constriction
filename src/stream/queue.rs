@@ -1080,7 +1080,7 @@ mod tests {
 
         let mut decoder = DefaultRangeDecoder::from_compressed(&compressed).unwrap();
         for symbol in symbols {
-            assert_eq!(decoder.decode_symbol(&model).unwrap(), symbol);
+            assert_eq!(decoder.decode_symbol(model).unwrap(), symbol);
         }
         assert!(decoder.maybe_exhausted());
     }

@@ -1076,16 +1076,16 @@ pub trait Decode<const PRECISION: usize>: Code {
 /// ) -> Encoder::IntoDecoder
 /// where
 ///     Encoder: Encode<PRECISION> + IntoDecoder<PRECISION>, // <-- Different trait bound.
-///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32>,
+///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32> + Copy,
 ///     D::Probability: Into<Encoder::Word>,
 ///     Encoder::Word: num_traits::AsPrimitive<D::Probability>
 /// {
-///     encoder.encode_symbol(137, &model);
+///     encoder.encode_symbol(137, model);
 ///     let mut decoder = encoder.into_decoder();
-///     let decoded = decoder.decode_symbol(&model).unwrap();
+///     let decoded = decoder.decode_symbol(model).unwrap();
 ///     assert_eq!(decoded, 137);
 ///
-///     // encoder.encode_symbol(42, &model); // <-- This would fail (we moved `encoder`).
+///     // encoder.encode_symbol(42, model); // <-- This would fail (we moved `encoder`).
 ///     decoder // <-- We can return `decoder` as it has no references to the current stack frame.
 /// }
 ///
@@ -1135,17 +1135,17 @@ pub trait IntoDecoder<const PRECISION: usize>: Encode<PRECISION> {
 /// where
 ///     Encoder: Encode<PRECISION>,
 ///     for<'a> Encoder: AsDecoder<'a, PRECISION>, // <-- Different trait bound.
-///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32>,
+///     D: EncoderModel<PRECISION, Symbol=i32> + DecoderModel<PRECISION, Symbol=i32> + Copy,
 ///     D::Probability: Into<Encoder::Word>,
 ///     Encoder::Word: num_traits::AsPrimitive<D::Probability>
 /// {
-///     encoder.encode_symbol(137, &model);
+///     encoder.encode_symbol(137, model);
 ///     let mut decoder = encoder.as_decoder();
-///     let decoded = decoder.decode_symbol(&model).unwrap(); // (Doesn't mutate `encoder`.)
+///     let decoded = decoder.decode_symbol(model).unwrap(); // (Doesn't mutate `encoder`.)
 ///     assert_eq!(decoded, 137);
 ///
 ///     std::mem::drop(decoder); // <-- We have to explicitly drop `decoder` ...
-///     encoder.encode_symbol(42, &model); // <-- ... before we can use `encoder` again.
+///     encoder.encode_symbol(42, model); // <-- ... before we can use `encoder` again.
 /// }
 ///
 /// // Usage example:

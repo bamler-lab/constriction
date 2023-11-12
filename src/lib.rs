@@ -564,8 +564,8 @@ pub trait Seek: PosSeek {
     /// let mut decoder = AnsCoder::from_reversed_compressed(compressed).unwrap();
     ///
     /// // Since we chose to encode onto a stack, decoding yields the last encoded chunk first:
-    /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 50);
-    /// assert_eq!(decoder.decode_symbol(&entropy_model).unwrap(), 51);
+    /// assert_eq!(decoder.decode_symbol(entropy_model).unwrap(), 50);
+    /// assert_eq!(decoder.decode_symbol(entropy_model).unwrap(), 51);
     ///
     /// // To jump to our snapshot, we have to use the adjusted `snapshot_pos`:
     /// decoder.seek((snapshot_pos, snapshot_state));

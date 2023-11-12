@@ -1208,7 +1208,7 @@ mod tests {
 
         let mut decoder = DefaultAnsCoder::from_compressed(compressed).unwrap();
         for symbol in symbols.rev() {
-            assert_eq!(decoder.decode_symbol(&model).unwrap(), symbol);
+            assert_eq!(decoder.decode_symbol(model).unwrap(), symbol);
         }
         assert!(decoder.is_empty());
     }
