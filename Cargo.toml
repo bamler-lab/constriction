@@ -37,8 +37,8 @@ libm = "0.2.6"
 probability = {version = "0.20"}
 
 ndarray = {version = "0.15", optional = true}
-numpy = {version = "0.19.0", optional = true}
-pyo3 = {version = "0.19.1", features = ["extension-module"], optional = true}
+numpy = {version = "0.20", optional = true}
+pyo3 = {version = "0.20", features = ["extension-module"], optional = true}
 
 [dev-dependencies]
 byteorder = "1.4.2"
