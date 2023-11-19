@@ -246,7 +246,7 @@ Contributors can compile `constriction` manually as follows:
 4. If you want to compile the Python module:
    - install [poetry](https://python-poetry.org/).
    - install Python dependencies: `cd` into the repository and run `poetry install`
-   - build the Python module: `poetry run maturin develop --features pybindings`
+   - build the Python module: `poetry run maturin develop --features pybindings --release`
    - run Python unit tests: `poetry run pytest tests/python`
    - start a Python REPL that sees the compiled Python module: `poetry run ipython`
 
