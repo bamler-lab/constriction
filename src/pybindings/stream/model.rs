@@ -7,8 +7,12 @@ use pyo3::prelude::*;
 
 use crate::{
     pybindings::PyReadonlyFloatArray1,
-    stream::model::{DefaultContiguousCategoricalEntropyModel, LeakyQuantizer, UniformModel},
+    stream::model::{
+        DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer, UniformModel,
+    },
 };
+
+use self::internals::DefaultEntropyModel;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<Model>()?;
@@ -436,9 +440,23 @@ impl Uniform {
 ///
 /// - **mean** --- the mean of the Gaussian distribution before quantization.
 /// - **std** --- the standard deviation of the Gaussian distribution before quantization.
+///   Must be positive.
 #[pyclass(extends=Model)]
 #[derive(Debug)]
 struct QuantizedGaussian;
+
+fn quantized_gaussian(
+    mean: f64,
+    std: f64,
+    quantizer: DefaultLeakyQuantizer<f64, i32>,
+) -> impl DefaultEntropyModel + Send + Sync {
+    assert!(
+        std > 0.0,
+        "Invalid model parameter: `std` must be positive."
+    );
+    let distribution = probability::distribution::Gaussian::new(mean, std);
+    quantizer.quantize(distribution)
+}
 
 #[pymethods]
 impl QuantizedGaussian {
@@ -454,39 +472,31 @@ impl QuantizedGaussian {
     ) -> PyResult<(Self, Model)> {
         let model = match (mean, std) {
             (None, None) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
                 let model = internals::ParameterizableModel::new(move |(mean, std): (f64, f64)| {
-                    let distribution = probability::distribution::Gaussian::new(mean, std);
-                    quantizer.quantize(distribution)
+                    quantized_gaussian(mean, std, quantizer)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
             (Some(mean), Some(std)) => {
-                let distribution = probability::distribution::Gaussian::new(mean, std);
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
-                Arc::new(quantizer.quantize(distribution)) as Arc<dyn internals::Model>
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
+                Arc::new(quantized_gaussian(mean, std, quantizer)) as Arc<dyn internals::Model>
             }
             (None, Some(std)) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
                 let model = internals::ParameterizableModel::new(move |(mean,): (f64,)| {
-                    let distribution = probability::distribution::Gaussian::new(mean, std);
-                    quantizer.quantize(distribution)
+                    quantized_gaussian(mean, std, quantizer)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
             (Some(mean), None) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
                 let model = internals::ParameterizableModel::new(move |(std,): (f64,)| {
-                    let distribution = probability::distribution::Gaussian::new(mean, std);
-                    quantizer.quantize(distribution)
+                    quantized_gaussian(mean, std, quantizer)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
@@ -517,10 +527,23 @@ impl QuantizedGaussian {
 ///
 /// - **mean** --- the mean of the Laplace distribution before quantization.
 /// - **scale** --- the scale parameter `b` of the Laplace distribution before quantization
-///   (resulting in a variance of `2 * scale**2`).
+///   (resulting in a variance of `2 * scale**2`). Must be positive.
 #[pyclass(extends=Model)]
 #[derive(Debug)]
 struct QuantizedLaplace;
+
+fn quantized_laplace(
+    mean: f64,
+    scale: f64,
+    quantizer: DefaultLeakyQuantizer<f64, i32>,
+) -> impl DefaultEntropyModel + Send + Sync {
+    assert!(
+        scale > 0.0,
+        "Invalid model parameter: `scale` must be positive."
+    );
+    let distribution = probability::distribution::Laplace::new(mean, scale);
+    quantizer.quantize(distribution)
+}
 
 #[pymethods]
 impl QuantizedLaplace {
@@ -536,40 +559,33 @@ impl QuantizedLaplace {
     ) -> PyResult<(Self, Model)> {
         let model = match (mean, scale) {
             (None, None) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
                 let model =
                     internals::ParameterizableModel::new(move |(mean, scale): (f64, f64)| {
-                        let distribution = probability::distribution::Laplace::new(mean, scale);
-                        quantizer.quantize(distribution)
+                        quantized_laplace(mean, scale, quantizer)
                     });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
             (Some(mean), Some(scale)) => {
-                let distribution = probability::distribution::Laplace::new(mean, scale);
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
-                Arc::new(quantizer.quantize(distribution)) as Arc<dyn internals::Model>
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
+                let model = quantized_laplace(mean, scale, quantizer);
+                Arc::new(model) as Arc<dyn internals::Model>
             }
             (Some(mean), None) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
                 let model = internals::ParameterizableModel::new(move |(scale,): (f64,)| {
-                    let distribution = probability::distribution::Laplace::new(mean, scale);
-                    quantizer.quantize(distribution)
+                    quantized_laplace(mean, scale, quantizer)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
             (None, Some(scale)) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
                 let model = internals::ParameterizableModel::new(move |(mean,): (f64,)| {
-                    let distribution = probability::distribution::Laplace::new(mean, scale);
-                    quantizer.quantize(distribution)
+                    quantized_laplace(mean, scale, quantizer)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
@@ -607,10 +623,24 @@ impl QuantizedLaplace {
 ///
 /// - **loc** --- the location (mode) of the Cauchy distribution before quantization.
 /// - **scale** --- the scale parameter `gamma` of the Cauchy distribution before
-///   quantization (resulting in a full width at half maximum of `2 * scale`).
+///   quantization (resulting in a full width at half maximum of `2 * scale`). Must be
+///   positive
 #[pyclass(extends=Model)]
 #[derive(Debug)]
 struct QuantizedCauchy;
+
+fn quantized_cauchy(
+    mean: f64,
+    scale: f64,
+    quantizer: DefaultLeakyQuantizer<f64, i32>,
+) -> impl DefaultEntropyModel + Send + Sync {
+    assert!(
+        scale > 0.0,
+        "Invalid model parameter: `scale` must be positive."
+    );
+    let distribution = probability::distribution::Cauchy::new(mean, scale);
+    quantizer.quantize(distribution)
+}
 
 #[pymethods]
 impl QuantizedCauchy {
@@ -626,40 +656,32 @@ impl QuantizedCauchy {
     ) -> PyResult<(Self, Model)> {
         let model = match (loc, scale) {
             (None, None) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
                 let model =
                     internals::ParameterizableModel::new(move |(loc, scale): (f64, f64)| {
-                        let distribution = probability::distribution::Cauchy::new(loc, scale);
-                        quantizer.quantize(distribution)
+                        quantized_cauchy(loc, scale, quantizer)
                     });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
             (Some(loc), Some(scale)) => {
-                let distribution = probability::distribution::Cauchy::new(loc, scale);
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
-                Arc::new(quantizer.quantize(distribution)) as Arc<dyn internals::Model>
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
+                Arc::new(quantized_cauchy(loc, scale, quantizer)) as Arc<dyn internals::Model>
             }
             (Some(loc), None) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
                 let model = internals::ParameterizableModel::new(move |(scale,): (f64,)| {
-                    let distribution = probability::distribution::Cauchy::new(loc, scale);
-                    quantizer.quantize(distribution)
+                    quantized_cauchy(loc, scale, quantizer)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
             (None, Some(scale)) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(
-                    min_symbol_inclusive..=max_symbol_inclusive,
-                );
+                let quantizer =
+                    DefaultLeakyQuantizer::new(min_symbol_inclusive..=max_symbol_inclusive);
                 let model = internals::ParameterizableModel::new(move |(loc,): (f64,)| {
-                    let distribution = probability::distribution::Cauchy::new(loc, scale);
-                    quantizer.quantize(distribution)
+                    quantized_cauchy(loc, scale, quantizer)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
@@ -702,14 +724,14 @@ impl Binomial {
         let model = match (n, p) {
             (None, None) => {
                 let model = internals::ParameterizableModel::new(move |(n, p): (i32, f64)| {
-                    let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(0..=n);
+                    let quantizer = DefaultLeakyQuantizer::new(0..=n);
                     let distribution = probability::distribution::Binomial::new(n as usize, p);
                     quantizer.quantize(distribution)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
             (Some(n), None) => {
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(0..=n);
+                let quantizer = DefaultLeakyQuantizer::new(0..=n);
                 let model = internals::ParameterizableModel::new(move |(p,): (f64,)| {
                     let distribution = probability::distribution::Binomial::new(n as usize, p);
                     quantizer.quantize(distribution)
@@ -718,12 +740,12 @@ impl Binomial {
             }
             (Some(n), Some(p)) => {
                 let distribution = probability::distribution::Binomial::new(n as usize, p);
-                let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(0..=n);
+                let quantizer = DefaultLeakyQuantizer::new(0..=n);
                 Arc::new(quantizer.quantize(distribution)) as Arc<dyn internals::Model>
             }
             (None, Some(p)) => {
                 let model = internals::ParameterizableModel::new(move |(n,): (i32,)| {
-                    let quantizer = LeakyQuantizer::<f64, _, _, 24>::new(0..=n);
+                    let quantizer = DefaultLeakyQuantizer::new(0..=n);
                     let distribution = probability::distribution::Binomial::new(n as usize, p);
                     quantizer.quantize(distribution)
                 });
