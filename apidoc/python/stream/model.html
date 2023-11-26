@@ -369,7 +369,11 @@ calling the entropy coder's encode or decode method.</p>
 <ul>
 <li><strong>loc</strong> &mdash; the location (mode) of the Cauchy distribution before quantization.</li>
 <li><strong>scale</strong> &mdash; the scale parameter <code>gamma</code> of the Cauchy distribution before
-quantization (resulting in a full width at half maximum of <code>2 * scale</code>).</li>
+quantization (resulting in a full width at half maximum of <code>2 * scale</code>). Must be
+strictly positive. If the scale is calculated by a function that might return zero,
+then add some small regularization (e.g., 1e-16) to it to ensure the function argument
+is positive (note that, as with any parameters of the entropy model, regularization
+has to be consistent between encoder and decoder side).</li>
 </ul></div>
 <h3>Ancestors</h3>
 <ul class="hlist">
@@ -412,7 +416,11 @@ constructing the model, or as a rank-1 numpy array (with <code>dtype=np.float64<
 calling the entropy coder's encode or decode method.</p>
 <ul>
 <li><strong>mean</strong> &mdash; the mean of the Gaussian distribution before quantization.</li>
-<li><strong>std</strong> &mdash; the standard deviation of the Gaussian distribution before quantization.</li>
+<li><strong>std</strong> &mdash; the standard deviation of the Gaussian distribution before quantization.
+Must be strictly positive. If the standard deviation is calculated by a function
+that might return zero, then add some small regularization (e.g., 1e-16) to it to
+ensure the function argument is positive (note that, as with any parameters of the
+entropy model, regularization has to be consistent between encoder and decoder side).</li>
 </ul></div>
 <h3>Ancestors</h3>
 <ul class="hlist">
@@ -441,7 +449,11 @@ calling the entropy coder's encode or decode method.</p>
 <ul>
 <li><strong>mean</strong> &mdash; the mean of the Laplace distribution before quantization.</li>
 <li><strong>scale</strong> &mdash; the scale parameter <code>b</code> of the Laplace distribution before quantization
-(resulting in a variance of <code>2 * scale**2</code>).</li>
+(resulting in a variance of <code>2 * scale**2</code>). Must be strictly positive. If the scale
+is calculated by a function that might return zero, then add some small regularization
+(e.g., 1e-16) to it to ensure the function argument is positive (note that, as with
+any parameters of the entropy model, regularization has to be consistent between
+encoder and decoder side).</li>
 </ul></div>
 <h3>Ancestors</h3>
 <ul class="hlist">
