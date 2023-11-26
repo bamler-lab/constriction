@@ -440,7 +440,10 @@ impl Uniform {
 ///
 /// - **mean** --- the mean of the Gaussian distribution before quantization.
 /// - **std** --- the standard deviation of the Gaussian distribution before quantization.
-///   Must be positive.
+///   Must be strictly positive. If the standard deviation is calculated by a function
+///   that might return zero, then add some small regularization (e.g., 1e-16) to it to
+///   ensure the function argument is positive (note that, as with any parameters of the
+///   entropy model, regularization has to be consistent between encoder and decoder side).
 #[pyclass(extends=Model)]
 #[derive(Debug)]
 struct QuantizedGaussian;
@@ -527,7 +530,11 @@ impl QuantizedGaussian {
 ///
 /// - **mean** --- the mean of the Laplace distribution before quantization.
 /// - **scale** --- the scale parameter `b` of the Laplace distribution before quantization
-///   (resulting in a variance of `2 * scale**2`). Must be positive.
+///   (resulting in a variance of `2 * scale**2`). Must be strictly positive. If the scale
+///   is calculated by a function that might return zero, then add some small regularization
+///   (e.g., 1e-16) to it to ensure the function argument is positive (note that, as with
+///   any parameters of the entropy model, regularization has to be consistent between
+///   encoder and decoder side).
 #[pyclass(extends=Model)]
 #[derive(Debug)]
 struct QuantizedLaplace;
@@ -624,7 +631,10 @@ impl QuantizedLaplace {
 /// - **loc** --- the location (mode) of the Cauchy distribution before quantization.
 /// - **scale** --- the scale parameter `gamma` of the Cauchy distribution before
 ///   quantization (resulting in a full width at half maximum of `2 * scale`). Must be
-///   positive
+///   strictly positive. If the scale is calculated by a function that might return zero,
+///   then add some small regularization (e.g., 1e-16) to it to ensure the function argument
+///   is positive (note that, as with any parameters of the entropy model, regularization
+///   has to be consistent between encoder and decoder side).
 #[pyclass(extends=Model)]
 #[derive(Debug)]
 struct QuantizedCauchy;
