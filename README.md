@@ -24,7 +24,7 @@ computational efficiency. The goals of `constriction` are three-fold:
 
 **Live demo:** [here's a web app](https://robamler.github.io/linguistic-flux-capacitor)
 that started out as a machine-learning research project in Python and was later turned
-into a web app by using `constriction` in a WebAssembly module).
+into a web app by using `constriction` in a WebAssembly module.
 
 ## Project Status
 
@@ -273,8 +273,7 @@ licenses of all dependencies (the file is also available
 
 ## What's With the Name?
 
-Constriction is a library of compression primitives with bindings for Rust and
-[Python](https://en.wikipedia.org/wiki/Python_(programming_language)).
+Constriction is a Rust library of compression primitives with bindings for [Python](https://en.wikipedia.org/wiki/Python_(programming_language)).
 [Pythons](https://en.wikipedia.org/wiki/Pythonidae) are a family of nonvenomous snakes that
 subdue their prey by "compressing" it, a method known as
 [constriction](https://en.wikipedia.org/wiki/Constriction).
