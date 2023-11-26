@@ -3869,20 +3869,53 @@ mod tests {
     use super::super::{stack::DefaultAnsCoder, Decode};
 
     use alloc::{string::String, vec};
-    use probability::distribution::{Binomial, Cauchy, Gaussian};
+    use probability::distribution::{Binomial, Cauchy, Gaussian, Laplace};
+
+    #[test]
+    fn split_almost_delta_distribution() {
+        fn inner(distribution: impl Distribution<Value = f64>) {
+            let quantizer = DefaultLeakyQuantizer::new(-10..=10);
+            let model = quantizer.quantize(distribution);
+            let (left_cdf, left_prob) = model.left_cumulative_and_probability(2).unwrap();
+            let (right_cdf, right_prob) = model.left_cumulative_and_probability(3).unwrap();
+
+            assert_eq!(
+                left_prob.get(),
+                right_prob.get() - 1,
+                "Peak not split evenly."
+            );
+            assert_eq!(
+                (1u32 << 24) - left_prob.get() - right_prob.get(),
+                19,
+                "Peak has wrong probability mass."
+            );
+            assert_eq!(left_cdf + left_prob.get(), right_cdf);
+            // More thorough generic consistency checks of the CDF are done in `test_quantized_*()`.
+        }
+
+        inner(Gaussian::new(2.5, 1e-40));
+        inner(Cauchy::new(2.5, 1e-40));
+        inner(Laplace::new(2.5, 1e-40));
+    }
 
     #[test]
     fn leakily_quantized_normal() {
         #[cfg(not(miri))]
         let (support, std_devs, means) = (
             -127..=127,
-            [0.0001, 0.1, 3.5, 123.45, 1234.56],
-            [-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0],
+            [1e-40, 0.0001, 0.1, 3.5, 123.45, 1234.56],
+            [
+                -300.6, -127.5, -100.2, -4.5, 0.0, 50.3, 127.5, 180.2, 2000.0,
+            ],
         );
 
         // We use different settings when testing on miri so that the test time stays reasonable.
         #[cfg(miri)]
-        let (support, std_devs, means) = (-50..=50, [0.0001, 3.5, 1234.56], [-300.6, -5.2, 2000.0]);
+        let (support, std_devs, means) = (
+            -20..=20,
+            [1e-40, 0.0001, 3.5, 1234.56],
+            [-300.6, -20.5, -5.2, 8.5, 20.5, 2000.0],
+        );
 
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
         for &std_dev in &std_devs {
@@ -3901,18 +3934,53 @@ mod tests {
         #[cfg(not(miri))]
         let (support, gammas, means) = (
             -127..=127,
-            [0.0001, 0.1, 3.5, 123.45, 1234.56],
-            [-300.6, -100.2, -5.2, 0.0, 50.3, 180.2, 2000.0],
+            [1e-40, 0.0001, 0.1, 3.5, 123.45, 1234.56],
+            [
+                -300.6, -127.5, -100.2, -4.5, 0.0, 50.3, 127.5, 180.2, 2000.0,
+            ],
         );
 
         // We use different settings when testing on miri so that the test time stays reasonable.
         #[cfg(miri)]
-        let (support, gammas, means) = (-50..=50, [0.0001, 3.5, 1234.56], [-300.6, -5.2, 2000.0]);
-
+        let (support, gammas, means) = (
+            -20..=20,
+            [1e-40, 0.0001, 3.5, 1234.56],
+            [-300.6, -20.5, -5.2, 8.5, 20.5, 2000.0],
+        );
         let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
         for &gamma in &gammas {
             for &mean in &means {
                 let distribution = Cauchy::new(mean, gamma);
+                test_entropy_model(
+                    &quantizer.quantize(distribution),
+                    *support.start()..*support.end() + 1,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn leakily_quantized_laplace() {
+        #[cfg(not(miri))]
+        let (support, bs, means) = (
+            -127..=127,
+            [1e-40, 0.0001, 0.1, 3.5, 123.45, 1234.56],
+            [
+                -300.6, -127.5, -100.2, -4.5, 0.0, 50.3, 127.5, 180.2, 2000.0,
+            ],
+        );
+
+        // We use different settings when testing on miri so that the test time stays reasonable.
+        #[cfg(miri)]
+        let (support, bs, means) = (
+            -20..=20,
+            [1e-40, 0.0001, 3.5, 1234.56],
+            [-300.6, -20.5, -5.2, 8.5, 20.5, 2000.0],
+        );
+        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
+        for &b in &bs {
+            for &mean in &means {
+                let distribution = Laplace::new(mean, b);
                 test_entropy_model(
                     &quantizer.quantize(distribution),
                     *support.start()..*support.end() + 1,
