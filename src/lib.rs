@@ -269,6 +269,7 @@ extern crate std;
 mod pybindings;
 
 pub mod backends;
+pub mod quant;
 pub mod stream;
 pub mod symbol;
 
@@ -279,7 +280,9 @@ use core::{
     num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
 };
 
-use num_traits::{AsPrimitive, PrimInt, Unsigned, WrappingAdd, WrappingMul, WrappingSub};
+use num_traits::{
+    float::FloatCore, AsPrimitive, PrimInt, Unsigned, WrappingAdd, WrappingMul, WrappingSub,
+};
 
 // READ WRITE SEMANTICS =======================================================
 
@@ -762,3 +765,56 @@ impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
         }
     }
 }
+
+#[derive(PartialOrd, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NonNanFloat<F: FloatCore>(F);
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum NanError {
+    NaN,
+}
+
+impl<F: FloatCore> NonNanFloat<F> {
+    fn new(x: F) -> Result<Self, NanError> {
+        if x.is_nan() {
+            Err(NanError::NaN)
+        } else {
+            Ok(Self(x))
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self) -> F {
+        self.0
+    }
+}
+
+impl<F: FloatCore> Eq for NonNanFloat<F> {}
+
+#[allow(clippy::derive_ord_xor_partial_ord)]
+impl<F: FloatCore> Ord for NonNanFloat<F> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.0
+            .partial_cmp(&other.0)
+            .expect("NonNanFloatCore::inner is not NaN.")
+    }
+}
+
+impl<F: FloatCore> core::ops::Add for NonNanFloat<F> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl Display for NanError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NaN => write!(f, "NaN Encountered."),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for NanError {}
