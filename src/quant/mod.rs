@@ -1,3 +1,5 @@
+mod augmented_btree;
+
 use core::{fmt::Debug, hash::Hash, ops::Add};
 
 use alloc::vec::Vec;
