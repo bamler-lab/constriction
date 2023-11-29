@@ -7,7 +7,7 @@ use core::{
 
 use alloc::boxed::Box;
 
-pub struct AugmentedBtree<F, C, const CAP: usize> {
+pub struct AugmentedBTree<F, C, const CAP: usize> {
     total: C,
     root_type: NodeType,
     root: ChildRef<F, C, CAP>,
@@ -69,15 +69,15 @@ struct BoundedVec<T, const CAP: usize> {
 struct Entry<F, C> {
     key: F,
 
-    /// Sum of counts within the current subtree from the first entry up until
+    /// Sum of counts within the current subTree from the first entry up until
     /// and including this entry. Thus the total weight of a leaf node is stored
-    /// in the `accum_within_subtree` field of the leaf node's last entry.
-    accum_within_subtree: C,
+    /// in the `accum` field of the leaf node's last entry.
+    accum: C,
 }
 
 // DROP =======================================================================
 
-impl<F, C, const CAP: usize> Drop for AugmentedBtree<F, C, CAP> {
+impl<F, C, const CAP: usize> Drop for AugmentedBTree<F, C, CAP> {
     fn drop(&mut self) {
         unsafe {
             match self.root_type {
@@ -171,7 +171,7 @@ macro_rules! bind_child {
 
 // MAIN API ===================================================================
 
-impl<F, C, const CAP: usize> AugmentedBtree<F, C, CAP>
+impl<F, C, const CAP: usize> AugmentedBTree<F, C, CAP>
 where
     F: Ord + Copy + Unpin,
     C: Ord + Default + Copy + Add<Output = C> + Sub<Output = C> + Unpin,
@@ -185,256 +185,47 @@ where
     }
 
     pub fn insert(&mut self, key: F, amount: C) {
-        let mut node_type = self.root_type;
+        // Find the leaf node where the key should be inserted and increment all accums of parent
+        // nodes to the right of the path. If the key already exists in a non-leaf node then
+        // incrementing the accums already took care of inserting, so there's nothing else to do.
         let mut node_ref = &mut self.root;
-
+        let mut node_type = self.root_type;
         while node_type == NonLeaf {
             let node = &mut ***unsafe { &mut node_ref.non_leaf };
-
-            // Identify separator that either matches key or is just right to it.
-            let index = node.separators.partition_point(|entry| entry.key < key);
-            let mut right_iter = node.separators.iter_mut().take(index);
-
-            if let Some(right_separator) = right_iter.next() {
-                // Increment all accumulators to the right (including the one we're at, if it already exists).
-                let right_key = right_separator.key;
-                right_separator.accum_within_subtree =
-                    right_separator.accum_within_subtree + amount;
-                for entry in right_iter {
-                    entry.accum_within_subtree = entry.accum_within_subtree + amount;
-                }
-                if right_key == key {
-                    // An entry with `key` already existed in this non-leaf node, and we've already
-                    // incremented its count, so ther's nothing else to do.
-                    return;
-                }
-            }
-
-            node_ref = if index == 0 {
-                &mut node.first_child
-            } else {
-                let slice = node.remaining_children.deref_mut();
-                unsafe { slice.get_unchecked_mut(index - 1) }
-            };
-            node_type = node.children_type;
-        }
-
-        // We've arrived at a leaf node.
-        let node = &mut ***unsafe { &mut node_ref.leaf };
-
-        // Identify entry that either matches key or is just right to it.
-        let insert_index = node.entries.partition_point(|entry| entry.key < key);
-        let mut right_iter = node.entries.iter_mut().take(insert_index);
-
-        if let Some(right_entry) = right_iter.next() {
-            if right_entry.key == key {
-                right_entry.accum_within_subtree = right_entry.accum_within_subtree + amount;
-                for entry in right_iter {
-                    entry.accum_within_subtree = entry.accum_within_subtree + amount;
-                }
+            let Some((child_ref, child_type)) = node.child_by_key_mut(
+                key,
+                |entry| entry.key,
+                |entry| entry.accum = entry.accum + amount,
+            ) else {
                 return;
-            }
-        }
-
-        let old_accum = node
-            .entries
-            .get(insert_index.wrapping_sub(1))
-            .map(|node| node.accum_within_subtree)
-            .unwrap_or_default();
-        let mut insert_entry = Entry::new(key, old_accum + amount);
-
-        if node
-            .entries
-            .try_insert_and_accum(insert_index, insert_entry, |entry| {
-                Entry::new(entry.key, entry.accum_within_subtree + amount)
-            })
-            .is_ok()
-        {
-            return;
-        }
-
-        // TODO: try spilling into neighboring siblings first.
-
-        let left_sibling = node;
-        let mut right_sibling = LeafNode::empty(left_sibling.parent);
-
-        // `left_child_weight_inclusive` includes the weight of the separator.
-        if insert_index <= CAP / 2 {
-            // We're inserting into the left half or the parent.
-            let weight_before_right_sibling = if insert_index == CAP / 2 {
-                insert_entry.accum_within_subtree
-            } else {
-                left_sibling
-                    .entries
-                    .get(CAP / 2 - 1)
-                    .expect("CAP/2 > insert_index >= 0")
-                    .accum_within_subtree
             };
 
-            let right_entries = left_sibling.entries.chop(CAP / 2).expect("node is full");
+            node_ref = child_ref;
+            node_type = child_type;
+        }
+        let leaf_node = &mut ***unsafe { &mut node_ref.leaf };
 
-            right_sibling
-                .entries
-                .try_append_transform(right_entries, |entry| Entry {
-                    key: entry.key,
-                    accum_within_subtree: entry.accum_within_subtree - weight_before_right_sibling,
-                })
-                .expect("can't overflow");
-
-            left_sibling
-                .entries
-                .try_insert_and_accum(insert_index, insert_entry, |entry| {
-                    Entry::new(entry.key, entry.accum_within_subtree + amount)
-                })
-                .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
-        } else {
-            // We're inserting into the right half.
-            let weight_before_right_sibling = left_sibling
-                .entries
-                .get(CAP / 2 - 1)
-                .expect("CAP/2 > insert_index >= 0")
-                .accum_within_subtree;
-
-            let right_entries = left_sibling
-                .entries
-                .chop(CAP / 2 + 1)
-                .expect("CAP/2 < insert_index <= len");
-
-            let (before_insert, after_insert) =
-                right_entries.split_at(insert_index - (CAP / 2 + 1));
-
-            right_sibling
-                .entries
-                .try_append_transform(before_insert, |entry| Entry {
-                    key: entry.key,
-                    accum_within_subtree: entry.accum_within_subtree - weight_before_right_sibling,
-                })
-                .expect("can't overflow");
-
-            insert_entry.accum_within_subtree =
-                insert_entry.accum_within_subtree - weight_before_right_sibling;
-            right_sibling
-                .entries
-                .try_push(insert_entry)
-                .expect("can't overflow");
-
-            right_sibling
-                .entries
-                .try_append_transform(after_insert, |entry| Entry {
-                    key: entry.key,
-                    accum_within_subtree: entry.accum_within_subtree - weight_before_right_sibling
-                        + amount,
-                })
-                .expect("can't overflow");
+        // Insert into the leaf node.
+        let Some((mut key, mut left_child_weight, mut right_child_ref)) =
+            leaf_node.insert(key, amount)
+        else {
+            return;
         };
 
-        let ejected_entry = left_sibling
-            .entries
-            .pop()
-            .expect("there are CAP/2+1 > 0 entries");
-
-        let left_child = left_sibling;
-        let right_child_ref = ChildRef::leaf(right_sibling);
-
-        while let Some(mut node) = left_child.parent {
+        // The leaf node overflew and had to be split into two. Propagate up the tree.
+        let mut parent = leaf_node.parent;
+        while let Some(mut node) = parent {
             let node = unsafe { node.0.as_mut() };
-
-            if node.separators.len() < CAP {
-                // Identify separator that is just right to key (we know that key does not exist in nodes).
-                let insert_index = node.separators.partition_point(|entry| entry.key < key);
-                let preceeding_accum = node
-                    .separators
-                    .deref()
-                    .get(insert_index.wrapping_sub(1))
-                    .map(|entry| entry.accum_within_subtree)
-                    .unwrap_or_default();
-
-                node.separators.insert(
-                    insert_index,
-                    Entry {
-                        key: ejected_entry.key,
-                        accum_within_subtree: preceeding_accum + ejected_entry.accum_within_subtree,
-                    },
-                );
-
-                node.remaining_children
-                    .insert(insert_index, right_child_ref);
-
+            let Some((ejected_key, ejected_weight, right_sibling_ref)) =
+                node.insert(key, left_child_weight, right_child_ref)
+            else {
                 return;
-            }
+            };
 
-            // TODO: try to first spill into neighboring siblings.
-            // `left_child_weight_inclusive` includes the weight of the separator.
-            todo!("port code below");
-            // let (key, left_child_weight_inclusive) = if insert_index <= CAP / 2 {
-            //     // We're inserting into the left half or the parent.
-            //     let right_entries = left_sibling.entries.chop(CAP / 2).expect("node is full");
-
-            //     left_sibling
-            //         .entries
-            //         .try_insert_and_accum(insert_index, insert_entry, |entry| {
-            //             Entry::new(entry.key, entry.accum_within_subtree + amount)
-            //         })
-            //         .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
-            //     let ejected_entry = left_sibling
-            //         .entries
-            //         .pop()
-            //         .expect("we just inserted an entry");
-            //     let weight_before_right_sibling = ejected_entry.accum_within_subtree;
-
-            //     right_sibling
-            //         .entries
-            //         .try_append_transform(right_entries, |entry| Entry {
-            //             key: entry.key,
-            //             accum_within_subtree: entry.accum_within_subtree
-            //                 - weight_before_right_sibling,
-            //         })
-            //         .expect("can't overflow");
-
-            //     (ejected_entry.key, weight_before_right_sibling)
-            // } else {
-            //     // We're inserting into the right half.
-            //     let right_entries = left_sibling
-            //         .entries
-            //         .chop(CAP / 2 + 1)
-            //         .expect("CAP/2 < insert_index <= len");
-            //     let ejected_entry = left_sibling
-            //         .entries
-            //         .pop()
-            //         .expect("there are CAP/2+1 > 0 entries");
-            //     let weight_before_right_sibling = ejected_entry.accum_within_subtree;
-
-            //     let (before_insert, after_insert) =
-            //         right_entries.split_at_mut(insert_index - (CAP / 2 + 1));
-
-            //     right_sibling
-            //         .entries
-            //         .try_append_transform(before_insert, |entry| Entry {
-            //             key: entry.key,
-            //             accum_within_subtree: entry.accum_within_subtree
-            //                 - weight_before_right_sibling,
-            //         })
-            //         .expect("can't overflow");
-
-            //     insert_entry.accum_within_subtree =
-            //         insert_entry.accum_within_subtree - weight_before_right_sibling;
-            //     right_sibling
-            //         .entries
-            //         .try_push(insert_entry)
-            //         .expect("can't overflow");
-
-            //     right_sibling
-            //         .entries
-            //         .try_append_transform(after_insert, |entry| Entry {
-            //             key: entry.key,
-            //             accum_within_subtree: entry.accum_within_subtree
-            //                 - weight_before_right_sibling
-            //                 + amount,
-            //         })
-            //         .expect("can't overflow");
-
-            //     (ejected_entry.key, weight_before_right_sibling)
-            // };
+            key = ejected_key;
+            left_child_weight = ejected_weight;
+            right_child_ref = right_sibling_ref;
+            parent = node.parent;
         }
 
         todo!("Create new root node");
@@ -459,10 +250,154 @@ impl<F, C, const CAP: usize> ChildRef<F, C, CAP> {
     }
 }
 
+impl<F, C, const CAP: usize> NonLeafNode<F, C, CAP>
+where
+    F: Unpin + Ord + Copy,
+    C: Default + Add<Output = C> + Unpin + Copy,
+{
+    fn child_by_key_mut<X: Ord>(
+        &mut self,
+        key: X,
+        get_key: impl Fn(&Entry<F, C>) -> X,
+        update_right: impl Fn(&mut Entry<F, C>),
+    ) -> Option<(&mut ChildRef<F, C, CAP>, NodeType)> {
+        let index = self
+            .separators
+            .partition_point(|entry| get_key(entry) < key);
+        let mut right_iter = self.separators.iter_mut().take(index);
+
+        if let Some(right_separator) = right_iter.next() {
+            let right_key = get_key(right_separator);
+            update_right(right_separator);
+            for entry in right_iter {
+                update_right(entry)
+            }
+            if right_key == key {
+                return None;
+            }
+        }
+
+        let child_ref = if index == 0 {
+            &mut self.first_child
+        } else {
+            let slice = self.remaining_children.deref_mut();
+            unsafe { slice.get_unchecked_mut(index - 1) }
+        };
+
+        Some((child_ref, self.children_type))
+    }
+
+    fn insert(
+        &mut self,
+        key: F,
+        left_child_weight: C,
+        right_child_ref: ChildRef<F, C, CAP>,
+    ) -> Option<(F, C, ChildRef<F, C, CAP>)> {
+        // Identify separator that is just right to key (we know that key does not exist in nodes).
+        let insert_index = self.separators.partition_point(|entry| entry.key < key);
+        let preceeding_accum = self
+            .separators
+            .deref()
+            .get(insert_index.wrapping_sub(1))
+            .map(|entry| entry.accum)
+            .unwrap_or_default();
+
+        if self
+            .separators
+            .try_insert(
+                insert_index,
+                Entry {
+                    key,
+                    accum: preceeding_accum + left_child_weight,
+                },
+            )
+            .is_ok()
+        {
+            self.remaining_children
+                .try_insert(insert_index, right_child_ref)
+                .expect("separators and remaining_children always have same len");
+            return None;
+        }
+
+        // TODO: try to first spill into neighboring siblings.
+        // `left_child_weight_inclusive` includes the weight of the separator.
+        todo!("port code below");
+        // let (key, left_child_weight_inclusive) = if insert_index <= CAP / 2 {
+        //     // We're inserting into the left half or the parent.
+        //     let right_entries = left_sibling.entries.chop(CAP / 2).expect("node is full");
+
+        //     left_sibling
+        //         .entries
+        //         .try_insert_and_accum(insert_index, entry, |entry| {
+        //             Entry::new(entry.key, entry.accum + amount)
+        //         })
+        //         .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
+        //     let ejected_entry = left_sibling
+        //         .entries
+        //         .pop()
+        //         .expect("we just inserted an entry");
+        //     let weight_before_right_sibling = ejected_entry.accum;
+
+        //     right_sibling
+        //         .entries
+        //         .try_append_transform(right_entries, |entry| Entry {
+        //             key: entry.key,
+        //             accum: entry.accum
+        //                 - weight_before_right_sibling,
+        //         })
+        //         .expect("can't overflow");
+
+        //     (ejected_entry.key, weight_before_right_sibling)
+        // } else {
+        //     // We're inserting into the right half.
+        //     let right_entries = left_sibling
+        //         .entries
+        //         .chop(CAP / 2 + 1)
+        //         .expect("CAP/2 < insert_index <= len");
+        //     let ejected_entry = left_sibling
+        //         .entries
+        //         .pop()
+        //         .expect("there are CAP/2+1 > 0 entries");
+        //     let weight_before_right_sibling = ejected_entry.accum;
+
+        //     let (before_insert, after_insert) =
+        //         right_entries.split_at_mut(insert_index - (CAP / 2 + 1));
+
+        //     right_sibling
+        //         .entries
+        //         .try_append_transform(before_insert, |entry| Entry {
+        //             key: entry.key,
+        //             accum: entry.accum
+        //                 - weight_before_right_sibling,
+        //         })
+        //         .expect("can't overflow");
+
+        //     entry.accum =
+        //         entry.accum - weight_before_right_sibling;
+        //     right_sibling
+        //         .entries
+        //         .try_push(entry)
+        //         .expect("can't overflow");
+
+        //     right_sibling
+        //         .entries
+        //         .try_append_transform(after_insert, |entry| Entry {
+        //             key: entry.key,
+        //             accum: entry.accum
+        //                 - weight_before_right_sibling
+        //                 + amount,
+        //         })
+        //         .expect("can't overflow");
+
+        //     (ejected_entry.key, weight_before_right_sibling)
+        // };
+    }
+}
+
 impl<F, C, const CAP: usize> LeafNode<F, C, CAP>
 where
-    F: Copy + Unpin,
-    C: Copy + Unpin,
+    F: Copy + Unpin + Ord,
+    C: Copy + Unpin + Default + Add<Output = C> + Sub<Output = C>,
 {
     fn empty(parent: Option<ParentRef<F, C, CAP>>) -> Self {
         Self {
@@ -471,8 +406,113 @@ where
         }
     }
 
-    fn insert(&mut self, key: F, amount: C) {
-        todo!()
+    fn insert(&mut self, key: F, amount: C) -> Option<(F, C, ChildRef<F, C, CAP>)> {
+        // Check if the node already contains an entry with the given `key`.
+        // If so, increment its accum and all accums to the right, then return.
+        let insert_index = self.entries.partition_point(|entry| entry.key < key);
+        let mut right_iter = self.entries.iter_mut().take(insert_index);
+        match right_iter.next() {
+            Some(right_entry) if right_entry.key == key => {
+                right_entry.accum = right_entry.accum + amount;
+                for entry in right_iter {
+                    entry.accum = entry.accum + amount;
+                }
+                return None;
+            }
+            _ => {}
+        }
+
+        // An entry with `key` doesn't exist yet. Create a new one and insert it.
+        let old_accum = self
+            .entries
+            .get(insert_index.wrapping_sub(1))
+            .map(|node| node.accum)
+            .unwrap_or_default();
+        let mut insert_entry = Entry::new(key, old_accum + amount);
+
+        if self
+            .entries
+            .try_insert_and_accum(insert_index, insert_entry, |entry| {
+                Entry::new(entry.key, entry.accum + amount)
+            })
+            .is_ok()
+        {
+            return None; // No splitting necessary.
+        }
+
+        // Inserting would overflow the leaf node. Split it into two.
+        // TODO: maybe try spilling into neighboring siblings first.
+        let mut right_sibling = LeafNode::empty(self.parent);
+
+        if insert_index <= CAP / 2 {
+            // We're inserting into the left half or the parent.
+            let weight_before_right_sibling = if insert_index == CAP / 2 {
+                insert_entry.accum
+            } else {
+                self.entries
+                    .get(CAP / 2 - 1)
+                    .expect("CAP/2 > insert_index >= 0")
+                    .accum
+            };
+
+            let right_entries = self.entries.chop(CAP / 2).expect("node is full");
+
+            right_sibling
+                .entries
+                .try_append_transform(right_entries, |entry| Entry {
+                    key: entry.key,
+                    accum: entry.accum - weight_before_right_sibling,
+                })
+                .expect("can't overflow");
+
+            self.entries
+                .try_insert_and_accum(insert_index, insert_entry, |entry| {
+                    Entry::new(entry.key, entry.accum + amount)
+                })
+                .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
+        } else {
+            // We're inserting into the right half.
+            let weight_before_right_sibling = self
+                .entries
+                .get(CAP / 2 - 1)
+                .expect("CAP/2 > insert_index >= 0")
+                .accum;
+
+            let right_entries = self
+                .entries
+                .chop(CAP / 2 + 1)
+                .expect("CAP/2 < insert_index <= len");
+
+            let (before_insert, after_insert) =
+                right_entries.split_at(insert_index - (CAP / 2 + 1));
+
+            right_sibling
+                .entries
+                .try_append_transform(before_insert, |entry| Entry {
+                    key: entry.key,
+                    accum: entry.accum - weight_before_right_sibling,
+                })
+                .expect("can't overflow");
+
+            insert_entry.accum = insert_entry.accum - weight_before_right_sibling;
+            right_sibling
+                .entries
+                .try_push(insert_entry)
+                .expect("can't overflow");
+
+            right_sibling
+                .entries
+                .try_append_transform(after_insert, |entry| Entry {
+                    key: entry.key,
+                    accum: entry.accum - weight_before_right_sibling + amount,
+                })
+                .expect("can't overflow");
+        };
+
+        let ejected_entry = self.entries.pop().expect("there are CAP/2+1 > 0 entries");
+        let right_child_ref = ChildRef::leaf(right_sibling);
+
+        Some((ejected_entry.key, ejected_entry.accum, right_child_ref))
     }
 }
 
@@ -492,7 +532,7 @@ impl<T: Unpin, const CAP: usize> BoundedVec<T, CAP> {
         self.len
     }
 
-    fn insert(&mut self, index: usize, item: T) -> Result<(), ()> {
+    fn try_insert(&mut self, index: usize, item: T) -> Result<(), ()> {
         assert!(index <= self.len);
         if self.len == CAP {
             return Err(());
@@ -611,11 +651,8 @@ impl<'a, T> BoundedVecView<'a, T> {
 }
 
 impl<F, C> Entry<F, C> {
-    fn new(key: F, accum_within_subtree: C) -> Self {
-        Self {
-            key,
-            accum_within_subtree,
-        }
+    fn new(key: F, accum: C) -> Self {
+        Self { key, accum }
     }
 }
 
@@ -623,13 +660,13 @@ impl<F, C> Entry<F, C> {
 mod tests {
     use crate::NonNanFloat;
 
-    use super::AugmentedBtree;
+    use super::AugmentedBTree;
 
     type F32 = NonNanFloat<f32>;
 
     #[test]
     fn create() {
-        let tree = AugmentedBtree::<F32, u32, 128>::new();
+        let tree = AugmentedBTree::<F32, u32, 128>::new();
         assert_eq!(tree.total(), 0);
     }
 }
