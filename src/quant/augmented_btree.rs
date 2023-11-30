@@ -1,6 +1,5 @@
 use core::{
     fmt::Debug,
-    mem::MaybeUninit,
     ops::{Add, Deref, DerefMut, Sub},
 };
 
@@ -10,7 +9,14 @@ use self::{
 };
 use NodeType::{Leaf, NonLeaf};
 
+#[cfg(test)]
+use alloc::string::String;
+#[cfg(test)]
+use core::fmt::Display;
+
 pub struct AugmentedBTree<P, C, const CAP: usize> {
+    #[cfg(test)]
+    test: bool,
     total: C,
     root_type: NodeType,
     root: ChildRef<P, C, CAP>,
@@ -87,6 +93,8 @@ where
     pub fn new() -> Self {
         // TODO: statically assert that CAP>0;
         Self {
+            #[cfg(test)]
+            test: false,
             total: C::default(),
             root_type: Leaf,
             root: ChildRef::leaf(LeafNode::empty(None)),
@@ -97,7 +105,16 @@ where
         self.total
     }
 
-    pub fn insert(&mut self, key: P, count: C) {
+    #[cfg(test)]
+    pub fn set_test(&mut self, test: bool) {
+        self.test = test;
+    }
+
+    pub fn insert(&mut self, key: P, count: C)
+    where
+        P: core::fmt::Display + Debug, // TODO: remove (only for debugging)
+        C: core::fmt::Display + Debug, // TODO: remove (only for debugging)
+    {
         self.total = self.total + count;
 
         // Find the leaf node where the key should be inserted, and increment all accums to the
@@ -127,6 +144,20 @@ where
             return;
         };
 
+        #[cfg(test)]
+        if self.test {
+            let mut s = String::from("SPLITTED LEAF NODE:\n");
+            leaf_node.append_to_debug_string(&mut s, "  ", leaf_node.parent);
+            s.push_str("\nRIGHT SIBLING:\n");
+            unsafe { right_child_ref.as_leaf_unchecked() }.append_to_debug_string(
+                &mut s,
+                "  ",
+                leaf_node.parent,
+            );
+            std::eprintln!("{}", s);
+            std::dbg!(key, weight_before_right_child);
+        }
+
         // The leaf node overflew and had to be split into two. Propagate up the tree.
         let mut parent = leaf_node.parent;
         while let Some(mut node) = parent {
@@ -136,6 +167,20 @@ where
             else {
                 return;
             };
+
+            #[cfg(test)]
+            if self.test {
+                let mut s = String::from("SPLITTED NON-LEAF NODE:\n");
+                node.append_to_debug_string(&mut s, "  ", node.parent);
+                s.push_str("\nRIGHT SIBLING:\n");
+                unsafe { right_sibling_ref.as_non_leaf_unchecked() }.append_to_debug_string(
+                    &mut s,
+                    "  ",
+                    node.parent,
+                );
+                std::eprintln!("{}", s);
+                std::dbg!(ejected_key, ejected_weight);
+            }
 
             key = ejected_key;
             weight_before_right_child = ejected_weight;
@@ -167,9 +212,9 @@ where
         let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
         let mut right_child = core::mem::replace(&mut new_root.first_child, old_root);
 
-        let new_root_ref = ParentRef::from_ref(unsafe { self.root.as_non_leaf_unchecked() });
+        let new_root_ref = unsafe { self.root.downgrade_non_leaf_unchecked() };
         let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
-        if self.root_type == NonLeaf {
+        if new_root.children_type == NonLeaf {
             unsafe {
                 new_root.first_child.as_non_leaf_mut_unchecked().parent = Some(new_root_ref);
                 right_child.as_non_leaf_mut_unchecked().parent = Some(new_root_ref);
@@ -187,7 +232,71 @@ where
             .expect("vector is empty and `CAP>0`");
     }
 
-    pub fn get_by_pos(&self, pos: P) {}
+    /// Returns the left-sided CDF, i.e., the sum of all counts strictly left of `pos`.
+    pub fn get_by_pos(&self, pos: P) -> C {
+        self.get_by_key(pos, |entry| entry.pos)
+    }
+
+    pub fn get_by_accum(&self, accum: C) {
+        todo!()
+    }
+
+    pub fn get_by_key<X: Ord>(&self, key: X, get_key: impl Fn(&Entry<P, C>) -> X) -> C {
+        let mut accum = C::default();
+
+        let mut node_ref = &self.root;
+        let mut node_type = self.root_type;
+        while node_type == NonLeaf {
+            let node = unsafe { node_ref.as_non_leaf_unchecked() };
+            let index = node
+                .separators
+                .partition_point(|entry| get_key(entry) < key);
+            accum = accum
+                + node
+                    .separators
+                    .get(index.wrapping_sub(1))
+                    .map(|entry| entry.accum)
+                    .unwrap_or_default();
+            node_type = node.children_type;
+            node_ref = node
+                .remaining_children
+                .deref()
+                .get(index.wrapping_sub(1))
+                .unwrap_or(&node.first_child);
+        }
+        let leaf_node = unsafe { node_ref.as_leaf_unchecked() };
+
+        let index = leaf_node
+            .entries
+            .partition_point(|entry| get_key(entry) < key);
+        accum = accum
+            + leaf_node
+                .entries
+                .get(index.wrapping_sub(1))
+                .map(|entry| entry.accum)
+                .unwrap_or_default();
+        accum
+    }
+
+    #[cfg(test)]
+    fn to_debug_string(&self) -> String
+    where
+        P: Display,
+        C: Display,
+    {
+        let mut s = String::new();
+        match self.root_type {
+            NonLeaf => {
+                let root = unsafe { self.root.as_non_leaf_unchecked() };
+                root.append_to_debug_string(&mut s, "", None);
+            }
+            Leaf => {
+                let root = unsafe { self.root.as_leaf_unchecked() };
+                root.append_to_debug_string(&mut s, "", None);
+            }
+        }
+        s
+    }
 }
 
 impl<P, C, const CAP: usize> NonLeafNode<P, C, CAP>
@@ -220,7 +329,7 @@ where
         let index = self
             .separators
             .partition_point(|entry| get_key(entry) < key);
-        let mut right_iter = self.separators.iter_mut().take(index);
+        let mut right_iter = self.separators.iter_mut().skip(index);
 
         if let Some(right_separator) = right_iter.next() {
             let right_key = get_key(right_separator);
@@ -273,7 +382,20 @@ where
         let right_sibling = match insert_index.cmp(&(CAP / 2)) {
             core::cmp::Ordering::Less => {
                 // Insert both `separator` and `right_child` into the left sibling (i.e., `self`).
-                let right_separators = self.separators.chop(CAP / 2).expect("node is full").into();
+                let accum_of_ejected = self
+                    .separators
+                    .get(CAP / 2 - 1)
+                    .expect("CAP / 2 > index >= 0")
+                    .accum;
+                let chopped_off_separators = self.separators.chop(CAP / 2).expect("node is full");
+                let mut right_separators = BoundedVec::new();
+                right_separators
+                    .try_append_transform(chopped_off_separators, |entry| Entry {
+                        pos: entry.pos,
+                        accum: entry.accum - accum_of_ejected,
+                    })
+                    .expect("can't overflow");
+
                 let right_remaining_children: BoundedVec<_, CAP> = self
                     .remaining_children
                     .chop(CAP / 2)
@@ -303,10 +425,19 @@ where
                 )
             }
             core::cmp::Ordering::Equal => {
+                // TODO: ensure test code coverage.
                 // Append `separator` to the end of `self.separators` (so it gets ejected afterwards),
                 // and set `right_child` to `right_sibling.first_child`.
-                let right_separators: BoundedVec<_, CAP> =
-                    self.separators.chop(CAP / 2).expect("node is full").into();
+                let accum_of_ejected = separator.accum;
+                let chopped_off_separators = self.separators.chop(CAP / 2).expect("node is full");
+                let mut right_separators = BoundedVec::new();
+                right_separators
+                    .try_append_transform(chopped_off_separators, |entry| Entry {
+                        pos: entry.pos,
+                        accum: entry.accum - accum_of_ejected,
+                    })
+                    .expect("can't overflow");
+
                 self.separators
                     .try_push(separator)
                     .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
@@ -328,7 +459,7 @@ where
             core::cmp::Ordering::Greater => {
                 // Insert both `separator` and `right_child` into `right_sibling`.
                 let insert_index = insert_index - (CAP / 2 + 1);
-                let weight_before_right_sibling = self
+                let accum_of_ejected = self
                     .separators
                     .get(CAP / 2)
                     .expect("CAP/2 < original insert_index <= len")
@@ -344,17 +475,17 @@ where
                 right_separators
                     .try_append_transform(before_insert, |entry| Entry {
                         pos: entry.pos,
-                        accum: entry.accum - weight_before_right_sibling,
+                        accum: entry.accum - accum_of_ejected,
                     })
                     .expect("can't overflow");
-                separator.accum = separator.accum - weight_before_right_sibling;
+                separator.accum = separator.accum - accum_of_ejected;
                 right_separators
                     .try_push(separator)
                     .expect("can't overflow");
                 right_separators
                     .try_append_transform(after_insert, |entry| Entry {
                         pos: entry.pos,
-                        accum: entry.accum - weight_before_right_sibling,
+                        accum: entry.accum - accum_of_ejected,
                     })
                     .expect("can't overflow");
 
@@ -383,22 +514,94 @@ where
                 )
             }
         };
-        // We're inserting into the left half or the parent.
-        // FIXME: this is wrong! if we insert the separator into the parent, then we should insert the
-        // right_child into `right_sibling`. Maybe it would all be simpler if we always split tto the left?
-        // Actually, it's probably even easier to distinguish all three cases here, because `insert_index == CAP/2` is special anyway because it means inserting the child into `right_sibling.first_child`.
+
+        let mut right_sibling_ref = ChildRef::non_leaf(right_sibling);
+        let right_sibling_pref = unsafe { right_sibling_ref.downgrade_non_leaf_unchecked() };
+        let right_sibling = unsafe { right_sibling_ref.as_non_leaf_mut_unchecked() };
+        match self.children_type {
+            NonLeaf => {
+                let first_nephew = unsafe { right_sibling.first_child.as_non_leaf_mut_unchecked() };
+                first_nephew.parent = Some(right_sibling_pref);
+                for nephew in right_sibling.remaining_children.iter_mut() {
+                    let nephew = unsafe { nephew.as_non_leaf_mut_unchecked() };
+                    nephew.parent = Some(right_sibling_pref);
+                }
+            }
+            Leaf => {
+                let first_nephew = unsafe { right_sibling.first_child.as_leaf_mut_unchecked() };
+                first_nephew.parent = Some(right_sibling_pref);
+                for nephew in right_sibling.remaining_children.iter_mut() {
+                    let nephew = unsafe { nephew.as_leaf_mut_unchecked() };
+                    nephew.parent = Some(right_sibling_pref);
+                }
+            }
+        }
 
         let ejected_separator = self
             .separators
             .pop()
             .expect("there are CAP/2+1 > 0 separators");
-        let right_sibling_ref = ChildRef::non_leaf(right_sibling);
 
         Some((
             ejected_separator.pos,
             ejected_separator.accum,
             right_sibling_ref,
         ))
+    }
+
+    #[cfg(test)]
+    fn append_to_debug_string(
+        &self,
+        s: &mut String,
+        ident: &str,
+        expected_parent: Option<ParentRef<P, C, CAP>>,
+    ) where
+        P: Display,
+        C: Display,
+    {
+        use alloc::format;
+
+        if self.parent != expected_parent {
+            s.push_str(&ident);
+            s.push_str("INVALID PARENT: ");
+        }
+        let self_ref = Some(ParentRef::from_ref(&self));
+
+        s.push_str(&format!(
+            "{}nonleaf with {} separators:\n",
+            ident,
+            self.separators.len()
+        ));
+        let mut ident = String::from(ident);
+        ident.push_str("  ");
+        match self.children_type {
+            NonLeaf => {
+                let first_child = unsafe { self.first_child.as_non_leaf_unchecked() };
+                first_child.append_to_debug_string(s, &ident, self_ref);
+                for (separator, child) in self.separators.iter().zip(self.remaining_children.iter())
+                {
+                    s.push_str(&format!(
+                        "{}separator: {} (accum={})\n",
+                        &ident, separator.pos, separator.accum
+                    ));
+                    let child = unsafe { child.as_non_leaf_unchecked() };
+                    child.append_to_debug_string(s, &ident, self_ref);
+                }
+            }
+            Leaf => {
+                let first_child = unsafe { self.first_child.as_leaf_unchecked() };
+                first_child.append_to_debug_string(s, &ident, self_ref);
+                for (separator, child) in self.separators.iter().zip(self.remaining_children.iter())
+                {
+                    s.push_str(&format!(
+                        "{}separator: {} (accum={})\n",
+                        &ident, separator.pos, separator.accum
+                    ));
+                    let child = unsafe { child.as_leaf_unchecked() };
+                    child.append_to_debug_string(s, &ident, self_ref);
+                }
+            }
+        }
     }
 }
 
@@ -418,7 +621,7 @@ where
         // Check if the node already contains an entry with the given `key`.
         // If so, increment its accum and all accums to the right, then return.
         let insert_index = self.entries.partition_point(|entry| entry.pos < key);
-        let mut right_iter = self.entries.iter_mut().take(insert_index);
+        let mut right_iter = self.entries.iter_mut().skip(insert_index);
         match right_iter.next() {
             Some(right_entry) if right_entry.pos == key => {
                 right_entry.accum = right_entry.accum + count;
@@ -454,12 +657,12 @@ where
 
         if insert_index <= CAP / 2 {
             // We're inserting into the left half or the parent.
-            let weight_before_right_sibling = if insert_index == CAP / 2 {
-                insert_entry.accum
+            let old_weight_before_right_sibling = if CAP / 2 == 0 {
+                C::default()
             } else {
                 self.entries
                     .get(CAP / 2 - 1)
-                    .expect("CAP/2 > insert_index >= 0")
+                    .expect("node is full and CAP/2 > 0")
                     .accum
             };
 
@@ -469,7 +672,7 @@ where
                 .entries
                 .try_append_transform(right_entries, |entry| Entry {
                     pos: entry.pos,
-                    accum: entry.accum - weight_before_right_sibling,
+                    accum: entry.accum - old_weight_before_right_sibling,
                 })
                 .expect("can't overflow");
 
@@ -521,6 +724,31 @@ where
         let right_sibling_ref = ChildRef::leaf(right_sibling);
 
         Some((ejected_entry.pos, ejected_entry.accum, right_sibling_ref))
+    }
+
+    #[cfg(test)]
+    fn append_to_debug_string(
+        &self,
+        s: &mut String,
+        ident: &str,
+        expected_parent: Option<ParentRef<P, C, CAP>>,
+    ) where
+        P: Display,
+        C: Display,
+    {
+        use alloc::format;
+
+        if self.parent != expected_parent {
+            s.push_str(&ident);
+            s.push_str("INVALID PARENT: ");
+        }
+
+        s.push_str(&ident);
+        s.push_str("  leaf:");
+        for Entry { pos, accum } in self.entries.iter() {
+            s.push_str(&format!(" {pos},{accum} |"));
+        }
+        s.push_str("\n");
     }
 }
 
@@ -601,20 +829,37 @@ mod tree_refs {
         pub unsafe fn as_leaf_mut_unchecked(&mut self) -> &mut LeafNode<P, C, CAP> {
             &mut self.leaf
         }
+
+        #[inline(always)]
+        pub unsafe fn downgrade_non_leaf_unchecked(&self) -> ParentRef<P, C, CAP> {
+            let ptr_mut = self.as_non_leaf_unchecked() as *const NonLeafNode<_, _, CAP>
+                as *mut NonLeafNode<_, _, CAP>;
+            ParentRef(unsafe { NonNull::new_unchecked(ptr_mut) })
+        }
     }
 
     impl<P, C, const CAP: usize> ParentRef<P, C, CAP> {
         #[inline(always)]
+        pub unsafe fn as_mut(&mut self) -> &mut NonLeafNode<P, C, CAP> {
+            self.0.as_mut()
+        }
+
+        /// This is dangerous. Prefer calling `ChildRef::downgrade_non_leaf_unchecked()` if possible
+        /// as this statically ensures that the ref is at least already on the heap.
+        #[cfg(test)]
         pub fn from_ref(node: &NonLeafNode<P, C, CAP>) -> Self {
             let ptr_mut = node as *const NonLeafNode<_, _, CAP> as *mut NonLeafNode<_, _, CAP>;
             ParentRef(unsafe { NonNull::new_unchecked(ptr_mut) })
         }
+    }
 
-        #[inline(always)]
-        pub unsafe fn as_mut(&mut self) -> &mut NonLeafNode<P, C, CAP> {
-            self.0.as_mut()
+    impl<P, C, const CAP: usize> PartialEq for ParentRef<P, C, CAP> {
+        fn eq(&self, other: &Self) -> bool {
+            self.0 == other.0
         }
     }
+
+    impl<P, C, const CAP: usize> Eq for ParentRef<P, C, CAP> {}
 }
 
 mod bounded_vec {
@@ -654,11 +899,12 @@ mod bounded_vec {
             }
 
             unsafe {
-                self.buf.get_unchecked_mut(index..).rotate_right(1);
-                let tmp = self.buf.get_unchecked(index).assume_init_read();
-                self.buf.get_unchecked_mut(self.len).write(tmp);
+                self.buf
+                    .get_unchecked_mut(index..self.len + 1)
+                    .rotate_right(1);
                 self.buf.get_unchecked_mut(index).write(item);
             }
+            self.len += 1;
 
             Ok(())
         }
@@ -684,6 +930,7 @@ mod bounded_vec {
                 }
                 self.buf.get_unchecked_mut(index).write(item);
             }
+            self.len += 1;
 
             Ok(())
         }
@@ -726,6 +973,7 @@ mod bounded_vec {
                 core::ptr::copy_nonoverlapping(tail.0.as_ptr(), dst.as_mut_ptr(), tail.len());
             }
             self.len += tail.len();
+
             Ok(())
         }
 
@@ -742,6 +990,7 @@ mod bounded_vec {
             for (src_item, dst_item) in tail.0.iter().zip(dst) {
                 unsafe { dst_item.write(transform(src_item.assume_init_read())) };
             }
+            self.len += tail.len();
 
             Ok(())
         }
@@ -810,24 +1059,173 @@ mod bounded_vec {
 
 #[cfg(test)]
 mod tests {
+    use core::hash::{Hash, Hasher};
+    use std::{collections::hash_map::DefaultHasher, dbg};
+
+    use alloc::vec::Vec;
+    use rand::{distributions, seq::SliceRandom, Rng, RngCore, SeedableRng};
+    use rand_xoshiro::Xoshiro256StarStar;
+
     use crate::NonNanFloat;
 
     use super::AugmentedBTree;
 
     type F32 = NonNanFloat<f32>;
+    type F64 = NonNanFloat<f64>;
 
     #[test]
     fn minimal() {
-        let mut tree = AugmentedBTree::<F32, u32, 128>::new();
-        assert_eq!(tree.total(), 0);
+        dbg!(minimal_internal::<128>());
+        dbg!(minimal_internal::<10>());
+        dbg!(minimal_internal::<5>());
+        dbg!(minimal_internal::<2>());
+        dbg!(minimal_internal::<1>());
 
-        tree.insert(F32::new(3.2).unwrap(), 7);
-        assert_eq!(tree.total(), 7);
-        tree.insert(F32::new(5.1).unwrap(), 2);
-        assert_eq!(tree.total(), 9);
-        tree.insert(F32::new(4.9).unwrap(), 3);
-        assert_eq!(tree.total(), 12);
-        tree.insert(F32::new(1.4).unwrap(), 10);
-        assert_eq!(tree.total(), 22);
+        fn minimal_internal<const CAP: usize>() {
+            let mut tree = AugmentedBTree::<F32, u32, CAP>::new();
+            assert_eq!(tree.total(), 0);
+
+            // Insert { -2.25=>3, 1.5=>10, 2.5=>9, 3.25=>7, 4.75=>3, 5.125=>2, 6.5=>1 } in some
+            // random order.
+            let insertions = [
+                (3.25, 7, 7),
+                (5.125, 2, 9),
+                (4.75, 3, 12),
+                (1.5, 10, 22),
+                (2.5, 9, 31),
+                (6.5, 1, 32),
+                (-2.25, 3, 35),
+            ];
+            for (pos, count, total) in insertions {
+                tree.insert(F32::new(pos).unwrap(), count);
+                assert_eq!(tree.total(), total);
+                // Uncomment the following for debugging.
+                // std::eprintln!(
+                //     "after inserting {},{}:\n{}\n",
+                //     pos,
+                //     count,
+                //     tree.to_debug_string()
+                // );
+            }
+
+            let test_points = [
+                (-5.7, 0),
+                (-2.25, 0),
+                (-2.1, 3),
+                (1.5, 3),
+                (1.8, 13),
+                (2.5, 13),
+                (2.7, 22),
+                (3.25, 22),
+                (4.1, 29),
+                (4.75, 29),
+                (5.1, 32),
+                (5.125, 32),
+                (5.5, 34),
+                (6.5, 34),
+                (7.2, 35),
+            ];
+
+            for (pos, expected_accum) in test_points {
+                let pos = F32::new(pos).unwrap();
+                assert_eq!(tree.get_by_pos(pos), expected_accum);
+            }
+        }
+    }
+
+    #[test]
+    fn random_data() {
+        #[cfg(not(miri))]
+        let amts = [1000, 10_000];
+
+        #[cfg(miri)]
+        let amts = [1000];
+
+        for amt in amts {
+            dbg!(amt, random_data_internal::<128>(amt));
+            dbg!(amt, random_data_internal::<10>(amt));
+            dbg!(amt, random_data_internal::<5>(amt));
+            dbg!(amt, random_data_internal::<2>(amt));
+            dbg!(amt, random_data_internal::<1>(amt));
+        }
+
+        fn random_data_internal<const CAP: usize>(amt: usize) {
+            let mut hasher = DefaultHasher::new();
+            20231201.hash(&mut hasher);
+            (CAP as u64).hash(&mut hasher);
+            (amt as u64).hash(&mut hasher);
+
+            let mut rng = Xoshiro256StarStar::seed_from_u64(hasher.finish());
+            let repeat_distribution = distributions::Uniform::from(1..5);
+            let count_distribution = distributions::Uniform::from(0..100);
+
+            let mut insertions = Vec::new();
+            for _ in 0..amt {
+                let repeats = rng.sample(repeat_distribution);
+                // Deliberately use a somewhat lower precision than what's supported by
+                // f64 so that we can always represent a mid-point between two positions.
+                let int_pos = rng.next_u64() >> 14;
+                let pos = F64::new(int_pos as f64 / (u64::MAX >> 14) as f64).unwrap();
+                for _ in 0..repeats {
+                    insertions.push((pos, rng.sample(count_distribution)));
+                }
+            }
+            insertions.shuffle(&mut rng);
+            let num_insertions = insertions.len();
+            assert!(num_insertions > 2 * amt);
+            assert!(num_insertions < 4 * amt);
+
+            let mut tree = AugmentedBTree::<F64, u32, CAP>::new();
+            let two = F64::new(2.0).unwrap();
+            for (i, &(pos, count)) in insertions.iter().enumerate() {
+                tree.insert(pos, count);
+                if tree.total != tree.get_by_pos(two) {
+                    std::eprintln!("AFTER {i}th INSERT ({pos},{count}):");
+                    std::dbg!(tree.total, tree.get_by_pos(two));
+                    std::eprintln!("{}", tree.to_debug_string());
+                    panic!();
+                }
+            }
+
+            let mut sorted = insertions;
+            sorted.sort_unstable_by_key(|(pos, _)| *pos);
+
+            let mut last_pos = F64::new(-1.0).unwrap();
+            let mut accum = 0;
+            let mut cdf = sorted
+                .iter()
+                .filter_map(|&(pos, count)| {
+                    let ret = if pos != last_pos {
+                        Some((last_pos, accum))
+                    } else {
+                        None
+                    };
+                    accum += count;
+                    last_pos = pos;
+                    ret
+                })
+                .collect::<Vec<_>>();
+            cdf.push((last_pos, accum));
+
+            assert!(cdf.len() * 2 < num_insertions);
+            assert!(cdf.len() * 5 > num_insertions);
+
+            assert_eq!(tree.total, cdf.last().unwrap().1);
+            assert_eq!(
+                tree.get_by_pos(cdf.last().unwrap().0 + F64::new(0.1).unwrap()),
+                tree.total
+            );
+
+            let mut last_pos = F64::new(-1.0).unwrap();
+            let mut last_accum = 0;
+            let half = F64::new(0.5).unwrap();
+            for &(pos, accum) in &cdf {
+                let before = half * (last_pos + pos);
+                assert_eq!(tree.get_by_pos(before), last_accum);
+                assert_eq!(tree.get_by_pos(pos), last_accum);
+                last_pos = pos;
+                last_accum = accum;
+            }
+        }
     }
 }
