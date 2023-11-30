@@ -10,10 +10,10 @@ use self::{
 };
 use NodeType::{Leaf, NonLeaf};
 
-pub struct AugmentedBTree<F, C, const CAP: usize> {
+pub struct AugmentedBTree<P, C, const CAP: usize> {
     total: C,
     root_type: NodeType,
-    root: ChildRef<F, C, CAP>,
+    root: ChildRef<P, C, CAP>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,23 +23,23 @@ enum NodeType {
 }
 
 #[derive(Debug)]
-struct NonLeafNode<F, C, const CAP: usize> {
-    parent: Option<ParentRef<F, C, CAP>>,
+struct NonLeafNode<P, C, const CAP: usize> {
+    parent: Option<ParentRef<P, C, CAP>>,
     children_type: NodeType,
-    separators: BoundedVec<Entry<F, C>, CAP>,
-    first_child: ChildRef<F, C, CAP>,
-    remaining_children: BoundedVec<ChildRef<F, C, CAP>, CAP>,
+    separators: BoundedVec<Entry<P, C>, CAP>,
+    first_child: ChildRef<P, C, CAP>,
+    remaining_children: BoundedVec<ChildRef<P, C, CAP>, CAP>,
 }
 
 #[derive(Debug)]
-struct LeafNode<F, C, const CAP: usize> {
-    parent: Option<ParentRef<F, C, CAP>>,
-    entries: BoundedVec<Entry<F, C>, CAP>,
+struct LeafNode<P, C, const CAP: usize> {
+    parent: Option<ParentRef<P, C, CAP>>,
+    entries: BoundedVec<Entry<P, C>, CAP>,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Entry<F, C> {
-    key: F,
+struct Entry<P, C> {
+    pos: P,
 
     /// Sum of counts within the current subTree from the first entry up until
     /// and including this entry. Thus the total weight of a leaf node is stored
@@ -47,7 +47,7 @@ struct Entry<F, C> {
     accum: C,
 }
 
-impl<F, C, const CAP: usize> Drop for AugmentedBTree<F, C, CAP> {
+impl<P, C, const CAP: usize> Drop for AugmentedBTree<P, C, CAP> {
     fn drop(&mut self) {
         unsafe {
             match self.root_type {
@@ -58,7 +58,7 @@ impl<F, C, const CAP: usize> Drop for AugmentedBTree<F, C, CAP> {
     }
 }
 
-impl<F, C, const CAP: usize> Drop for NonLeafNode<F, C, CAP> {
+impl<P, C, const CAP: usize> Drop for NonLeafNode<P, C, CAP> {
     fn drop(&mut self) {
         unsafe {
             match self.children_type {
@@ -79,9 +79,9 @@ impl<F, C, const CAP: usize> Drop for NonLeafNode<F, C, CAP> {
     }
 }
 
-impl<F, C, const CAP: usize> AugmentedBTree<F, C, CAP>
+impl<P, C, const CAP: usize> AugmentedBTree<P, C, CAP>
 where
-    F: Ord + Copy + Unpin,
+    P: Ord + Copy + Unpin,
     C: Ord + Default + Copy + Add<Output = C> + Sub<Output = C> + Unpin,
 {
     pub fn new() -> Self {
@@ -93,8 +93,12 @@ where
         }
     }
 
-    pub fn insert(&mut self, key: F, amount: C) {
-        self.total = self.total + amount;
+    pub fn total(&self) -> C {
+        self.total
+    }
+
+    pub fn insert(&mut self, key: P, count: C) {
+        self.total = self.total + count;
 
         // Find the leaf node where the key should be inserted, and increment all accums to the
         // right of the path from root to leaf. If the key already exists in a non-leaf node, then
@@ -105,8 +109,8 @@ where
             let node = unsafe { node_ref.as_non_leaf_mut_unchecked() };
             let Some((child_ref, child_type)) = node.child_by_key_mut(
                 key,
-                |entry| entry.key,
-                |entry| entry.accum = entry.accum + amount,
+                |entry| entry.pos,
+                |entry| entry.accum = entry.accum + count,
             ) else {
                 return;
             };
@@ -118,7 +122,7 @@ where
 
         // Insert into the leaf node.
         let Some((mut key, mut weight_before_right_child, mut right_child_ref)) =
-            leaf_node.insert(key, amount)
+            leaf_node.insert(key, count)
         else {
             return;
         };
@@ -143,7 +147,7 @@ where
         let mut separators = BoundedVec::new();
         separators
             .try_push(Entry {
-                key,
+                pos: key,
                 accum: weight_before_right_child,
             })
             .expect("vector is empty and `CAP>0`");
@@ -183,22 +187,20 @@ where
             .expect("vector is empty and `CAP>0`");
     }
 
-    pub fn total(&self) -> C {
-        self.total
-    }
+    pub fn get_by_pos(&self, pos: P) {}
 }
 
-impl<F, C, const CAP: usize> NonLeafNode<F, C, CAP>
+impl<P, C, const CAP: usize> NonLeafNode<P, C, CAP>
 where
-    F: Unpin + Ord + Copy,
+    P: Unpin + Ord + Copy,
     C: Default + Add<Output = C> + Sub<Output = C> + Unpin + Copy,
 {
     fn new(
-        parent: Option<ParentRef<F, C, CAP>>,
+        parent: Option<ParentRef<P, C, CAP>>,
         children_type: NodeType,
-        separators: BoundedVec<Entry<F, C>, CAP>,
-        first_child: ChildRef<F, C, CAP>,
-        remaining_children: BoundedVec<ChildRef<F, C, CAP>, CAP>,
+        separators: BoundedVec<Entry<P, C>, CAP>,
+        first_child: ChildRef<P, C, CAP>,
+        remaining_children: BoundedVec<ChildRef<P, C, CAP>, CAP>,
     ) -> Self {
         Self {
             parent,
@@ -212,9 +214,9 @@ where
     fn child_by_key_mut<X: Ord>(
         &mut self,
         key: X,
-        get_key: impl Fn(&Entry<F, C>) -> X,
-        update_right: impl Fn(&mut Entry<F, C>),
-    ) -> Option<(&mut ChildRef<F, C, CAP>, NodeType)> {
+        get_key: impl Fn(&Entry<P, C>) -> X,
+        update_right: impl Fn(&mut Entry<P, C>),
+    ) -> Option<(&mut ChildRef<P, C, CAP>, NodeType)> {
         let index = self
             .separators
             .partition_point(|entry| get_key(entry) < key);
@@ -242,12 +244,12 @@ where
 
     fn insert(
         &mut self,
-        key: F,
+        key: P,
         weight_before_right_child: C,
-        right_child: ChildRef<F, C, CAP>,
-    ) -> Option<(F, C, ChildRef<F, C, CAP>)> {
+        right_child: ChildRef<P, C, CAP>,
+    ) -> Option<(P, C, ChildRef<P, C, CAP>)> {
         // Identify separator that is just right to key (we know that key does not exist in nodes).
-        let insert_index = self.separators.partition_point(|entry| entry.key < key);
+        let insert_index = self.separators.partition_point(|entry| entry.pos < key);
         let preceding_accum = self
             .separators
             .deref()
@@ -256,7 +258,7 @@ where
             .unwrap_or_default();
 
         let mut separator = Entry {
-            key,
+            pos: key,
             accum: preceding_accum + weight_before_right_child,
         };
         if self.separators.try_insert(insert_index, separator).is_ok() {
@@ -341,7 +343,7 @@ where
                 let mut right_separators = BoundedVec::new();
                 right_separators
                     .try_append_transform(before_insert, |entry| Entry {
-                        key: entry.key,
+                        pos: entry.pos,
                         accum: entry.accum - weight_before_right_sibling,
                     })
                     .expect("can't overflow");
@@ -351,7 +353,7 @@ where
                     .expect("can't overflow");
                 right_separators
                     .try_append_transform(after_insert, |entry| Entry {
-                        key: entry.key,
+                        pos: entry.pos,
                         accum: entry.accum - weight_before_right_sibling,
                     })
                     .expect("can't overflow");
@@ -393,35 +395,35 @@ where
         let right_sibling_ref = ChildRef::non_leaf(right_sibling);
 
         Some((
-            ejected_separator.key,
+            ejected_separator.pos,
             ejected_separator.accum,
             right_sibling_ref,
         ))
     }
 }
 
-impl<F, C, const CAP: usize> LeafNode<F, C, CAP>
+impl<P, C, const CAP: usize> LeafNode<P, C, CAP>
 where
-    F: Copy + Unpin + Ord,
+    P: Copy + Unpin + Ord,
     C: Copy + Unpin + Default + Add<Output = C> + Sub<Output = C>,
 {
-    fn empty(parent: Option<ParentRef<F, C, CAP>>) -> Self {
+    fn empty(parent: Option<ParentRef<P, C, CAP>>) -> Self {
         Self {
             parent,
             entries: BoundedVec::new(),
         }
     }
 
-    fn insert(&mut self, key: F, amount: C) -> Option<(F, C, ChildRef<F, C, CAP>)> {
+    fn insert(&mut self, key: P, count: C) -> Option<(P, C, ChildRef<P, C, CAP>)> {
         // Check if the node already contains an entry with the given `key`.
         // If so, increment its accum and all accums to the right, then return.
-        let insert_index = self.entries.partition_point(|entry| entry.key < key);
+        let insert_index = self.entries.partition_point(|entry| entry.pos < key);
         let mut right_iter = self.entries.iter_mut().take(insert_index);
         match right_iter.next() {
-            Some(right_entry) if right_entry.key == key => {
-                right_entry.accum = right_entry.accum + amount;
+            Some(right_entry) if right_entry.pos == key => {
+                right_entry.accum = right_entry.accum + count;
                 for entry in right_iter {
-                    entry.accum = entry.accum + amount;
+                    entry.accum = entry.accum + count;
                 }
                 return None;
             }
@@ -434,12 +436,12 @@ where
             .get(insert_index.wrapping_sub(1))
             .map(|node| node.accum)
             .unwrap_or_default();
-        let mut insert_entry = Entry::new(key, old_accum + amount);
+        let mut insert_entry = Entry::new(key, old_accum + count);
 
         if self
             .entries
             .try_insert_and_accum(insert_index, insert_entry, |entry| {
-                Entry::new(entry.key, entry.accum + amount)
+                Entry::new(entry.pos, entry.accum + count)
             })
             .is_ok()
         {
@@ -466,14 +468,14 @@ where
             right_sibling
                 .entries
                 .try_append_transform(right_entries, |entry| Entry {
-                    key: entry.key,
+                    pos: entry.pos,
                     accum: entry.accum - weight_before_right_sibling,
                 })
                 .expect("can't overflow");
 
             self.entries
                 .try_insert_and_accum(insert_index, insert_entry, |entry| {
-                    Entry::new(entry.key, entry.accum + amount)
+                    Entry::new(entry.pos, entry.accum + count)
                 })
                 .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
         } else {
@@ -495,7 +497,7 @@ where
             right_sibling
                 .entries
                 .try_append_transform(before_insert, |entry| Entry {
-                    key: entry.key,
+                    pos: entry.pos,
                     accum: entry.accum - weight_before_right_sibling,
                 })
                 .expect("can't overflow");
@@ -509,8 +511,8 @@ where
             right_sibling
                 .entries
                 .try_append_transform(after_insert, |entry| Entry {
-                    key: entry.key,
-                    accum: entry.accum - weight_before_right_sibling + amount,
+                    pos: entry.pos,
+                    accum: entry.accum - weight_before_right_sibling + count,
                 })
                 .expect("can't overflow");
         };
@@ -518,13 +520,13 @@ where
         let ejected_entry = self.entries.pop().expect("there are CAP/2+1 > 0 entries");
         let right_sibling_ref = ChildRef::leaf(right_sibling);
 
-        Some((ejected_entry.key, ejected_entry.accum, right_sibling_ref))
+        Some((ejected_entry.pos, ejected_entry.accum, right_sibling_ref))
     }
 }
 
-impl<F, C> Entry<F, C> {
-    fn new(key: F, accum: C) -> Self {
-        Self { key, accum }
+impl<P, C> Entry<P, C> {
+    fn new(key: P, accum: C) -> Self {
+        Self { pos: key, accum }
     }
 }
 
@@ -542,29 +544,29 @@ mod tree_refs {
     /// child. Any container that has a `ChildRef` needs to implement `Drop`, where
     /// it has to call either `.drop_non_leaf()` or `.drop_leaf()` on all of its
     /// fields of type `ChildRef`.
-    pub union ChildRef<F, C, const CAP: usize> {
-        non_leaf: ManuallyDrop<Box<NonLeafNode<F, C, CAP>>>,
-        leaf: ManuallyDrop<Box<LeafNode<F, C, CAP>>>,
+    pub union ChildRef<P, C, const CAP: usize> {
+        non_leaf: ManuallyDrop<Box<NonLeafNode<P, C, CAP>>>,
+        leaf: ManuallyDrop<Box<LeafNode<P, C, CAP>>>,
     }
 
     /// A non-owned reference to a `NonLeafNode`.
     #[derive(Debug, Clone, Copy)]
-    pub struct ParentRef<F, C, const CAP: usize>(NonNull<NonLeafNode<F, C, CAP>>);
+    pub struct ParentRef<P, C, const CAP: usize>(NonNull<NonLeafNode<P, C, CAP>>);
 
-    impl<F, C, const CAP: usize> Debug for ChildRef<F, C, CAP> {
+    impl<P, C, const CAP: usize> Debug for ChildRef<P, C, CAP> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             f.debug_struct("ChildRef").finish_non_exhaustive()
         }
     }
 
-    impl<F, C, const CAP: usize> ChildRef<F, C, CAP> {
-        pub fn non_leaf(child: NonLeafNode<F, C, CAP>) -> ChildRef<F, C, CAP> {
+    impl<P, C, const CAP: usize> ChildRef<P, C, CAP> {
+        pub fn non_leaf(child: NonLeafNode<P, C, CAP>) -> ChildRef<P, C, CAP> {
             Self {
                 non_leaf: ManuallyDrop::new(Box::new(child)),
             }
         }
 
-        pub fn leaf(child: LeafNode<F, C, CAP>) -> ChildRef<F, C, CAP> {
+        pub fn leaf(child: LeafNode<P, C, CAP>) -> ChildRef<P, C, CAP> {
             Self {
                 leaf: ManuallyDrop::new(Box::new(child)),
             }
@@ -581,35 +583,35 @@ mod tree_refs {
         }
 
         #[inline(always)]
-        pub unsafe fn as_non_leaf_unchecked(&self) -> &NonLeafNode<F, C, CAP> {
+        pub unsafe fn as_non_leaf_unchecked(&self) -> &NonLeafNode<P, C, CAP> {
             &self.non_leaf
         }
 
         #[inline(always)]
-        pub unsafe fn as_non_leaf_mut_unchecked(&mut self) -> &mut NonLeafNode<F, C, CAP> {
+        pub unsafe fn as_non_leaf_mut_unchecked(&mut self) -> &mut NonLeafNode<P, C, CAP> {
             &mut self.non_leaf
         }
 
         #[inline(always)]
-        pub unsafe fn as_leaf_unchecked(&self) -> &LeafNode<F, C, CAP> {
+        pub unsafe fn as_leaf_unchecked(&self) -> &LeafNode<P, C, CAP> {
             &self.leaf
         }
 
         #[inline(always)]
-        pub unsafe fn as_leaf_mut_unchecked(&mut self) -> &mut LeafNode<F, C, CAP> {
+        pub unsafe fn as_leaf_mut_unchecked(&mut self) -> &mut LeafNode<P, C, CAP> {
             &mut self.leaf
         }
     }
 
-    impl<F, C, const CAP: usize> ParentRef<F, C, CAP> {
+    impl<P, C, const CAP: usize> ParentRef<P, C, CAP> {
         #[inline(always)]
-        pub fn from_ref(node: &NonLeafNode<F, C, CAP>) -> Self {
+        pub fn from_ref(node: &NonLeafNode<P, C, CAP>) -> Self {
             let ptr_mut = node as *const NonLeafNode<_, _, CAP> as *mut NonLeafNode<_, _, CAP>;
             ParentRef(unsafe { NonNull::new_unchecked(ptr_mut) })
         }
 
         #[inline(always)]
-        pub unsafe fn as_mut(&mut self) -> &mut NonLeafNode<F, C, CAP> {
+        pub unsafe fn as_mut(&mut self) -> &mut NonLeafNode<P, C, CAP> {
             self.0.as_mut()
         }
     }
@@ -815,8 +817,17 @@ mod tests {
     type F32 = NonNanFloat<f32>;
 
     #[test]
-    fn create() {
-        let tree = AugmentedBTree::<F32, u32, 128>::new();
+    fn minimal() {
+        let mut tree = AugmentedBTree::<F32, u32, 128>::new();
         assert_eq!(tree.total(), 0);
+
+        tree.insert(F32::new(3.2).unwrap(), 7);
+        assert_eq!(tree.total(), 7);
+        tree.insert(F32::new(5.1).unwrap(), 2);
+        assert_eq!(tree.total(), 9);
+        tree.insert(F32::new(4.9).unwrap(), 3);
+        assert_eq!(tree.total(), 12);
+        tree.insert(F32::new(1.4).unwrap(), 10);
+        assert_eq!(tree.total(), 22);
     }
 }
