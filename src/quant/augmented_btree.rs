@@ -1,7 +1,7 @@
 use core::{
     fmt::Debug,
     mem::{ManuallyDrop, MaybeUninit},
-    ops::{Add, Bound, Deref, DerefMut, Index, IndexMut, Sub},
+    ops::{Add, Deref, DerefMut, Index, Sub},
     ptr::{self, NonNull},
 };
 
@@ -19,7 +19,6 @@ enum NodeType {
     Leaf,
 }
 
-use grove::ModifiableWalker;
 use NodeType::{Leaf, NonLeaf};
 
 /// A (conceptually) owned reference to either a `NonLeafNode` or a `LeafNode`.
@@ -48,8 +47,8 @@ struct ParentRef<F, C, const CAP: usize>(NonNull<NonLeafNode<F, C, CAP>>);
 struct NonLeafNode<F, C, const CAP: usize> {
     parent: Option<ParentRef<F, C, CAP>>,
     children_type: NodeType,
-    first_child: ChildRef<F, C, CAP>,
     separators: BoundedVec<Entry<F, C>, CAP>,
+    first_child: ChildRef<F, C, CAP>,
     remaining_children: BoundedVec<ChildRef<F, C, CAP>, CAP>,
 }
 
@@ -98,6 +97,26 @@ impl<F, C, const CAP: usize> ChildRef<F, C, CAP> {
     unsafe fn drop_leaf(&mut self) {
         core::mem::drop(ManuallyDrop::take(&mut self.leaf));
     }
+
+    #[inline(always)]
+    unsafe fn as_non_leaf_unchecked(&self) -> &NonLeafNode<F, C, CAP> {
+        &self.non_leaf
+    }
+
+    #[inline(always)]
+    unsafe fn as_non_leaf_mut_unchecked(&mut self) -> &mut NonLeafNode<F, C, CAP> {
+        &mut self.non_leaf
+    }
+
+    #[inline(always)]
+    unsafe fn as_leaf_unchecked(&self) -> &LeafNode<F, C, CAP> {
+        &self.leaf
+    }
+
+    #[inline(always)]
+    unsafe fn as_leaf_mut_unchecked(&mut self) -> &mut LeafNode<F, C, CAP> {
+        &mut self.leaf
+    }
 }
 
 impl<F, C, const CAP: usize> Drop for NonLeafNode<F, C, CAP> {
@@ -134,6 +153,15 @@ impl<T, const CAP: usize> Deref for BoundedVec<T, CAP> {
 impl<T, const CAP: usize> DerefMut for BoundedVec<T, CAP> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { core::mem::transmute(self.buf.get_unchecked_mut(..self.len)) }
+    }
+}
+
+impl<'a, T: Unpin, const CAP: usize> From<BoundedVecViewMut<'a, T, CAP>> for BoundedVec<T, CAP> {
+    fn from(view: BoundedVecViewMut<'a, T, CAP>) -> Self {
+        let mut vec = Self::new();
+        vec.try_append(view)
+            .expect("capacities match and original vec was empty");
+        vec
     }
 }
 
@@ -177,6 +205,7 @@ where
     C: Ord + Default + Copy + Add<Output = C> + Sub<Output = C> + Unpin,
 {
     pub fn new() -> Self {
+        // TODO: statically assert that CAP>0;
         Self {
             total: C::default(),
             root_type: Leaf,
@@ -185,13 +214,15 @@ where
     }
 
     pub fn insert(&mut self, key: F, amount: C) {
-        // Find the leaf node where the key should be inserted and increment all accums of parent
-        // nodes to the right of the path. If the key already exists in a non-leaf node then
+        self.total = self.total + amount;
+
+        // Find the leaf node where the key should be inserted, and increment all accums to the
+        // right of the path from root to leaf. If the key already exists in a non-leaf node, then
         // incrementing the accums already took care of inserting, so there's nothing else to do.
         let mut node_ref = &mut self.root;
         let mut node_type = self.root_type;
         while node_type == NonLeaf {
-            let node = &mut ***unsafe { &mut node_ref.non_leaf };
+            let node = unsafe { node_ref.as_non_leaf_mut_unchecked() };
             let Some((child_ref, child_type)) = node.child_by_key_mut(
                 key,
                 |entry| entry.key,
@@ -203,10 +234,10 @@ where
             node_ref = child_ref;
             node_type = child_type;
         }
-        let leaf_node = &mut ***unsafe { &mut node_ref.leaf };
+        let leaf_node = unsafe { node_ref.as_leaf_mut_unchecked() };
 
         // Insert into the leaf node.
-        let Some((mut key, mut left_child_weight, mut right_child_ref)) =
+        let Some((mut key, mut weight_before_right_child, mut right_child_ref)) =
             leaf_node.insert(key, amount)
         else {
             return;
@@ -217,18 +248,59 @@ where
         while let Some(mut node) = parent {
             let node = unsafe { node.0.as_mut() };
             let Some((ejected_key, ejected_weight, right_sibling_ref)) =
-                node.insert(key, left_child_weight, right_child_ref)
+                node.insert(key, weight_before_right_child, right_child_ref)
             else {
                 return;
             };
 
             key = ejected_key;
-            left_child_weight = ejected_weight;
+            weight_before_right_child = ejected_weight;
             right_child_ref = right_sibling_ref;
             parent = node.parent;
         }
 
-        todo!("Create new root node");
+        // The root node overflew. We have to increase the tree hight by creating a new root node.
+        let mut separators = BoundedVec::new();
+        separators
+            .try_push(Entry {
+                key,
+                accum: weight_before_right_child,
+            })
+            .expect("vector is empty and `CAP>0`");
+
+        // Since we cannot move out of `self.root`, we have to first construct a new root with a
+        // temporary dummy `first_child`, then replace the old root by the new root, and then
+        // replace the new root's dummy `first_child` with the old root.
+        let new_root = ChildRef::non_leaf(NonLeafNode::new(
+            None,
+            self.root_type,
+            separators,
+            right_child_ref,
+            BoundedVec::new(),
+        ));
+        self.root_type = NonLeaf;
+        let old_root = core::mem::replace(&mut self.root, new_root);
+        let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
+        let mut right_child = core::mem::replace(&mut new_root.first_child, old_root);
+
+        let new_root_ref = unsafe { self.root.as_non_leaf_unchecked() }.as_parent_ref();
+        let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
+        if self.root_type == NonLeaf {
+            unsafe {
+                new_root.first_child.as_non_leaf_mut_unchecked().parent = Some(new_root_ref);
+                right_child.as_non_leaf_mut_unchecked().parent = Some(new_root_ref);
+            }
+        } else {
+            unsafe {
+                new_root.first_child.as_leaf_mut_unchecked().parent = Some(new_root_ref);
+                right_child.as_leaf_mut_unchecked().parent = Some(new_root_ref);
+            }
+        }
+
+        new_root
+            .remaining_children
+            .try_push(right_child)
+            .expect("vector is empty and `CAP>0`");
     }
 
     pub fn total(&self) -> C {
@@ -253,8 +325,24 @@ impl<F, C, const CAP: usize> ChildRef<F, C, CAP> {
 impl<F, C, const CAP: usize> NonLeafNode<F, C, CAP>
 where
     F: Unpin + Ord + Copy,
-    C: Default + Add<Output = C> + Unpin + Copy,
+    C: Default + Add<Output = C> + Sub<Output = C> + Unpin + Copy,
 {
+    fn new(
+        parent: Option<ParentRef<F, C, CAP>>,
+        children_type: NodeType,
+        separators: BoundedVec<Entry<F, C>, CAP>,
+        first_child: ChildRef<F, C, CAP>,
+        remaining_children: BoundedVec<ChildRef<F, C, CAP>, CAP>,
+    ) -> Self {
+        Self {
+            parent,
+            children_type,
+            separators,
+            first_child,
+            remaining_children,
+        }
+    }
+
     fn child_by_key_mut<X: Ord>(
         &mut self,
         key: X,
@@ -277,12 +365,11 @@ where
             }
         }
 
-        let child_ref = if index == 0 {
-            &mut self.first_child
-        } else {
-            let slice = self.remaining_children.deref_mut();
-            unsafe { slice.get_unchecked_mut(index - 1) }
-        };
+        let child_ref = self
+            .remaining_children
+            .deref_mut()
+            .get_mut(index.wrapping_sub(1))
+            .unwrap_or(&mut self.first_child);
 
         Some((child_ref, self.children_type))
     }
@@ -290,107 +377,166 @@ where
     fn insert(
         &mut self,
         key: F,
-        left_child_weight: C,
-        right_child_ref: ChildRef<F, C, CAP>,
+        weight_before_right_child: C,
+        right_child: ChildRef<F, C, CAP>,
     ) -> Option<(F, C, ChildRef<F, C, CAP>)> {
         // Identify separator that is just right to key (we know that key does not exist in nodes).
         let insert_index = self.separators.partition_point(|entry| entry.key < key);
-        let preceeding_accum = self
+        let preceding_accum = self
             .separators
             .deref()
             .get(insert_index.wrapping_sub(1))
             .map(|entry| entry.accum)
             .unwrap_or_default();
 
-        if self
-            .separators
-            .try_insert(
-                insert_index,
-                Entry {
-                    key,
-                    accum: preceeding_accum + left_child_weight,
-                },
-            )
-            .is_ok()
-        {
+        let mut separator = Entry {
+            key,
+            accum: preceding_accum + weight_before_right_child,
+        };
+        if self.separators.try_insert(insert_index, separator).is_ok() {
             self.remaining_children
-                .try_insert(insert_index, right_child_ref)
+                .try_insert(insert_index, right_child)
                 .expect("separators and remaining_children always have same len");
             return None;
         }
 
-        // TODO: try to first spill into neighboring siblings.
-        // `left_child_weight_inclusive` includes the weight of the separator.
-        todo!("port code below");
-        // let (key, left_child_weight_inclusive) = if insert_index <= CAP / 2 {
-        //     // We're inserting into the left half or the parent.
-        //     let right_entries = left_sibling.entries.chop(CAP / 2).expect("node is full");
+        // Inserting would overflow the node. Split it into two.
+        // TODO: maybe try spilling into neighboring siblings first.
+        let right_sibling = match insert_index.cmp(&(CAP / 2)) {
+            core::cmp::Ordering::Less => {
+                // Insert both `separator` and `right_child` into the left sibling (i.e., `self`).
+                let right_separators = self.separators.chop(CAP / 2).expect("node is full").into();
+                let right_remaining_children: BoundedVec<_, CAP> = self
+                    .remaining_children
+                    .chop(CAP / 2)
+                    .expect("node is full")
+                    .into();
+                let right_first_child = self
+                    .remaining_children
+                    .pop()
+                    .expect("len = CAP/2 and CAP > 1");
 
-        //     left_sibling
-        //         .entries
-        //         .try_insert_and_accum(insert_index, entry, |entry| {
-        //             Entry::new(entry.key, entry.accum + amount)
-        //         })
-        //         .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
-        //     let ejected_entry = left_sibling
-        //         .entries
-        //         .pop()
-        //         .expect("we just inserted an entry");
-        //     let weight_before_right_sibling = ejected_entry.accum;
+                // `self.remaining_children` is now one item shorter than `self.separators`, but
+                // they become equal in length once we eject the last separator.
 
-        //     right_sibling
-        //         .entries
-        //         .try_append_transform(right_entries, |entry| Entry {
-        //             key: entry.key,
-        //             accum: entry.accum
-        //                 - weight_before_right_sibling,
-        //         })
-        //         .expect("can't overflow");
+                self.separators
+                    .try_insert(insert_index, separator)
+                    .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
+                self.remaining_children
+                    .try_insert(insert_index, right_child)
+                    .expect("there are `CAP - CAP/2 + 1` vacancies, which is >0 because CAP>0.");
 
-        //     (ejected_entry.key, weight_before_right_sibling)
-        // } else {
-        //     // We're inserting into the right half.
-        //     let right_entries = left_sibling
-        //         .entries
-        //         .chop(CAP / 2 + 1)
-        //         .expect("CAP/2 < insert_index <= len");
-        //     let ejected_entry = left_sibling
-        //         .entries
-        //         .pop()
-        //         .expect("there are CAP/2+1 > 0 entries");
-        //     let weight_before_right_sibling = ejected_entry.accum;
+                NonLeafNode::new(
+                    self.parent,
+                    self.children_type,
+                    right_separators,
+                    right_first_child,
+                    right_remaining_children,
+                )
+            }
+            core::cmp::Ordering::Equal => {
+                // Append `separator` to the end of `self.separators` (so it gets ejected afterwards),
+                // and set `right_child` to `right_sibling.first_child`.
+                let right_separators: BoundedVec<_, CAP> =
+                    self.separators.chop(CAP / 2).expect("node is full").into();
+                self.separators
+                    .try_push(separator)
+                    .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
+                let right_first_child = right_child;
+                let right_remaining_children = self
+                    .remaining_children
+                    .chop(CAP / 2)
+                    .expect("node is full")
+                    .into();
 
-        //     let (before_insert, after_insert) =
-        //         right_entries.split_at_mut(insert_index - (CAP / 2 + 1));
+                NonLeafNode::new(
+                    self.parent,
+                    self.children_type,
+                    right_separators,
+                    right_first_child,
+                    right_remaining_children,
+                )
+            }
+            core::cmp::Ordering::Greater => {
+                // Insert both `separator` and `right_child` into `right_sibling`.
+                let insert_index = insert_index - (CAP / 2 + 1);
+                let weight_before_right_sibling = self
+                    .separators
+                    .get(CAP / 2)
+                    .expect("CAP/2 < original insert_index <= len")
+                    .accum;
 
-        //     right_sibling
-        //         .entries
-        //         .try_append_transform(before_insert, |entry| Entry {
-        //             key: entry.key,
-        //             accum: entry.accum
-        //                 - weight_before_right_sibling,
-        //         })
-        //         .expect("can't overflow");
+                // Build `right_sibling`'s list of separators.
+                let right_separators = self
+                    .separators
+                    .chop(CAP / 2 + 1)
+                    .expect("CAP/2 < original insert_index <= len");
+                let (before_insert, after_insert) = right_separators.split_at(insert_index);
+                let mut right_separators = BoundedVec::new();
+                right_separators
+                    .try_append_transform(before_insert, |entry| Entry {
+                        key: entry.key,
+                        accum: entry.accum - weight_before_right_sibling,
+                    })
+                    .expect("can't overflow");
+                separator.accum = separator.accum - weight_before_right_sibling;
+                right_separators
+                    .try_push(separator)
+                    .expect("can't overflow");
+                right_separators
+                    .try_append_transform(after_insert, |entry| Entry {
+                        key: entry.key,
+                        accum: entry.accum - weight_before_right_sibling,
+                    })
+                    .expect("can't overflow");
 
-        //     entry.accum =
-        //         entry.accum - weight_before_right_sibling;
-        //     right_sibling
-        //         .entries
-        //         .try_push(entry)
-        //         .expect("can't overflow");
+                // Build `right_sibling`'s list of children.
+                let right_children = self
+                    .remaining_children
+                    .chop(CAP / 2)
+                    .expect("CAP/2 < original insert_index <= len");
+                let (mut right_first_child, right_remaining_children) = right_children.split_at(1);
+                let right_first_child = right_first_child.pop().expect("contains exactly 1");
+                let (before_insert, after_insert) = right_remaining_children.split_at(insert_index);
+                let mut right_remaining_children: BoundedVec<_, CAP> = before_insert.into();
+                right_remaining_children
+                    .try_push(right_child)
+                    .expect("can't overflow");
+                right_remaining_children
+                    .try_append(after_insert)
+                    .expect("can't overflow");
 
-        //     right_sibling
-        //         .entries
-        //         .try_append_transform(after_insert, |entry| Entry {
-        //             key: entry.key,
-        //             accum: entry.accum
-        //                 - weight_before_right_sibling
-        //                 + amount,
-        //         })
-        //         .expect("can't overflow");
+                NonLeafNode::new(
+                    self.parent,
+                    self.children_type,
+                    right_separators,
+                    right_first_child,
+                    right_remaining_children,
+                )
+            }
+        };
+        // We're inserting into the left half or the parent.
+        // FIXME: this is wrong! if we insert the separator into the parent, then we should insert the
+        // right_child into `right_sibling`. Maybe it would all be simpler if we always split tto the left?
+        // Actually, it's probably even easier to distinguish all three cases here, because `insert_index == CAP/2` is special anyway because it means inserting the child into `right_sibling.first_child`.
 
-        //     (ejected_entry.key, weight_before_right_sibling)
-        // };
+        let ejected_separator = self
+            .separators
+            .pop()
+            .expect("there are CAP/2+1 > 0 separators");
+        let right_sibling_ref = ChildRef::non_leaf(right_sibling);
+
+        Some((
+            ejected_separator.key,
+            ejected_separator.accum,
+            right_sibling_ref,
+        ))
+    }
+
+    #[inline(always)]
+    fn as_parent_ref(&self) -> ParentRef<F, C, CAP> {
+        let ptr_mut = self as *const NonLeafNode<_, _, CAP> as *mut NonLeafNode<_, _, CAP>;
+        ParentRef(unsafe { NonNull::new_unchecked(ptr_mut) })
     }
 }
 
@@ -474,8 +620,8 @@ where
             // We're inserting into the right half.
             let weight_before_right_sibling = self
                 .entries
-                .get(CAP / 2 - 1)
-                .expect("CAP/2 > insert_index >= 0")
+                .get(CAP / 2)
+                .expect("CAP/2 < insert_index <= len")
                 .accum;
 
             let right_entries = self
@@ -510,9 +656,9 @@ where
         };
 
         let ejected_entry = self.entries.pop().expect("there are CAP/2+1 > 0 entries");
-        let right_child_ref = ChildRef::leaf(right_sibling);
+        let right_sibling_ref = ChildRef::leaf(right_sibling);
 
-        Some((ejected_entry.key, ejected_entry.accum, right_child_ref))
+        Some((ejected_entry.key, ejected_entry.accum, right_sibling_ref))
     }
 }
 
@@ -593,13 +739,16 @@ impl<T: Unpin, const CAP: usize> BoundedVec<T, CAP> {
         }
     }
 
-    fn chop(&mut self, start_index: usize) -> Option<BoundedVecView<'_, T>> {
-        let view = self.buf.get(start_index..self.len)?;
+    fn chop(&mut self, start_index: usize) -> Option<BoundedVecViewMut<'_, T, CAP>> {
+        let view = self.buf.get_mut(start_index..self.len)?;
         self.len = start_index;
-        Some(BoundedVecView(view))
+        Some(BoundedVecViewMut(view))
     }
 
-    pub(crate) fn try_append(&mut self, tail: BoundedVecView<'_, T>) -> Result<(), ()> {
+    pub(crate) fn try_append<const BOUND: usize>(
+        &mut self,
+        tail: BoundedVecViewMut<'_, T, BOUND>,
+    ) -> Result<(), ()> {
         let dst = self
             .buf
             .get_mut(self.len..self.len + tail.len())
@@ -611,9 +760,9 @@ impl<T: Unpin, const CAP: usize> BoundedVec<T, CAP> {
         Ok(())
     }
 
-    pub(crate) fn try_append_transform(
+    pub(crate) fn try_append_transform<const BOUND: usize>(
         &mut self,
-        tail: BoundedVecView<'_, T>,
+        tail: BoundedVecViewMut<'_, T, BOUND>,
         transform: impl Fn(T) -> T,
     ) -> Result<(), ()> {
         let dst = self
@@ -629,9 +778,9 @@ impl<T: Unpin, const CAP: usize> BoundedVec<T, CAP> {
     }
 }
 
-struct BoundedVecView<'a, T>(&'a [MaybeUninit<T>]);
+struct BoundedVecViewMut<'a, T, const BOUND: usize>(&'a mut [MaybeUninit<T>]);
 
-impl<'a, T> Index<usize> for BoundedVecView<'a, T> {
+impl<'a, T, const BOUND: usize> Index<usize> for BoundedVecViewMut<'a, T, BOUND> {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -639,14 +788,32 @@ impl<'a, T> Index<usize> for BoundedVecView<'a, T> {
     }
 }
 
-impl<'a, T> BoundedVecView<'a, T> {
-    fn split_at(self, mid: usize) -> (BoundedVecView<'a, T>, BoundedVecView<'a, T>) {
-        let (left, right) = self.0.split_at(mid);
-        (BoundedVecView(left), BoundedVecView(right))
+impl<'a, T, const BOUND: usize> BoundedVecViewMut<'a, T, BOUND> {
+    fn split_at(
+        self,
+        mid: usize,
+    ) -> (
+        BoundedVecViewMut<'a, T, BOUND>,
+        BoundedVecViewMut<'a, T, BOUND>,
+    ) {
+        let (left, right) = self.0.split_at_mut(mid);
+        (BoundedVecViewMut(left), BoundedVecViewMut(right))
     }
 
     fn len(&self) -> usize {
         self.0.len()
+    }
+
+    fn pop(&'a mut self) -> Option<T> {
+        if self.0.len() == 0 {
+            None
+        } else {
+            unsafe {
+                let item = self.0.get_unchecked_mut(0).assume_init_read();
+                self.0 = self.0.get_unchecked_mut(..self.len() - 1);
+                Some(item)
+            }
+        }
     }
 }
 
