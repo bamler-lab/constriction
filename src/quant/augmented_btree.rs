@@ -1,11 +1,14 @@
 use core::{
     fmt::Debug,
-    mem::{ManuallyDrop, MaybeUninit},
-    ops::{Add, Deref, DerefMut, Index, Sub},
-    ptr::{self, NonNull},
+    mem::MaybeUninit,
+    ops::{Add, Deref, DerefMut, Sub},
 };
 
-use alloc::boxed::Box;
+use self::{
+    bounded_vec::BoundedVec,
+    tree_refs::{ChildRef, ParentRef},
+};
+use NodeType::{Leaf, NonLeaf};
 
 pub struct AugmentedBTree<F, C, const CAP: usize> {
     total: C,
@@ -18,30 +21,6 @@ enum NodeType {
     NonLeaf,
     Leaf,
 }
-
-use NodeType::{Leaf, NonLeaf};
-
-/// A (conceptually) owned reference to either a `NonLeafNode` or a `LeafNode`.
-///
-/// Note that a `ChildRef` does not actually the child when it is dropped.
-/// This is not possible because the `ChildRef` doesn't know the type of the
-/// child. Any container that has a `ChildRef` needs to implement `Drop`, where
-/// it has to call either `.drop_non_leaf()` or `.drop_leaf()` on all of its
-/// fields of type `ChildRef`.
-union ChildRef<F, C, const CAP: usize> {
-    non_leaf: ManuallyDrop<Box<NonLeafNode<F, C, CAP>>>,
-    leaf: ManuallyDrop<Box<LeafNode<F, C, CAP>>>,
-}
-
-impl<F, C, const CAP: usize> Debug for ChildRef<F, C, CAP> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ChildRef").finish_non_exhaustive()
-    }
-}
-
-/// A non-owned reference to a `NonLeafNode`.
-#[derive(Debug, Clone, Copy)]
-struct ParentRef<F, C, const CAP: usize>(NonNull<NonLeafNode<F, C, CAP>>);
 
 #[derive(Debug)]
 struct NonLeafNode<F, C, const CAP: usize> {
@@ -58,12 +37,6 @@ struct LeafNode<F, C, const CAP: usize> {
     entries: BoundedVec<Entry<F, C>, CAP>,
 }
 
-#[derive(Debug)]
-struct BoundedVec<T, const CAP: usize> {
-    len: usize,
-    buf: [MaybeUninit<T>; CAP],
-}
-
 #[derive(Clone, Copy, Debug)]
 struct Entry<F, C> {
     key: F,
@@ -74,8 +47,6 @@ struct Entry<F, C> {
     accum: C,
 }
 
-// DROP =======================================================================
-
 impl<F, C, const CAP: usize> Drop for AugmentedBTree<F, C, CAP> {
     fn drop(&mut self) {
         unsafe {
@@ -84,38 +55,6 @@ impl<F, C, const CAP: usize> Drop for AugmentedBTree<F, C, CAP> {
                 Leaf => self.root.drop_leaf(),
             }
         }
-    }
-}
-
-impl<F, C, const CAP: usize> ChildRef<F, C, CAP> {
-    #[inline(always)]
-    unsafe fn drop_non_leaf(&mut self) {
-        core::mem::drop(ManuallyDrop::take(&mut self.non_leaf));
-    }
-
-    #[inline(always)]
-    unsafe fn drop_leaf(&mut self) {
-        core::mem::drop(ManuallyDrop::take(&mut self.leaf));
-    }
-
-    #[inline(always)]
-    unsafe fn as_non_leaf_unchecked(&self) -> &NonLeafNode<F, C, CAP> {
-        &self.non_leaf
-    }
-
-    #[inline(always)]
-    unsafe fn as_non_leaf_mut_unchecked(&mut self) -> &mut NonLeafNode<F, C, CAP> {
-        &mut self.non_leaf
-    }
-
-    #[inline(always)]
-    unsafe fn as_leaf_unchecked(&self) -> &LeafNode<F, C, CAP> {
-        &self.leaf
-    }
-
-    #[inline(always)]
-    unsafe fn as_leaf_mut_unchecked(&mut self) -> &mut LeafNode<F, C, CAP> {
-        &mut self.leaf
     }
 }
 
@@ -139,65 +78,6 @@ impl<F, C, const CAP: usize> Drop for NonLeafNode<F, C, CAP> {
         }
     }
 }
-
-// UTILITIES ==================================================================
-
-impl<T, const CAP: usize> Deref for BoundedVec<T, CAP> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { core::mem::transmute(self.buf.get_unchecked(..self.len)) }
-    }
-}
-
-impl<T, const CAP: usize> DerefMut for BoundedVec<T, CAP> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { core::mem::transmute(self.buf.get_unchecked_mut(..self.len)) }
-    }
-}
-
-impl<'a, T: Unpin, const CAP: usize> From<BoundedVecViewMut<'a, T, CAP>> for BoundedVec<T, CAP> {
-    fn from(view: BoundedVecViewMut<'a, T, CAP>) -> Self {
-        let mut vec = Self::new();
-        vec.try_append(view)
-            .expect("capacities match and original vec was empty");
-        vec
-    }
-}
-
-macro_rules! child_call {
-    (($child: expr , $discriminator: expr).$fn_name: ident $args: tt) => {
-        match $discriminator {
-            NonLeaf => ($child.non_leaf).$fn_name$args,
-            Leaf => ($child.leaf).$fn_name$args,
-        }
-    };
-}
-
-macro_rules! bind_child {
-    (&mut $child: expr, $discriminator: expr, |$child_ident: ident| $expression: expr) => {{
-        match $discriminator {
-            NonLeaf => match (&mut $child.non_leaf) {
-                $child_ident => $expression,
-            },
-            Leaf => match (&mut $child.leaf) {
-                $child_ident => $expression,
-            },
-        }
-    }};
-    (&$child: expr, $discriminator: expr, |$child_ident: ident| $expression: expr) => {{
-        match $discriminator {
-            NonLeaf => match (&mut $child.non_leaf) {
-                $child_ident => $expression,
-            },
-            Leaf => match (&mut $child.leaf) {
-                $child_ident => $expression,
-            },
-        }
-    }};
-}
-
-// MAIN API ===================================================================
 
 impl<F, C, const CAP: usize> AugmentedBTree<F, C, CAP>
 where
@@ -246,7 +126,7 @@ where
         // The leaf node overflew and had to be split into two. Propagate up the tree.
         let mut parent = leaf_node.parent;
         while let Some(mut node) = parent {
-            let node = unsafe { node.0.as_mut() };
+            let node = unsafe { node.as_mut() };
             let Some((ejected_key, ejected_weight, right_sibling_ref)) =
                 node.insert(key, weight_before_right_child, right_child_ref)
             else {
@@ -283,7 +163,7 @@ where
         let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
         let mut right_child = core::mem::replace(&mut new_root.first_child, old_root);
 
-        let new_root_ref = unsafe { self.root.as_non_leaf_unchecked() }.as_parent_ref();
+        let new_root_ref = ParentRef::from_ref(unsafe { self.root.as_non_leaf_unchecked() });
         let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
         if self.root_type == NonLeaf {
             unsafe {
@@ -305,20 +185,6 @@ where
 
     pub fn total(&self) -> C {
         self.total
-    }
-}
-
-impl<F, C, const CAP: usize> ChildRef<F, C, CAP> {
-    fn non_leaf(child: NonLeafNode<F, C, CAP>) -> ChildRef<F, C, CAP> {
-        Self {
-            non_leaf: ManuallyDrop::new(Box::new(child)),
-        }
-    }
-
-    fn leaf(child: LeafNode<F, C, CAP>) -> ChildRef<F, C, CAP> {
-        Self {
-            leaf: ManuallyDrop::new(Box::new(child)),
-        }
     }
 }
 
@@ -532,12 +398,6 @@ where
             right_sibling_ref,
         ))
     }
-
-    #[inline(always)]
-    fn as_parent_ref(&self) -> ParentRef<F, C, CAP> {
-        let ptr_mut = self as *const NonLeafNode<_, _, CAP> as *mut NonLeafNode<_, _, CAP>;
-        ParentRef(unsafe { NonNull::new_unchecked(ptr_mut) })
-    }
 }
 
 impl<F, C, const CAP: usize> LeafNode<F, C, CAP>
@@ -662,164 +522,287 @@ where
     }
 }
 
-impl<T: Unpin, const CAP: usize> BoundedVec<T, CAP> {
-    fn new() -> Self {
-        let buf = unsafe {
-            // SAFETY: This is taken from an example in the official documentation of `MaybeUninit`.
-            // It calls `assume_init` on the *outer* `MaybeUninit`. This is safe because the type we
-            // claim to have initialized at this point is `[MaybeUninit<T>; CAP]`, which does not
-            // require initialization. See example in the documentation of `MaybeUninit`.
-            MaybeUninit::<[MaybeUninit<T>; CAP]>::uninit().assume_init()
-        };
-        Self { len: 0, buf }
+impl<F, C> Entry<F, C> {
+    fn new(key: F, accum: C) -> Self {
+        Self { key, accum }
+    }
+}
+
+mod tree_refs {
+    use core::{fmt::Debug, mem::ManuallyDrop, ptr::NonNull};
+
+    use alloc::boxed::Box;
+
+    use super::{LeafNode, NonLeafNode};
+
+    /// A (conceptually) owned reference to either a `NonLeafNode` or a `LeafNode`.
+    ///
+    /// Note that a `ChildRef` does not actually the child when it is dropped.
+    /// This is not possible because the `ChildRef` doesn't know the type of the
+    /// child. Any container that has a `ChildRef` needs to implement `Drop`, where
+    /// it has to call either `.drop_non_leaf()` or `.drop_leaf()` on all of its
+    /// fields of type `ChildRef`.
+    pub union ChildRef<F, C, const CAP: usize> {
+        non_leaf: ManuallyDrop<Box<NonLeafNode<F, C, CAP>>>,
+        leaf: ManuallyDrop<Box<LeafNode<F, C, CAP>>>,
     }
 
-    const fn len(&self) -> usize {
-        self.len
+    /// A non-owned reference to a `NonLeafNode`.
+    #[derive(Debug, Clone, Copy)]
+    pub struct ParentRef<F, C, const CAP: usize>(NonNull<NonLeafNode<F, C, CAP>>);
+
+    impl<F, C, const CAP: usize> Debug for ChildRef<F, C, CAP> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("ChildRef").finish_non_exhaustive()
+        }
     }
 
-    fn try_insert(&mut self, index: usize, item: T) -> Result<(), ()> {
-        assert!(index <= self.len);
-        if self.len == CAP {
-            return Err(());
-        }
-
-        unsafe {
-            self.buf.get_unchecked_mut(index..).rotate_right(1);
-            let tmp = self.buf.get_unchecked(index).assume_init_read();
-            self.buf.get_unchecked_mut(self.len).write(tmp);
-            self.buf.get_unchecked_mut(index).write(item);
-        }
-
-        Ok(())
-    }
-
-    fn try_insert_and_accum(
-        &mut self,
-        index: usize,
-        item: T,
-        update: impl Fn(T) -> T,
-    ) -> Result<(), ()> {
-        assert!(index <= self.len);
-
-        if self.len == CAP {
-            return Err(());
-        }
-
-        let mut write_index = self.len;
-        unsafe {
-            while write_index > index {
-                let tmp = self.buf.get_unchecked(write_index - 1).assume_init_read();
-                self.buf.get_unchecked_mut(write_index).write(update(tmp));
-                write_index -= 1;
+    impl<F, C, const CAP: usize> ChildRef<F, C, CAP> {
+        pub fn non_leaf(child: NonLeafNode<F, C, CAP>) -> ChildRef<F, C, CAP> {
+            Self {
+                non_leaf: ManuallyDrop::new(Box::new(child)),
             }
-            self.buf.get_unchecked_mut(index).write(item);
         }
 
-        Ok(())
+        pub fn leaf(child: LeafNode<F, C, CAP>) -> ChildRef<F, C, CAP> {
+            Self {
+                leaf: ManuallyDrop::new(Box::new(child)),
+            }
+        }
+
+        #[inline(always)]
+        pub unsafe fn drop_non_leaf(&mut self) {
+            core::mem::drop(ManuallyDrop::take(&mut self.non_leaf));
+        }
+
+        #[inline(always)]
+        pub unsafe fn drop_leaf(&mut self) {
+            core::mem::drop(ManuallyDrop::take(&mut self.leaf));
+        }
+
+        #[inline(always)]
+        pub unsafe fn as_non_leaf_unchecked(&self) -> &NonLeafNode<F, C, CAP> {
+            &self.non_leaf
+        }
+
+        #[inline(always)]
+        pub unsafe fn as_non_leaf_mut_unchecked(&mut self) -> &mut NonLeafNode<F, C, CAP> {
+            &mut self.non_leaf
+        }
+
+        #[inline(always)]
+        pub unsafe fn as_leaf_unchecked(&self) -> &LeafNode<F, C, CAP> {
+            &self.leaf
+        }
+
+        #[inline(always)]
+        pub unsafe fn as_leaf_mut_unchecked(&mut self) -> &mut LeafNode<F, C, CAP> {
+            &mut self.leaf
+        }
     }
 
-    pub(crate) fn try_push(&mut self, item: T) -> Result<(), ()> {
-        if self.len == CAP {
-            Err(())
-        } else {
-            unsafe { self.buf.get_unchecked_mut(self.len).write(item) };
-            self.len += 1;
+    impl<F, C, const CAP: usize> ParentRef<F, C, CAP> {
+        #[inline(always)]
+        pub fn from_ref(node: &NonLeafNode<F, C, CAP>) -> Self {
+            let ptr_mut = node as *const NonLeafNode<_, _, CAP> as *mut NonLeafNode<_, _, CAP>;
+            ParentRef(unsafe { NonNull::new_unchecked(ptr_mut) })
+        }
+
+        #[inline(always)]
+        pub unsafe fn as_mut(&mut self) -> &mut NonLeafNode<F, C, CAP> {
+            self.0.as_mut()
+        }
+    }
+}
+
+mod bounded_vec {
+    use core::{
+        mem::MaybeUninit,
+        ops::{Deref, DerefMut, Index},
+    };
+
+    #[derive(Debug)]
+    pub struct BoundedVec<T, const CAP: usize> {
+        len: usize,
+        buf: [MaybeUninit<T>; CAP],
+    }
+
+    pub struct BoundedVecViewMut<'a, T, const BOUND: usize>(&'a mut [MaybeUninit<T>]);
+
+    impl<T: Unpin, const CAP: usize> BoundedVec<T, CAP> {
+        pub fn new() -> Self {
+            let buf = unsafe {
+                // SAFETY: This is taken from an example in the official documentation of `MaybeUninit`.
+                // It calls `assume_init` on the *outer* `MaybeUninit`. This is safe because the type we
+                // claim to have initialized at this point is `[MaybeUninit<T>; CAP]`, which does not
+                // require initialization. See example in the documentation of `MaybeUninit`.
+                MaybeUninit::<[MaybeUninit<T>; CAP]>::uninit().assume_init()
+            };
+            Self { len: 0, buf }
+        }
+
+        pub const fn len(&self) -> usize {
+            self.len
+        }
+
+        pub fn try_insert(&mut self, index: usize, item: T) -> Result<(), ()> {
+            assert!(index <= self.len);
+            if self.len == CAP {
+                return Err(());
+            }
+
+            unsafe {
+                self.buf.get_unchecked_mut(index..).rotate_right(1);
+                let tmp = self.buf.get_unchecked(index).assume_init_read();
+                self.buf.get_unchecked_mut(self.len).write(tmp);
+                self.buf.get_unchecked_mut(index).write(item);
+            }
+
+            Ok(())
+        }
+
+        pub fn try_insert_and_accum(
+            &mut self,
+            index: usize,
+            item: T,
+            update: impl Fn(T) -> T,
+        ) -> Result<(), ()> {
+            assert!(index <= self.len);
+
+            if self.len == CAP {
+                return Err(());
+            }
+
+            let mut write_index = self.len;
+            unsafe {
+                while write_index > index {
+                    let tmp = self.buf.get_unchecked(write_index - 1).assume_init_read();
+                    self.buf.get_unchecked_mut(write_index).write(update(tmp));
+                    write_index -= 1;
+                }
+                self.buf.get_unchecked_mut(index).write(item);
+            }
+
+            Ok(())
+        }
+
+        pub fn try_push(&mut self, item: T) -> Result<(), ()> {
+            if self.len == CAP {
+                Err(())
+            } else {
+                unsafe { self.buf.get_unchecked_mut(self.len).write(item) };
+                self.len += 1;
+                Ok(())
+            }
+        }
+
+        pub fn pop(&mut self) -> Option<T> {
+            if self.len == 0 {
+                None
+            } else {
+                self.len -= 1;
+                let last = unsafe { self.buf.get_unchecked_mut(self.len).assume_init_read() };
+                Some(last)
+            }
+        }
+
+        pub fn chop(&mut self, start_index: usize) -> Option<BoundedVecViewMut<'_, T, CAP>> {
+            let view = self.buf.get_mut(start_index..self.len)?;
+            self.len = start_index;
+            Some(BoundedVecViewMut(view))
+        }
+
+        pub fn try_append<const BOUND: usize>(
+            &mut self,
+            tail: BoundedVecViewMut<'_, T, BOUND>,
+        ) -> Result<(), ()> {
+            let dst = self
+                .buf
+                .get_mut(self.len..self.len + tail.len())
+                .ok_or(())?;
+            unsafe {
+                core::ptr::copy_nonoverlapping(tail.0.as_ptr(), dst.as_mut_ptr(), tail.len());
+            }
+            self.len += tail.len();
+            Ok(())
+        }
+
+        pub fn try_append_transform<const BOUND: usize>(
+            &mut self,
+            tail: BoundedVecViewMut<'_, T, BOUND>,
+            transform: impl Fn(T) -> T,
+        ) -> Result<(), ()> {
+            let dst = self
+                .buf
+                .get_mut(self.len..self.len + tail.len())
+                .ok_or(())?;
+
+            for (src_item, dst_item) in tail.0.iter().zip(dst) {
+                unsafe { dst_item.write(transform(src_item.assume_init_read())) };
+            }
+
             Ok(())
         }
     }
 
-    fn pop(&mut self) -> Option<T> {
-        if self.len == 0 {
-            None
-        } else {
-            self.len -= 1;
-            let last = unsafe { self.buf.get_unchecked_mut(self.len).assume_init_read() };
-            Some(last)
-        }
-    }
-
-    fn chop(&mut self, start_index: usize) -> Option<BoundedVecViewMut<'_, T, CAP>> {
-        let view = self.buf.get_mut(start_index..self.len)?;
-        self.len = start_index;
-        Some(BoundedVecViewMut(view))
-    }
-
-    pub(crate) fn try_append<const BOUND: usize>(
-        &mut self,
-        tail: BoundedVecViewMut<'_, T, BOUND>,
-    ) -> Result<(), ()> {
-        let dst = self
-            .buf
-            .get_mut(self.len..self.len + tail.len())
-            .ok_or(())?;
-        unsafe {
-            ptr::copy_nonoverlapping(tail.0.as_ptr(), dst.as_mut_ptr(), tail.len());
-        }
-        self.len += tail.len();
-        Ok(())
-    }
-
-    pub(crate) fn try_append_transform<const BOUND: usize>(
-        &mut self,
-        tail: BoundedVecViewMut<'_, T, BOUND>,
-        transform: impl Fn(T) -> T,
-    ) -> Result<(), ()> {
-        let dst = self
-            .buf
-            .get_mut(self.len..self.len + tail.len())
-            .ok_or(())?;
-
-        for (src_item, dst_item) in tail.0.iter().zip(dst) {
-            unsafe { dst_item.write(transform(src_item.assume_init_read())) };
+    impl<'a, T, const BOUND: usize> BoundedVecViewMut<'a, T, BOUND> {
+        pub fn len(&self) -> usize {
+            self.0.len()
         }
 
-        Ok(())
-    }
-}
-
-struct BoundedVecViewMut<'a, T, const BOUND: usize>(&'a mut [MaybeUninit<T>]);
-
-impl<'a, T, const BOUND: usize> Index<usize> for BoundedVecViewMut<'a, T, BOUND> {
-    type Output = T;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        unsafe { self.0[index].assume_init_ref() }
-    }
-}
-
-impl<'a, T, const BOUND: usize> BoundedVecViewMut<'a, T, BOUND> {
-    fn split_at(
-        self,
-        mid: usize,
-    ) -> (
-        BoundedVecViewMut<'a, T, BOUND>,
-        BoundedVecViewMut<'a, T, BOUND>,
-    ) {
-        let (left, right) = self.0.split_at_mut(mid);
-        (BoundedVecViewMut(left), BoundedVecViewMut(right))
-    }
-
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn pop(&'a mut self) -> Option<T> {
-        if self.0.len() == 0 {
-            None
-        } else {
-            unsafe {
-                let item = self.0.get_unchecked_mut(0).assume_init_read();
-                self.0 = self.0.get_unchecked_mut(..self.len() - 1);
-                Some(item)
+        pub fn pop(&'a mut self) -> Option<T> {
+            if self.0.len() == 0 {
+                None
+            } else {
+                unsafe {
+                    let item = self.0.get_unchecked_mut(0).assume_init_read();
+                    self.0 = self.0.get_unchecked_mut(..self.len() - 1);
+                    Some(item)
+                }
             }
         }
-    }
-}
 
-impl<F, C> Entry<F, C> {
-    fn new(key: F, accum: C) -> Self {
-        Self { key, accum }
+        pub fn split_at(
+            self,
+            mid: usize,
+        ) -> (
+            BoundedVecViewMut<'a, T, BOUND>,
+            BoundedVecViewMut<'a, T, BOUND>,
+        ) {
+            let (left, right) = self.0.split_at_mut(mid);
+            (BoundedVecViewMut(left), BoundedVecViewMut(right))
+        }
+    }
+
+    impl<'a, T, const BOUND: usize> Index<usize> for BoundedVecViewMut<'a, T, BOUND> {
+        type Output = T;
+
+        fn index(&self, index: usize) -> &Self::Output {
+            unsafe { self.0[index].assume_init_ref() }
+        }
+    }
+
+    impl<T, const CAP: usize> Deref for BoundedVec<T, CAP> {
+        type Target = [T];
+
+        fn deref(&self) -> &Self::Target {
+            unsafe { core::mem::transmute(self.buf.get_unchecked(..self.len)) }
+        }
+    }
+
+    impl<T, const CAP: usize> DerefMut for BoundedVec<T, CAP> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            unsafe { core::mem::transmute(self.buf.get_unchecked_mut(..self.len)) }
+        }
+    }
+
+    impl<'a, T: Unpin, const CAP: usize> From<BoundedVecViewMut<'a, T, CAP>> for BoundedVec<T, CAP> {
+        fn from(view: BoundedVecViewMut<'a, T, CAP>) -> Self {
+            let mut vec = Self::new();
+            vec.try_append(view)
+                .expect("capacities match and original vec was empty");
+            vec
+        }
     }
 }
 
