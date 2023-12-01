@@ -759,7 +759,7 @@ impl<P, C> Entry<P, C> {
 }
 
 mod tree_refs {
-    use core::{fmt::Debug, mem::ManuallyDrop, ptr::NonNull};
+    use core::{cell::UnsafeCell, fmt::Debug, mem::ManuallyDrop, ptr::NonNull};
 
     use alloc::boxed::Box;
 
@@ -773,13 +773,13 @@ mod tree_refs {
     /// it has to call either `.drop_non_leaf()` or `.drop_leaf()` on all of its
     /// fields of type `ChildRef`.
     pub union ChildRef<P, C, const CAP: usize> {
-        non_leaf: ManuallyDrop<Box<NonLeafNode<P, C, CAP>>>,
-        leaf: ManuallyDrop<Box<LeafNode<P, C, CAP>>>,
+        non_leaf: ManuallyDrop<NonNull<UnsafeCell<NonLeafNode<P, C, CAP>>>>,
+        leaf: ManuallyDrop<NonNull<UnsafeCell<LeafNode<P, C, CAP>>>>,
     }
 
     /// A non-owned reference to a `NonLeafNode`.
     #[derive(Debug, Clone, Copy)]
-    pub struct ParentRef<P, C, const CAP: usize>(NonNull<NonLeafNode<P, C, CAP>>);
+    pub struct ParentRef<P, C, const CAP: usize>(NonNull<UnsafeCell<NonLeafNode<P, C, CAP>>>);
 
     impl<P, C, const CAP: usize> Debug for ChildRef<P, C, CAP> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -789,67 +789,74 @@ mod tree_refs {
 
     impl<P, C, const CAP: usize> ChildRef<P, C, CAP> {
         pub fn non_leaf(child: NonLeafNode<P, C, CAP>) -> ChildRef<P, C, CAP> {
+            let child_on_heap = Box::new(UnsafeCell::new(child));
             Self {
-                non_leaf: ManuallyDrop::new(Box::new(child)),
+                non_leaf: ManuallyDrop::new(Box::leak(child_on_heap).into()),
             }
         }
 
         pub fn leaf(child: LeafNode<P, C, CAP>) -> ChildRef<P, C, CAP> {
+            let child_on_heap = Box::new(UnsafeCell::new(child));
             Self {
-                leaf: ManuallyDrop::new(Box::new(child)),
+                leaf: ManuallyDrop::new(Box::leak(child_on_heap).into()),
             }
         }
 
         #[inline(always)]
         pub unsafe fn drop_non_leaf(&mut self) {
-            core::mem::drop(ManuallyDrop::take(&mut self.non_leaf));
+            core::mem::drop(Box::from_raw(
+                ManuallyDrop::take(&mut self.non_leaf).as_ptr(),
+            ));
         }
 
         #[inline(always)]
         pub unsafe fn drop_leaf(&mut self) {
-            core::mem::drop(ManuallyDrop::take(&mut self.leaf));
+            core::mem::drop(Box::from_raw(ManuallyDrop::take(&mut self.leaf).as_ptr()));
         }
 
         #[inline(always)]
         pub unsafe fn as_non_leaf_unchecked(&self) -> &NonLeafNode<P, C, CAP> {
-            &self.non_leaf
+            &*self.non_leaf.as_ref().get()
         }
 
         #[inline(always)]
         pub unsafe fn as_non_leaf_mut_unchecked(&mut self) -> &mut NonLeafNode<P, C, CAP> {
-            &mut self.non_leaf
+            self.non_leaf.as_mut().get_mut()
         }
 
         #[inline(always)]
         pub unsafe fn as_leaf_unchecked(&self) -> &LeafNode<P, C, CAP> {
-            &self.leaf
+            &*self.leaf.as_ref().get()
         }
 
         #[inline(always)]
         pub unsafe fn as_leaf_mut_unchecked(&mut self) -> &mut LeafNode<P, C, CAP> {
-            &mut self.leaf
+            self.leaf.as_mut().get_mut()
         }
 
         #[inline(always)]
         pub unsafe fn downgrade_non_leaf_unchecked(&self) -> ParentRef<P, C, CAP> {
-            let ptr_mut = self.as_non_leaf_unchecked() as *const NonLeafNode<_, _, CAP>
-                as *mut NonLeafNode<_, _, CAP>;
-            ParentRef(unsafe { NonNull::new_unchecked(ptr_mut) })
+            ParentRef(*self.non_leaf)
         }
     }
+
+    // pub struct ParentRef<P, C, const CAP: usize>(NonNull<UnsafeCell<NonLeafNode<P, C, CAP>>>);
 
     impl<P, C, const CAP: usize> ParentRef<P, C, CAP> {
         #[inline(always)]
         pub unsafe fn as_mut(&mut self) -> &mut NonLeafNode<P, C, CAP> {
-            self.0.as_mut()
+            self.0.as_mut().get_mut()
         }
 
-        /// This is dangerous. Prefer calling `ChildRef::downgrade_non_leaf_unchecked()` if possible
-        /// as this statically ensures that the ref is at least already on the heap.
+        /// This is dangerous and therefore only enabled for diagnostics tricks in unit tests.
+        /// Prefer calling `ChildRef::downgrade_non_leaf_unchecked()` if possible, which statically
+        /// ensures that the ref is at least already on the heap.
         #[cfg(test)]
         pub fn from_ref(node: &NonLeafNode<P, C, CAP>) -> Self {
             let ptr_mut = node as *const NonLeafNode<_, _, CAP> as *mut NonLeafNode<_, _, CAP>;
-            ParentRef(unsafe { NonNull::new_unchecked(ptr_mut) })
+            ParentRef(unsafe {
+                NonNull::new_unchecked(&mut UnsafeCell::new(ptr_mut.read()) as *mut UnsafeCell<_>)
+            })
         }
     }
 
@@ -1078,6 +1085,8 @@ mod tests {
         dbg!(minimal_internal::<128>());
         dbg!(minimal_internal::<10>());
         dbg!(minimal_internal::<5>());
+        dbg!(minimal_internal::<4>());
+        dbg!(minimal_internal::<3>());
         dbg!(minimal_internal::<2>());
         dbg!(minimal_internal::<1>());
 
@@ -1136,15 +1145,17 @@ mod tests {
     #[test]
     fn random_data() {
         #[cfg(not(miri))]
-        let amts = [1000, 10_000];
+        let amts = [100, 1000, 10_000];
 
         #[cfg(miri)]
-        let amts = [1000];
+        let amts = [100];
 
         for amt in amts {
             dbg!(amt, random_data_internal::<128>(amt));
             dbg!(amt, random_data_internal::<10>(amt));
             dbg!(amt, random_data_internal::<5>(amt));
+            dbg!(amt, random_data_internal::<4>(amt));
+            dbg!(amt, random_data_internal::<3>(amt));
             dbg!(amt, random_data_internal::<2>(amt));
             dbg!(amt, random_data_internal::<1>(amt));
         }
