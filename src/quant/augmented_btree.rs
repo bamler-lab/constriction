@@ -110,24 +110,25 @@ where
         self.test = test;
     }
 
-    pub fn insert(&mut self, key: P, count: C) {
+    pub fn insert(&mut self, pos: P, count: C) {
         if count == C::default() {
             return;
         }
         self.total = self.total + count;
 
-        // Find the leaf node where the key should be inserted, and increment all accums to the
-        // right of the path from root to leaf. If the key already exists in a non-leaf node, then
-        // incrementing the accums already took care of inserting, so there's nothing else to do.
+        // Find the leaf node where the entry should be inserted (if any), and increment all accums
+        // to the right of the path from root to leaf.
         let mut node_ref = &mut self.root;
         let mut node_type = self.root_type;
         while node_type == NonLeaf {
             let node = unsafe { node_ref.as_non_leaf_mut_unchecked() };
             let Some((child_ref, child_type)) = node.child_by_key_mut(
-                key,
+                pos,
                 |entry| entry.pos,
                 |entry| entry.accum = entry.accum + count,
             ) else {
+                // The non-leaf node `node` already had an entry at position `pos`, and we've
+                // already incremented the accums, so there's nothing else to do.
                 return;
             };
 
@@ -137,8 +138,8 @@ where
         let leaf_node = unsafe { node_ref.as_leaf_mut_unchecked() };
 
         // Insert into the leaf node.
-        let Some((mut key, mut weight_before_right_child, mut right_child_ref)) =
-            leaf_node.insert(key, count)
+        let Some((mut pos, mut weight_before_right_child, mut right_child_ref)) =
+            leaf_node.insert(pos, count)
         else {
             return;
         };
@@ -147,13 +148,13 @@ where
         let mut parent = leaf_node.parent;
         while let Some(mut node) = parent {
             let node = unsafe { node.as_mut() };
-            let Some((ejected_key, ejected_weight, right_sibling_ref)) =
-                node.insert(key, weight_before_right_child, right_child_ref)
+            let Some((ejected_pos, ejected_weight, right_sibling_ref)) =
+                node.insert(pos, weight_before_right_child, right_child_ref)
             else {
                 return;
             };
 
-            key = ejected_key;
+            pos = ejected_pos;
             weight_before_right_child = ejected_weight;
             right_child_ref = right_sibling_ref;
             parent = node.parent;
@@ -163,7 +164,7 @@ where
         let mut separators = BoundedVec::new();
         separators
             .try_push(Entry {
-                pos: key,
+                pos,
                 accum: weight_before_right_child,
             })
             .expect("vector is empty and `CAP>0`");
@@ -360,14 +361,15 @@ where
         Some((child_ref, self.children_type))
     }
 
+    /// Assumes that an entry at position `pos` does not yet exist.
     fn insert(
         &mut self,
-        key: P,
+        pos: P,
         weight_before_right_child: C,
         right_child: ChildRef<P, C, CAP>,
     ) -> Option<(P, C, ChildRef<P, C, CAP>)> {
-        // Identify separator that is just right to key (we know that key does not exist in nodes).
-        let insert_index = self.separators.partition_point(|entry| entry.pos < key);
+        // Identify separator that is just right to `pos` (assumes there is no entry at `pos` yet).
+        let insert_index = self.separators.partition_point(|entry| entry.pos < pos);
         let preceding_accum = self
             .separators
             .deref()
@@ -376,7 +378,7 @@ where
             .unwrap_or_default();
 
         let mut separator = Entry {
-            pos: key,
+            pos,
             accum: preceding_accum + weight_before_right_child,
         };
         if self.separators.try_insert(insert_index, separator).is_ok() {
@@ -624,13 +626,13 @@ where
         }
     }
 
-    fn insert(&mut self, key: P, count: C) -> Option<(P, C, ChildRef<P, C, CAP>)> {
-        // Check if the node already contains an entry with the given `key`.
+    fn insert(&mut self, pos: P, count: C) -> Option<(P, C, ChildRef<P, C, CAP>)> {
+        // Check if the node already contains an entry with at the given `pos`.
         // If so, increment its accum and all accums to the right, then return.
-        let insert_index = self.entries.partition_point(|entry| entry.pos < key);
+        let insert_index = self.entries.partition_point(|entry| entry.pos < pos);
         let mut right_iter = self.entries.iter_mut().skip(insert_index);
         match right_iter.next() {
-            Some(right_entry) if right_entry.pos == key => {
+            Some(right_entry) if right_entry.pos == pos => {
                 right_entry.accum = right_entry.accum + count;
                 for entry in right_iter {
                     entry.accum = entry.accum + count;
@@ -640,13 +642,13 @@ where
             _ => {}
         }
 
-        // An entry with `key` doesn't exist yet. Create a new one and insert it.
+        // An entry with at position `pos` doesn't exist yet. Create a new one and insert it.
         let old_accum = self
             .entries
             .get(insert_index.wrapping_sub(1))
             .map(|node| node.accum)
             .unwrap_or_default();
-        let mut insert_entry = Entry::new(key, old_accum + count);
+        let mut insert_entry = Entry::new(pos, old_accum + count);
 
         if self
             .entries
@@ -759,8 +761,8 @@ where
 }
 
 impl<P, C> Entry<P, C> {
-    fn new(key: P, accum: C) -> Self {
-        Self { pos: key, accum }
+    fn new(pos: P, accum: C) -> Self {
+        Self { pos, accum }
     }
 }
 
