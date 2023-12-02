@@ -1089,26 +1089,51 @@ mod tests {
             // Insert { -2.25=>3, 1.5=>10, 2.5=>9, 3.25=>7, 4.75=>3, 5.125=>2, 6.5=>7 } in some
             // random order.
             let insertions = [
-                (3.25, 7, 7),
-                (5.125, 2, 9),
-                (4.75, 3, 12),
-                (1.5, 10, 22),
-                (2.5, 9, 31),
-                (6.5, 7, 38),
-                (-2.25, 3, 41),
+                (3.25, 7, 7, 0, None, None),
+                (5.125, 2, 9, 7, Some(3.25), None),
+                (4.75, 3, 12, 7, Some(3.25), Some(5.125)),
+                (1.5, 10, 22, 0, None, Some(3.25)),
+                (2.5, 9, 31, 10, Some(1.5), Some(3.25)),
+                (6.5, 7, 38, 31, Some(5.125), None),
+                (-2.25, 3, 41, 0, None, Some(1.5)),
             ];
-            for (pos, count, total) in insertions {
-                tree.insert(F32::new(pos).unwrap(), count);
-                assert_eq!(tree.total(), total);
-                if tree.total() != total {
-                    std::eprintln!(
-                        "after inserting {},{}:\n{}\n",
-                        pos,
-                        count,
-                        tree.to_debug_string()
-                    );
-                    assert_eq!(tree.total(), total); // generates the error message.
+            for (pos, count, total, accum_before, left_neighbor_pos, right_neighbor_pos) in
+                insertions
+            {
+                let pos = F32::new(pos).unwrap();
+                let right_neighbor_pos = right_neighbor_pos.map(|x| F32::new(x).unwrap());
+                let left_neighbor_pos = left_neighbor_pos.map(|x| F32::new(x).unwrap());
+                let epsilon = F32::new(1e-5).unwrap();
+
+                assert_eq!(tree.left_cumulative(pos), accum_before);
+                assert_eq!(tree.left_cumulative(pos + epsilon), accum_before);
+                if let Some(pos_r) = right_neighbor_pos {
+                    assert_eq!(tree.left_cumulative(pos_r), accum_before);
                 }
+                assert_eq!(tree.quantile_function(accum_before), right_neighbor_pos);
+                assert_eq!(
+                    tree.quantile_function(accum_before.wrapping_sub(1)),
+                    left_neighbor_pos
+                );
+
+                tree.insert(pos, count);
+
+                assert_eq!(tree.total(), total);
+                assert_eq!(tree.left_cumulative(pos), accum_before);
+                assert_eq!(tree.left_cumulative(pos + epsilon), accum_before + count);
+                if let Some(pos_r) = right_neighbor_pos {
+                    assert_eq!(tree.left_cumulative(pos_r), accum_before + count);
+                }
+                assert_eq!(tree.quantile_function(accum_before), Some(pos));
+                assert_eq!(tree.quantile_function(accum_before + count - 1), Some(pos));
+                assert_eq!(
+                    tree.quantile_function(accum_before + count),
+                    right_neighbor_pos
+                );
+                assert_eq!(
+                    tree.quantile_function(accum_before.wrapping_sub(1)),
+                    left_neighbor_pos
+                );
             }
 
             let test_points = [
