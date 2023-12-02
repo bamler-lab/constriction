@@ -56,14 +56,14 @@ impl<P, C, const CAP: usize> Drop for NonLeafNode<P, C, CAP> {
             match self.children_type {
                 NonLeaf => {
                     self.first_child.drop_non_leaf();
-                    for sc in self.remaining_children.deref_mut() {
-                        sc.drop_non_leaf();
+                    while let Some(mut child) = self.remaining_children.pop() {
+                        child.drop_non_leaf()
                     }
                 }
                 Leaf => {
                     self.first_child.drop_leaf();
-                    for sc in self.remaining_children.deref_mut() {
-                        sc.drop_leaf();
+                    while let Some(mut child) = self.remaining_children.pop() {
+                        child.drop_leaf()
                     }
                 }
             }
@@ -73,8 +73,8 @@ impl<P, C, const CAP: usize> Drop for NonLeafNode<P, C, CAP> {
 
 impl<P, C, const CAP: usize> AugmentedBTree<P, C, CAP>
 where
-    P: Ord + Copy + Unpin,
-    C: Ord + Default + Copy + Add<Output = C> + Sub<Output = C> + Unpin,
+    P: Ord + Copy,
+    C: Ord + Default + Copy + Add<Output = C> + Sub<Output = C>,
 {
     pub fn new() -> Self {
         // TODO: statically assert that CAP>0;
@@ -221,8 +221,8 @@ where
 
 impl<P, C, const CAP: usize> NonLeafNode<P, C, CAP>
 where
-    P: Unpin + Ord + Copy,
-    C: Default + Add<Output = C> + Sub<Output = C> + Unpin + Copy,
+    P: Ord + Copy,
+    C: Default + Add<Output = C> + Sub<Output = C> + Copy,
 {
     fn new(
         children_type: NodeType,
@@ -457,8 +457,8 @@ where
 
 impl<P, C, const CAP: usize> LeafNode<P, C, CAP>
 where
-    P: Copy + Unpin + Ord,
-    C: Copy + Unpin + Default + Add<Output = C> + Sub<Output = C>,
+    P: Copy + Ord,
+    C: Copy + Default + Add<Output = C> + Sub<Output = C>,
 {
     fn new() -> Self {
         Self {
@@ -664,7 +664,7 @@ mod child_ptr {
 
     /// A (conceptually) owned reference to either a `NonLeafNode` or a `LeafNode`.
     ///
-    /// Note that a `ChildPtr` does not actually the child when it is dropped.
+    /// Note that a `ChildPtr` does not automatically drop the child when it is dropped.
     /// This is not possible because the `ChildPtr` doesn't know the type of the
     /// child. Any container that has a `ChildPtr` needs to implement `Drop`, where
     /// it has to call either `.drop_non_leaf()` or `.drop_leaf()` on all of its
@@ -695,12 +695,12 @@ mod child_ptr {
 
         #[inline(always)]
         pub unsafe fn drop_non_leaf(&mut self) {
-            core::mem::drop(ManuallyDrop::take(&mut self.non_leaf));
+            ManuallyDrop::drop(&mut self.non_leaf);
         }
 
         #[inline(always)]
         pub unsafe fn drop_leaf(&mut self) {
-            core::mem::drop(ManuallyDrop::take(&mut self.leaf));
+            ManuallyDrop::drop(&mut self.leaf);
         }
 
         #[inline(always)]
@@ -737,9 +737,17 @@ mod bounded_vec {
         buf: [MaybeUninit<T>; CAP],
     }
 
+    impl<T, const CAP: usize> Drop for BoundedVec<T, CAP> {
+        fn drop(&mut self) {
+            while let Some(item) = self.pop() {
+                core::mem::drop(item);
+            }
+        }
+    }
+
     pub struct BoundedVecViewMut<'a, T, const BOUND: usize>(&'a mut [MaybeUninit<T>]);
 
-    impl<T: Unpin, const CAP: usize> BoundedVec<T, CAP> {
+    impl<T, const CAP: usize> BoundedVec<T, CAP> {
         pub fn new() -> Self {
             let buf = unsafe {
                 // SAFETY: This is taken from an example in the official documentation of `MaybeUninit`.
@@ -910,7 +918,7 @@ mod bounded_vec {
         }
     }
 
-    impl<'a, T: Unpin, const CAP: usize> From<BoundedVecViewMut<'a, T, CAP>> for BoundedVec<T, CAP> {
+    impl<'a, T, const CAP: usize> From<BoundedVecViewMut<'a, T, CAP>> for BoundedVec<T, CAP> {
         fn from(view: BoundedVecViewMut<'a, T, CAP>) -> Self {
             let mut vec = Self::new();
             vec.try_append(view)
