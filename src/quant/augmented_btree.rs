@@ -3,7 +3,10 @@ use core::{
     ops::{Add, Deref, DerefMut, Sub},
 };
 
-use self::{bounded_vec::BoundedVec, child_ptr::ChildPtr};
+use self::{
+    bounded_vec::{BoundedPairOfVecs, BoundedVec},
+    child_ptr::ChildPtr,
+};
 use NodeType::{Leaf, NonLeaf};
 
 pub struct AugmentedBTree<P, C, const CAP: usize> {
@@ -20,9 +23,8 @@ enum NodeType {
 
 struct NonLeafNode<P, C, const CAP: usize> {
     children_type: NodeType,
-    separators: BoundedVec<Entry<P, C>, CAP>,
     first_child: ChildPtr<P, C, CAP>,
-    remaining_children: BoundedVec<ChildPtr<P, C, CAP>, CAP>,
+    separated_children: BoundedPairOfVecs<Entry<P, C>, ChildPtr<P, C, CAP>, CAP>,
 }
 
 struct LeafNode<P, C, const CAP: usize> {
@@ -56,13 +58,13 @@ impl<P, C, const CAP: usize> Drop for NonLeafNode<P, C, CAP> {
             match self.children_type {
                 NonLeaf => {
                     self.first_child.drop_non_leaf();
-                    while let Some(mut child) = self.remaining_children.pop() {
+                    while let Some((_, mut child)) = self.separated_children.pop() {
                         child.drop_non_leaf()
                     }
                 }
                 Leaf => {
                     self.first_child.drop_leaf();
-                    while let Some(mut child) = self.remaining_children.pop() {
+                    while let Some((_, mut child)) = self.separated_children.pop() {
                         child.drop_leaf()
                     }
                 }
@@ -96,40 +98,34 @@ where
 
         self.total = self.total + count;
 
-        let Some((mut separator_pos, mut ejected_accum, mut right_sibling)) = (match self.root_type
-        {
+        let Some((separator_pos, ejected_accum, right_sibling)) = (match self.root_type {
             NonLeaf => unsafe { self.root.as_non_leaf_mut_unchecked() }.insert(pos, count),
             Leaf => unsafe { self.root.as_leaf_mut_unchecked() }.insert(pos, count),
         }) else {
             return;
         };
-
         // The root node overflew, and we had to split off a `right_sibling` from it. The splitting
         // operation ejected a separator at position `separator_pos`, and `ejected_accum` is the
         // weight of the left split + separator.
-        let mut separators = BoundedVec::new();
-        separators
-            .try_push(Entry {
-                pos: separator_pos,
-                accum: ejected_accum,
-            })
-            .expect("vector is empty and `CAP>0`");
 
         // Since we cannot move out of `self.root`, we have to first construct a new root with a
         // temporary dummy `first_child`, then replace the old root by the new root, and then
         // replace the new root's dummy `first_child` with the old root.
         let new_root = ChildPtr::non_leaf(NonLeafNode::new(
             self.root_type,
-            separators,
             right_sibling,
-            BoundedVec::new(),
+            BoundedPairOfVecs::new(),
         ));
         let old_root = core::mem::replace(&mut self.root, new_root);
         let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
         let right_sibling = core::mem::replace(&mut new_root.first_child, old_root);
+        let separator = Entry {
+            pos: separator_pos,
+            accum: ejected_accum,
+        };
         new_root
-            .remaining_children
-            .try_push(right_sibling)
+            .separated_children
+            .try_push(separator, right_sibling)
             .expect("vector is empty and `CAP>0`");
         self.root_type = NonLeaf;
     }
@@ -146,14 +142,15 @@ where
         let mut node_type = self.root_type;
         while node_type == NonLeaf {
             let node = unsafe { node_ref.as_non_leaf_unchecked() };
-            let index = node.separators.partition_point(|entry| entry.pos < pos);
-            if let Some(entry) = node.separators.get(index.wrapping_sub(1)) {
+            let separators = node.separated_children.first_as_ref();
+            let index = separators.partition_point(|entry| entry.pos < pos);
+            if let Some(entry) = separators.get(index.wrapping_sub(1)) {
                 accum = accum + entry.accum
             }
             node_type = node.children_type;
             node_ref = node
-                .remaining_children
-                .deref()
+                .separated_children
+                .second_as_ref()
                 .get(index.wrapping_sub(1))
                 .unwrap_or(&node.first_child);
         }
@@ -195,19 +192,18 @@ where
         let mut right_bound = None;
         while node_type == NonLeaf {
             let node = unsafe { node_ref.as_non_leaf_unchecked() };
-            let index = node
-                .separators
-                .partition_point(|entry| entry.accum <= remaining);
-            if let Some(right_separator) = node.separators.get(index) {
+            let separators = node.separated_children.first_as_ref();
+            let index = separators.partition_point(|entry| entry.accum <= remaining);
+            if let Some(right_separator) = separators.get(index) {
                 right_bound = Some(right_separator.pos);
             }
-            if let Some(left_separator) = node.separators.get(index.wrapping_sub(1)) {
+            if let Some(left_separator) = separators.get(index.wrapping_sub(1)) {
                 remaining = remaining - left_separator.accum;
             }
             node_type = node.children_type;
             node_ref = node
-                .remaining_children
-                .deref()
+                .separated_children
+                .second_as_ref()
                 .get(index.wrapping_sub(1))
                 .unwrap_or(&node.first_child);
         }
@@ -231,15 +227,13 @@ where
 {
     fn new(
         children_type: NodeType,
-        separators: BoundedVec<Entry<P, C>, CAP>,
         first_child: ChildPtr<P, C, CAP>,
-        remaining_children: BoundedVec<ChildPtr<P, C, CAP>, CAP>,
+        separated_children: BoundedPairOfVecs<Entry<P, C>, ChildPtr<P, C, CAP>, CAP>,
     ) -> Self {
         Self {
             children_type,
-            separators,
             first_child,
-            remaining_children,
+            separated_children,
         }
     }
 
@@ -249,10 +243,9 @@ where
         get_key: impl Fn(&Entry<P, C>) -> X,
         update_right: impl Fn(&mut Entry<P, C>),
     ) -> Option<(usize, &mut ChildPtr<P, C, CAP>, NodeType)> {
-        let index = self
-            .separators
-            .partition_point(|entry| get_key(entry) < key);
-        let mut right_iter = self.separators.iter_mut().skip(index);
+        let separators = self.separated_children.first_as_mut();
+        let index = separators.partition_point(|entry| get_key(entry) < key);
+        let mut right_iter = separators.iter_mut().skip(index);
 
         if let Some(right_separator) = right_iter.next() {
             let right_key = get_key(right_separator);
@@ -266,8 +259,8 @@ where
         }
 
         let child_ref = self
-            .remaining_children
-            .deref_mut()
+            .separated_children
+            .second_as_mut()
             .get_mut(index.wrapping_sub(1))
             .unwrap_or(&mut self.first_child);
 
@@ -297,7 +290,8 @@ where
         // neighbor of `child` to the right. The splitting operation ejected a separator at position
         // `separator_pos`, and `ejected_accum` is the weight of the left split + separator.
         let preceding_accum = self
-            .separators
+            .separated_children
+            .first_as_ref()
             .get(insert_index.wrapping_sub(1))
             .map(|entry| entry.accum)
             .unwrap_or_default();
@@ -306,155 +300,86 @@ where
             pos: separator_pos,
             accum: preceding_accum + ejected_accum,
         };
-        if self.separators.try_insert(insert_index, separator).is_ok() {
-            self.remaining_children
-                .try_insert(insert_index, new_child)
-                .expect("separators and remaining_children always have same len"); // TODO: this should become unnecessary
+        let Err((_, new_child)) =
+            self.separated_children
+                .try_insert(insert_index, separator, new_child)
+        else {
             return None;
-        }
-
-        // Inserting would overflow the node. Split it into two.
-        let right_sibling = match insert_index.cmp(&(CAP / 2)) {
-            core::cmp::Ordering::Less => {
-                // Insert both `separator` and `new_child` into the left sibling (i.e., `self`).
-                let accum_of_ejected = self
-                    .separators
-                    .get(CAP / 2 - 1)
-                    .expect("CAP / 2 > index >= 0")
-                    .accum;
-                let chopped_off_separators = self.separators.chop(CAP / 2).expect("node is full");
-                let mut right_separators = BoundedVec::new();
-                right_separators
-                    .try_append_transform(chopped_off_separators, |entry| Entry {
-                        pos: entry.pos,
-                        accum: entry.accum - accum_of_ejected,
-                    })
-                    .expect("can't overflow");
-
-                let right_remaining_children: BoundedVec<_, CAP> = self
-                    .remaining_children
-                    .chop(CAP / 2)
-                    .expect("node is full")
-                    .into();
-                let right_first_child = self
-                    .remaining_children
-                    .pop()
-                    .expect("len = CAP/2 and CAP > 1");
-
-                // `self.remaining_children` is now one item shorter than `self.separators`, but
-                // they become equal in length once we eject the last separator.
-
-                self.separators
-                    .try_insert(insert_index, separator)
-                    .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
-                self.remaining_children
-                    .try_insert(insert_index, new_child)
-                    .expect("there are `CAP - CAP/2 + 1` vacancies, which is >0 because CAP>0.");
-
-                NonLeafNode::new(
-                    self.children_type,
-                    right_separators,
-                    right_first_child,
-                    right_remaining_children,
-                )
-            }
-            core::cmp::Ordering::Equal => {
-                // Append `separator` to the end of `self.separators` (so it gets ejected afterwards),
-                // and set `new_child` to `right_sibling.first_child`.
-                let accum_of_ejected = separator.accum;
-                let chopped_off_separators = self.separators.chop(CAP / 2).expect("node is full");
-                let mut right_separators = BoundedVec::new();
-                right_separators
-                    .try_append_transform(chopped_off_separators, |entry| Entry {
-                        pos: entry.pos,
-                        accum: entry.accum - accum_of_ejected,
-                    })
-                    .expect("can't overflow");
-
-                self.separators
-                    .try_push(separator)
-                    .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
-                let right_first_child = new_child;
-                let right_remaining_children = self
-                    .remaining_children
-                    .chop(CAP / 2)
-                    .expect("node is full")
-                    .into();
-
-                NonLeafNode::new(
-                    self.children_type,
-                    right_separators,
-                    right_first_child,
-                    right_remaining_children,
-                )
-            }
-            core::cmp::Ordering::Greater => {
-                // Insert both `separator` and `new_child` into `right_sibling`.
-                let insert_index = insert_index - (CAP / 2 + 1);
-                let accum_of_ejected = self
-                    .separators
-                    .get(CAP / 2)
-                    .expect("CAP/2 < original insert_index <= len")
-                    .accum;
-
-                // Build `right_sibling`'s list of separators.
-                let right_separators = self
-                    .separators
-                    .chop(CAP / 2 + 1)
-                    .expect("CAP/2 < original insert_index <= len");
-                let (before_insert, after_insert) = right_separators.split_at(insert_index);
-                let mut right_separators = BoundedVec::new();
-                right_separators
-                    .try_append_transform(before_insert, |entry| Entry {
-                        pos: entry.pos,
-                        accum: entry.accum - accum_of_ejected,
-                    })
-                    .expect("can't overflow");
-                separator.accum = separator.accum - accum_of_ejected;
-                right_separators
-                    .try_push(separator)
-                    .expect("can't overflow");
-                right_separators
-                    .try_append_transform(after_insert, |entry| Entry {
-                        pos: entry.pos,
-                        accum: entry.accum - accum_of_ejected,
-                    })
-                    .expect("can't overflow");
-
-                // Build `right_sibling`'s list of children.
-                let right_children = self
-                    .remaining_children
-                    .chop(CAP / 2)
-                    .expect("CAP/2 < original insert_index <= len");
-                let (mut right_first_child, right_remaining_children) = right_children.split_at(1);
-                let right_first_child = right_first_child.pop().expect("contains exactly 1");
-                let (before_insert, after_insert) = right_remaining_children.split_at(insert_index);
-                let mut right_remaining_children: BoundedVec<_, CAP> = before_insert.into();
-                right_remaining_children
-                    .try_push(new_child)
-                    .expect("can't overflow");
-                right_remaining_children
-                    .try_append(after_insert)
-                    .expect("can't overflow");
-
-                NonLeafNode::new(
-                    self.children_type,
-                    right_separators,
-                    right_first_child,
-                    right_remaining_children,
-                )
-            }
         };
 
-        let ejected_separator = self
-            .separators
+        // Inserting would overflow the node. Split it into two.
+        let mut right_separated_children = BoundedPairOfVecs::new();
+        if insert_index <= CAP / 2 {
+            // Insert into the left sibling (i.e., `self`).
+            let accum_of_ejected = if insert_index == CAP / 2 {
+                separator.accum
+            } else {
+                self.separated_children
+                    .first_as_ref()
+                    .get(CAP / 2 - 1)
+                    .expect("CAP / 2 > index >= 0")
+                    .accum
+            };
+            let chopped_off = self.separated_children.chop(CAP / 2).expect("node is full");
+            right_separated_children
+                .try_append_transform1(chopped_off, |entry| Entry {
+                    pos: entry.pos,
+                    accum: entry.accum - accum_of_ejected,
+                })
+                .expect("can't overflow");
+            self.separated_children
+                .try_insert(insert_index, separator, new_child)
+                .ok()
+                .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
+        } else {
+            // Insert into `right_sibling`.
+            let insert_index = insert_index - (CAP / 2 + 1);
+            let accum_of_ejected = self
+                .separated_children
+                .first_as_ref()
+                .get(CAP / 2)
+                .expect("CAP/2 < original insert_index <= len")
+                .accum;
+
+            // Build `right_sibling`'s list of separators.
+            let chopped_off = self
+                .separated_children
+                .chop(CAP / 2 + 1)
+                .expect("CAP/2 < original insert_index <= len");
+            let (before_insert, after_insert) = chopped_off.split_at_mut(insert_index);
+            right_separated_children
+                .try_append_transform1(before_insert, |entry| Entry {
+                    pos: entry.pos,
+                    accum: entry.accum - accum_of_ejected,
+                })
+                .expect("can't overflow");
+            separator.accum = separator.accum - accum_of_ejected;
+            right_separated_children
+                .try_push(separator, new_child)
+                .expect("can't overflow");
+            right_separated_children
+                .try_append_transform1(after_insert, |entry| Entry {
+                    pos: entry.pos,
+                    accum: entry.accum - accum_of_ejected,
+                })
+                .expect("can't overflow");
+        };
+
+        let (ejected_separator, right_first_child) = self
+            .separated_children
             .pop()
-            .expect("there are CAP/2+1 > 0 separators");
+            .expect("there are CAP/2+1 > 0 entries");
+
+        let right_sibling = ChildPtr::non_leaf(NonLeafNode::new(
+            self.children_type,
+            right_first_child,
+            right_separated_children,
+        ));
 
         Some((
             ejected_separator.pos,
             ejected_separator.accum,
-            ChildPtr::non_leaf(right_sibling),
+            right_sibling,
         ))
     }
 }
@@ -547,7 +472,7 @@ where
                 .expect("CAP/2 < insert_index <= len");
 
             let (before_insert, after_insert) =
-                right_entries.split_at(insert_index - (CAP / 2 + 1));
+                right_entries.split_at_mut(insert_index - (CAP / 2 + 1));
 
             right_sibling
                 .entries
@@ -611,8 +536,7 @@ impl<P: Display, C: Display, const CAP: usize> Debug for NonLeafNode<P, C, CAP> 
             NonLeaf => {
                 let first_child = unsafe { self.first_child.as_non_leaf_unchecked() };
                 f.entry(first_child);
-                for (separator, child) in self.separators.iter().zip(self.remaining_children.iter())
-                {
+                for (separator, child) in self.separated_children.iter() {
                     f.entry(separator);
                     f.entry(unsafe { child.as_non_leaf_unchecked() });
                 }
@@ -620,8 +544,7 @@ impl<P: Display, C: Display, const CAP: usize> Debug for NonLeafNode<P, C, CAP> 
             Leaf => {
                 let first_child = unsafe { self.first_child.as_leaf_unchecked() };
                 f.entry(first_child);
-                for (separator, child) in self.separators.iter().zip(self.remaining_children.iter())
-                {
+                for (separator, child) in self.separated_children.iter() {
                     f.entry(separator);
                     f.entry(unsafe { child.as_leaf_unchecked() });
                 }
@@ -735,49 +658,86 @@ mod bounded_vec {
         ops::{Deref, DerefMut, Index},
     };
 
+    /// Semantically equivalent to `BoundedVec<(T1, T2), CAP>`, but with all `T1`s stored in one
+    /// array and all `T2` stored in a different array, thus improving memory locality for
+    /// algorithms that access one part more often than the other
     #[derive(Debug)]
-    pub struct BoundedVec<T, const CAP: usize> {
+    pub struct BoundedPairOfVecs<T1, T2, const CAP: usize> {
         len: usize,
-        buf: [MaybeUninit<T>; CAP],
+        buf1: [MaybeUninit<T1>; CAP],
+        buf2: [MaybeUninit<T2>; CAP],
     }
 
-    impl<T, const CAP: usize> Drop for BoundedVec<T, CAP> {
+    #[derive(Debug)]
+    pub struct BoundedVec<T, const CAP: usize>(BoundedPairOfVecs<T, (), CAP>);
+
+    impl<T1, T2, const CAP: usize> Drop for BoundedPairOfVecs<T1, T2, CAP> {
         fn drop(&mut self) {
-            while let Some(item) = self.pop() {
-                core::mem::drop(item);
+            while let Some(pair) = self.pop() {
+                core::mem::drop(pair);
             }
         }
     }
 
+    #[derive(Debug)]
     pub struct BoundedVecViewMut<'a, T, const BOUND: usize>(&'a mut [MaybeUninit<T>]);
 
-    impl<T, const CAP: usize> BoundedVec<T, CAP> {
+    #[derive(Debug)]
+    pub struct BoundedPairOfVecsViewMut<'a, T1, T2, const BOUND: usize>(
+        BoundedVecViewMut<'a, T1, BOUND>,
+        BoundedVecViewMut<'a, T2, BOUND>,
+    );
+
+    impl<T1, T2, const CAP: usize> BoundedPairOfVecs<T1, T2, CAP> {
         pub fn new() -> Self {
-            let buf = unsafe {
+            let (buf1, buf2) = unsafe {
                 // SAFETY: This is taken from an example in the official documentation of `MaybeUninit`.
                 // It calls `assume_init` on the *outer* `MaybeUninit`. This is safe because the type we
                 // claim to have initialized at this point is `[MaybeUninit<T>; CAP]`, which does not
                 // require initialization. See example in the documentation of `MaybeUninit`.
-                MaybeUninit::<[MaybeUninit<T>; CAP]>::uninit().assume_init()
+                (
+                    MaybeUninit::<[MaybeUninit<T1>; CAP]>::uninit().assume_init(),
+                    MaybeUninit::<[MaybeUninit<T2>; CAP]>::uninit().assume_init(),
+                )
             };
-            Self { len: 0, buf }
+            Self { len: 0, buf1, buf2 }
         }
 
         pub const fn len(&self) -> usize {
             self.len
         }
 
-        pub fn try_insert(&mut self, index: usize, item: T) -> Result<(), ()> {
+        pub fn first_as_ref(&self) -> &[T1] {
+            unsafe { core::mem::transmute(self.buf1.get_unchecked(..self.len)) }
+        }
+
+        pub fn second_as_ref(&self) -> &[T2] {
+            unsafe { core::mem::transmute(self.buf2.get_unchecked(..self.len)) }
+        }
+
+        pub fn first_as_mut(&mut self) -> &mut [T1] {
+            unsafe { core::mem::transmute(self.buf1.get_unchecked_mut(..self.len)) }
+        }
+
+        pub fn second_as_mut(&mut self) -> &mut [T2] {
+            unsafe { core::mem::transmute(self.buf2.get_unchecked_mut(..self.len)) }
+        }
+
+        pub fn try_insert(&mut self, index: usize, item1: T1, item2: T2) -> Result<(), (T1, T2)> {
             assert!(index <= self.len);
             if self.len == CAP {
-                return Err(());
+                return Err((item1, item2));
             }
 
             unsafe {
-                self.buf
+                self.buf1
                     .get_unchecked_mut(index..self.len + 1)
                     .rotate_right(1);
-                self.buf.get_unchecked_mut(index).write(item);
+                self.buf1.get_unchecked_mut(index).write(item1);
+                self.buf2
+                    .get_unchecked_mut(index..self.len + 1)
+                    .rotate_right(1);
+                self.buf2.get_unchecked_mut(index).write(item2);
             }
             self.len += 1;
 
@@ -787,8 +747,9 @@ mod bounded_vec {
         pub fn try_insert_and_accum(
             &mut self,
             index: usize,
-            item: T,
-            update: impl Fn(T) -> T,
+            item1: T1,
+            item2: T2,
+            update1: impl Fn(T1) -> T1,
         ) -> Result<(), ()> {
             assert!(index <= self.len);
 
@@ -796,60 +757,155 @@ mod bounded_vec {
                 return Err(());
             }
 
-            let mut write_index = self.len;
             unsafe {
+                let mut write_index = self.len;
                 while write_index > index {
-                    let tmp = self.buf.get_unchecked(write_index - 1).assume_init_read();
-                    self.buf.get_unchecked_mut(write_index).write(update(tmp));
+                    let tmp = self.buf1.get_unchecked(write_index - 1).assume_init_read();
+                    self.buf1.get_unchecked_mut(write_index).write(update1(tmp));
                     write_index -= 1;
                 }
-                self.buf.get_unchecked_mut(index).write(item);
+                self.buf1.get_unchecked_mut(index).write(item1);
+
+                self.buf2
+                    .get_unchecked_mut(index..self.len + 1)
+                    .rotate_right(1);
+                self.buf2.get_unchecked_mut(index).write(item2);
             }
             self.len += 1;
 
             Ok(())
         }
 
-        pub fn try_push(&mut self, item: T) -> Result<(), ()> {
+        pub fn try_push(&mut self, item1: T1, item2: T2) -> Result<(), ()> {
             if self.len == CAP {
                 Err(())
             } else {
-                unsafe { self.buf.get_unchecked_mut(self.len).write(item) };
+                unsafe {
+                    self.buf1.get_unchecked_mut(self.len).write(item1);
+                    self.buf2.get_unchecked_mut(self.len).write(item2);
+                }
                 self.len += 1;
                 Ok(())
             }
         }
 
-        pub fn pop(&mut self) -> Option<T> {
+        pub fn pop(&mut self) -> Option<(T1, T2)> {
             if self.len == 0 {
                 None
             } else {
                 self.len -= 1;
-                let last = unsafe { self.buf.get_unchecked_mut(self.len).assume_init_read() };
+                let last = unsafe {
+                    (
+                        self.buf1.get_unchecked_mut(self.len).assume_init_read(),
+                        self.buf2.get_unchecked_mut(self.len).assume_init_read(),
+                    )
+                };
                 Some(last)
             }
         }
 
-        pub fn chop(&mut self, start_index: usize) -> Option<BoundedVecViewMut<'_, T, CAP>> {
-            let view = self.buf.get_mut(start_index..self.len)?;
+        pub fn chop(
+            &mut self,
+            start_index: usize,
+        ) -> Option<BoundedPairOfVecsViewMut<'_, T1, T2, CAP>> {
+            let view1 = BoundedVecViewMut(self.buf1.get_mut(start_index..self.len)?);
+            let view2 = BoundedVecViewMut(&mut self.buf2[start_index..self.len]);
             self.len = start_index;
-            Some(BoundedVecViewMut(view))
+            Some(BoundedPairOfVecsViewMut(view1, view2))
+        }
+
+        pub fn try_append<const BOUND: usize>(
+            &mut self,
+            tail: BoundedPairOfVecsViewMut<'_, T1, T2, BOUND>,
+        ) -> Result<(), ()> {
+            let tail_len = tail.0 .0.len();
+            let dst1 = self.buf1.get_mut(self.len..self.len + tail_len).ok_or(())?;
+            let dst2 = &mut self.buf2[self.len..self.len + tail_len];
+            unsafe {
+                core::ptr::copy_nonoverlapping(tail.0 .0.as_ptr(), dst1.as_mut_ptr(), tail_len);
+                core::ptr::copy_nonoverlapping(tail.1 .0.as_ptr(), dst2.as_mut_ptr(), tail_len);
+            }
+            self.len += tail_len;
+
+            Ok(())
+        }
+
+        pub fn try_append_transform1<const BOUND: usize>(
+            &mut self,
+            tail: BoundedPairOfVecsViewMut<'_, T1, T2, BOUND>,
+            transform1: impl Fn(T1) -> T1,
+        ) -> Result<(), ()> {
+            let tail_len = tail.0 .0.len();
+            let dst1 = self
+                .buf1
+                .get_mut(self.len..self.len + tail.len())
+                .ok_or(())?;
+            let dst2 = &mut self.buf2[self.len..self.len + tail_len];
+
+            unsafe {
+                for (src_item, dst_item) in tail.0 .0.iter().zip(dst1) {
+                    dst_item.write(transform1(src_item.assume_init_read()));
+                }
+                core::ptr::copy_nonoverlapping(tail.1 .0.as_ptr(), dst2.as_mut_ptr(), tail_len);
+            }
+            self.len += tail_len;
+
+            Ok(())
+        }
+
+        pub fn iter(&self) -> impl ExactSizeIterator<Item = (&T1, &T2)> {
+            self.first_as_ref().iter().zip(self.second_as_ref())
+        }
+    }
+
+    impl<T1, T2, const CAP: usize> Default for BoundedPairOfVecs<T1, T2, CAP> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl<T, const CAP: usize> BoundedVec<T, CAP> {
+        pub fn new() -> Self {
+            Self(BoundedPairOfVecs::new())
+        }
+
+        pub const fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        pub fn try_insert(&mut self, index: usize, item: T) -> Result<(), T> {
+            self.0.try_insert(index, item, ()).map_err(|(item, _)| item)
+        }
+
+        pub fn try_insert_and_accum(
+            &mut self,
+            index: usize,
+            item: T,
+            update: impl Fn(T) -> T,
+        ) -> Result<(), ()> {
+            self.0.try_insert_and_accum(index, item, (), update)
+        }
+
+        pub fn try_push(&mut self, item: T) -> Result<(), ()> {
+            self.0.try_push(item, ())
+        }
+
+        pub fn pop(&mut self) -> Option<T> {
+            Some(self.0.pop()?.0)
+        }
+
+        pub fn chop(&mut self, start_index: usize) -> Option<BoundedVecViewMut<'_, T, CAP>> {
+            Some(self.0.chop(start_index)?.0)
         }
 
         pub fn try_append<const BOUND: usize>(
             &mut self,
             tail: BoundedVecViewMut<'_, T, BOUND>,
         ) -> Result<(), ()> {
-            let dst = self
-                .buf
-                .get_mut(self.len..self.len + tail.len())
-                .ok_or(())?;
-            unsafe {
-                core::ptr::copy_nonoverlapping(tail.0.as_ptr(), dst.as_mut_ptr(), tail.len());
-            }
-            self.len += tail.len();
-
-            Ok(())
+            let mut tail2: [MaybeUninit<()>; BOUND] =
+                unsafe { MaybeUninit::<[MaybeUninit<()>; BOUND]>::uninit().assume_init() };
+            let tail = BoundedPairOfVecsViewMut(tail, BoundedVecViewMut(&mut tail2));
+            self.0.try_append(tail)
         }
 
         pub fn try_append_transform<const BOUND: usize>(
@@ -857,17 +913,16 @@ mod bounded_vec {
             tail: BoundedVecViewMut<'_, T, BOUND>,
             transform: impl Fn(T) -> T,
         ) -> Result<(), ()> {
-            let dst = self
-                .buf
-                .get_mut(self.len..self.len + tail.len())
-                .ok_or(())?;
+            let mut tail2: [MaybeUninit<()>; BOUND] =
+                unsafe { MaybeUninit::<[MaybeUninit<()>; BOUND]>::uninit().assume_init() };
+            let tail = BoundedPairOfVecsViewMut(tail, BoundedVecViewMut(&mut tail2));
+            self.0.try_append_transform1(tail, transform)
+        }
+    }
 
-            for (src_item, dst_item) in tail.0.iter().zip(dst) {
-                unsafe { dst_item.write(transform(src_item.assume_init_read())) };
-            }
-            self.len += tail.len();
-
-            Ok(())
+    impl<T, const CAP: usize> Default for BoundedVec<T, CAP> {
+        fn default() -> Self {
+            Self::new()
         }
     }
 
@@ -877,18 +932,18 @@ mod bounded_vec {
         }
 
         pub fn pop(&'a mut self) -> Option<T> {
-            if self.0.len() == 0 {
+            if self.len() == 0 {
                 None
             } else {
                 unsafe {
-                    let item = self.0.get_unchecked_mut(0).assume_init_read();
+                    let item = self.0.get_unchecked_mut(self.len() - 1).assume_init_read();
                     self.0 = self.0.get_unchecked_mut(..self.len() - 1);
                     Some(item)
                 }
             }
         }
 
-        pub fn split_at(
+        pub fn split_at_mut(
             self,
             mid: usize,
         ) -> (
@@ -897,6 +952,53 @@ mod bounded_vec {
         ) {
             let (left, right) = self.0.split_at_mut(mid);
             (BoundedVecViewMut(left), BoundedVecViewMut(right))
+        }
+    }
+
+    impl<'a, T1, T2, const BOUND: usize> BoundedPairOfVecsViewMut<'a, T1, T2, BOUND> {
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        pub fn pop(&'a mut self) -> Option<(T1, T2)> {
+            let item1 = self.0.pop()?;
+            let item2 = self.1.pop().expect("lens are equal");
+            Some((item1, item2))
+        }
+
+        pub fn split_at_mut(
+            self,
+            mid: usize,
+        ) -> (
+            BoundedPairOfVecsViewMut<'a, T1, T2, BOUND>,
+            BoundedPairOfVecsViewMut<'a, T1, T2, BOUND>,
+        ) {
+            let (left1, right1) = self.0.split_at_mut(mid);
+            let (left2, right2) = self.1.split_at_mut(mid);
+            (
+                BoundedPairOfVecsViewMut(left1, left2),
+                BoundedPairOfVecsViewMut(right1, right2),
+            )
+        }
+    }
+
+    impl<'a, T1, T2, const CAP: usize> From<BoundedPairOfVecsViewMut<'a, T1, T2, CAP>>
+        for BoundedPairOfVecs<T1, T2, CAP>
+    {
+        fn from(view: BoundedPairOfVecsViewMut<'a, T1, T2, CAP>) -> Self {
+            let mut vec = Self::new();
+            vec.try_append(view)
+                .expect("capacities match and original vec was empty");
+            vec
+        }
+    }
+
+    impl<'a, T, const CAP: usize> From<BoundedVecViewMut<'a, T, CAP>> for BoundedVec<T, CAP> {
+        fn from(view: BoundedVecViewMut<'a, T, CAP>) -> Self {
+            let mut vec = Self::new();
+            vec.try_append(view)
+                .expect("capacities match and original vec was empty");
+            vec
         }
     }
 
@@ -912,22 +1014,13 @@ mod bounded_vec {
         type Target = [T];
 
         fn deref(&self) -> &Self::Target {
-            unsafe { core::mem::transmute(self.buf.get_unchecked(..self.len)) }
+            unsafe { core::mem::transmute(self.0.buf1.get_unchecked(..self.0.len)) }
         }
     }
 
     impl<T, const CAP: usize> DerefMut for BoundedVec<T, CAP> {
         fn deref_mut(&mut self) -> &mut Self::Target {
-            unsafe { core::mem::transmute(self.buf.get_unchecked_mut(..self.len)) }
-        }
-    }
-
-    impl<'a, T, const CAP: usize> From<BoundedVecViewMut<'a, T, CAP>> for BoundedVec<T, CAP> {
-        fn from(view: BoundedVecViewMut<'a, T, CAP>) -> Self {
-            let mut vec = Self::new();
-            vec.try_append(view)
-                .expect("capacities match and original vec was empty");
-            vec
+            unsafe { core::mem::transmute(self.0.buf1.get_unchecked_mut(..self.0.len)) }
         }
     }
 }
