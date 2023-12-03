@@ -138,6 +138,8 @@ where
     ///
     /// This is the sum of all counts strictly left of `pos`.
     pub fn left_cumulative(&self, pos: P) -> C {
+        // This is implemented non-recursively as a kind of manual tail call optimization, which
+        // is possible because we only have to walk down the tree, not up.
         let mut accum = C::default();
 
         let mut node_ref = &self.root;
@@ -182,9 +184,12 @@ where
     /// - `tree.quantile_function(tree.left_cumulative(tree.quantile_function(accum).unwrap())).unwrap())`
     ///   is equal to `tree.quantile_function(accum).unwrap()` (assuming that the inner `unwrap()`
     ///   succeeds—in which case the outer `unwrap()` is guaranteed to succeed).
-    pub fn quantile_function(&self, mut accum: C) -> Option<P> {
+    pub fn quantile_function(&self, accum: C) -> Option<P> {
+        // This is implemented non-recursively as a kind of manual tail call optimization, which
+        // is possible because we only have to walk down the tree, not up.
         // Since `Entry::accum` stores the *right-sided* CDF, we have to find the
         // first entry whose accum is strictly larger than the provided accum.
+        let mut remaining = accum;
         let mut node_ref = &self.root;
         let mut node_type = self.root_type;
         let mut right_bound = None;
@@ -192,12 +197,12 @@ where
             let node = unsafe { node_ref.as_non_leaf_unchecked() };
             let index = node
                 .separators
-                .partition_point(|entry| entry.accum <= accum);
+                .partition_point(|entry| entry.accum <= remaining);
             if let Some(right_separator) = node.separators.get(index) {
                 right_bound = Some(right_separator.pos);
             }
             if let Some(left_separator) = node.separators.get(index.wrapping_sub(1)) {
-                accum = accum - left_separator.accum;
+                remaining = remaining - left_separator.accum;
             }
             node_type = node.children_type;
             node_ref = node
@@ -210,7 +215,7 @@ where
 
         let index = leaf_node
             .entries
-            .partition_point(|entry| entry.accum <= accum);
+            .partition_point(|entry| entry.accum <= remaining);
         leaf_node
             .entries
             .get(index)
@@ -280,7 +285,7 @@ where
             return None;
         };
 
-        let Some((mut separator_pos, mut ejected_accum, mut new_child)) = (match child_type {
+        let Some((separator_pos, ejected_accum, new_child)) = (match child_type {
             NonLeaf => unsafe { child.as_non_leaf_mut_unchecked() }.insert(pos, count),
             Leaf => unsafe { child.as_leaf_mut_unchecked() }.insert(pos, count),
         }) else {
@@ -293,7 +298,6 @@ where
         // `separator_pos`, and `ejected_accum` is the weight of the left split + separator.
         let preceding_accum = self
             .separators
-            .deref()
             .get(insert_index.wrapping_sub(1))
             .map(|entry| entry.accum)
             .unwrap_or_default();
@@ -482,7 +486,7 @@ where
             _ => {}
         }
 
-        // An entry with at position `pos` doesn't exist yet. Create a new one and insert it.
+        // An entry at position `pos` doesn't exist yet. Create a new one and insert it.
         let old_accum = self
             .entries
             .get(insert_index.wrapping_sub(1))
