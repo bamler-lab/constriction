@@ -101,8 +101,8 @@ use super::{
 };
 use crate::{
     backends::{ReadWords, WriteWords},
-    generic_asserts, BitArray, CoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos,
-    PosSeek, Seek, Stack,
+    generic_static_asserts, BitArray, CoderError, DefaultEncoderFrontendError, NonZeroBitArray,
+    Pos, PosSeek, Seek, Stack,
 };
 
 /// Experimental entropy coder for advanced variants of bitsback coding.
@@ -274,7 +274,7 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
     where
         Word: Into<State>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (State: BitArray, Word: BitArray; const PRECISION: usize);
             PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
             NON_ZERO_PRECISION: PRECISION > 0;
@@ -608,7 +608,7 @@ where
     where
         RemaindersBackend: WriteWords<Word>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (State: BitArray, Word: BitArray; const PRECISION: usize, const NEW_PRECISION: usize);
             PRECISION_MUST_NOT_DECREASE: NEW_PRECISION >= PRECISION;
             WORD_MUST_SUPPORT_NEW_PRECISION: NEW_PRECISION <= Word::BITS;
@@ -659,7 +659,7 @@ where
     where
         RemaindersBackend: ReadWords<Word, Stack>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (State: BitArray, Word: BitArray; const PRECISION: usize, const NEW_PRECISION: usize);
             PRECISION_MUST_NOT_INCREASE: NEW_PRECISION <= PRECISION;
             NEW_PRECISION_MUST_BE_NONZERO: NEW_PRECISION > 0;
@@ -757,7 +757,7 @@ where
     where
         RemaindersBackend: WriteWords<Word> + ReadWords<Word, Stack>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (State: BitArray, Word: BitArray; const PRECISION: usize, const NEW_PRECISION: usize);
             NEW_PRECISION_MUST_BE_NONZERO: NEW_PRECISION > 0;
             WORD_MUST_SUPPORT_NEW_PRECISION: NEW_PRECISION <= Word::BITS;
@@ -1050,7 +1050,7 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (State: BitArray, Word: BitArray; const PRECISION: usize);
             WORD_MUST_SUPPORT_PRECISION: PRECISION <= Word::BITS;
             PRECISION_MUST_BE_NONZERO: PRECISION > 0;
@@ -1147,7 +1147,7 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (State: BitArray, Word: BitArray; const PRECISION: usize);
             WORD_MUST_SUPPORT_PRECISION: PRECISION <= Word::BITS;
             PRECISION_MUST_BE_NONZERO: PRECISION > 0;

@@ -166,7 +166,7 @@ pub use probability::distribution::Distribution;
 /// [`probability`]: https://docs.rs/probability/latest/probability/
 pub use probability::distribution::Inverse;
 
-use crate::{generic_asserts, wrapping_pow2, BitArray, NonZeroBitArray};
+use crate::{generic_static_asserts, wrapping_pow2, BitArray, NonZeroBitArray};
 
 /// Base trait for probabilistic models of a data source.
 ///
@@ -1209,7 +1209,7 @@ where
     ///
     /// [`quantize`]: #method.quantize
     pub fn new(support: RangeInclusive<Symbol>) -> Self {
-        generic_asserts!(
+        generic_static_asserts!(
             (Probability: BitArray; const PRECISION: usize);
             PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
             PRECISION_MUST_BE_NONZERO: PRECISION > 0;
@@ -1807,7 +1807,7 @@ pub trait SymbolTable<Symbol, Probability: BitArray> {
         &self,
         quantile: Probability,
     ) -> (Symbol, Probability, Probability::NonZero) {
-        generic_asserts!(
+        generic_static_asserts!(
             (Probability: BitArray; const PRECISION: usize);
             PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
             PRECISION_MUST_BE_NONZERO: PRECISION > 0;
@@ -3172,7 +3172,7 @@ where
     P::Item: Borrow<Probability>,
     Op: FnMut(Symbol, Probability, Probability) -> Result<(), ()>,
 {
-    generic_asserts!(
+    generic_static_asserts!(
         (Probability: BitArray; const PRECISION: usize);
         PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
         PRECISION_MUST_BE_NONZERO: PRECISION > 0;
@@ -3216,7 +3216,7 @@ where
     f64: AsPrimitive<Probability>,
     usize: AsPrimitive<Probability>,
 {
-    generic_asserts!(
+    generic_static_asserts!(
         (Probability: BitArray; const PRECISION: usize);
         PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
         PRECISION_MUST_BE_NONZERO: PRECISION > 0;
@@ -3486,7 +3486,7 @@ where
         P: IntoIterator,
         P::Item: Borrow<Probability>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Probability: BitArray; const PRECISION: usize);
             PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
             PRECISION_MUST_BE_NONZERO: PRECISION > 0;
@@ -3527,7 +3527,7 @@ where
     where
         M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Probability: BitArray; const PRECISION: usize);
             PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
             PRECISION_MUST_BE_NONZERO: PRECISION > 0;
@@ -3598,7 +3598,7 @@ where
         I: IntoIterator,
         I::Item: Borrow<Probability>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Probability: BitArray; const PRECISION: usize);
             PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
             PRECISION_MUST_BE_NONZERO: PRECISION > 0;
@@ -3750,7 +3750,7 @@ where
         &self,
         quantile: Probability,
     ) -> (Symbol, Probability, Probability::NonZero) {
-        generic_asserts!(
+        generic_static_asserts!(
             (Probability: BitArray; const PRECISION: usize);
             PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
             PRECISION_MUST_BE_NONZERO: PRECISION > 0;
