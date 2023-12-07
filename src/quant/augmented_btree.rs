@@ -1,5 +1,6 @@
 use core::{
     fmt::{Debug, Display},
+    mem::ManuallyDrop,
     ops::{Add, Deref, DerefMut, Sub},
 };
 
@@ -25,12 +26,12 @@ enum NodeType {
 
 struct NonLeafNode<P, C, const CAP: usize> {
     children_type: NodeType,
-    first_child: ChildPtr<P, C, CAP>,
+    first_child: ManuallyDrop<ChildPtr<P, C, CAP>>,
 
     /// Upholds the following invariant:
     /// - if it is the root, then `separated_childern.len() >= 2`
     /// - if it is not the root, then `separated_children.len() >= CAP / 2 >= 2`
-    separated_children: BoundedPairOfVecs<Entry<P, C>, ChildPtr<P, C, CAP>, CAP>,
+    separated_children: ManuallyDrop<BoundedPairOfVecs<Entry<P, C>, ChildPtr<P, C, CAP>, CAP>>,
 }
 
 struct LeafNode<P, C, const CAP: usize> {
@@ -130,7 +131,7 @@ where
         ));
         let old_root = core::mem::replace(&mut self.root, new_root);
         let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
-        let right_sibling = core::mem::replace(&mut new_root.first_child, old_root);
+        let right_sibling = new_root.replace_first_child(old_root);
         let separator = Entry {
             pos: separator_pos,
             accum: ejected_accum,
@@ -256,8 +257,8 @@ where
     ) -> Self {
         Self {
             children_type,
-            first_child,
-            separated_children,
+            first_child: ManuallyDrop::new(first_child),
+            separated_children: ManuallyDrop::new(separated_children),
         }
     }
 
@@ -266,14 +267,14 @@ where
     /// Note that dropping these before sticking them into a different `NonLeafNode` would leak
     /// the memory allocated for the children.
     fn leak_raw_parts(
-        self,
+        mut self,
     ) -> (
         ChildPtr<P, C, CAP>,
         BoundedPairOfVecs<Entry<P, C>, ChildPtr<P, C, CAP>, CAP>,
     ) {
         unsafe {
-            let first_child = core::ptr::read(&self.first_child);
-            let separated_children = core::ptr::read(&self.separated_children);
+            let first_child = ManuallyDrop::take(&mut self.first_child);
+            let separated_children = ManuallyDrop::take(&mut self.separated_children);
             core::mem::forget(self);
             (first_child, separated_children)
         }
@@ -534,8 +535,9 @@ where
                             let old_separator = core::mem::replace(separator, last_stolen_entry);
                             let old_first_child = core::mem::replace(
                                 &mut right_neighbor.first_child,
-                                last_stolen_grandchild,
+                                ManuallyDrop::new(last_stolen_grandchild),
                             );
+                            let old_first_child = ManuallyDrop::into_inner(old_first_child);
                             child
                                 .separated_children
                                 .try_push(old_separator, old_first_child)
@@ -616,10 +618,8 @@ where
                                     // Special case: `child_a` is not actually a part of the merger.
                                     let separator_bc =
                                         core::mem::replace(separator_bc, separator_ab);
-                                    let first_child_c = core::mem::replace(
-                                        &mut child_c.first_child,
-                                        child_b_first_child,
-                                    );
+                                    let first_child_c =
+                                        child_c.replace_first_child(child_b_first_child);
                                     child_b_separated_children
                                         .try_push(separator_bc, first_child_c)
                                         .expect("child_b underflowed");
@@ -668,6 +668,12 @@ where
                 todo!()
             }
         }
+    }
+
+    fn replace_first_child(&mut self, new_first_child: ChildPtr<P, C, CAP>) -> ChildPtr<P, C, CAP> {
+        let old_first_child =
+            core::mem::replace(&mut self.first_child, ManuallyDrop::new(new_first_child));
+        ManuallyDrop::into_inner(old_first_child)
     }
 }
 
