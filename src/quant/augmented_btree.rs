@@ -1,13 +1,11 @@
 use core::{
+    cmp::Ordering::{Equal, Greater, Less},
     fmt::{Debug, Display},
     mem::ManuallyDrop,
     ops::{Add, Deref, DerefMut, Sub},
 };
 
-use self::{
-    bounded_vec::{BoundedPairOfVecs, BoundedVec},
-    child_ptr::ChildPtr,
-};
+use self::{bounded_vec::BoundedPairOfVecs, child_ptr::ChildPtr};
 use NodeType::{Leaf, NonLeaf};
 
 use crate::generic_static_asserts;
@@ -24,20 +22,42 @@ enum NodeType {
     Leaf,
 }
 
-struct NonLeafNode<P, C, const CAP: usize> {
-    children_type: NodeType,
-    first_child: ManuallyDrop<ChildPtr<P, C, CAP>>,
+trait Node<P, C, const CAP: usize> {
+    type ChildRef;
+
+    /// Tries to remove `count` items at position `pos`. Returns `Err(())` if there are fewer than
+    /// `count` items at `pos`. in this case, the subtree rooted at this node has been restored
+    /// into its original state at the time the method returns.
+    fn remove(&mut self, pos: P, count: C) -> Result<(), ()>;
+
+    fn data_ref(&self) -> &Payload<P, C, Self::ChildRef, CAP>;
+    fn data_mut(&mut self) -> &mut Payload<P, C, Self::ChildRef, CAP>;
+
+    /// Returns the node's payload.
+    ///
+    /// Note that, for a non-leaf node, dropping the payload before sticking its contents into some
+    /// different node(s) would leak the memory allocated for the children.
+    fn leak_data(self) -> Payload<P, C, Self::ChildRef, CAP>;
+}
+
+struct Payload<P, C, L, const CAP: usize> {
+    head: L,
 
     /// Upholds the following invariant:
-    /// - if it is the root, then `separated_childern.len() >= 2`
-    /// - if it is not the root, then `separated_children.len() >= CAP / 2 >= 2`
-    separated_children: ManuallyDrop<BoundedPairOfVecs<Entry<P, C>, ChildPtr<P, C, CAP>, CAP>>,
+    /// - if it is the root and a `NonLeafNode`, then `bulk.len() >= 2`
+    /// - if it is not the root, then `data.bulk.len() >= CAP / 2 >= 2`
+    bulk: BoundedPairOfVecs<Entry<P, C>, L, CAP>,
+}
+
+struct NonLeafNode<P, C, const CAP: usize> {
+    children_type: NodeType,
+    data: ManuallyDrop<Payload<P, C, ChildPtr<P, C, CAP>, CAP>>,
 }
 
 struct LeafNode<P, C, const CAP: usize> {
     /// Satisfies `entires.len() >= CAP / 2 >= 2` unless it is the root node
-    /// (the root node may have arbitrarily few entries, including zero).
-    entries: BoundedVec<Entry<P, C>, CAP>,
+    /// (the root node may have arbitrarily few data.bulk, including zero).
+    data: Payload<P, C, (), CAP>,
 }
 
 #[derive(Clone, Copy)]
@@ -66,14 +86,14 @@ impl<P, C, const CAP: usize> Drop for NonLeafNode<P, C, CAP> {
         unsafe {
             match self.children_type {
                 NonLeaf => {
-                    self.first_child.drop_non_leaf();
-                    while let Some((_, mut child)) = self.separated_children.pop() {
+                    self.data.head.drop_non_leaf();
+                    while let Some((_, mut child)) = self.data.bulk.pop() {
                         child.drop_non_leaf()
                     }
                 }
                 Leaf => {
-                    self.first_child.drop_leaf();
-                    while let Some((_, mut child)) = self.separated_children.pop() {
+                    self.data.head.drop_leaf();
+                    while let Some((_, mut child)) = self.data.bulk.pop() {
                         child.drop_leaf()
                     }
                 }
@@ -122,8 +142,8 @@ where
         // is the weight of the left split + separator.
 
         // Since we cannot move out of `self.root`, we have to first construct a new root with a
-        // temporary dummy `first_child`, then replace the old root by the new root, and then
-        // replace the new root's dummy `first_child` with the old root.
+        // temporary dummy `data.head`, then replace the old root by the new root, and then
+        // replace the new root's dummy `data.head` with the old root.
         let new_root = ChildPtr::non_leaf(NonLeafNode::new(
             self.root_type,
             right_sibling,
@@ -131,13 +151,12 @@ where
         ));
         let old_root = core::mem::replace(&mut self.root, new_root);
         let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
-        let right_sibling = new_root.replace_first_child(old_root);
-        let separator = Entry {
-            pos: separator_pos,
-            accum: ejected_accum,
-        };
+        let right_sibling = core::mem::replace(&mut new_root.data.head, old_root);
+
+        let separator = Entry::new(separator_pos, ejected_accum);
         new_root
-            .separated_children
+            .data
+            .bulk
             .try_push(separator, right_sibling)
             .expect("vector is empty and `CAP>0`");
         self.root_type = NonLeaf;
@@ -149,10 +168,22 @@ where
         }
 
         match self.root_type {
-            NonLeaf => unsafe { self.root.as_non_leaf_mut_unchecked() }.remove(pos, count),
-            Leaf => todo!(),
+            NonLeaf => {
+                let root = unsafe { self.root.as_non_leaf_mut_unchecked() };
+                root.remove(pos, count)?;
+                if root.data.bulk.len() == 0 {
+                    let old_root = core::mem::replace(&mut self.root, ChildPtr::none());
+                    let old_root = unsafe { old_root.into_non_leaf_unchecked() };
+                    self.root_type = old_root.children_type;
+                    self.root = old_root.leak_data().head;
+                }
+            }
+            Leaf => unsafe { self.root.as_leaf_mut_unchecked() }.remove(pos, count)?,
             // Leaf => unsafe { self.root.as_leaf_mut_unchecked() }.remove(pos, count),
         }
+
+        self.total = self.total - count;
+        Ok(())
     }
 
     /// Returns the left-sided CDF.
@@ -167,26 +198,32 @@ where
         let mut node_type = self.root_type;
         while node_type == NonLeaf {
             let node = unsafe { node_ref.as_non_leaf_unchecked() };
-            let separators = node.separated_children.first_as_ref();
+            let separators = node.data.bulk.first_as_ref();
             let index = separators.partition_point(|entry| entry.pos < pos);
             if let Some(entry) = separators.get(index.wrapping_sub(1)) {
                 accum = accum + entry.accum
             }
             node_type = node.children_type;
             node_ref = node
-                .separated_children
+                .data
+                .bulk
                 .second_as_ref()
                 .get(index.wrapping_sub(1))
-                .unwrap_or(&node.first_child);
+                .unwrap_or(&node.data.head);
         }
         let leaf_node = unsafe { node_ref.as_leaf_unchecked() };
 
-        let index = leaf_node.entries.partition_point(|entry| entry.pos < pos);
+        let index = leaf_node
+            .data
+            .bulk
+            .first_as_ref()
+            .partition_point(|entry| entry.pos < pos);
         accum = accum
             + leaf_node
-                .entries
+                .data
+                .bulk
                 .get(index.wrapping_sub(1))
-                .map(|entry| entry.accum)
+                .map(|(entry, ())| entry.accum)
                 .unwrap_or_default();
         accum
     }
@@ -217,7 +254,7 @@ where
         let mut right_bound = None;
         while node_type == NonLeaf {
             let node = unsafe { node_ref.as_non_leaf_unchecked() };
-            let separators = node.separated_children.first_as_ref();
+            let separators = node.data.bulk.first_as_ref();
             let index = separators.partition_point(|entry| entry.accum <= remaining);
             if let Some(right_separator) = separators.get(index) {
                 right_bound = Some(right_separator.pos);
@@ -227,66 +264,44 @@ where
             }
             node_type = node.children_type;
             node_ref = node
-                .separated_children
+                .data
+                .bulk
                 .second_as_ref()
                 .get(index.wrapping_sub(1))
-                .unwrap_or(&node.first_child);
+                .unwrap_or(&node.data.head);
         }
         let leaf_node = unsafe { node_ref.as_leaf_unchecked() };
 
         let index = leaf_node
-            .entries
+            .data
+            .bulk
+            .first_as_ref()
             .partition_point(|entry| entry.accum <= remaining);
         leaf_node
-            .entries
+            .data
+            .bulk
             .get(index)
-            .map(|entry| entry.pos)
+            .map(|(entry, ())| entry.pos)
             .or(right_bound)
     }
 }
 
-impl<P, C, const CAP: usize> NonLeafNode<P, C, CAP>
+impl<P, C, L, const CAP: usize> Payload<P, C, L, CAP>
 where
-    P: Ord + Copy,
-    C: Default + Ord + Add<Output = C> + Sub<Output = C> + Copy,
+    P: Copy,
+    C: Copy + Default + Add<Output = C> + Sub<Output = C>,
 {
-    fn new(
-        children_type: NodeType,
-        first_child: ChildPtr<P, C, CAP>,
-        separated_children: BoundedPairOfVecs<Entry<P, C>, ChildPtr<P, C, CAP>, CAP>,
-    ) -> Self {
-        Self {
-            children_type,
-            first_child: ManuallyDrop::new(first_child),
-            separated_children: ManuallyDrop::new(separated_children),
-        }
+    fn new(head: L, bulk: BoundedPairOfVecs<Entry<P, C>, L, CAP>) -> Self {
+        Self { head, bulk }
     }
 
-    /// Destructs the node into its `first_child` and `separated_children`.
-    ///
-    /// Note that dropping these before sticking them into a different `NonLeafNode` would leak
-    /// the memory allocated for the children.
-    fn leak_raw_parts(
-        mut self,
-    ) -> (
-        ChildPtr<P, C, CAP>,
-        BoundedPairOfVecs<Entry<P, C>, ChildPtr<P, C, CAP>, CAP>,
-    ) {
-        unsafe {
-            let first_child = ManuallyDrop::take(&mut self.first_child);
-            let separated_children = ManuallyDrop::take(&mut self.separated_children);
-            core::mem::forget(self);
-            (first_child, separated_children)
-        }
-    }
-
-    fn child_by_key_mut<X: Ord>(
+    fn by_key_mut_update_right<X: Ord>(
         &mut self,
         key: X,
         get_key: impl Fn(&Entry<P, C>) -> X,
         update_right: impl Fn(&mut Entry<P, C>),
-    ) -> Option<(usize, &mut ChildPtr<P, C, CAP>, NodeType)> {
-        let separators: &mut [Entry<P, C>] = self.separated_children.first_as_mut();
+    ) -> Option<(usize, &mut L)> {
+        let separators = self.bulk.first_as_mut();
         let index = separators.partition_point(|entry| get_key(entry) < key);
         let mut right_iter: core::iter::Skip<core::slice::IterMut<'_, Entry<P, C>>> =
             separators.iter_mut().skip(index);
@@ -303,26 +318,483 @@ where
         }
 
         let child_ref = self
-            .separated_children
+            .bulk
             .second_as_mut()
             .get_mut(index.wrapping_sub(1))
-            .unwrap_or(&mut self.first_child);
+            .unwrap_or(&mut self.head);
 
-        Some((index, child_ref, self.children_type))
+        Some((index, child_ref))
+    }
+
+    fn rebalance_after_underflow_before<CN>(
+        &mut self,
+        index: usize,
+        downcast_mut: impl Fn(&mut L) -> &mut CN,
+        into_downcast: impl Fn(L) -> CN,
+    ) where
+        CN: Node<P, C, CAP>,
+    {
+        // Child node underflowed. Check if we can steal some entries from one of
+        // its neighbors. If not, merge three children into two.
+
+        let (mut left, mut right) = self.bulk.get_all_mut().split_at_mut(index);
+        let mut left_iter = left.iter_mut().rev();
+        let (child, left, left_neighbor_len, left_accum) =
+            if let Some((left_separator, child)) = left_iter.next() {
+                let left_neighbor =
+                    downcast_mut(left_iter.next().map(|(_, c)| c).unwrap_or(&mut self.head));
+                let left_neighbor_len = left_neighbor.data_ref().bulk.len();
+                let left_accum = left_separator.accum;
+                (
+                    downcast_mut(child),
+                    Some((left_neighbor, left_separator)),
+                    left_neighbor_len,
+                    left_accum,
+                )
+            } else {
+                (downcast_mut(&mut self.head), None, 0, C::default())
+            };
+        core::mem::drop(left_iter);
+        let right = right.iter_mut().next().map(|(e, c)| (e, downcast_mut(c)));
+        let right_neighbor_len = right
+            .as_ref()
+            .map(|(_, c)| c.data_ref().bulk.len())
+            .unwrap_or_default();
+
+        if left_neighbor_len > right_neighbor_len && left_neighbor_len > CAP / 2 {
+            // Steal data from the end of `left_neighbor`.
+            let (left_neighbor, mut separator) =
+                left.expect("`left_neighbor_len > 0`, so it exists");
+            let new_left_neighbor_len = CAP / 2 + (left_neighbor_len - CAP / 2) / 2;
+
+            let mut stolen = left_neighbor
+                .data_mut()
+                .bulk
+                .chop(new_left_neighbor_len)
+                .expect("we steal at least one");
+            let (first_stolen_entry, new_first_child) =
+                stolen.pop_front().expect("we steal at least one");
+
+            let adjust_accums_left = first_stolen_entry.accum;
+            let new_separator = Entry::new(
+                first_stolen_entry.pos,
+                left_accum + first_stolen_entry.accum,
+            );
+            let adjust_accums_right = separator.accum - new_separator.accum;
+
+            let old_separator = core::mem::replace(separator, new_separator);
+            let last_stolen_entry = Entry::new(old_separator.pos, adjust_accums_right);
+            let old_first_child = core::mem::replace(&mut child.data_mut().head, new_first_child);
+
+            child
+                .data_mut()
+                .bulk
+                .try_prepend_and_update1(
+                    stolen,
+                    last_stolen_entry,
+                    old_first_child,
+                    |entry| Entry::new(entry.pos, entry.accum - adjust_accums_left),
+                    |entry| Entry::new(entry.pos, entry.accum + adjust_accums_right),
+                )
+                .expect("can't overflow");
+        } else if right_neighbor_len > CAP / 2 {
+            // Steal data from the beginning of `right_neighbor``.
+            let (separator, right_neighbor) =
+                right.expect("`right_neighbor_len > 0`, so it exists.");
+            let right_neighbor = right_neighbor.data_mut();
+            let new_right_neighbor_len = CAP / 2 + (right_neighbor_len - CAP / 2) / 2;
+            let amt_steal = right_neighbor_len - new_right_neighbor_len;
+
+            let adjust_accums_right = right_neighbor
+                .bulk
+                .get(amt_steal - 1)
+                .expect("we steal less than available but at least one")
+                .0
+                .accum;
+            let mut stolen = right_neighbor
+                .bulk
+                .chop_front(amt_steal, |entry| {
+                    Entry::new(entry.pos, entry.accum - adjust_accums_right)
+                })
+                .expect("we steal at least one");
+            let (last_stolen_entry, new_first_child) =
+                stolen.pop().expect("we steal at least one.");
+
+            let new_separator = Entry::new(
+                last_stolen_entry.pos,
+                separator.accum + last_stolen_entry.accum,
+            );
+            let old_separator = core::mem::replace(separator, new_separator);
+
+            let left_accum = left.map(|(_, entry)| entry.accum).unwrap_or_default();
+            let adjust_accums_left = old_separator.accum - left_accum;
+
+            let first_stolen_entry = Entry::new(old_separator.pos, adjust_accums_left);
+            let old_first_child = core::mem::replace(&mut right_neighbor.head, new_first_child);
+
+            child
+                .data_mut()
+                .bulk
+                .try_push(first_stolen_entry, old_first_child)
+                .expect("can't overflow");
+            child
+                .data_mut()
+                .bulk
+                .try_append_guarded_transform1(stolen, |entry| {
+                    Entry::new(entry.pos, entry.accum + adjust_accums_left)
+                })
+                .expect("can't overflow");
+        } else {
+            // Can't steal any data.bulk from neighbors. We need to reduce the number
+            // of child nodes. Let `i` be the index of the node that underflowed.
+            // - if `i` has neighbors to both sides, then we merge the three nodes
+            //   `[i - 1, i, i + 1]` into two;
+            // - if `i` is the first or last child, then we instead merge the three
+            //   nodes `[i, i + 1, i + 2]` or `[i - 2, i - 1, i]`, respectively,
+            //   into two, if they all three exist;
+            // - if there are only two children (which is the minimum possible
+            //   number of children because the root node has at least two children,
+            //   and all non-root nodes have at least `CAP / 2 >= 2` children
+            //   because `CAP >= 4`), then we merge these two children (i.e., either
+            //   `[i, i + 1]` or `[i - 1, i]` into one).
+            //
+            // Thus in general, we merge 2-3 children `[A, B, C?]` (where `C` may or
+            // may not exist). Our strategy is to remove node `B` and split up its
+            // data.bulk (+ separators) across `A` and `C` (if existent) (+ separator)
+            // such that `A` and `C` have equally many data.bulk (up to 1 if the total
+            // number is odd). This always works without moving any data.bulk between
+            // `A` and `C` because, in all cases considered above, either the set
+            // `{A, B}` or the set `{B, C}` (or both) consist of node `i`, which has
+            // exactly `CAP / 2 - 1` data.bulk (because it just underflowed), and one
+            // of its neighbors, which has exactly `CAP / 2` data.bulk (because we
+            // couldn't steal from it any more). Therefore, even if we merged all
+            // data.bulk of these two nodes and the separator into one node, we would
+            // end up with a merged node with `2 * (CAP / 2) - 1 + 1 ∈ {CAP - 1, CAP}`
+            // data.bulk, and the other node, which has at least `CAP / 2` and at most
+            // `CAP` data.bulk.
+
+            let index_b = index.clamp(1, self.bulk.len()) - 1;
+            let (separator_ab, child_b) = self.bulk.remove(index_b).expect("`index_b < len`");
+            let accum_before_a = self
+                .bulk
+                .first_as_ref()
+                .get(index_b.wrapping_sub(1))
+                .map(|entry| entry.accum)
+                .unwrap_or_default();
+            let mut child_b = into_downcast(child_b).leak_data();
+
+            let (separators, children) = self.bulk.both_as_mut();
+            let (children_until_a, children_from_c) = children.split_at_mut(index_b);
+            let child_a = children_until_a.last_mut().unwrap_or(&mut self.head);
+            let child_a = downcast_mut(child_a);
+            let child_c = children_from_c.first_mut();
+
+            let separated_child_c = child_c.and_then(|c| {
+                let c = downcast_mut(c);
+                if c.data_ref().bulk.len() >= 2 * (CAP / 2) {
+                    // Ignore `child_c` for the merger since it wouldn't be affected
+                    // by it anyway but would make the logic below more complicated.
+                    None
+                } else {
+                    Some((&mut separators[index_b], c))
+                }
+            });
+
+            if let Some((separator_bc, child_c)) = separated_child_c {
+                // We're merging three children `[A, B, C]` into two `[A', C']`.
+                let len_a = child_a.data_ref().bulk.len();
+                let len_b = child_b.bulk.len();
+                let len_c = child_c.data_ref().bulk.len();
+                let num_grandchildren = len_a + len_b + len_c + 1;
+                let target_len_a = num_grandchildren / 2;
+                let increase_len_a = target_len_a - len_a;
+                // `increase_len_a <= CAP / 2`, where equality requires that `child_a` underflowed.
+                // Thus, `increase_len_a <= len_b`.
+
+                if increase_len_a == 0 {
+                    // Special case: `child_a` is not actually a part of the merger.
+                    let adjust_accums_c = separator_bc.accum - separator_ab.accum;
+                    let separator_bc = core::mem::replace(separator_bc, separator_ab);
+                    let first_stolen_entry = Entry::new(separator_bc.pos, adjust_accums_c);
+                    let first_child_c =
+                        core::mem::replace(&mut child_c.data_mut().head, child_b.head);
+
+                    child_c
+                        .data_mut()
+                        .bulk
+                        .try_prepend_and_update1(
+                            child_b.bulk.take_all(),
+                            first_stolen_entry,
+                            first_child_c,
+                            |entry| entry,
+                            |entry| Entry::new(entry.pos, entry.accum + adjust_accums_c),
+                        )
+                        .expect("can't overflow");
+                } else {
+                    let child_c = child_c.data_mut();
+                    let mut tail_b = child_b
+                        .bulk
+                        .chop(increase_len_a - 1)
+                        .expect("0 < increase_len_a <= len_b");
+                    let (mid_point, new_first_child_c) =
+                        tail_b.pop_front().expect("0 < increase_len_a <= len_b");
+                    let new_separator =
+                        Entry::new(mid_point.pos, mid_point.accum + separator_ab.accum);
+                    let adjust_accums_c_left = new_separator.accum - separator_ab.accum;
+                    let tail_b_last_entry = Entry::new(separator_bc.pos, adjust_accums_c_left);
+                    let adjust_accums_c_right = separator_bc.accum - new_separator.accum;
+                    let old_first_child_c =
+                        core::mem::replace(&mut child_c.head, new_first_child_c);
+
+                    child_c
+                        .bulk
+                        .try_prepend_and_update1(
+                            tail_b,
+                            tail_b_last_entry,
+                            old_first_child_c,
+                            |entry| Entry::new(entry.pos, entry.accum - adjust_accums_c_left),
+                            |entry| Entry::new(entry.pos, entry.accum + adjust_accums_c_right),
+                        )
+                        .expect("can't overflow");
+
+                    let adjust_accums_a_right = separator_ab.accum - accum_before_a;
+                    let head_b_first_entry = Entry::new(separator_ab.pos, adjust_accums_a_right);
+                    child_a
+                        .data_mut()
+                        .bulk
+                        .try_push(head_b_first_entry, child_b.head)
+                        .expect("increase_len_a > 0");
+                    child_a
+                        .data_mut()
+                        .bulk
+                        .try_append_transform1(child_b.bulk.take_all(), |entry| {
+                            Entry::new(entry.pos, entry.accum + adjust_accums_a_right)
+                        })
+                        .expect("can't overflow");
+                }
+            } else {
+                // We're merging two children `[A, B]` into one `A'`.
+                let adjust_accums = separator_ab.accum - accum_before_a;
+                let first_stolen = Entry::new(separator_ab.pos, adjust_accums);
+                child_a
+                    .data_mut()
+                    .bulk
+                    .try_push(first_stolen, child_b.head)
+                    .expect("increase_len_a > 0");
+                child_a
+                    .data_mut()
+                    .bulk
+                    .try_append_transform1(child_b.bulk.take_all(), |entry| {
+                        Entry::new(entry.pos, entry.accum + adjust_accums)
+                    })
+                    .expect("can't overflow");
+            }
+        }
+    }
+}
+
+impl<P, C, const CAP: usize> Node<P, C, CAP> for NonLeafNode<P, C, CAP>
+where
+    P: Ord + Copy,
+    C: Default + Ord + Add<Output = C> + Sub<Output = C> + Copy,
+{
+    type ChildRef = ChildPtr<P, C, CAP>;
+
+    fn remove(&mut self, pos: P, count: C) -> Result<(), ()> {
+        let data = self.data.deref_mut();
+        let (separators, children) = data.bulk.both_as_mut();
+        let index = separators.partition_point(|entry| entry.pos < pos);
+        let child = children
+            .get_mut(index.wrapping_sub(1))
+            .unwrap_or(&mut data.head);
+        let (left_separators, right_separators) = separators.split_at_mut(index);
+        let mut right_iter = right_separators.iter_mut();
+
+        let mut found = false;
+        if let Some(right_separator) = right_iter.next() {
+            if right_separator.accum < count {
+                return Err(());
+            }
+            let new_accum = right_separator.accum - count;
+
+            found = right_separator.pos == pos;
+            if found {
+                let previous_accum = left_separators
+                    .last()
+                    .map(|entry| entry.accum)
+                    .unwrap_or_default();
+                if previous_accum > new_accum {
+                    return Err(());
+                }
+                let new_accum_in_left_subtree = new_accum - previous_accum;
+                match self.children_type {
+                    NonLeaf => {
+                        let child = unsafe { child.as_non_leaf_mut_unchecked() };
+                        let last_entry_left =
+                            child.get_last_and_remove_if_accum_is(new_accum_in_left_subtree);
+                        match last_entry_left.accum.cmp(&new_accum_in_left_subtree) {
+                            Equal => {
+                                // Removed all counts at `pos`. Replace the separator with the last
+                                // entry of the left subtree, which we just removed.
+                                right_separator.pos = last_entry_left.pos;
+                            }
+                            Greater => return Err(()),
+                            Less => (),
+                        }
+                    }
+                    Leaf => {
+                        let child = unsafe { child.as_leaf_mut_unchecked() };
+                        let last_entry_left =
+                            child.get_last_and_remove_if_accum_is(new_accum_in_left_subtree);
+                        match last_entry_left.accum.cmp(&new_accum_in_left_subtree) {
+                            Equal => {
+                                // Removed all counts at `pos`. Replace the separator with the last
+                                // entry of the left subtree, which we just removed.
+                                right_separator.pos = last_entry_left.pos;
+                            }
+                            Greater => return Err(()),
+                            Less => (),
+                        }
+                    }
+                };
+            }
+
+            right_separator.accum = new_accum;
+            for entry in right_iter {
+                entry.accum = entry.accum - count;
+            }
+        }
+
+        'dispatch: {
+            match self.children_type {
+                NonLeaf => {
+                    let child = unsafe { child.as_non_leaf_mut_unchecked() };
+                    if !found && child.remove(pos, count).is_err() {
+                        break 'dispatch;
+                    }
+                    if child.data.bulk.len() < CAP / 2 {
+                        self.data.rebalance_after_underflow_before(
+                            index,
+                            |c| unsafe { c.as_non_leaf_mut_unchecked() },
+                            |c| unsafe { *c.into_non_leaf_unchecked() },
+                        );
+                    }
+                    return Ok(());
+                }
+                Leaf => {
+                    let child = unsafe { child.as_leaf_mut_unchecked() };
+                    if !found && child.remove(pos, count).is_err() {
+                        break 'dispatch;
+                    }
+                    if child.data.bulk.len() < CAP / 2 {
+                        self.data.rebalance_after_underflow_before(
+                            index,
+                            |c| unsafe { c.as_leaf_mut_unchecked() },
+                            |c| unsafe { *c.into_leaf_unchecked() },
+                        );
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
+        // Entry wasn't found. Clean up any modifications we've done optimistically.
+        for entry in &mut separators[index..] {
+            entry.accum = entry.accum + count;
+        }
+
+        Err(())
+    }
+
+    fn data_ref(&self) -> &Payload<P, C, Self::ChildRef, CAP> {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut Payload<P, C, Self::ChildRef, CAP> {
+        &mut self.data
+    }
+
+    fn leak_data(mut self) -> Payload<P, C, Self::ChildRef, CAP> {
+        unsafe {
+            let data = ManuallyDrop::take(&mut self.data);
+            core::mem::forget(self);
+            data
+        }
+    }
+}
+
+impl<P, C, const CAP: usize> Node<P, C, CAP> for LeafNode<P, C, CAP>
+where
+    P: Ord + Copy,
+    C: Default + Ord + Add<Output = C> + Sub<Output = C> + Copy,
+{
+    type ChildRef = ();
+
+    fn remove(&mut self, pos: P, count: C) -> Result<(), ()> {
+        let entries = self.data.bulk.first_as_mut();
+        let index = entries.partition_point(|entry| entry.pos < pos);
+        let previous_accum = entries
+            .get(index.wrapping_sub(1))
+            .map(|entry| entry.accum)
+            .unwrap_or_default();
+
+        let mut right_iter = entries.iter_mut().skip(index);
+        let entry = right_iter.next().ok_or(())?;
+        if entry.pos != pos || entry.accum < previous_accum + count {
+            return Err(());
+        }
+        if entry.accum == previous_accum + count {
+            self.data
+                .bulk
+                .remove_and_update1(index, |entry| Entry::new(entry.pos, entry.accum - count))
+                .expect("it exists");
+        } else {
+            entry.accum = entry.accum - count;
+            for entry in right_iter {
+                entry.accum = entry.accum - count;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn data_ref(&self) -> &Payload<P, C, Self::ChildRef, CAP> {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut Payload<P, C, Self::ChildRef, CAP> {
+        &mut self.data
+    }
+
+    fn leak_data(self) -> Payload<P, C, Self::ChildRef, CAP> {
+        self.data
+    }
+}
+
+impl<P, C, const CAP: usize> NonLeafNode<P, C, CAP>
+where
+    P: Ord + Copy,
+    C: Default + Ord + Add<Output = C> + Sub<Output = C> + Copy,
+{
+    fn new(
+        children_type: NodeType,
+        head: ChildPtr<P, C, CAP>,
+        bulk: BoundedPairOfVecs<Entry<P, C>, ChildPtr<P, C, CAP>, CAP>,
+    ) -> Self {
+        Self {
+            children_type,
+            data: ManuallyDrop::new(Payload::new(head, bulk)),
+        }
     }
 
     fn insert(&mut self, pos: P, count: C) -> Option<(P, C, ChildPtr<P, C, CAP>)> {
-        let Some((insert_index, child, child_type)) = self.child_by_key_mut(
+        let (insert_index, child) = self.data.by_key_mut_update_right(
             pos,
             |entry| entry.pos,
             |entry| entry.accum = entry.accum + count,
-        ) else {
-            // The non-leaf node already had an entry at position `pos`, and we've
-            // already incremented the accums, so there's nothing else to do.
-            return None;
-        };
+        )?;
 
-        let Some((separator_pos, ejected_accum, new_child)) = (match child_type {
+        let Some((separator_pos, ejected_accum, new_child)) = (match self.children_type {
             NonLeaf => unsafe { child.as_non_leaf_mut_unchecked() }.insert(pos, count),
             Leaf => unsafe { child.as_leaf_mut_unchecked() }.insert(pos, count),
         }) else {
@@ -334,19 +806,18 @@ where
         // neighbor of `child` to the right. The splitting operation ejected a separator at position
         // `separator_pos`, and `ejected_accum` is the weight of the left split + separator.
         let preceding_accum = self
-            .separated_children
+            .data
+            .bulk
             .first_as_ref()
             .get(insert_index.wrapping_sub(1))
             .map(|entry| entry.accum)
             .unwrap_or_default();
 
-        let mut separator = Entry {
-            pos: separator_pos,
-            accum: preceding_accum + ejected_accum,
-        };
-        let Err((_, new_child)) =
-            self.separated_children
-                .try_insert(insert_index, separator, new_child)
+        let mut separator = Entry::new(separator_pos, preceding_accum + ejected_accum);
+        let Err((_, new_child)) = self
+            .data
+            .bulk
+            .try_insert(insert_index, separator, new_child)
         else {
             return None;
         };
@@ -358,20 +829,21 @@ where
             let accum_of_ejected = if insert_index == CAP / 2 {
                 separator.accum
             } else {
-                self.separated_children
+                self.data
+                    .bulk
                     .first_as_ref()
                     .get(CAP / 2 - 1)
                     .expect("CAP / 2 > index >= 0")
                     .accum
             };
-            let chopped_off = self.separated_children.chop(CAP / 2).expect("node is full");
+            let chopped_off = self.data.bulk.chop(CAP / 2).expect("node is full");
             right_separated_children
-                .try_append_transform1(chopped_off, |entry| Entry {
-                    pos: entry.pos,
-                    accum: entry.accum - accum_of_ejected,
+                .try_append_transform1(chopped_off, |entry| {
+                    Entry::new(entry.pos, entry.accum - accum_of_ejected)
                 })
                 .expect("can't overflow");
-            self.separated_children
+            self.data
+                .bulk
                 .try_insert(insert_index, separator, new_child)
                 .ok()
                 .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
@@ -379,7 +851,8 @@ where
             // Insert into `right_sibling`.
             let insert_index = insert_index - (CAP / 2 + 1);
             let accum_of_ejected = self
-                .separated_children
+                .data
+                .bulk
                 .first_as_ref()
                 .get(CAP / 2)
                 .expect("CAP/2 < original insert_index <= len")
@@ -387,14 +860,14 @@ where
 
             // Build `right_sibling`'s list of separators.
             let chopped_off = self
-                .separated_children
+                .data
+                .bulk
                 .chop(CAP / 2 + 1)
                 .expect("CAP/2 < original insert_index <= len");
             let (before_insert, after_insert) = chopped_off.split_at_mut(insert_index);
             right_separated_children
-                .try_append_transform1(before_insert, |entry| Entry {
-                    pos: entry.pos,
-                    accum: entry.accum - accum_of_ejected,
+                .try_append_transform1(before_insert, |entry| {
+                    Entry::new(entry.pos, entry.accum - accum_of_ejected)
                 })
                 .expect("can't overflow");
             separator.accum = separator.accum - accum_of_ejected;
@@ -402,17 +875,17 @@ where
                 .try_push(separator, new_child)
                 .expect("can't overflow");
             right_separated_children
-                .try_append_transform1(after_insert, |entry| Entry {
-                    pos: entry.pos,
-                    accum: entry.accum - accum_of_ejected,
+                .try_append_transform1(after_insert, |entry| {
+                    Entry::new(entry.pos, entry.accum - accum_of_ejected)
                 })
                 .expect("can't overflow");
         };
 
         let (ejected_separator, right_first_child) = self
-            .separated_children
+            .data
+            .bulk
             .pop()
-            .expect("there are CAP/2+1 > 0 entries");
+            .expect("there are CAP/2+1 > 0 data.bulk");
 
         let right_sibling = ChildPtr::non_leaf(NonLeafNode::new(
             self.children_type,
@@ -427,294 +900,98 @@ where
         ))
     }
 
-    /// Tries to remove `count` items at position `pos`. Returns `Err(())` if there are fewer than
-    /// `count` items at `pos`. in this case, the subtree rooted at this node has been restored
-    /// into its original state at the time the method returns.
-    fn remove(&mut self, pos: P, count: C) -> Result<(), ()> {
-        let separators: &mut [Entry<P, C>] = self.separated_children.first_as_mut();
-        let index = separators.partition_point(|entry| entry.pos < pos);
-        let mut right_iter = separators.iter_mut().skip(index);
-
-        if let Some(right_separator) = right_iter.next() {
-            if right_separator.accum < count {
-                return Err(());
-            }
-            let right_pos = right_separator.pos;
-            right_separator.accum = right_separator.accum - count;
-            for entry in right_iter {
-                entry.accum = entry.accum - count;
-            }
-            if right_pos == pos {
-                // TODO: remove entry if its accum is zero
-                return Ok(());
-            }
-        }
-
-        let child = self
-            .separated_children
-            .second_as_mut()
-            .get_mut(index.wrapping_sub(1))
-            .unwrap_or(&mut self.first_child);
-
-        match self.children_type {
-            NonLeaf => {
-                let child = unsafe { child.as_non_leaf_mut_unchecked() };
-                if child.remove(pos, count).is_ok() {
-                    if child.separated_children.len() < CAP / 2 {
-                        // Child node underflowed. Check if we can steal some entries from one of
-                        // its neighbors. If not, merge three children into two.
-
-                        let (mut left, mut right) =
-                            self.separated_children.get_all_mut().split_at_mut(index);
-                        let mut left_iter = left.iter_mut().rev();
-                        let (child, left, left_neighbor_len) =
-                            if let Some((left_separator, child)) = left_iter.next() {
-                                let left_neighbor = unsafe {
-                                    left_iter
-                                        .next()
-                                        .map(|(_, c)| c)
-                                        .unwrap_or(&mut self.first_child)
-                                        .as_non_leaf_mut_unchecked()
-                                };
-                                let left_neighbor_len = left_neighbor.separated_children.len();
-                                (
-                                    unsafe { child.as_non_leaf_mut_unchecked() },
-                                    Some((left_neighbor, left_separator)),
-                                    left_neighbor_len,
-                                )
-                            } else {
-                                (
-                                    unsafe { self.first_child.as_non_leaf_mut_unchecked() },
-                                    None,
-                                    0,
-                                )
-                            };
-                        core::mem::drop(left_iter);
-                        let right = right
-                            .iter_mut()
-                            .next()
-                            .map(|(e, c)| (e, unsafe { c.as_non_leaf_mut_unchecked() }));
-                        let right_neighbor_len = right
-                            .as_ref()
-                            .map(|(_, c)| c.separated_children.len())
-                            .unwrap_or_default();
-
-                        if left_neighbor_len > right_neighbor_len {
-                            if left_neighbor_len > CAP / 2 {
-                                // Steal entries from the end of `left_neighbor`.
-                                let (left_neighbor, mut separator) =
-                                    left.expect("`left_neighbor_len > 0`, so it exists");
-                                let new_left_neighbor_len =
-                                    CAP / 2 + (left_neighbor_len - CAP / 2) / 2;
-                                let mut stolen = left_neighbor
-                                    .separated_children
-                                    .chop(new_left_neighbor_len)
-                                    .expect("`new_left_neighbor_len < left_neighbor`");
-                                core::mem::swap(&mut stolen.first_as_mut()[0], &mut separator);
-                                core::mem::swap(
-                                    &mut stolen.second_as_mut()[0],
-                                    &mut child.first_child,
-                                );
-                                child
-                                    .separated_children
-                                    .try_prepend(stolen)
-                                    .expect("can't overflow");
-                            }
-                        } else if right_neighbor_len > CAP / 2 {
-                            // Steal entries from the beginning of `right_neighbor``.
-                            let (separator, right_neighbor) =
-                                right.expect("`right_neighbor_len > 0`, so it exists.");
-                            let new_right_neighbor_len =
-                                CAP / 2 + (right_neighbor_len - CAP / 2) / 2;
-                            let mut stolen = right_neighbor
-                                .separated_children
-                                .chop_front(right_neighbor_len - new_right_neighbor_len)
-                                .expect("`new_right_neighbor_len < right_neighbor_len`");
-                            let (last_stolen_entry, last_stolen_grandchild) =
-                                stolen.pop().expect("we stole at least one.");
-                            let old_separator = core::mem::replace(separator, last_stolen_entry);
-                            let old_first_child = core::mem::replace(
-                                &mut right_neighbor.first_child,
-                                ManuallyDrop::new(last_stolen_grandchild),
-                            );
-                            let old_first_child = ManuallyDrop::into_inner(old_first_child);
-                            child
-                                .separated_children
-                                .try_push(old_separator, old_first_child)
-                                .expect("can't overflow");
-                            child
-                                .separated_children
-                                .try_append_guarded(stolen)
-                                .expect("can't overflow");
-                        } else {
-                            // Can't steal any entries from neighbors. We need to reduce the number
-                            // of child nodes. Let `i` be the index of the node that underflowed.
-                            // - if `i` has neighbors to both sides, then we merge the three nodes
-                            //   `[i - 1, i, i + 1]` into two;
-                            // - if `i` is the first or last child, then we instead merge the three
-                            //   nodes `[i, i + 1, i + 2]` or `[i - 2, i - 1, i]`, respectively,
-                            //   into two, if they all three exist;
-                            // - if there are only two children (which is the minimum possible
-                            //   number of children because the root node has at least two children,
-                            //   and all non-root nodes have at least `CAP / 2 >= 2` children
-                            //   because `CAP >= 4`), then we merge these two children (i.e., either
-                            //   `[i, i + 1]` or `[i - 1, i]` into one).
-                            //
-                            // Thus in general, we merge 2-3 children `[A, B, C?]` (where `C` may or
-                            // may not exist). Our strategy is to remove node `B` and split up its
-                            // entries (+ separators) across `A` and `C` (if existent) (+ separator)
-                            // such that `A` and `C` have equally many entries (up to 1 if the total
-                            // number is odd). This always works without moving any entries between
-                            // `A` and `C` because, in all cases considered above, either the set
-                            // `{A, B}` or the set `{B, C}` (or both) consist of node `i`, which has
-                            // exactly `CAP / 2 - 1` entries (because it just underflowed), and one
-                            // of its neighbors, which has exactly `CAP / 2` entries (because we
-                            // couldn't steal from it any more). Therefore, even if we merged all
-                            // entries of these two nodes and the separator into one node, we would
-                            // end up with a merged node with `2 * (CAP / 2) - 1 + 1 ∈ {CAP - 1, CAP}`
-                            // entries, and the other node, which has at least `CAP / 2` and at most
-                            // `CAP` entries.
-
-                            let index_b = index.clamp(1, self.separated_children.len()) - 1;
-                            let (separator_ab, child_b) = self
-                                .separated_children
-                                .remove(index_b)
-                                .expect("`index_b < len`");
-                            let child_b = unsafe { child_b.into_non_leaf_unchecked() };
-                            let (child_b_first_child, mut child_b_separated_children) =
-                                child_b.leak_raw_parts();
-
-                            let (separators, children) = self.separated_children.both_as_mut();
-                            let (children_until_a, children_from_c) =
-                                children.split_at_mut(index_b);
-                            let child_a =
-                                children_until_a.last_mut().unwrap_or(&mut self.first_child);
-                            let child_a = unsafe { child_a.as_non_leaf_mut_unchecked() };
-                            let child_c = children_from_c.first_mut();
-
-                            let separated_child_c = child_c.and_then(|c| {
-                                let c = unsafe { c.as_non_leaf_mut_unchecked() };
-                                if c.separated_children.len() >= 2 * (CAP / 2) {
-                                    // Ignore `child_c` for the merger since it wouldn't be affected
-                                    // by it anyway but would make the logic below more complicated.
-                                    None
-                                } else {
-                                    Some((&mut separators[index_b], c))
-                                }
-                            });
-
-                            if let Some((separator_bc, child_c)) = separated_child_c {
-                                // We're merging three children `[A, B, C]` into two `[A', C']`.
-                                let len_a = child_a.separated_children.len();
-                                let len_b = child_b_separated_children.len();
-                                let len_c = child_c.separated_children.len();
-                                let num_grandchildren = len_a + len_b + len_c + 1;
-                                let target_len_a = num_grandchildren / 2;
-                                let increase_len_a = target_len_a - len_a;
-                                // `increase_len_a <= CAP / 2`, where equality requires that `child_a` underflowed.
-                                // Thus, `increase_len_a <= len_b`.
-
-                                if increase_len_a == 0 {
-                                    // Special case: `child_a` is not actually a part of the merger.
-                                    let separator_bc =
-                                        core::mem::replace(separator_bc, separator_ab);
-                                    let first_child_c =
-                                        child_c.replace_first_child(child_b_first_child);
-                                    child_b_separated_children
-                                        .try_push(separator_bc, first_child_c)
-                                        .expect("child_b underflowed");
-                                    child_c
-                                        .separated_children
-                                        .try_prepend(child_b_separated_children.take_all())
-                                        .expect("can't overflow");
-                                } else {
-                                    let tail_b = child_b_separated_children
-                                        .three_way_split(
-                                            increase_len_a - 1,
-                                            separator_bc,
-                                            &mut child_c.first_child,
-                                        )
-                                        .expect("0 < increase_len_a <= len_b");
-                                    child_c.separated_children.try_prepend(tail_b);
-
-                                    child_a
-                                        .separated_children
-                                        .try_push(separator_ab, child_b_first_child)
-                                        .expect("increase_len_a > 0");
-                                    child_a
-                                        .separated_children
-                                        .try_append(child_b_separated_children.take_all())
-                                        .expect("can't overflow");
-                                }
-                            } else {
-                                child_a
-                                    .separated_children
-                                    .try_push(separator_ab, child_b_first_child)
-                                    .expect("increase_len_a > 0");
-                                child_a
-                                    .separated_children
-                                    .try_append(child_b_separated_children.take_all())
-                                    .expect("can't overflow");
-                            }
-                        }
+    /// May return a wrong separator if accum of the last separator is higher than the argument
+    /// `accum`. But in this case, the returned entry will also have an accum that is higher than
+    /// the argument `accum`.
+    fn get_last_and_remove_if_accum_is(&mut self, accum: C) -> Entry<P, C> {
+        let len = self.data.bulk.len();
+        let (&mut last_separator, last_child) = self
+            .data
+            .bulk
+            .last_mut()
+            .expect("invariant bulk.len() >= 2");
+        let offset = last_separator.accum;
+        let accum = accum - offset;
+        if last_separator.accum > accum {
+            last_separator // Not the last separator but already with higher accum.
+        } else {
+            let mut last = match self.children_type {
+                NonLeaf => {
+                    let last_child = unsafe { last_child.as_non_leaf_mut_unchecked() };
+                    let last = last_child.get_last_and_remove_if_accum_is(accum);
+                    if last_child.data.bulk.len() < CAP / 2 {
+                        self.data.rebalance_after_underflow_before(
+                            len,
+                            |c| unsafe { c.as_non_leaf_mut_unchecked() },
+                            |c| unsafe { *c.into_non_leaf_unchecked() },
+                        );
                     }
-                    return Ok(());
+                    last
                 }
-                todo!()
-            }
-            Leaf => {
-                let child = unsafe { child.as_leaf_mut_unchecked() };
-                // child.remove(pos, count);
-                todo!()
-            }
+                Leaf => {
+                    let last_child = unsafe { last_child.as_leaf_mut_unchecked() };
+                    let last = last_child.get_last_and_remove_if_accum_is(accum);
+                    if last_child.data.bulk.len() < CAP / 2 {
+                        self.data.rebalance_after_underflow_before(
+                            len,
+                            |c| unsafe { c.as_leaf_mut_unchecked() },
+                            |c| unsafe { *c.into_leaf_unchecked() },
+                        );
+                    }
+                    last
+                }
+            };
+            last.accum = last.accum + offset;
+            last
         }
-    }
-
-    fn replace_first_child(&mut self, new_first_child: ChildPtr<P, C, CAP>) -> ChildPtr<P, C, CAP> {
-        let old_first_child =
-            core::mem::replace(&mut self.first_child, ManuallyDrop::new(new_first_child));
-        ManuallyDrop::into_inner(old_first_child)
     }
 }
 
 impl<P, C, const CAP: usize> LeafNode<P, C, CAP>
 where
     P: Copy + Ord,
-    C: Copy + Default + Add<Output = C> + Sub<Output = C>,
+    C: Copy + Default + Add<Output = C> + Sub<Output = C> + PartialEq,
 {
     fn new() -> Self {
         Self {
-            entries: BoundedVec::new(),
+            data: Payload::new((), BoundedPairOfVecs::new()),
         }
     }
 
     fn insert(&mut self, pos: P, count: C) -> Option<(P, C, ChildPtr<P, C, CAP>)> {
         // Check if the node already contains an entry with at the given `pos`.
         // If so, increment its accum and all accums to the right, then return.
-        let insert_index = self.entries.partition_point(|entry| entry.pos < pos);
-        let mut right_iter = self.entries.iter_mut().skip(insert_index);
+        let insert_index = self
+            .data
+            .bulk
+            .first_as_ref()
+            .partition_point(|entry| entry.pos < pos);
+        let mut right_iter = self.data.bulk.iter_mut().skip(insert_index);
         match right_iter.next() {
-            Some(right_entry) if right_entry.pos == pos => {
+            Some((right_entry, ())) if right_entry.pos == pos => {
                 right_entry.accum = right_entry.accum + count;
-                for entry in right_iter {
+                for (entry, ()) in right_iter {
                     entry.accum = entry.accum + count;
                 }
                 return None;
             }
             _ => {}
         }
+        core::mem::drop(right_iter);
 
         // An entry at position `pos` doesn't exist yet. Create a new one and insert it.
         let old_accum = self
-            .entries
+            .data
+            .bulk
             .get(insert_index.wrapping_sub(1))
-            .map(|node| node.accum)
+            .map(|(node, ())| node.accum)
             .unwrap_or_default();
         let mut insert_entry = Entry::new(pos, old_accum + count);
 
         if self
-            .entries
-            .try_insert_and_accum(insert_index, insert_entry, |entry| {
+            .data
+            .bulk
+            .try_insert_and_update1(insert_index, insert_entry, (), |entry| {
                 Entry::new(entry.pos, entry.accum + count)
             })
             .is_ok()
@@ -730,37 +1007,43 @@ where
             let old_weight_before_right_sibling = if CAP / 2 == 0 {
                 C::default()
             } else {
-                self.entries
+                self.data
+                    .bulk
+                    .first_as_ref()
                     .get(CAP / 2 - 1)
                     .expect("node is full and CAP/2 > 0")
                     .accum
             };
 
-            let right_entries = self.entries.chop(CAP / 2).expect("node is full");
+            let right_entries = self.data.bulk.chop(CAP / 2).expect("node is full");
 
             right_sibling
-                .entries
-                .try_append_transform(right_entries, |entry| Entry {
-                    pos: entry.pos,
-                    accum: entry.accum - old_weight_before_right_sibling,
+                .data
+                .bulk
+                .try_append_transform1(right_entries, |entry| {
+                    Entry::new(entry.pos, entry.accum - old_weight_before_right_sibling)
                 })
                 .expect("can't overflow");
 
-            self.entries
-                .try_insert_and_accum(insert_index, insert_entry, |entry| {
+            self.data
+                .bulk
+                .try_insert_and_update1(insert_index, insert_entry, (), |entry| {
                     Entry::new(entry.pos, entry.accum + count)
                 })
                 .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
         } else {
             // We're inserting into the right half.
             let weight_before_right_sibling = self
-                .entries
+                .data
+                .bulk
+                .first_as_ref()
                 .get(CAP / 2)
                 .expect("CAP/2 < insert_index <= len")
                 .accum;
 
             let right_entries = self
-                .entries
+                .data
+                .bulk
                 .chop(CAP / 2 + 1)
                 .expect("CAP/2 < insert_index <= len");
 
@@ -768,32 +1051,45 @@ where
                 right_entries.split_at_mut(insert_index - (CAP / 2 + 1));
 
             right_sibling
-                .entries
-                .try_append_transform(before_insert, |entry| Entry {
-                    pos: entry.pos,
-                    accum: entry.accum - weight_before_right_sibling,
+                .data
+                .bulk
+                .try_append_transform1(before_insert, |entry| {
+                    Entry::new(entry.pos, entry.accum - weight_before_right_sibling)
                 })
                 .expect("can't overflow");
 
             insert_entry.accum = insert_entry.accum - weight_before_right_sibling;
             right_sibling
-                .entries
-                .try_push(insert_entry)
+                .data
+                .bulk
+                .try_push(insert_entry, ())
                 .expect("can't overflow");
 
             right_sibling
-                .entries
-                .try_append_transform(after_insert, |entry| Entry {
-                    pos: entry.pos,
-                    accum: entry.accum - weight_before_right_sibling + count,
+                .data
+                .bulk
+                .try_append_transform1(after_insert, |entry| {
+                    Entry::new(entry.pos, entry.accum - weight_before_right_sibling + count)
                 })
                 .expect("can't overflow");
         };
 
-        let ejected_entry = self.entries.pop().expect("there are CAP/2+1 > 0 entries");
+        let (ejected_entry, ()) = self
+            .data
+            .bulk
+            .pop()
+            .expect("there are CAP/2+1 > 0 data.bulk");
         let right_sibling_ref = ChildPtr::leaf(right_sibling);
 
         Some((ejected_entry.pos, ejected_entry.accum, right_sibling_ref))
+    }
+
+    fn get_last_and_remove_if_accum_is(&mut self, accum: C) -> Entry<P, C> {
+        let (&mut last, ()) = self.data.bulk.last_mut().expect("isn't empty");
+        if last.accum == accum {
+            self.data.bulk.pop();
+        }
+        last
     }
 }
 
@@ -827,17 +1123,17 @@ impl<P: Display, C: Display, const CAP: usize> Debug for NonLeafNode<P, C, CAP> 
 
         match self.children_type {
             NonLeaf => {
-                let first_child = unsafe { self.first_child.as_non_leaf_unchecked() };
-                f.entry(first_child);
-                for (separator, child) in self.separated_children.iter() {
+                let head = unsafe { self.data.head.as_non_leaf_unchecked() };
+                f.entry(head);
+                for (separator, child) in self.data.bulk.iter() {
                     f.entry(separator);
                     f.entry(unsafe { child.as_non_leaf_unchecked() });
                 }
             }
             Leaf => {
-                let first_child = unsafe { self.first_child.as_leaf_unchecked() };
-                f.entry(first_child);
-                for (separator, child) in self.separated_children.iter() {
+                let head = unsafe { self.data.head.as_leaf_unchecked() };
+                f.entry(head);
+                for (separator, child) in self.data.bulk.iter() {
                     f.entry(separator);
                     f.entry(unsafe { child.as_leaf_unchecked() });
                 }
@@ -851,10 +1147,10 @@ impl<P: Display, C: Display, const CAP: usize> Debug for NonLeafNode<P, C, CAP> 
 impl<P: Display, C: Display, const CAP: usize> Debug for LeafNode<P, C, CAP> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "[")?;
-        let mut iter = self.entries.iter();
-        if let Some(first) = iter.next() {
+        let mut iter = self.data.bulk.iter();
+        if let Some((first, ())) = iter.next() {
             write!(f, "{first}")?;
-            for entry in iter {
+            for (entry, ()) in iter {
                 write!(f, ", {entry}")?;
             }
         }
@@ -892,6 +1188,7 @@ mod child_ptr {
     pub union ChildPtr<P, C, const CAP: usize> {
         non_leaf: ManuallyDrop<Box<NonLeafNode<P, C, CAP>>>,
         leaf: ManuallyDrop<Box<LeafNode<P, C, CAP>>>,
+        none: (),
     }
 
     impl<P, C, const CAP: usize> Debug for ChildPtr<P, C, CAP> {
@@ -911,6 +1208,10 @@ mod child_ptr {
             Self {
                 leaf: ManuallyDrop::new(Box::new(child)),
             }
+        }
+
+        pub fn none() -> ChildPtr<P, C, CAP> {
+            Self { none: () }
         }
 
         #[inline(always)]
@@ -957,9 +1258,10 @@ mod child_ptr {
 
 mod bounded_vec {
     use core::{
+        marker::PhantomData,
         mem::MaybeUninit,
-        ops::{Deref, DerefMut, Index},
-        slice::SliceIndex,
+        ops::{Deref, DerefMut},
+        slice::{from_raw_parts, from_raw_parts_mut, SliceIndex},
     };
 
     /// Semantically equivalent to `BoundedVec<(T1, T2), CAP>`, but with all `T1`s stored in one
@@ -970,10 +1272,8 @@ mod bounded_vec {
         len: usize,
         buf1: [MaybeUninit<T1>; CAP],
         buf2: [MaybeUninit<T2>; CAP],
+        phantom: PhantomData<(T1, T2)>,
     }
-
-    #[derive(Debug)]
-    pub struct BoundedVec<T, const CAP: usize>(BoundedPairOfVecs<T, (), CAP>);
 
     impl<T1, T2, const CAP: usize> Drop for BoundedPairOfVecs<T1, T2, CAP> {
         fn drop(&mut self) {
@@ -984,18 +1284,16 @@ mod bounded_vec {
     }
 
     /// A pair of two slices of equal length up to `BOUND` that are conceptually owned, i.e., one
-    /// can safely move the entries out (e.g., by passing an `OwnedBoundedPairOfSlices` as an
+    /// can safely move the data.bulk out (e.g., by passing an `OwnedBoundedPairOfSlices` as an
     /// argument to `BoundedPairOfVecs::try_append`).
+    ///
+    /// Doesn't drop its content when dropped.
     #[derive(Debug)]
     pub struct OwnedBoundedPairOfSlices<'a, T1, T2, const BOUND: usize> {
-        slice1: &'a mut [MaybeUninit<T1>],
-        slice2: &'a mut [MaybeUninit<T2>],
-    }
-
-    #[derive(Debug)]
-    pub struct OwnedBoundedSlice<'a, T, const CAP: usize> {
         len: usize,
-        slice: &'a mut [MaybeUninit<T>],
+        head1: *mut MaybeUninit<T1>,
+        head2: *mut MaybeUninit<T2>,
+        phantom: PhantomData<(&'a mut T1, &'a mut T2)>,
     }
 
     pub struct DropGuard<T, F: FnMut(&mut T)> {
@@ -1017,14 +1315,8 @@ mod bounded_vec {
         }
     }
 
-    impl<T, F: FnMut(&mut T)> DerefMut for DropGuard<T, F> {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            &mut self.inner
-        }
-    }
-
     /// A pair of two slices of equal length up to `BOUND`. In contrast to
-    /// [`OwnedBoundedPairOfSlices`], the entries of a `BoundedPairVecsViewMut` are not owned by
+    /// [`OwnedBoundedPairOfSlices`], the data.bulk of a `BoundedPairVecsViewMut` are not owned by
     /// the `BoundedPairVecsViewMut` and it is therefore not possible without `unsafe` to move them
     /// out of the `BoundedPairVecsViewMut`.
     #[derive(Debug)]
@@ -1042,7 +1334,12 @@ mod bounded_vec {
                     MaybeUninit::<[MaybeUninit<T2>; CAP]>::uninit().assume_init(),
                 )
             };
-            Self { len: 0, buf1, buf2 }
+            Self {
+                len: 0,
+                buf1,
+                buf2,
+                phantom: PhantomData,
+            }
         }
 
         pub const fn len(&self) -> usize {
@@ -1099,7 +1396,7 @@ mod bounded_vec {
             Ok(())
         }
 
-        pub fn try_insert_and_accum(
+        pub fn try_insert_and_update1(
             &mut self,
             index: usize,
             item1: T1,
@@ -1159,6 +1456,20 @@ mod bounded_vec {
             }
         }
 
+        pub fn last_mut(&mut self) -> Option<(&mut T1, &mut T2)> {
+            if self.len == 0 {
+                None
+            } else {
+                let last = unsafe {
+                    (
+                        self.buf1.get_unchecked_mut(self.len - 1).assume_init_mut(),
+                        self.buf2.get_unchecked_mut(self.len - 1).assume_init_mut(),
+                    )
+                };
+                Some(last)
+            }
+        }
+
         pub fn remove(&mut self, index: usize) -> Option<(T1, T2)> {
             if index >= self.len {
                 None
@@ -1173,14 +1484,49 @@ mod bounded_vec {
                 unsafe {
                     core::ptr::copy(
                         self.buf1.as_ptr().add(index + 1),
-                        self.buf1.as_mut_ptr(),
+                        self.buf1.as_mut_ptr().add(index),
                         self.len - index,
                     );
                     core::ptr::copy(
                         self.buf2.as_ptr().add(index + 1),
-                        self.buf2.as_mut_ptr(),
+                        self.buf2.as_mut_ptr().add(index),
                         self.len - index,
                     );
+                }
+
+                Some(items)
+            }
+        }
+
+        pub fn remove_and_update1(
+            &mut self,
+            index: usize,
+            update1: impl Fn(T1) -> T1,
+        ) -> Option<(T1, T2)> {
+            if index >= self.len {
+                None
+            } else {
+                let items = unsafe {
+                    (
+                        self.buf1.get_unchecked_mut(index).assume_init_read(),
+                        self.buf2.get_unchecked_mut(index).assume_init_read(),
+                    )
+                };
+
+                self.len -= 1;
+                unsafe {
+                    core::ptr::copy(
+                        self.buf2.as_ptr().add(index + 1),
+                        self.buf2.as_mut_ptr().add(index),
+                        self.len - index,
+                    );
+
+                    let mut write_index = index;
+                    while write_index < self.len {
+                        let tmp = self.buf1.get_unchecked(write_index + 1).assume_init_read();
+                        self.buf1.get_unchecked_mut(write_index).write(update1(tmp));
+                        write_index += 1;
+                    }
                 }
 
                 Some(items)
@@ -1222,89 +1568,72 @@ mod bounded_vec {
             &mut self,
             start_index: usize,
         ) -> Option<OwnedBoundedPairOfSlices<'_, T1, T2, CAP>> {
-            let slice1 = self.buf1.get_mut(start_index..self.len)?;
-            let slice2 = &mut self.buf2[start_index..self.len];
-            self.len = start_index;
-            Some(OwnedBoundedPairOfSlices { slice1, slice2 })
-        }
-
-        /// Asserts that there is at least one more vacancy. Appends `(slot1, slot2)` to the vecs
-        /// and replaces them with the entries at position `index`, then chops off part strictly
-        /// after `index` (not including the item at `index`) and returns it. This operation
-        /// removes all entries at positions including and after `index` (thus, after successfully
-        /// calling `vecs.three_way_split(index)`, we have `vecs.len() == index`).
-        ///
-        /// Returns `None` if `index` is out of bounds.
-        ///
-        /// # Panics
-        ///
-        /// If `index` is within bounds but the vecs are full.
-        pub fn three_way_split(
-            &mut self,
-            index: usize,
-            slot1: &mut T1,
-            slot2: &mut T2,
-        ) -> Option<OwnedBoundedPairOfSlices<'_, T1, T2, CAP>> {
-            if index >= self.len {
+            if start_index > self.len {
                 return None;
             }
-            assert!(self.len < CAP);
-            unsafe {
-                // Append item at position `index` to the end.
-                let item1 = self.buf1.get_unchecked_mut(index).assume_init_read();
-                self.buf1
-                    .get_unchecked_mut(self.len)
-                    .write(core::mem::replace(slot1, item1));
-
-                let item2 = self.buf2.get_unchecked_mut(index).assume_init_read();
-                self.buf2
-                    .get_unchecked_mut(self.len)
-                    .write(core::mem::replace(slot2, item2));
-
-                let slice1 = self.buf1.get_unchecked_mut(index + 1..self.len + 1);
-                let slice2 = self.buf2.get_unchecked_mut(index + 1..self.len + 1);
-                self.len = index;
-                Some(OwnedBoundedPairOfSlices { slice1, slice2 })
-            }
+            let len = self.len - start_index;
+            let head1 = unsafe { (&mut self.buf1 as *mut MaybeUninit<T1>).add(start_index) };
+            let head2 = unsafe { (&mut self.buf2 as *mut MaybeUninit<T2>).add(start_index) };
+            self.len = start_index;
+            Some(OwnedBoundedPairOfSlices {
+                len,
+                head1,
+                head2,
+                phantom: PhantomData,
+            })
         }
 
         pub fn chop_front<'a>(
             &'a mut self,
             len: usize,
+            update1: impl Fn(T1) -> T1,
         ) -> Option<
             DropGuard<
                 OwnedBoundedPairOfSlices<'a, T1, T2, CAP>,
                 impl FnMut(&mut OwnedBoundedPairOfSlices<'a, T1, T2, CAP>),
             >,
         > {
-            let slice1 = self.buf1.get_mut(..len)?;
-            let slice2 = &mut self.buf2[..len];
+            if len > self.len {
+                return None;
+            }
+
+            let head1 = &mut self.buf1 as *mut _;
+            let head2 = &mut self.buf2 as *mut _;
             self.len -= len;
             let len_after_chop = self.len;
 
             Some(DropGuard {
-                inner: OwnedBoundedPairOfSlices { slice1, slice2 },
+                inner: OwnedBoundedPairOfSlices {
+                    len,
+                    head1,
+                    head2,
+                    phantom: PhantomData,
+                },
                 cleanup: move |slices| unsafe {
-                    core::ptr::copy(
-                        slices.slice1.as_ptr().add(len),
-                        slices.slice1.as_mut_ptr(),
-                        len_after_chop,
-                    );
-                    core::ptr::copy(
-                        slices.slice2.as_ptr().add(len),
-                        slices.slice2.as_mut_ptr(),
-                        len_after_chop,
-                    );
+                    let head1 = slices.head1;
+                    let head2 = slices.head2;
+                    core::ptr::copy(head2.add(len), head2, len_after_chop);
+                    for write_index in 0..len_after_chop {
+                        let tmp = (*head1.add(write_index + len)).assume_init_read();
+                        (*head1.add(write_index)).write(update1(tmp));
+                    }
                 },
             })
         }
 
         pub fn take_all(&mut self) -> OwnedBoundedPairOfSlices<'_, T1, T2, CAP> {
-            // TODO: is this still needed?
-            let slice1 = &mut self.buf1[..];
-            let slice2 = &mut self.buf2[..];
+            let len = self.len;
+            let head1 = &mut self.buf1 as *mut _;
+            let head2 = &mut self.buf2 as *mut _;
+
             self.len = 0;
-            OwnedBoundedPairOfSlices { slice1, slice2 }
+
+            OwnedBoundedPairOfSlices {
+                len,
+                head1,
+                head2,
+                phantom: PhantomData,
+            }
         }
 
         pub fn get_all_mut(&mut self) -> BoundedPairOfVecsViewMut<'_, T1, T2, CAP> {
@@ -1320,45 +1649,64 @@ mod bounded_vec {
             &mut self,
             tail: OwnedBoundedPairOfSlices<'_, T1, T2, BOUND>,
         ) -> Result<(), ()> {
-            self.try_append_guarded(DropGuard {
-                inner: tail,
-                cleanup: |_| (),
-            })
-        }
-
-        pub fn try_append_guarded<'a, F, const BOUND: usize>(
-            &mut self,
-            tail: DropGuard<OwnedBoundedPairOfSlices<'a, T1, T2, BOUND>, F>,
-        ) -> Result<(), ()>
-        where
-            F: FnMut(&mut OwnedBoundedPairOfSlices<'a, T1, T2, BOUND>),
-        {
             let tail_len = tail.len();
-            let dst1 = self.buf1.get_mut(self.len..self.len + tail_len).ok_or(())?;
-            let dst2 = &mut self.buf2[self.len..self.len + tail_len];
+            if self.len + tail_len > CAP {
+                return Err(());
+            }
+
+            let dst1 = unsafe { (&mut self.buf1 as *mut MaybeUninit<T1>).add(self.len) };
+            let dst2 = unsafe { (&mut self.buf2 as *mut MaybeUninit<T2>).add(self.len) };
+
             unsafe {
-                core::ptr::copy_nonoverlapping(tail.slice1.as_ptr(), dst1.as_mut_ptr(), tail_len);
-                core::ptr::copy_nonoverlapping(tail.slice2.as_ptr(), dst2.as_mut_ptr(), tail_len);
+                core::ptr::copy_nonoverlapping(tail.head1, dst1, tail_len);
+                core::ptr::copy_nonoverlapping(tail.head2, dst2, tail_len);
             }
             self.len += tail_len;
 
             Ok(())
         }
 
-        pub fn try_prepend<const BOUND: usize>(
+        /// Prepends the concatenation of `head_begin` and `head_end` to the beginning of the pairs
+        /// of vecs. Applies `transform1_head_begin` to the `T1` parts of `head_begin` upon
+        /// inserting them, inserts `head_end` as is, and applies applies `update1_existing` to the
+        /// `T1` parts of existing items in the pair of vecs upon moving them.
+        pub fn try_prepend_and_update1<const BOUND: usize>(
             &mut self,
-            head: OwnedBoundedPairOfSlices<'_, T1, T2, BOUND>,
+            mut head_begin: OwnedBoundedPairOfSlices<'_, T1, T2, BOUND>,
+            head_end1: T1,
+            head_end2: T2,
+            transform1_head_begin: impl Fn(T1) -> T1,
+            update1_existing: impl Fn(T1) -> T1,
         ) -> Result<(), ()> {
-            let head_len = head.len();
-            let buf1 = self.buf1.get_mut(..self.len + head_len).ok_or(())?;
-            buf1.rotate_right(head_len);
-            let buf2 = &mut self.buf2[..self.len + head_len];
+            let head_len = head_begin.len() + 1;
+
+            let buf2 = self.buf2.get_mut(..self.len + head_len).ok_or(())?;
+            self.len += head_len;
             buf2.rotate_right(head_len);
             unsafe {
-                core::ptr::copy_nonoverlapping(head.slice1.as_ptr(), buf1.as_mut_ptr(), head_len);
-                core::ptr::copy_nonoverlapping(head.slice2.as_ptr(), buf2.as_mut_ptr(), head_len);
+                core::ptr::copy_nonoverlapping(head_begin.head2, buf2.as_mut_ptr(), head_len - 1);
+                buf2.get_unchecked_mut(head_len - 1).write(head_end2);
             }
-            self.len += head_len;
+
+            let buf1 = &mut self.buf1;
+            let head_begin_buf1 = head_begin.slice1_ref();
+            unsafe {
+                for write_index in (head_len..self.len).rev() {
+                    let tmp = buf1
+                        .get_unchecked(write_index - head_len)
+                        .assume_init_read();
+                    buf1.get_unchecked_mut(write_index)
+                        .write(update1_existing(tmp));
+                }
+                buf1.get_unchecked_mut(head_len - 1).write(head_end1);
+                for write_index in (0..head_len - 1).rev() {
+                    let tmp = head_begin_buf1
+                        .get_unchecked(write_index - head_len)
+                        .assume_init_read();
+                    buf1.get_unchecked_mut(write_index)
+                        .write(transform1_head_begin(tmp));
+                }
+            }
 
             Ok(())
         }
@@ -1368,15 +1716,30 @@ mod bounded_vec {
             tail: OwnedBoundedPairOfSlices<'_, T1, T2, BOUND>,
             transform1: impl Fn(T1) -> T1,
         ) -> Result<(), ()> {
+            let tail = DropGuard {
+                inner: tail,
+                cleanup: |_| (),
+            };
+            self.try_append_guarded_transform1(tail, transform1)
+        }
+
+        pub fn try_append_guarded_transform1<'a, F, const BOUND: usize>(
+            &mut self,
+            tail: DropGuard<OwnedBoundedPairOfSlices<'a, T1, T2, BOUND>, F>,
+            transform1: impl Fn(T1) -> T1,
+        ) -> Result<(), ()>
+        where
+            F: FnMut(&mut OwnedBoundedPairOfSlices<'a, T1, T2, BOUND>),
+        {
             let tail_len = tail.len();
             let dst1 = self.buf1.get_mut(self.len..self.len + tail_len).ok_or(())?;
 
             unsafe {
                 let dst2 = self.buf2.get_unchecked_mut(self.len..self.len + tail_len);
-                for (src_item, dst_item) in tail.slice1.iter().zip(dst1) {
+                for (src_item, dst_item) in tail.slice1_ref().iter().zip(dst1) {
                     dst_item.write(transform1(src_item.assume_init_read()));
                 }
-                core::ptr::copy_nonoverlapping(tail.slice2.as_ptr(), dst2.as_mut_ptr(), tail_len);
+                core::ptr::copy_nonoverlapping(tail.head2, dst2.as_mut_ptr(), tail_len);
             }
             self.len += tail_len;
 
@@ -1394,78 +1757,6 @@ mod bounded_vec {
     }
 
     impl<T1, T2, const CAP: usize> Default for BoundedPairOfVecs<T1, T2, CAP> {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
-    impl<T, const CAP: usize> BoundedVec<T, CAP> {
-        pub fn new() -> Self {
-            Self(BoundedPairOfVecs::new())
-        }
-
-        pub const fn len(&self) -> usize {
-            self.0.len()
-        }
-
-        pub fn try_insert(&mut self, index: usize, item: T) -> Result<(), T> {
-            self.0.try_insert(index, item, ()).map_err(|(item, _)| item)
-        }
-
-        pub fn try_insert_and_accum(
-            &mut self,
-            index: usize,
-            item: T,
-            update: impl Fn(T) -> T,
-        ) -> Result<(), ()> {
-            self.0.try_insert_and_accum(index, item, (), update)
-        }
-
-        pub fn try_push(&mut self, item: T) -> Result<(), ()> {
-            self.0.try_push(item, ())
-        }
-
-        pub fn pop(&mut self) -> Option<T> {
-            Some(self.0.pop()?.0)
-        }
-
-        pub fn chop(&mut self, start_index: usize) -> Option<OwnedBoundedSlice<'_, T, CAP>> {
-            let slice = self.0.chop(start_index)?.slice1;
-            let len = slice.len();
-            Some(OwnedBoundedSlice { len, slice })
-        }
-
-        pub fn try_append<const BOUND: usize>(
-            &mut self,
-            tail: OwnedBoundedSlice<'_, T, BOUND>,
-        ) -> Result<(), ()> {
-            let tail_len = tail.len();
-            let mut tail2: [MaybeUninit<()>; BOUND] =
-                unsafe { MaybeUninit::<[MaybeUninit<()>; BOUND]>::uninit().assume_init() };
-            let tail = OwnedBoundedPairOfSlices::<'_, _, _, BOUND> {
-                slice1: unsafe { tail.slice.get_unchecked_mut(..tail_len) },
-                slice2: unsafe { tail2.get_unchecked_mut(..tail_len) },
-            };
-            self.0.try_append(tail)
-        }
-
-        pub fn try_append_transform<const BOUND: usize>(
-            &mut self,
-            tail: OwnedBoundedSlice<'_, T, BOUND>,
-            transform: impl Fn(T) -> T,
-        ) -> Result<(), ()> {
-            let tail_len = tail.len();
-            let mut tail2: [MaybeUninit<()>; BOUND] =
-                unsafe { MaybeUninit::<[MaybeUninit<()>; BOUND]>::uninit().assume_init() };
-            let tail = OwnedBoundedPairOfSlices::<'_, _, _, BOUND> {
-                slice1: unsafe { tail.slice.get_unchecked_mut(..tail_len) },
-                slice2: unsafe { tail2.get_unchecked_mut(..tail_len) },
-            };
-            self.0.try_append_transform1(tail, transform)
-        }
-    }
-
-    impl<T, const CAP: usize> Default for BoundedVec<T, CAP> {
         fn default() -> Self {
             Self::new()
         }
@@ -1520,38 +1811,25 @@ mod bounded_vec {
         }
     }
 
-    impl<'a, T, const BOUND: usize> OwnedBoundedSlice<'a, T, BOUND> {
+    impl<'a, T1, T2, const BOUND: usize> OwnedBoundedPairOfSlices<'a, T1, T2, BOUND> {
         pub fn len(&self) -> usize {
             self.len
         }
 
-        pub fn as_ref(&self) -> &[T] {
-            unsafe { core::mem::transmute(self.slice.get_unchecked(..self.len)) }
+        fn slice1_mut(&mut self) -> &mut [MaybeUninit<T1>] {
+            unsafe { from_raw_parts_mut(self.head1, self.len) }
         }
 
-        pub fn as_mut(&mut self) -> &mut [T] {
-            unsafe { core::mem::transmute(self.slice.get_unchecked_mut(..self.len)) }
+        fn slice2_mut(&mut self) -> &mut [MaybeUninit<T2>] {
+            unsafe { from_raw_parts_mut(self.head2, self.len) }
         }
 
-        pub fn split_at_mut(self, mid: usize) -> (Self, Self) {
-            assert!(mid <= self.len);
-            let (left, right) = self.slice.split_at_mut(mid);
-            (
-                OwnedBoundedSlice {
-                    len: mid,
-                    slice: left,
-                },
-                OwnedBoundedSlice {
-                    len: self.len - mid,
-                    slice: right,
-                },
-            )
+        fn slice1_ref(&self) -> &[MaybeUninit<T1>] {
+            unsafe { from_raw_parts(self.head1, self.len) }
         }
-    }
 
-    impl<'a, T1, T2, const BOUND: usize> OwnedBoundedPairOfSlices<'a, T1, T2, BOUND> {
-        pub fn len(&self) -> usize {
-            self.slice1.len()
+        fn slice2_ref(&self) -> &[MaybeUninit<T2>] {
+            unsafe { from_raw_parts(self.head2, self.len) }
         }
 
         pub fn pop(&mut self) -> Option<(T1, T2)> {
@@ -1561,13 +1839,26 @@ mod bounded_vec {
                 unsafe {
                     let new_len = self.len() - 1;
 
-                    let item1 = self.slice1.get_unchecked_mut(new_len).assume_init_read();
-                    let old_slice1 = std::mem::replace(&mut self.slice1, &mut []);
-                    std::mem::replace(&mut self.slice1, old_slice1.get_unchecked_mut(..new_len));
+                    let item1 = self.slice1_ref().get_unchecked(new_len).assume_init_read();
+                    let item2 = self.slice2_ref().get_unchecked(new_len).assume_init_read();
+                    self.len = new_len;
 
-                    let item2 = self.slice2.get_unchecked_mut(new_len).assume_init_read();
-                    let old_slice2 = std::mem::replace(&mut self.slice2, &mut []);
-                    std::mem::replace(&mut self.slice2, old_slice2.get_unchecked_mut(..new_len));
+                    Some((item1, item2))
+                }
+            }
+        }
+
+        pub fn pop_front(&mut self) -> Option<(T1, T2)> {
+            if self.len() == 0 {
+                None
+            } else {
+                unsafe {
+                    let item1 = (*self.head1).assume_init_read();
+                    let item2 = (*self.head2).assume_init_read();
+
+                    self.head1 = self.head1.add(1);
+                    self.head2 = self.head2.add(1);
+                    self.len -= 1;
 
                     Some((item1, item2))
                 }
@@ -1581,26 +1872,30 @@ mod bounded_vec {
             OwnedBoundedPairOfSlices<'a, T1, T2, BOUND>,
             OwnedBoundedPairOfSlices<'a, T1, T2, BOUND>,
         ) {
-            let (left1, right1) = self.slice1.split_at_mut(mid);
-            let (left2, right2) = self.slice2.split_at_mut(mid);
+            assert!(mid <= self.len);
+
             (
                 OwnedBoundedPairOfSlices {
-                    slice1: left1,
-                    slice2: left2,
+                    len: mid,
+                    head1: self.head1,
+                    head2: self.head2,
+                    phantom: PhantomData,
                 },
                 OwnedBoundedPairOfSlices {
-                    slice1: right1,
-                    slice2: right2,
+                    len: self.len - mid,
+                    head1: unsafe { self.head1.add(mid) },
+                    head2: unsafe { self.head2.add(mid) },
+                    phantom: PhantomData,
                 },
             )
         }
 
         pub fn first_as_ref(&self) -> &[T1] {
-            unsafe { core::mem::transmute(&*self.slice1) }
+            unsafe { core::mem::transmute(&*self.slice1_ref()) }
         }
 
         pub fn second_as_ref(&self) -> &[T2] {
-            unsafe { core::mem::transmute(&*self.slice2) }
+            unsafe { core::mem::transmute(&*self.slice2_ref()) }
         }
 
         pub fn both_as_ref(&self) -> (&[T1], &[T2]) {
@@ -1608,18 +1903,18 @@ mod bounded_vec {
         }
 
         pub fn first_as_mut(&mut self) -> &mut [T1] {
-            unsafe { core::mem::transmute(&mut *self.slice1) }
+            unsafe { core::mem::transmute(&mut *self.slice1_mut()) }
         }
 
         pub fn second_as_mut(&mut self) -> &mut [T2] {
-            unsafe { core::mem::transmute(&mut *self.slice2) }
+            unsafe { core::mem::transmute(&mut *self.slice2_mut()) }
         }
 
         pub fn both_as_mut(&mut self) -> (&mut [T1], &mut [T2]) {
             unsafe {
                 (
-                    core::mem::transmute(&mut *self.slice2),
-                    core::mem::transmute(&mut *self.slice1),
+                    core::mem::transmute(&mut *self.slice2_mut()),
+                    core::mem::transmute(&mut *self.slice1_mut()),
                 )
             }
         }
@@ -1636,34 +1931,34 @@ mod bounded_vec {
         }
     }
 
-    impl<'a, T, const CAP: usize> From<OwnedBoundedSlice<'a, T, CAP>> for BoundedVec<T, CAP> {
-        fn from(view: OwnedBoundedSlice<'a, T, CAP>) -> Self {
-            let mut vec = Self::new();
-            vec.try_append(view)
-                .expect("capacities match and original vec was empty");
-            vec
-        }
-    }
+    impl<'a, T1, T2, F, const BOUND: usize> DropGuard<OwnedBoundedPairOfSlices<'a, T1, T2, BOUND>, F>
+    where
+        F: FnMut(&mut OwnedBoundedPairOfSlices<'a, T1, T2, BOUND>),
+    {
+        /// We allow `pop`ing from the end even within a `DropGuard` because this doesn't change
+        /// the head positions of the slices, which are needed for cleanup logic.
+        pub fn pop(&mut self) -> Option<(T1, T2)> {
+            if self.len() == 0 {
+                None
+            } else {
+                unsafe {
+                    let new_len = self.len() - 1;
 
-    impl<'a, T, const BOUND: usize> Index<usize> for OwnedBoundedSlice<'a, T, BOUND> {
-        type Output = T;
+                    let item1 = self
+                        .inner
+                        .slice1_ref()
+                        .get_unchecked(new_len)
+                        .assume_init_read();
+                    let item2 = self
+                        .inner
+                        .slice2_ref()
+                        .get_unchecked(new_len)
+                        .assume_init_read();
+                    self.inner.len = new_len;
 
-        fn index(&self, index: usize) -> &Self::Output {
-            unsafe { self.slice[index].assume_init_ref() }
-        }
-    }
-
-    impl<T, const CAP: usize> Deref for BoundedVec<T, CAP> {
-        type Target = [T];
-
-        fn deref(&self) -> &Self::Target {
-            unsafe { core::mem::transmute(self.0.buf1.get_unchecked(..self.0.len)) }
-        }
-    }
-
-    impl<T, const CAP: usize> DerefMut for BoundedVec<T, CAP> {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            unsafe { core::mem::transmute(self.0.buf1.get_unchecked_mut(..self.0.len)) }
+                    Some((item1, item2))
+                }
+            }
         }
     }
 }
@@ -1748,6 +2043,8 @@ mod tests {
                 );
             }
 
+            // Test if `left_cumulative` returns the correct values on all insert positions,
+            // between all insert positions, and above and below the range of insert positions.
             let test_points = [
                 (-5.7, 0),
                 (-2.25, 0),
@@ -1794,6 +2091,40 @@ mod tests {
                     last_expected_pos
                 );
                 last_expected_pos = expected_pos;
+            }
+
+            // Remove some items. Recall that the tree currently has state
+            // { -2.25=>3, 1.5=>10, 2.5=>9, 3.25=>7, 4.75=>3, 5.125=>2, 6.5=>7 }.
+            let removals = [
+                (5.125, 1, true, 32, 34, 33),
+                (2.7, 0, true, 22, 22, 22),
+                (0.1, 1, false, 3, 3, 3),
+                (1.5, 6, true, 3, 13, 7),
+                (3.25, 7, true, 16, 23, 16),
+                (1.5, 2, true, 3, 7, 5),
+                (-2.25, 1, true, 0, 3, 2),
+                (1.5, 5, false, 2, 4, 4),
+                (2.5, 3, true, 4, 13, 10),
+                (2.5, 7, false, 4, 10, 10),
+                (2.5, 6, true, 4, 10, 4),
+                (4.75, 3, true, 4, 7, 4),
+            ];
+            let mut total = tree.total;
+            for (pos, count, should_work, cdf, cdf_right_before, cdf_right_after) in removals {
+                let pos_right = F32::new(pos + 0.001).unwrap();
+                let pos = F32::new(pos).unwrap();
+                assert_eq!(tree.left_cumulative(pos), cdf);
+                assert_eq!(tree.left_cumulative(pos_right), cdf_right_before);
+
+                let worked = tree.remove(pos, count).is_ok();
+
+                assert_eq!(worked, should_work);
+                assert_eq!(tree.left_cumulative(pos), cdf);
+                assert_eq!(tree.left_cumulative(pos_right), cdf_right_after);
+                if should_work {
+                    total -= count
+                }
+                assert_eq!(tree.total, total);
             }
         }
     }
