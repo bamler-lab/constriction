@@ -102,6 +102,61 @@ impl<P, C, const CAP: usize> Drop for NonLeafNode<P, C, CAP> {
     }
 }
 
+impl<P: Copy, C: Copy, const CAP: usize> Clone for NonLeafNode<P, C, CAP> {
+    fn clone(&self) -> Self {
+        let data = match self.children_type {
+            NonLeaf => {
+                let head =
+                    ChildPtr::non_leaf(unsafe { self.data.head.as_non_leaf_unchecked() }.clone());
+                let mut bulk = BoundedPairOfVecs::new();
+                for (separator, child) in self.data.bulk.iter() {
+                    let child = unsafe { child.as_non_leaf_unchecked() };
+                    bulk.try_push(separator.clone(), ChildPtr::non_leaf(child.clone()))
+                        .expect("same capacity");
+                }
+                Payload::new(head, bulk)
+            }
+            Leaf => {
+                let head = ChildPtr::leaf(unsafe { self.data.head.as_leaf_unchecked() }.clone());
+                let mut bulk = BoundedPairOfVecs::new();
+                for (separator, child) in self.data.bulk.iter() {
+                    let child = unsafe { child.as_leaf_unchecked() };
+                    bulk.try_push(separator.clone(), ChildPtr::leaf(child.clone()))
+                        .expect("same capacity");
+                }
+                Payload::new(head, bulk)
+            }
+        };
+        Self {
+            children_type: self.children_type,
+            data: ManuallyDrop::new(data),
+        }
+    }
+}
+
+impl<P: Copy, C: Copy, const CAP: usize> Clone for LeafNode<P, C, CAP> {
+    fn clone(&self) -> Self {
+        Self {
+            data: Payload::new((), self.data.bulk.clone()),
+        }
+    }
+}
+
+impl<P: Copy, C: Copy, const CAP: usize> Clone for AugmentedBTree<P, C, CAP> {
+    fn clone(&self) -> Self {
+        let root = match self.root_type {
+            NonLeaf => ChildPtr::non_leaf(unsafe { self.root.as_non_leaf_unchecked() }.clone()),
+            Leaf => ChildPtr::leaf(unsafe { self.root.as_leaf_unchecked() }.clone()),
+        };
+
+        Self {
+            total: self.total,
+            root_type: self.root_type,
+            root,
+        }
+    }
+}
+
 impl<P, C, const CAP: usize> AugmentedBTree<P, C, CAP>
 where
     P: Ord + Copy,
@@ -286,15 +341,17 @@ where
     }
 }
 
+impl<P, C, L, const CAP: usize> Payload<P, C, L, CAP> {
+    fn new(head: L, bulk: BoundedPairOfVecs<Entry<P, C>, L, CAP>) -> Self {
+        Self { head, bulk }
+    }
+}
+
 impl<P, C, L, const CAP: usize> Payload<P, C, L, CAP>
 where
     P: Copy,
     C: Copy + Default + Add<Output = C> + Sub<Output = C>,
 {
-    fn new(head: L, bulk: BoundedPairOfVecs<Entry<P, C>, L, CAP>) -> Self {
-        Self { head, bulk }
-    }
-
     fn by_key_mut_update_right<X: Ord>(
         &mut self,
         key: X,
@@ -1283,6 +1340,17 @@ mod bounded_vec {
         }
     }
 
+    impl<T1: Copy, T2: Copy, const CAP: usize> Clone for BoundedPairOfVecs<T1, T2, CAP> {
+        fn clone(&self) -> Self {
+            Self {
+                len: self.len,
+                buf1: self.buf1,
+                buf2: self.buf2,
+                phantom: PhantomData,
+            }
+        }
+    }
+
     /// A pair of two slices of equal length up to `BOUND` that are conceptually owned, i.e., one
     /// can safely move the data.bulk out (e.g., by passing an `OwnedBoundedPairOfSlices` as an
     /// argument to `BoundedPairOfVecs::try_append`).
@@ -1639,8 +1707,8 @@ mod bounded_vec {
         pub fn get_all_mut(&mut self) -> BoundedPairOfVecsViewMut<'_, T1, T2, CAP> {
             unsafe {
                 BoundedPairOfVecsViewMut(
-                    core::mem::transmute(&mut self.buf1[..]),
-                    core::mem::transmute(&mut self.buf2[..]),
+                    core::mem::transmute(self.buf1.get_unchecked_mut(..self.len)),
+                    core::mem::transmute(self.buf2.get_unchecked_mut(..self.len)),
                 )
             }
         }
@@ -1980,16 +2048,16 @@ mod tests {
     type F64 = NonNanFloat<f64>;
 
     #[test]
-    fn minimal() {
-        dbg!(minimal_internal::<128>());
-        dbg!(minimal_internal::<10>());
-        dbg!(minimal_internal::<5>());
-        dbg!(minimal_internal::<4>());
-        // dbg!(minimal_internal::<3>());
-        // dbg!(minimal_internal::<2>());
-        // dbg!(minimal_internal::<1>());
+    fn manual() {
+        dbg!(manual_internal::<128>());
+        dbg!(manual_internal::<10>());
+        dbg!(manual_internal::<5>());
+        dbg!(manual_internal::<4>());
+        // dbg!(manual_internal::<3>());
+        // dbg!(manual_internal::<2>());
+        // dbg!(manual_internal::<1>());
 
-        fn minimal_internal<const CAP: usize>() {
+        fn manual_internal<const CAP: usize>() {
             let mut tree = AugmentedBTree::<F32, u32, CAP>::new();
             assert_eq!(tree.total(), 0);
 
@@ -2107,7 +2175,6 @@ mod tests {
                 (2.5, 3, true, 4, 13, 10),
                 (2.5, 7, false, 4, 10, 10),
                 (2.5, 6, true, 4, 10, 4),
-                (4.75, 3, true, 4, 7, 4),
             ];
             let mut total = tree.total;
             for (pos, count, should_work, cdf, cdf_right_before, cdf_right_after) in removals {
@@ -2126,6 +2193,53 @@ mod tests {
                 }
                 assert_eq!(tree.total, total);
             }
+
+            let expected_tree = [(-2.25, 2), (1.5, 2), (4.75, 3), (5.125, 1), (6.5, 7)];
+
+            let mut accum = 0;
+            for &(pos, count) in &expected_tree {
+                let pos_right = F32::new(pos + 0.001).unwrap();
+                let pos = F32::new(pos).unwrap();
+                assert_eq!(tree.left_cumulative(pos), accum);
+                accum += count;
+                assert_eq!(tree.left_cumulative(pos_right), accum);
+            }
+            assert_eq!(tree.total(), accum);
+
+            // Removing one more item should make sure the root node is a leaf node for all CAP >= 4.
+            for &(pos, count) in &expected_tree {
+                let mut tree = tree.clone();
+                assert!(tree.remove(F32::new(pos).unwrap(), count).is_ok());
+                assert_eq!(tree.total(), accum - count);
+
+                assert_eq!(tree.root_type, super::Leaf);
+                let root = unsafe { tree.root.as_leaf_unchecked() };
+                let mut data = root
+                    .data
+                    .bulk
+                    .first_as_ref()
+                    .iter()
+                    .scan(0, |accum, entry| {
+                        let count = entry.accum - *accum;
+                        *accum = entry.accum;
+                        Some((entry.pos.get(), count))
+                    })
+                    .collect::<Vec<_>>();
+                let index = data.partition_point(|&(p, _)| p < pos);
+                data.insert(index, (pos, count));
+
+                assert_eq!(data, &expected_tree);
+            }
+
+            for &(pos, count) in &expected_tree {
+                assert!(tree.remove(F32::new(pos).unwrap(), count).is_ok());
+            }
+
+            assert_eq!(tree.total(), 0);
+            assert_eq!(tree.root_type, super::Leaf);
+            let root = unsafe { tree.root.as_leaf_unchecked() };
+            let data = root.data.bulk.first_as_ref();
+            assert_eq!(data.len(), 0);
         }
     }
 
