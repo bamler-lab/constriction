@@ -396,17 +396,19 @@ where
 
         let (mut left, mut right) = self.bulk.get_all_mut().split_at_mut(index);
         let mut left_iter = left.iter_mut().rev();
-        let (child, left, left_neighbor_len, left_accum) =
+        let (child, left, left_neighbor_len, left_left_accum) =
             if let Some((left_separator, child)) = left_iter.next() {
-                let left_neighbor =
-                    downcast_mut(left_iter.next().map(|(_, c)| c).unwrap_or(&mut self.head));
+                let (left_left_accum, left_neighbor) = left_iter
+                    .next()
+                    .map(|(e, c)| (e.accum, c))
+                    .unwrap_or((C::default(), &mut self.head));
+                let left_neighbor = downcast_mut(left_neighbor);
                 let left_neighbor_len = left_neighbor.data_ref().bulk.len();
-                let left_accum = left_separator.accum;
                 (
                     downcast_mut(child),
                     Some((left_neighbor, left_separator)),
                     left_neighbor_len,
-                    left_accum,
+                    left_left_accum,
                 )
             } else {
                 (downcast_mut(&mut self.head), None, 0, C::default())
@@ -435,7 +437,7 @@ where
             let adjust_accums_left = first_stolen_entry.accum;
             let new_separator = Entry::new(
                 first_stolen_entry.pos,
-                left_accum + first_stolen_entry.accum,
+                left_left_accum + first_stolen_entry.accum,
             );
             let adjust_accums_right = separator.accum - new_separator.accum;
 
@@ -598,10 +600,11 @@ where
                     let new_separator =
                         Entry::new(mid_point.pos, mid_point.accum + separator_ab.accum);
                     let adjust_accums_c_left = new_separator.accum - separator_ab.accum;
-                    let tail_b_last_entry = Entry::new(separator_bc.pos, adjust_accums_c_left);
                     let adjust_accums_c_right = separator_bc.accum - new_separator.accum;
+                    let tail_b_last_entry = Entry::new(separator_bc.pos, adjust_accums_c_right);
                     let old_first_child_c =
                         core::mem::replace(&mut child_c.head, new_first_child_c);
+                    *separator_bc = new_separator;
 
                     child_c
                         .bulk
@@ -968,10 +971,10 @@ where
             .last_mut()
             .expect("invariant bulk.len() >= 2");
         let offset = last_separator.accum;
-        let accum = accum - offset;
-        if last_separator.accum > accum {
+        if offset > accum {
             last_separator // Not the last separator but already with higher accum.
         } else {
+            let accum = accum - offset;
             let mut last = match self.children_type {
                 NonLeaf => {
                     let last_child = unsafe { last_child.as_non_leaf_mut_unchecked() };
@@ -1516,8 +1519,8 @@ mod bounded_vec {
                 self.len -= 1;
                 let last = unsafe {
                     (
-                        self.buf1.get_unchecked_mut(self.len).assume_init_read(),
-                        self.buf2.get_unchecked_mut(self.len).assume_init_read(),
+                        self.buf1.get_unchecked(self.len).assume_init_read(),
+                        self.buf2.get_unchecked(self.len).assume_init_read(),
                     )
                 };
                 Some(last)
@@ -1544,23 +1547,16 @@ mod bounded_vec {
             } else {
                 let items = unsafe {
                     (
-                        self.buf1.get_unchecked_mut(index).assume_init_read(),
-                        self.buf2.get_unchecked_mut(index).assume_init_read(),
+                        self.buf1.get_unchecked(index).assume_init_read(),
+                        self.buf2.get_unchecked(index).assume_init_read(),
                     )
                 };
-                self.len -= 1;
+
                 unsafe {
-                    core::ptr::copy(
-                        self.buf1.as_ptr().add(index + 1),
-                        self.buf1.as_mut_ptr().add(index),
-                        self.len - index,
-                    );
-                    core::ptr::copy(
-                        self.buf2.as_ptr().add(index + 1),
-                        self.buf2.as_mut_ptr().add(index),
-                        self.len - index,
-                    );
+                    self.buf1.get_unchecked_mut(index..self.len).rotate_left(1);
+                    self.buf2.get_unchecked_mut(index..self.len).rotate_left(1);
                 }
+                self.len -= 1;
 
                 Some(items)
             }
@@ -1576,26 +1572,22 @@ mod bounded_vec {
             } else {
                 let items = unsafe {
                     (
-                        self.buf1.get_unchecked_mut(index).assume_init_read(),
-                        self.buf2.get_unchecked_mut(index).assume_init_read(),
+                        self.buf1.get_unchecked(index).assume_init_read(),
+                        self.buf2.get_unchecked(index).assume_init_read(),
                     )
                 };
 
-                self.len -= 1;
                 unsafe {
-                    core::ptr::copy(
-                        self.buf2.as_ptr().add(index + 1),
-                        self.buf2.as_mut_ptr().add(index),
-                        self.len - index,
-                    );
-
-                    let mut write_index = index;
-                    while write_index < self.len {
-                        let tmp = self.buf1.get_unchecked(write_index + 1).assume_init_read();
-                        self.buf1.get_unchecked_mut(write_index).write(update1(tmp));
-                        write_index += 1;
+                    self.buf2.get_unchecked_mut(index..self.len).rotate_left(1);
+                    for read_index in index + 1..self.len {
+                        let tmp = self.buf1.get_unchecked(read_index).assume_init_read();
+                        self.buf1
+                            .get_unchecked_mut(read_index - 1)
+                            .write(update1(tmp));
                     }
                 }
+
+                self.len -= 1;
 
                 Some(items)
             }
@@ -1767,9 +1759,9 @@ mod bounded_vec {
                         .write(update1_existing(tmp));
                 }
                 buf1.get_unchecked_mut(head_len - 1).write(head_end1);
-                for write_index in (0..head_len - 1).rev() {
+                for write_index in 0..head_len - 1 {
                     let tmp = head_begin_buf1
-                        .get_unchecked(write_index - head_len)
+                        .get_unchecked(write_index)
                         .assume_init_read();
                     buf1.get_unchecked_mut(write_index)
                         .write(transform1_head_begin(tmp));
@@ -2261,6 +2253,25 @@ mod tests {
             // dbg!(amt, random_data_internal::<1>(amt));
         }
 
+        fn verify_tree<const CAP: usize>(tree: &AugmentedBTree<F64, u32, CAP>, cdf: &[(F64, u32)]) {
+            let (mut last_pos, mut last_accum) = cdf[0]; // dummy entry at position -1.0 with accum=0
+            let half = F64::new(0.5).unwrap();
+            for &(pos, accum) in &cdf[1..] {
+                let before = half * (last_pos + pos);
+                assert_eq!(tree.left_cumulative(before), last_accum);
+                assert_eq!(tree.left_cumulative(pos), last_accum);
+                assert_eq!(tree.quantile_function(last_accum), Some(pos));
+                if accum != last_accum + 1 {
+                    assert_eq!(tree.quantile_function(last_accum + 1), Some(pos));
+                }
+                last_pos = pos;
+                last_accum = accum;
+            }
+            assert_eq!(tree.total(), cdf.last().unwrap().1);
+            assert_eq!(tree.quantile_function(tree.total()), None);
+            assert_eq!(tree.quantile_function(tree.total() + 1), None);
+        }
+
         fn random_data_internal<const CAP: usize>(amt: usize) {
             let mut hasher = DefaultHasher::new();
             20231201.hash(&mut hasher);
@@ -2298,12 +2309,12 @@ mod tests {
                 }
             }
 
-            let mut sorted = insertions;
-            sorted.sort_unstable_by_key(|(pos, _)| *pos);
+            let mut sorted_insertions = insertions;
+            sorted_insertions.sort_unstable_by_key(|(pos, _)| *pos);
 
             let mut last_pos = F64::new(-1.0).unwrap();
             let mut accum = 0;
-            let mut cdf = sorted
+            let mut cdf = sorted_insertions
                 .iter()
                 .filter_map(|&(pos, count)| {
                     let ret = if pos != last_pos {
@@ -2327,21 +2338,126 @@ mod tests {
                 tree.total
             );
 
-            let (mut last_pos, mut last_accum) = cdf[0]; // dummy entry at position -1.0 with accum=0
-            let half = F64::new(0.5).unwrap();
-            for &(pos, accum) in &cdf[1..] {
-                let before = half * (last_pos + pos);
-                assert_eq!(tree.left_cumulative(before), last_accum);
-                assert_eq!(tree.left_cumulative(pos), last_accum);
-                assert_eq!(tree.quantile_function(last_accum), Some(pos));
-                if accum != last_accum + 1 {
-                    assert_eq!(tree.quantile_function(last_accum + 1), Some(pos));
+            verify_tree(&tree, &cdf);
+
+            let mut removals = sorted_insertions;
+            let partial_removal_probability = distributions::Bernoulli::new(0.2).unwrap();
+            let mut cdf_iter = cdf.iter_mut();
+            let mut cdf_entry = cdf_iter.next().unwrap();
+
+            let mut accumulated_removals = 0;
+            for (pos, count) in &mut removals {
+                if rng.sample(partial_removal_probability) {
+                    *count = rng.sample(distributions::Uniform::from(0..*count));
                 }
-                last_pos = pos;
-                last_accum = accum;
+
+                if *pos != cdf_entry.0 {
+                    cdf_entry.1 -= accumulated_removals;
+                    cdf_entry = cdf_iter.next().unwrap();
+                    assert_eq!(*pos, cdf_entry.0);
+                }
+
+                accumulated_removals += *count;
             }
-            assert_eq!(tree.quantile_function(tree.total), None);
-            assert_eq!(tree.quantile_function(tree.total + 1), None);
+            cdf_entry.1 -= accumulated_removals;
+            core::mem::drop((cdf_iter, cdf_entry));
+            let mut last_accum = 0;
+            let cdf = cdf
+                .iter()
+                .filter_map(|&(pos, accum)| {
+                    if accum == last_accum {
+                        None
+                    } else {
+                        last_accum = accum;
+                        Some((pos, accum))
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            // dbg!(&tree);
+
+            let test_pos: NonNanFloat<f64> = F64::new(0.8565437393514709).unwrap();
+            let test_pos_right = F64::new(test_pos.get() + 1e-6).unwrap();
+            let mut last_count_specific =
+                tree.left_cumulative(test_pos_right) - tree.left_cumulative(test_pos);
+            // dbg!(last_count_specific);
+
+            removals.shuffle(&mut rng);
+            for (i, &(pos, count)) in removals.iter().enumerate() {
+                if tree.left_cumulative(test_pos_right) < tree.left_cumulative(test_pos) {
+                    dbg!(i, &tree);
+                }
+                // if i == 17691 {
+                //     dbg!(
+                //         pos.get(),
+                //         count,
+                //         tree.left_cumulative(test_pos_right),
+                //         tree.left_cumulative(test_pos),
+                //         // &tree
+                //     );
+                // }
+                assert_eq!((i, tree.remove(pos, count)), (i, Ok(())));
+                // if i == 165 {
+                //     dbg!(
+                //         pos.get(),
+                //         count,
+                //         tree.left_cumulative(test_pos_right),
+                //         tree.left_cumulative(test_pos),
+                //         &tree
+                //     );
+                // }
+                // let cdf_test = tree.left_cumulative(test_pos);
+                // let cdf_test_right = tree.left_cumulative(test_pos_right);
+                // if cdf_test >= cdf_test_right {
+                //     dbg!(i, pos, count, cdf_test, cdf_test_right);
+                //     assert!(tree.remove(test_pos, 1).is_err());
+                // }
+
+                let Some(count_specific) = tree
+                    .left_cumulative(test_pos_right)
+                    .checked_sub(tree.left_cumulative(test_pos))
+                else {
+                    dbg!(i, &tree);
+                    panic!();
+                };
+                if count_specific != last_count_specific {
+                    // dbg!(
+                    //     i,
+                    //     last_count_specific,
+                    //     count_specific,
+                    //     pos.get(),
+                    //     pos == test_pos,
+                    //     count,
+                    //     &tree
+                    // );
+                    last_count_specific = count_specific;
+                }
+            }
+
+            verify_tree(&tree, &cdf);
+
+            // Remove all remaining entries.
+            let mut removals = cdf
+                .iter()
+                .scan(0, |a, &(pos, accum)| {
+                    let old_a = *a;
+                    *a = accum;
+                    Some((pos, accum - old_a))
+                })
+                .collect::<Vec<_>>();
+            removals.shuffle(&mut rng);
+
+            for (i, &(pos, count)) in removals.iter().enumerate() {
+                // if i == 3930 {
+                //     dbg!(CAP, amt, pos.get(), count, &tree);
+                // }
+                assert_eq!((i, tree.remove(pos, count)), (i, Ok(())));
+            }
+
+            assert_eq!(tree.total(), 0);
+            assert_eq!(tree.root_type, super::Leaf);
+            let root = unsafe { tree.root.as_leaf_unchecked() };
+            assert_eq!(root.data.bulk.len(), 0);
         }
     }
 }
