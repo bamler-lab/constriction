@@ -4,7 +4,12 @@ mod augmented_btree;
 #[cfg(feature = "benchmark-internals")]
 pub mod augmented_btree;
 
-use core::{fmt::Debug, hash::Hash, ops::Add};
+use core::{
+    convert::TryFrom,
+    fmt::{Debug, Display},
+    hash::Hash,
+    ops::{Add, Sub},
+};
 
 use alloc::vec::Vec;
 
@@ -17,178 +22,209 @@ use hashbrown::hash_map::{
     HashMap,
 };
 
+use crate::{UnwrapInfallible, F32};
+
+use self::augmented_btree::AugmentedBTree;
+
 pub mod vbq;
 
-#[derive(Debug, Clone, Copy)]
-struct Entry<V, C> {
-    value: V,
-    count: C,
-}
-
-impl<V: PartialEq, C> PartialEq for Entry<V, C> {
-    fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
-    }
-}
-
-impl<V: PartialOrd, C> PartialOrd for Entry<V, C> {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        self.value.partial_cmp(&other.value)
-    }
-}
-
-impl<V: Eq, C> Eq for Entry<V, C> {}
-
-impl<V: Ord, C> Ord for Entry<V, C> {
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.value.cmp(&other.value)
-    }
-}
-
-trait EmpiricalDistribution<V, C>
+pub trait EmpiricalDistribution<V, C>
 where
-    C: num_traits::Num + Copy,
-    V: Hash + Ord + Copy,
+    V: Ord,
+    C: Ord + num_traits::Num,
 {
+    fn try_from_points<'a, F>(
+        points: impl IntoIterator<Item = &'a F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        Self: Sized,
+        V: TryFrom<F>,
+        F: Copy + 'a;
+
     fn from_points<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
     where
-        V: 'a;
+        Self: Sized,
+        V: Copy + 'a,
+    {
+        Self::try_from_points(points).unwrap_infallible()
+    }
+
+    fn try_from_points_hashable<'a, F>(
+        points: impl IntoIterator<Item = &'a F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        Self: Sized,
+        V: TryFrom<F> + Hash,
+        F: Copy + 'a,
+    {
+        Self::try_from_points(points)
+    }
+
+    fn from_points_hashable<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
+    where
+        Self: Sized,
+        V: Hash + Copy + 'a,
+    {
+        Self::try_from_points_hashable(points).unwrap_infallible()
+    }
 
     fn total(&self) -> C;
 
-    fn left_sided_cumulative(&mut self, x: V) -> C;
+    fn left_sided_cumulative(&self, x: V) -> C;
+
+    /// Returns the inverse of [`left_sided_cumulative`](Self::left_sided_cumulative)
+    ///
+    /// More precisely, the returned value is the right-sided inverse of the left-sided CDF, i.e.,
+    /// it is the right-most position where the left-sided CDF is smaller than or equal to the
+    /// argument `cum`. Returns `None` if `cum >= self.total()` (in this case, the left-sided
+    /// CDF is smaller than or equal to `cum` everywhere, so there is no *single* right-most
+    /// position that satisfies this criterion).
+    ///
+    /// The following two relations hold (where `self` is an `EmpiricalDistribution`):
+    ///
+    /// - `self.left_cumulative(self.inverse_cumulative(self.left_cumulative(pos)).unwrap())` is
+    ///   equal to `self.left_cumulative(pos)` (assuming that `unwrap()` succeeds).
+    /// - `self.inverse_cumulative(self.left_cumulative(self.inverse_cumulative(cum).unwrap())).unwrap())`
+    ///   is equal to `self.inverse_cumulative(cum).unwrap()` (assuming that the inner `unwrap()`
+    ///   succeeds—in which case the outer `unwrap()` is guaranteed to succeed).
+    fn inverse_cumulative(&self, cum: C) -> Option<V>;
 }
 
-pub struct DynamicEmpiricalDistribution<V, C: Add<Output = C> + Default + Copy> {
-    phantom: core::marker::PhantomData<(V, C)>,
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CountWrapper<C>(C);
 
-#[derive(Clone, Debug)]
-pub struct StaticEmpiricalDistribution<V, C = usize> {
-    total: C,
-    sorted: Vec<Entry<V, C>>,
-}
-
-impl<V, C> EmpiricalDistribution<V, C> for StaticEmpiricalDistribution<V, C>
-where
-    C: num_traits::Num + Copy,
-    V: Hash + Ord + Copy,
-{
-    fn from_points<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
-    where
-        V: 'a,
-    {
-        let mut counts = HashMap::new();
-        for &point in points {
-            counts
-                .entry(point)
-                .and_modify(|count| *count = *count + C::one())
-                .or_insert(C::one());
-        }
-        let mut sorted = counts
-            .into_iter()
-            .map(|(value, count)| Entry { value, count })
-            .collect::<Vec<_>>();
-        sorted.sort_unstable();
-        let total = sorted
-            .iter_mut()
-            .fold(C::zero(), |total, Entry { value: _, count }| {
-                let a = *count;
-                *count = total;
-                a + total //TODO: this might wrap
-            });
-        Self { total, sorted }
+impl<C: Display> Display for CountWrapper<C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
     }
+}
 
-    fn left_sided_cumulative(&mut self, x: V) -> C {
-        let index = self.sorted.partition_point(|entry| entry.value < x);
-        self.sorted
-            .get(index)
-            .map(|entry| entry.count)
-            .unwrap_or(self.total)
-    }
-
+impl<C: num_traits::Num> Default for CountWrapper<C> {
     #[inline(always)]
-    fn total(&self) -> C {
-        self.total
+    fn default() -> Self {
+        Self(C::zero())
+    }
+}
+
+impl<C: PartialOrd> PartialOrd for CountWrapper<C> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl<C: Ord> Ord for CountWrapper<C> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl<C: Add<Output = C>> Add for CountWrapper<C> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        CountWrapper(self.0.add(rhs.0))
+    }
+}
+
+impl<C: Sub<Output = C>> Sub for CountWrapper<C> {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        CountWrapper(self.0.sub(rhs.0))
+    }
+}
+
+pub struct DynamicEmpiricalDistribution<V = F32, C = u32>(AugmentedBTree<V, CountWrapper<C>, 64>);
+
+impl<V: Display, C: Display + Debug> Debug for DynamicEmpiricalDistribution<V, C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("DynamicEmpiricalDistribution")
+            .field(&self.0)
+            .finish()
+    }
+}
+
+impl<V: Copy, C: Copy> Clone for DynamicEmpiricalDistribution<V, C> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }
 
 impl<V, C> EmpiricalDistribution<V, C> for DynamicEmpiricalDistribution<V, C>
 where
-    C: Add<Output = C> + Default + Copy + num_traits::Num,
-    V: Hash + Ord + Copy,
+    V: Copy + Ord,
+    C: Copy + Ord + num_traits::Num,
 {
-    fn from_points<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
+    fn try_from_points<'a, F>(
+        points: impl IntoIterator<Item = &'a F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
     where
-        V: 'a,
+        V: TryFrom<F>,
+        F: Copy + 'a,
     {
-        // let mut counts = HashMap::new();
-        // for &point in points {
-        //     counts
-        //         .entry(point)
-        //         .and_modify(|count| *count = *count + C::one())
-        //         .or_insert(C::one());
-        // }
-        // let mut sorted = counts
-        //     .into_iter()
-        //     .map(|(value, count)| Entry { value, count })
-        //     .collect::<Vec<_>>();
-        // sorted.sort_unstable();
-        // let mut sorted = sorted
-        //     .into_iter()
-        //     .collect::<SplayTree<(Entry<V, C>, SumSummary<C>, Unit)>>();
-        // let total = sorted.slice(..).summary().sum;
+        let mut tree = AugmentedBTree::new();
+        for &point in points {
+            tree.insert(V::try_from(point)?, CountWrapper(C::one()))
+        }
 
-        // Self { total, sorted }
-        todo!()
+        Ok(Self(tree))
     }
 
-    fn left_sided_cumulative(&mut self, x: V) -> C {
-        // self.sorted.slice(ByKey(..&x)).summary().sum
-        todo!()
+    fn try_from_points_hashable<'a, F>(
+        points: impl IntoIterator<Item = &'a F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        Self: Sized,
+        V: TryFrom<F> + Hash,
+        F: Copy + 'a,
+    {
+        let mut counts = HashMap::new();
+        for &point in points {
+            let point = V::try_from(point)?;
+            counts
+                .entry(point)
+                .and_modify(|count| *count = *count + CountWrapper(C::one()))
+                .or_insert(CountWrapper(C::one()));
+        }
+
+        let mut sorted = counts.into_iter().collect::<Vec<_>>();
+        sorted.sort_unstable_by_key(|(v, _)| *v);
+        let tree = unsafe { AugmentedBTree::from_sorted_unchecked(&sorted) };
+
+        Ok(Self(tree))
     }
 
-    #[inline(always)]
     fn total(&self) -> C {
-        todo!()
+        self.0.total().0
+    }
+
+    fn left_sided_cumulative(&self, x: V) -> C {
+        self.0.left_cumulative(x).0
+    }
+
+    fn inverse_cumulative(&self, cum: C) -> Option<V> {
+        self.0.quantile_function(CountWrapper(cum))
     }
 }
 
 impl<V, C> DynamicEmpiricalDistribution<V, C>
 where
-    C: Add<Output = C> + Default + Copy + num_traits::Num,
-    V: Ord + Copy,
+    V: Copy + Ord,
+    C: Copy + Ord + num_traits::Num,
 {
-    pub fn replace(&mut self, old: V, new: V) -> Result<(C, C), ()> {
-        // let new_count_at_old = match self.sorted.slice(ByKey((&old,))).delete() {
-        //     None => return Err(()),
-        //     Some(Entry {
-        //         value: _,
-        //         mut count,
-        //     }) => {
-        //         count = count - C::one();
-        //         if count != C::zero() {
-        //             self.sorted
-        //                 .slice(ByKey((&old,)))
-        //                 .insert(Entry { value: old, count });
-        //         }
-        //         count
-        //     }
-        // };
+    pub fn insert(&mut self, value: V) {
+        self.0.insert(value, CountWrapper(C::one()))
+    }
 
-        // let mut count = self
-        //     .sorted
-        //     .slice(ByKey((&new,)))
-        //     .delete()
-        //     .map(|entry| entry.count)
-        //     .unwrap_or_default();
-        // count = count + C::one();
-        // self.sorted
-        //     .slice(ByKey((&new,)))
-        //     .insert(Entry { value: new, count });
-        // Ok((new_count_at_old, count))
-        todo!()
+    pub fn remove(&mut self, value: V) -> Result<(), ()> {
+        self.0.remove(value, CountWrapper(C::one()))
+    }
+
+    pub fn shift(&mut self, old: V, new: V) -> Result<(), ()> {
+        // TODO: replace with a dedicated optimized implementation.
+        self.remove(old)?;
+        self.insert(new);
+        Ok(())
     }
 }
 
@@ -196,13 +232,35 @@ where
 mod tests {
     use super::*;
 
-    #[test]
-    fn static_empirical_distribution() {
-        todo!()
-    }
+    use alloc::vec::Vec;
+    use rand::{seq::SliceRandom, RngCore, SeedableRng};
+    use rand_xoshiro::Xoshiro256StarStar;
 
     #[test]
     fn dynamic_empirical_distribution() {
-        todo!()
+        let amt = 1000;
+        let mut rng = Xoshiro256StarStar::seed_from_u64(202312115);
+        let mut points = (0..amt)
+            .flat_map(|_| {
+                let num_repeats = 1 + rng.next_u32() % 4;
+                let value = rng.next_u32() as f32 / u32::MAX as f32;
+                core::iter::repeat(value).take(num_repeats as usize)
+            })
+            .collect::<Vec<_>>();
+        points.shuffle(&mut rng);
+        assert!(points.len() > amt);
+        assert!(points.len() < 5 * amt);
+
+        let dist = DynamicEmpiricalDistribution::<F32, u32>::try_from_points(&points).unwrap();
+
+        assert_eq!(dist.total() as usize, points.len());
+        for _ in 0..100 {
+            let index = rng.next_u32() as usize % amt;
+            let x = points[index];
+            let expected = points.iter().filter(|&&y| y < x).count() as u32;
+            let x = F32::new(x).unwrap();
+            assert_eq!(dist.left_sided_cumulative(x), expected);
+            assert_eq!(dist.inverse_cumulative(expected).unwrap(), x);
+        }
     }
 }

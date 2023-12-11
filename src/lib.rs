@@ -274,7 +274,7 @@ pub mod stream;
 pub mod symbol;
 
 use core::{
-    convert::Infallible,
+    convert::{Infallible, TryFrom},
     fmt::{Binary, Debug, Display, LowerHex, UpperHex},
     hash::Hash,
     num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
@@ -766,13 +766,26 @@ impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
     }
 }
 
-#[cfg(not(feature = "benchmark-internals"))]
-#[derive(PartialOrd, Clone, Copy, Debug, PartialEq)]
-pub(crate) struct NonNanFloat<F: FloatCore>(F);
-
-#[cfg(feature = "benchmark-internals")]
 #[derive(PartialOrd, Clone, Copy, Debug, PartialEq)]
 pub struct NonNanFloat<F: FloatCore>(F);
+pub type F32 = NonNanFloat<f32>;
+pub type F64 = NonNanFloat<f64>;
+
+impl TryFrom<f32> for F32 {
+    type Error = NanError;
+
+    fn try_from(value: f32) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<f64> for F64 {
+    type Error = NanError;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
 
 impl<F: FloatCore + Display> Display for NonNanFloat<F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -805,9 +818,16 @@ impl<F: FloatCore> Eq for NonNanFloat<F> {}
 #[allow(clippy::derive_ord_xor_partial_ord)]
 impl<F: FloatCore> Ord for NonNanFloat<F> {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.0
-            .partial_cmp(&other.0)
-            .expect("NonNanFloatCore::inner is not NaN.")
+        let Some(result) = self.0.partial_cmp(&other.0) else {
+            unsafe { core::hint::unreachable_unchecked() }
+        };
+        result
+    }
+}
+
+impl<F: FloatCore> Default for NonNanFloat<F> {
+    fn default() -> Self {
+        Self(F::zero())
     }
 }
 
@@ -838,7 +858,7 @@ impl<F: FloatCore> core::ops::Mul for NonNanFloat<F> {
 impl Display for NanError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::NaN => write!(f, "NaN Encountered."),
+            Self::NaN => write!(f, "NaN encountered."),
         }
     }
 }

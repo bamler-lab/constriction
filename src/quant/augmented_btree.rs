@@ -175,6 +175,16 @@ where
         }
     }
 
+    pub unsafe fn from_sorted_unchecked(positions_and_counts: &[(P, C)]) -> Self {
+        // let total: C = sorted.iter_mut().fold(C::zero(), |total, (_, count)| {
+        //     let old_count = *count;
+        //     *count = total;
+        //     old_count + total //TODO: this might wrap
+        // });
+
+        todo!()
+    }
+
     pub fn total(&self) -> C {
         self.total
     }
@@ -2032,12 +2042,9 @@ mod tests {
     use rand::{distributions, seq::SliceRandom, Rng, RngCore, SeedableRng};
     use rand_xoshiro::Xoshiro256StarStar;
 
-    use crate::NonNanFloat;
+    use crate::{F32, F64};
 
     use super::AugmentedBTree;
-
-    type F32 = NonNanFloat<f32>;
-    type F64 = NonNanFloat<f64>;
 
     #[test]
     fn manual() {
