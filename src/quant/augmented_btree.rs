@@ -2238,7 +2238,7 @@ mod tests {
     #[test]
     fn random_data() {
         #[cfg(not(miri))]
-        let amts = [100, 1000, 10_000];
+        let amts = [100, 1000, 10_000, 100_000];
 
         #[cfg(miri)]
         let amts = [100];
@@ -2341,7 +2341,7 @@ mod tests {
             verify_tree(&tree, &cdf);
 
             let mut removals = sorted_insertions;
-            let partial_removal_probability = distributions::Bernoulli::new(0.2).unwrap();
+            let partial_removal_probability = distributions::Bernoulli::new(0.1).unwrap();
             let mut cdf_iter = cdf.iter_mut();
             let mut cdf_entry = cdf_iter.next().unwrap();
 
@@ -2374,64 +2374,9 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
 
-            // dbg!(&tree);
-
-            let test_pos: NonNanFloat<f64> = F64::new(0.8565437393514709).unwrap();
-            let test_pos_right = F64::new(test_pos.get() + 1e-6).unwrap();
-            let mut last_count_specific =
-                tree.left_cumulative(test_pos_right) - tree.left_cumulative(test_pos);
-            // dbg!(last_count_specific);
-
             removals.shuffle(&mut rng);
             for (i, &(pos, count)) in removals.iter().enumerate() {
-                if tree.left_cumulative(test_pos_right) < tree.left_cumulative(test_pos) {
-                    dbg!(i, &tree);
-                }
-                // if i == 17691 {
-                //     dbg!(
-                //         pos.get(),
-                //         count,
-                //         tree.left_cumulative(test_pos_right),
-                //         tree.left_cumulative(test_pos),
-                //         // &tree
-                //     );
-                // }
                 assert_eq!((i, tree.remove(pos, count)), (i, Ok(())));
-                // if i == 165 {
-                //     dbg!(
-                //         pos.get(),
-                //         count,
-                //         tree.left_cumulative(test_pos_right),
-                //         tree.left_cumulative(test_pos),
-                //         &tree
-                //     );
-                // }
-                // let cdf_test = tree.left_cumulative(test_pos);
-                // let cdf_test_right = tree.left_cumulative(test_pos_right);
-                // if cdf_test >= cdf_test_right {
-                //     dbg!(i, pos, count, cdf_test, cdf_test_right);
-                //     assert!(tree.remove(test_pos, 1).is_err());
-                // }
-
-                let Some(count_specific) = tree
-                    .left_cumulative(test_pos_right)
-                    .checked_sub(tree.left_cumulative(test_pos))
-                else {
-                    dbg!(i, &tree);
-                    panic!();
-                };
-                if count_specific != last_count_specific {
-                    // dbg!(
-                    //     i,
-                    //     last_count_specific,
-                    //     count_specific,
-                    //     pos.get(),
-                    //     pos == test_pos,
-                    //     count,
-                    //     &tree
-                    // );
-                    last_count_specific = count_specific;
-                }
             }
 
             verify_tree(&tree, &cdf);
@@ -2448,9 +2393,6 @@ mod tests {
             removals.shuffle(&mut rng);
 
             for (i, &(pos, count)) in removals.iter().enumerate() {
-                // if i == 3930 {
-                //     dbg!(CAP, amt, pos.get(), count, &tree);
-                // }
                 assert_eq!((i, tree.remove(pos, count)), (i, Ok(())));
             }
 
