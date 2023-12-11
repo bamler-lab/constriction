@@ -766,8 +766,13 @@ impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
     }
 }
 
+#[cfg(not(feature = "benchmark-internals"))]
 #[derive(PartialOrd, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NonNanFloat<F: FloatCore>(F);
+
+#[cfg(feature = "benchmark-internals")]
+#[derive(PartialOrd, Clone, Copy, Debug, PartialEq)]
+pub struct NonNanFloat<F: FloatCore>(F);
 
 impl<F: FloatCore + Display> Display for NonNanFloat<F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -781,7 +786,7 @@ pub enum NanError {
 }
 
 impl<F: FloatCore> NonNanFloat<F> {
-    fn new(x: F) -> Result<Self, NanError> {
+    pub fn new(x: F) -> Result<Self, NanError> {
         if x.is_nan() {
             Err(NanError::NaN)
         } else {
@@ -790,7 +795,7 @@ impl<F: FloatCore> NonNanFloat<F> {
     }
 
     #[inline(always)]
-    fn get(&self) -> F {
+    pub fn get(&self) -> F {
         self.0
     }
 }

@@ -1,9 +1,12 @@
+#[cfg(not(feature = "benchmark-internals"))]
 mod augmented_btree;
+
+#[cfg(feature = "benchmark-internals")]
+pub mod augmented_btree;
 
 use core::{fmt::Debug, hash::Hash, ops::Add};
 
 use alloc::vec::Vec;
-use grove::{example_data::Unit, locators::ByKey, splay::SplayTree, Keyed, SomeTree, ToSummary};
 
 #[cfg(feature = "std")]
 use std::collections::HashMap;
@@ -54,6 +57,10 @@ where
     fn total(&self) -> C;
 
     fn left_sided_cumulative(&mut self, x: V) -> C;
+}
+
+pub struct DynamicEmpiricalDistribution<V, C: Add<Output = C> + Default + Copy> {
+    phantom: core::marker::PhantomData<(V, C)>,
 }
 
 #[derive(Clone, Debug)]
@@ -107,46 +114,6 @@ where
     }
 }
 
-pub struct DynamicEmpiricalDistribution<V, C: Add<Output = C> + Default + Copy> {
-    total: C,
-    sorted: SplayTree<(Entry<V, C>, SumSummary<C>, Unit)>,
-}
-
-impl<V, C: Add<Output = C> + Default + Copy + Debug> Debug for DynamicEmpiricalDistribution<V, C> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("DynamicEmpiricalDistribution")
-            .field("total", &self.total)
-            .finish_non_exhaustive()
-    }
-}
-
-#[derive(Default, Clone, Copy, Debug)]
-struct SumSummary<C> {
-    sum: C,
-}
-
-impl<C: Add<Output = C>> Add for SumSummary<C> {
-    type Output = SumSummary<C>;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self {
-            sum: self.sum + rhs.sum,
-        }
-    }
-}
-
-impl<V, C: Add<Output = C> + Copy> ToSummary<SumSummary<C>> for Entry<V, C> {
-    fn to_summary(&self) -> SumSummary<C> {
-        SumSummary { sum: self.count }
-    }
-}
-
-impl<V: Ord, C> Keyed<V> for Entry<V, C> {
-    fn get_key(&self) -> &V {
-        &self.value
-    }
-}
-
 impl<V, C> EmpiricalDistribution<V, C> for DynamicEmpiricalDistribution<V, C>
 where
     C: Add<Output = C> + Default + Copy + num_traits::Num,
@@ -156,33 +123,35 @@ where
     where
         V: 'a,
     {
-        let mut counts = HashMap::new();
-        for &point in points {
-            counts
-                .entry(point)
-                .and_modify(|count| *count = *count + C::one())
-                .or_insert(C::one());
-        }
-        let mut sorted = counts
-            .into_iter()
-            .map(|(value, count)| Entry { value, count })
-            .collect::<Vec<_>>();
-        sorted.sort_unstable();
-        let mut sorted = sorted
-            .into_iter()
-            .collect::<SplayTree<(Entry<V, C>, SumSummary<C>, Unit)>>();
-        let total = sorted.slice(..).summary().sum;
+        // let mut counts = HashMap::new();
+        // for &point in points {
+        //     counts
+        //         .entry(point)
+        //         .and_modify(|count| *count = *count + C::one())
+        //         .or_insert(C::one());
+        // }
+        // let mut sorted = counts
+        //     .into_iter()
+        //     .map(|(value, count)| Entry { value, count })
+        //     .collect::<Vec<_>>();
+        // sorted.sort_unstable();
+        // let mut sorted = sorted
+        //     .into_iter()
+        //     .collect::<SplayTree<(Entry<V, C>, SumSummary<C>, Unit)>>();
+        // let total = sorted.slice(..).summary().sum;
 
-        Self { total, sorted }
+        // Self { total, sorted }
+        todo!()
     }
 
     fn left_sided_cumulative(&mut self, x: V) -> C {
-        self.sorted.slice(ByKey(..&x)).summary().sum
+        // self.sorted.slice(ByKey(..&x)).summary().sum
+        todo!()
     }
 
     #[inline(always)]
     fn total(&self) -> C {
-        self.total
+        todo!()
     }
 }
 
@@ -192,33 +161,34 @@ where
     V: Ord + Copy,
 {
     pub fn replace(&mut self, old: V, new: V) -> Result<(C, C), ()> {
-        let new_count_at_old = match self.sorted.slice(ByKey((&old,))).delete() {
-            None => return Err(()),
-            Some(Entry {
-                value: _,
-                mut count,
-            }) => {
-                count = count - C::one();
-                if count != C::zero() {
-                    self.sorted
-                        .slice(ByKey((&old,)))
-                        .insert(Entry { value: old, count });
-                }
-                count
-            }
-        };
+        // let new_count_at_old = match self.sorted.slice(ByKey((&old,))).delete() {
+        //     None => return Err(()),
+        //     Some(Entry {
+        //         value: _,
+        //         mut count,
+        //     }) => {
+        //         count = count - C::one();
+        //         if count != C::zero() {
+        //             self.sorted
+        //                 .slice(ByKey((&old,)))
+        //                 .insert(Entry { value: old, count });
+        //         }
+        //         count
+        //     }
+        // };
 
-        let mut count = self
-            .sorted
-            .slice(ByKey((&new,)))
-            .delete()
-            .map(|entry| entry.count)
-            .unwrap_or_default();
-        count = count + C::one();
-        self.sorted
-            .slice(ByKey((&new,)))
-            .insert(Entry { value: new, count });
-        Ok((new_count_at_old, count))
+        // let mut count = self
+        //     .sorted
+        //     .slice(ByKey((&new,)))
+        //     .delete()
+        //     .map(|entry| entry.count)
+        //     .unwrap_or_default();
+        // count = count + C::one();
+        // self.sorted
+        //     .slice(ByKey((&new,)))
+        //     .insert(Entry { value: new, count });
+        // Ok((new_count_at_old, count))
+        todo!()
     }
 }
 

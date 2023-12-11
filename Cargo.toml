@@ -19,6 +19,7 @@ crate-type = ["rlib", "cdylib"]
 name = "constriction"
 
 [features]
+benchmark-internals = []
 default = ["std"]
 std = []
 
@@ -29,7 +30,6 @@ std = []
 pybindings = ["ndarray", "numpy", "pyo3"]
 
 [dependencies]
-grove = "0.2.0"
 hashbrown = "0.14.0"
 libm = "0.2.6"
 num-traits = {version = "0.2.15", default-features = false, features = ["libm"]}
@@ -49,4 +49,5 @@ rand_xoshiro = "0.6"
 
 [[bench]]
 harness = false
-name = "lookup"
+name = "bench"
+required-features = ["benchmark-internals"]
