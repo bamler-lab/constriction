@@ -29,7 +29,7 @@ into a web app by using `constriction` in a WebAssembly module).
 ### Installing `constriction` for Python
 
 ```bash
-pip install constriction~=0.3.2
+pip install constriction~=0.3.3
 ```
 
 ### Hello, World
