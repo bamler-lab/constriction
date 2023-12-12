@@ -6,6 +6,7 @@ use core::{
 };
 
 use self::{bounded_vec::BoundedPairOfVecs, child_ptr::ChildPtr};
+use alloc::vec::Vec;
 use NodeType::{Leaf, NonLeaf};
 
 use crate::generic_static_asserts;
@@ -189,6 +190,10 @@ where
         self.total
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (P, C)> + '_ {
+        Iter::new(self)
+    }
+
     pub fn insert(&mut self, pos: P, count: C) {
         if count == C::default() {
             return;
@@ -348,6 +353,16 @@ where
             .get(index)
             .map(|(entry, ())| entry.pos)
             .or(right_bound)
+    }
+}
+
+impl<P, C, const CAP: usize> Default for AugmentedBTree<P, C, CAP>
+where
+    P: Ord + Copy,
+    C: Ord + Default + Copy + Add<Output = C> + Sub<Output = C>,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1238,6 +1253,87 @@ impl<P: Display, C: Display> Display for Entry<P, C> {
 impl<P: Display, C: Display> Debug for Entry<P, C> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{self}")
+    }
+}
+
+struct Iter<'a, P, C, const CAP: usize> {
+    stack: Vec<(&'a NonLeafNode<P, C, CAP>, C, usize)>,
+    leaf: Option<(&'a LeafNode<P, C, CAP>, C, usize)>,
+}
+
+impl<'a, P, C: Default + Add<Output = C>, const CAP: usize> Iter<'a, P, C, CAP> {
+    fn new(tree: &'a AugmentedBTree<P, C, CAP>) -> Self {
+        let mut stack = Vec::new();
+        let mut node = &tree.root;
+        let mut node_type = tree.root_type;
+        while node_type == NonLeaf {
+            let non_leaf_node = unsafe { node.as_non_leaf_unchecked() };
+            node = &non_leaf_node.data.head;
+            node_type = non_leaf_node.children_type;
+            stack.push((non_leaf_node, C::default(), 0))
+        }
+
+        let leaf_node = unsafe { node.as_leaf_unchecked() };
+        Self {
+            stack,
+            leaf: Some((leaf_node, C::default(), 0)),
+        }
+    }
+}
+
+impl<'a, P, C: Default + Add<Output = C>, const CAP: usize> Iterator for Iter<'a, P, C, CAP>
+where
+    P: Copy,
+    C: Copy,
+{
+    type Item = (P, C);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((leaf_node, accum, index)) = &mut self.leaf {
+            if let Some(&entry) = leaf_node.data.bulk.first_as_ref().get(*index) {
+                *index += 1;
+                Some((entry.pos, *accum + entry.accum))
+            } else {
+                self.leaf = None;
+                while let Some((non_leaf_node, accum, index)) = self.stack.pop() {
+                    if let Some(&entry) = non_leaf_node.data.bulk.first_as_ref().get(index) {
+                        self.stack.push((non_leaf_node, accum, index));
+                        return Some((entry.pos, accum + entry.accum));
+                    }
+                }
+                None
+            }
+        } else {
+            let (parent, parent_accum, index) = self
+                .stack
+                .last_mut()
+                .expect("the tree has at least one node");
+            let mut node_type = parent.children_type;
+            let (left_separator, mut node) = parent
+                .data
+                .bulk
+                .get(*index)
+                .expect("every separator has a right child");
+            let accum = *parent_accum + left_separator.accum;
+            *index += 1;
+
+            while node_type == NonLeaf {
+                let non_leaf_node = unsafe { node.as_non_leaf_unchecked() };
+                node = &non_leaf_node.data.head;
+                node_type = non_leaf_node.children_type;
+                self.stack.push((non_leaf_node, accum, 0))
+            }
+
+            let leaf_node = unsafe { node.as_leaf_unchecked() };
+            let entry = leaf_node
+                .data
+                .bulk
+                .first_as_ref()
+                .first()
+                .expect("can'b be empty because it's not the root.");
+            self.leaf = Some((leaf_node, accum, 1));
+            Some((entry.pos, accum + entry.accum))
+        }
     }
 }
 
@@ -2285,7 +2381,7 @@ mod tests {
             (CAP as u64).hash(&mut hasher);
             (amt as u64).hash(&mut hasher);
 
-            let mut rng = Xoshiro256StarStar::seed_from_u64(hasher.finish());
+            let mut rng: Xoshiro256StarStar = Xoshiro256StarStar::seed_from_u64(hasher.finish());
             let repeat_distribution = distributions::Uniform::from(1..5);
             let count_distribution = distributions::Uniform::from(1..100);
 
@@ -2407,6 +2503,57 @@ mod tests {
             assert_eq!(tree.root_type, super::Leaf);
             let root = unsafe { tree.root.as_leaf_unchecked() };
             assert_eq!(root.data.bulk.len(), 0);
+        }
+    }
+
+    #[test]
+    fn iter() {
+        #[cfg(not(miri))]
+        let amts = [100, 1000, 10_000, 100_000];
+
+        #[cfg(miri)]
+        let amts = [100];
+
+        for amt in amts {
+            dbg!(amt, iter_internal::<128>(amt));
+            dbg!(amt, iter_internal::<10>(amt));
+            dbg!(amt, iter_internal::<5>(amt));
+            dbg!(amt, iter_internal::<4>(amt));
+        }
+
+        fn iter_internal<const CAP: usize>(amt: usize) {
+            let mut hasher = DefaultHasher::new();
+            20231212.hash(&mut hasher);
+            (CAP as u64).hash(&mut hasher);
+            (amt as u64).hash(&mut hasher);
+
+            let mut rng: Xoshiro256StarStar = Xoshiro256StarStar::seed_from_u64(hasher.finish());
+
+            let pmf = (0..amt)
+                .map(|i| {
+                    let pos = F32::new(i as f32).unwrap();
+                    let count = 1 + rng.next_u32() % 128;
+                    (pos, count)
+                })
+                .collect::<Vec<_>>();
+
+            let mut insertions = pmf.clone();
+            insertions.shuffle(&mut rng);
+            let mut tree = AugmentedBTree::<_, _, 5>::new();
+            for &(pos, count) in &insertions {
+                tree.insert(pos, count);
+            }
+
+            let mut accum = 0;
+            let pmf_from_iterator = tree
+                .iter()
+                .map(|(p, c)| {
+                    let count = c - accum;
+                    accum = c;
+                    (p, count)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(pmf_from_iterator, pmf);
         }
     }
 }

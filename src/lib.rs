@@ -779,11 +779,51 @@ impl TryFrom<f32> for F32 {
     }
 }
 
+impl num_traits::Zero for F32 {
+    fn zero() -> Self {
+        Self::new(0.0).unwrap()
+    }
+
+    fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+}
+
+impl num_traits::Bounded for F32 {
+    fn min_value() -> Self {
+        F32::new(<f32 as num_traits::Bounded>::min_value()).unwrap()
+    }
+
+    fn max_value() -> Self {
+        F32::new(<f32 as num_traits::Bounded>::max_value()).unwrap()
+    }
+}
+
 impl TryFrom<f64> for F64 {
     type Error = NanError;
 
     fn try_from(value: f64) -> Result<Self, Self::Error> {
         Self::new(value)
+    }
+}
+
+impl num_traits::Zero for F64 {
+    fn zero() -> Self {
+        Self::new(0.0).unwrap()
+    }
+
+    fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+}
+
+impl num_traits::Bounded for F64 {
+    fn min_value() -> Self {
+        F64::new(<f64 as num_traits::Bounded>::min_value()).unwrap()
+    }
+
+    fn max_value() -> Self {
+        F64::new(<f64 as num_traits::Bounded>::max_value()).unwrap()
     }
 }
 

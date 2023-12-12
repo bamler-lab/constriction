@@ -1,3 +1,5 @@
+pub mod vbq;
+
 #[cfg(not(feature = "benchmark-internals"))]
 mod augmented_btree;
 
@@ -25,8 +27,6 @@ use hashbrown::hash_map::{
 use crate::{UnwrapInfallible, F32};
 
 use self::augmented_btree::AugmentedBTree;
-
-pub mod vbq;
 
 pub trait EmpiricalDistribution<V, C>
 where
@@ -71,6 +71,11 @@ where
     fn total(&self) -> C;
 
     fn left_sided_cumulative(&self, x: V) -> C;
+
+    fn entropy_base2<F>(&self) -> F
+    where
+        F: num_traits::float::Float + 'static,
+        C: num_traits::AsPrimitive<F>;
 
     /// Returns the inverse of [`left_sided_cumulative`](Self::left_sided_cumulative)
     ///
@@ -204,6 +209,23 @@ where
 
     fn inverse_cumulative(&self, cum: C) -> Option<V> {
         self.0.quantile_function(CountWrapper(cum))
+    }
+
+    fn entropy_base2<F>(&self) -> F
+    where
+        F: num_traits::float::Float + 'static,
+        C: num_traits::AsPrimitive<F>,
+    {
+        let mut last_accum = C::zero();
+        let mut sum_count_log_count = F::zero();
+        for (_, accum) in self.0.iter() {
+            let count = (accum.0 - last_accum).as_();
+            sum_count_log_count = sum_count_log_count + count * count.log2();
+            last_accum = accum.0;
+        }
+
+        let total = self.0.total().0.as_();
+        total.log2() - sum_count_log_count / total
     }
 }
 
