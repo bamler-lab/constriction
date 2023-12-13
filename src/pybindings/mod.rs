@@ -38,7 +38,7 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// ### Installing `constriction` for Python
 ///
 /// ```bash
-/// pip install constriction~=0.3.3
+/// pip install constriction~=0.3.4
 /// ```
 ///
 /// ### Hello, World
