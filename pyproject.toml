@@ -14,7 +14,7 @@ classifiers = [
   "Intended Audience :: Science/Research",
 ]
 dependencies = [
-  "numpy~=1.19",
+  "numpy~=1.16",
 ]
 maintainers = [
   {name = "Robert Bamler", email = "robert.bamler@uni-tuebingen.de"},
