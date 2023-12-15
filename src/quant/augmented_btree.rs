@@ -3,6 +3,7 @@ use core::{
     fmt::{Debug, Display},
     mem::ManuallyDrop,
     ops::{Add, Deref, DerefMut, Sub},
+    slice::SliceIndex,
 };
 
 use self::{bounded_vec::BoundedPairOfVecs, child_ptr::ChildPtr};
@@ -27,7 +28,7 @@ trait Node<P, C, const CAP: usize> {
     type ChildRef;
 
     /// Tries to remove `count` items at position `pos`. Returns `Err(())` if there are fewer than
-    /// `count` items at `pos`. in this case, the subtree rooted at this node has been restored
+    /// `count` items at `pos`. In this case, the subtree rooted at this node has been restored
     /// into its original state at the time the method returns.
     fn remove(&mut self, pos: P, count: C) -> Result<(), ()>;
 
@@ -61,7 +62,7 @@ struct LeafNode<P, C, const CAP: usize> {
     data: Payload<P, C, (), CAP>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Entry<P, C> {
     pos: P,
 
@@ -201,35 +202,13 @@ where
 
         self.total = self.total + count;
 
-        let Some((separator_pos, ejected_accum, right_sibling)) = (match self.root_type {
+        if let Some(split_off_part) = match self.root_type {
             NonLeaf => unsafe { self.root.as_non_leaf_mut_unchecked() }.insert(pos, count),
             Leaf => unsafe { self.root.as_leaf_mut_unchecked() }.insert(pos, count),
-        }) else {
-            return;
-        };
-        // The root node overflowed, and we had to split off a `right_sibling` from it. The
-        // splitting operation ejected a separator at position `separator_pos`, and `ejected_accum`
-        // is the weight of the left split + separator.
-
-        // Since we cannot move out of `self.root`, we have to first construct a new root with a
-        // temporary dummy `data.head`, then replace the old root by the new root, and then
-        // replace the new root's dummy `data.head` with the old root.
-        let new_root = ChildPtr::non_leaf(NonLeafNode::new(
-            self.root_type,
-            right_sibling,
-            BoundedPairOfVecs::new(),
-        ));
-        let old_root = core::mem::replace(&mut self.root, new_root);
-        let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
-        let right_sibling = core::mem::replace(&mut new_root.data.head, old_root);
-
-        let separator = Entry::new(separator_pos, ejected_accum);
-        new_root
-            .data
-            .bulk
-            .try_push(separator, right_sibling)
-            .expect("vector is empty and `CAP>0`");
-        self.root_type = NonLeaf;
+        } {
+            // The root node overflowed, and we had to split off a `right_sibling` from it.
+            self.push_non_leaf_root(split_off_part);
+        }
     }
 
     pub fn remove(&mut self, pos: P, count: C) -> Result<(), ()> {
@@ -242,18 +221,85 @@ where
                 let root = unsafe { self.root.as_non_leaf_mut_unchecked() };
                 root.remove(pos, count)?;
                 if root.data.bulk.len() == 0 {
-                    let old_root = core::mem::replace(&mut self.root, ChildPtr::none());
-                    let old_root = unsafe { old_root.into_non_leaf_unchecked() };
-                    self.root_type = old_root.children_type;
-                    self.root = old_root.leak_data().head;
+                    unsafe {
+                        self.pop_non_leaf_root();
+                    }
                 }
             }
             Leaf => unsafe { self.root.as_leaf_mut_unchecked() }.remove(pos, count)?,
-            // Leaf => unsafe { self.root.as_leaf_mut_unchecked() }.remove(pos, count),
         }
 
         self.total = self.total - count;
         Ok(())
+    }
+
+    pub fn shift(&mut self, from: P, to: P, count: C) -> Result<(), ()> {
+        if from == to || count == C::default() {
+            return Ok(());
+        }
+
+        let rightwards = to > from;
+        let (left_pos, right_pos) = if rightwards { (from, to) } else { (to, from) };
+
+        if let Some(split_off_part) = match self.root_type {
+            NonLeaf => {
+                let root = unsafe { self.root.as_non_leaf_mut_unchecked() };
+                let ret = root.shift(left_pos, right_pos, rightwards, count)?;
+                if root.data.bulk.len() == 0 {
+                    unsafe {
+                        self.pop_non_leaf_root();
+                    }
+                    return Ok(());
+                }
+                ret
+            }
+            Leaf => unsafe { self.root.as_leaf_mut_unchecked() }
+                .shift(left_pos, right_pos, rightwards, count)?,
+        } {
+            self.push_non_leaf_root(split_off_part);
+        }
+
+        Ok(())
+    }
+
+    /// Removes the root node, assuming it is a `NonLeafNode`, and replaces it
+    /// with the root's first child node.
+    ///
+    /// # Safety
+    ///
+    /// The root node must be a `NonLeafNode`.
+    unsafe fn pop_non_leaf_root(&mut self) {
+        let old_root = core::mem::replace(&mut self.root, ChildPtr::none());
+        let old_root = unsafe { old_root.into_non_leaf_unchecked() };
+        self.root_type = old_root.children_type;
+        self.root = old_root.leak_data().head;
+    }
+
+    /// Replaces the current root node with a new `NonLeafNode` with two children.
+    ///
+    /// The first child of the new root node is the current root node, and the second child is
+    /// given by the argument `right_child`. The two children are separated at `separator_pos`
+    /// with accumulator `separator_accum`.
+    fn push_non_leaf_root(&mut self, split_off_part: SplitOffPart<P, C, CAP>) {
+        // Since we cannot move out of `self.root`, we have to first construct a new root with a
+        // temporary dummy `data.head`, then replace the old root by the new root, and then
+        // replace the new root's dummy `data.head` with the old root.
+        let new_root = ChildPtr::non_leaf(NonLeafNode::new(
+            self.root_type,
+            split_off_part.right,
+            BoundedPairOfVecs::new(),
+        ));
+        let old_root = core::mem::replace(&mut self.root, new_root);
+        let new_root = unsafe { self.root.as_non_leaf_mut_unchecked() };
+        let right_sibling = core::mem::replace(&mut new_root.data.head, old_root);
+
+        let separator = Entry::new(split_off_part.pos, split_off_part.accum);
+        new_root
+            .data
+            .bulk
+            .try_push(separator, right_sibling)
+            .expect("vector is empty and `CAP>0`");
+        self.root_type = NonLeaf;
     }
 
     /// Returns the left-sided CDF.
@@ -353,6 +399,23 @@ where
             .get(index)
             .map(|(entry, ())| entry.pos)
             .or(right_bound)
+    }
+
+    fn debug_assert_integrity(&self) {
+        #[cfg(debug_assertions)]
+        {
+            let total = match self.root_type {
+                NonLeaf => {
+                    let root = unsafe { self.root.as_non_leaf_unchecked() };
+                    root.assert_integrity(true, None, None)
+                }
+                Leaf => {
+                    let root = unsafe { self.root.as_leaf_unchecked() };
+                    root.assert_integrity(true, None, None)
+                }
+            };
+            assert!(self.total == total);
+        }
     }
 }
 
@@ -563,7 +626,7 @@ where
                 .bulk
                 .first_as_ref()
                 .get(index_b.wrapping_sub(1))
-                .map(move |entry| entry.accum)
+                .map(|entry| entry.accum)
                 .unwrap_or_default();
             let mut child_b = into_downcast(child_b).leak_data();
 
@@ -704,44 +767,15 @@ where
 
             found = right_separator.pos == pos;
             if found {
-                let previous_accum = left_separators
-                    .last()
-                    .map(move |entry| entry.accum)
-                    .unwrap_or_default();
-                if previous_accum > new_accum {
-                    return Err(());
+                unsafe {
+                    replace_pos_with_previous_if_accum_is(
+                        self.children_type,
+                        right_separator,
+                        left_separators.last(),
+                        new_accum,
+                        child,
+                    )?;
                 }
-                let new_accum_in_left_subtree = new_accum - previous_accum;
-                match self.children_type {
-                    NonLeaf => {
-                        let child = unsafe { child.as_non_leaf_mut_unchecked() };
-                        let last_entry_left =
-                            child.get_last_and_remove_if_accum_is(new_accum_in_left_subtree);
-                        match last_entry_left.accum.cmp(&new_accum_in_left_subtree) {
-                            Equal => {
-                                // Removed all counts at `pos`. Replace the separator with the last
-                                // entry of the left subtree, which we just removed.
-                                right_separator.pos = last_entry_left.pos;
-                            }
-                            Greater => return Err(()),
-                            Less => (),
-                        }
-                    }
-                    Leaf => {
-                        let child = unsafe { child.as_leaf_mut_unchecked() };
-                        let last_entry_left =
-                            child.get_last_and_remove_if_accum_is(new_accum_in_left_subtree);
-                        match last_entry_left.accum.cmp(&new_accum_in_left_subtree) {
-                            Equal => {
-                                // Removed all counts at `pos`. Replace the separator with the last
-                                // entry of the left subtree, which we just removed.
-                                right_separator.pos = last_entry_left.pos;
-                            }
-                            Greater => return Err(()),
-                            Less => (),
-                        }
-                    }
-                };
             }
 
             right_separator.accum = new_accum;
@@ -820,7 +854,7 @@ where
         let index = entries.partition_point(move |entry| entry.pos < pos);
         let previous_accum = entries
             .get(index.wrapping_sub(1))
-            .map(move |entry| entry.accum)
+            .map(|entry| entry.accum)
             .unwrap_or_default();
 
         let mut right_iter = entries.iter_mut().skip(index);
@@ -858,6 +892,44 @@ where
     }
 }
 
+impl<P, C, const CAP: usize> LeafNode<P, C, CAP>
+where
+    P: Ord + Copy,
+    C: Default + Ord + Add<Output = C> + Sub<Output = C> + Copy,
+{
+    #[cfg(debug_assertions)]
+    fn assert_integrity(
+        &self,
+        is_root: bool,
+        lower_bound: Option<P>,
+        upper_bound: Option<(P, C)>,
+    ) -> C {
+        let entries = self.data.bulk.first_as_ref();
+        if !is_root {
+            assert!(entries.len() >= CAP / 2);
+        }
+        if entries.is_empty() {
+            return C::default();
+        }
+        let first = entries.first().unwrap();
+        if let Some(lower_pos) = lower_bound {
+            assert!(first.pos > lower_pos);
+        }
+        let mut prev = first;
+        for entry in entries.iter().skip(1) {
+            assert!(entry.pos > prev.pos);
+            assert!(entry.accum > prev.accum);
+            prev = entry;
+        }
+        if let Some((upper_pos, upper_accum)) = upper_bound {
+            assert!(prev.pos < upper_pos);
+            assert!(prev.accum < upper_accum);
+        }
+
+        prev.accum
+    }
+}
+
 impl<P, C, const CAP: usize> NonLeafNode<P, C, CAP>
 where
     P: Ord + Copy,
@@ -874,33 +946,47 @@ where
         }
     }
 
-    fn insert(&mut self, pos: P, count: C) -> Option<(P, C, ChildPtr<P, C, CAP>)> {
+    fn insert(&mut self, pos: P, count: C) -> Option<SplitOffPart<P, C, CAP>> {
         let (insert_index, child) = self.data.by_key_mut_update_right(
             pos,
             move |entry| entry.pos,
             move |entry| entry.accum = entry.accum + count,
         )?;
 
-        let Some((separator_pos, ejected_accum, new_child)) = (match self.children_type {
+        if let Some(split_off_part) = match self.children_type {
             NonLeaf => unsafe { child.as_non_leaf_mut_unchecked() }.insert(pos, count),
             Leaf => unsafe { child.as_leaf_mut_unchecked() }.insert(pos, count),
-        }) else {
-            // Inserting into the subtree rooted at `child` succeeded without overflowing `child`.
-            return None;
-        };
+        } {
+            // The child node overflowed and was split into two, where `new_child` should become the new
+            // neighbor of `child` to the right. The splitting operation ejected a separator at position
+            // `separator_pos`, and `ejected_accum` is the weight of the left split + separator.
+            self.insert_child_node(
+                insert_index,
+                split_off_part.pos,
+                split_off_part.accum,
+                split_off_part.right,
+            )
+        } else {
+            None
+        }
+    }
 
-        // The child node overflowed and was split into two, where `new_child` should become the new
-        // neighbor of `child` to the right. The splitting operation ejected a separator at position
-        // `separator_pos`, and `ejected_accum` is the weight of the left split + separator.
+    fn insert_child_node(
+        &mut self,
+        insert_index: usize,
+        left_separator_pos: P,
+        weight_before: C,
+        new_child: ChildPtr<P, C, CAP>,
+    ) -> Option<SplitOffPart<P, C, CAP>> {
         let preceding_accum = self
             .data
             .bulk
             .first_as_ref()
             .get(insert_index.wrapping_sub(1))
-            .map(move |entry| entry.accum)
+            .map(|entry| entry.accum)
             .unwrap_or_default();
 
-        let mut separator = Entry::new(separator_pos, preceding_accum + ejected_accum);
+        let mut separator = Entry::new(left_separator_pos, preceding_accum + weight_before);
         let Err((_, new_child)) = self
             .data
             .bulk
@@ -980,11 +1066,224 @@ where
             right_separated_children,
         ));
 
-        Some((
-            ejected_separator.pos,
-            ejected_separator.accum,
-            right_sibling,
-        ))
+        Some(SplitOffPart {
+            pos: ejected_separator.pos,
+            accum: ejected_separator.accum,
+            right: right_sibling,
+        })
+    }
+
+    fn shift(
+        &mut self,
+        left_pos: P,
+        right_pos: P,
+        mut rightwards: bool,
+        count: C,
+    ) -> Result<Option<SplitOffPart<P, C, CAP>>, ()> {
+        let data = self.data.deref_mut();
+        let (separators, children) = data.bulk.both_as_mut();
+        let left_index = separators.partition_point(move |entry| entry.pos < left_pos);
+
+        match separators.get_mut(left_index) {
+            Some(separator) if separator.pos <= right_pos => {
+                // `left_pos` and `right_pos` are in different children, or at least one of them
+                // is on a separator.
+                let right_separators = unsafe { separators.get_unchecked_mut(left_index..) };
+                let mut right_index = left_index
+                    + right_separators.partition_point(move |entry| entry.pos < right_pos);
+
+                let (mut from_index, from_pos, mut to_index, to_pos) = if rightwards {
+                    (left_index, left_pos, right_index, right_pos)
+                } else {
+                    (right_index, right_pos, left_index, left_pos)
+                };
+
+                // Remove from `from_index` (either separator or its left child).
+                let removed = match separators.get_mut(from_index) {
+                    Some(from_separator) if from_separator.pos == from_pos => {
+                        if from_separator.accum < count {
+                            return Err(());
+                        }
+                        let new_accum = from_separator.accum - count;
+                        let (before_from, after_from) = separators.split_at_mut(from_index);
+                        let from_separator = unsafe { after_from.get_unchecked_mut(0) };
+                        unsafe {
+                            replace_pos_with_previous_if_accum_is(
+                                self.children_type,
+                                from_separator,
+                                before_from.last(),
+                                new_accum,
+                                children
+                                    .get_mut(from_index.wrapping_sub(1))
+                                    .unwrap_or(&mut data.head),
+                            )?;
+                            if left_index == right_index && from_separator.pos < to_pos {
+                                // We just replaced the separator with the right-most entry of its
+                                // left subtree, but this new separator is left of the insert
+                                // position. This can only happen if `rightwards == false`, but we
+                                // now have to insert `to_pos` to the *right* side of the separator.
+                                right_index += 1;
+                                to_index += 1;
+                                rightwards = true;
+                            }
+                        }
+                        true
+                    }
+                    _ => false,
+                };
+
+                let from_child = children
+                    .get_mut(from_index.wrapping_sub(1))
+                    .unwrap_or(&mut data.head);
+                let rebalanced;
+                match self.children_type {
+                    NonLeaf => {
+                        let from_child = unsafe { from_child.as_non_leaf_mut_unchecked() };
+                        if !removed {
+                            from_child.remove(from_pos, count)?;
+                        }
+                        rebalanced = from_child.data.bulk.len() < CAP / 2;
+                        if rebalanced {
+                            for separator in &mut separators[from_index..] {
+                                separator.accum = separator.accum - count;
+                            }
+                            data.rebalance_after_underflow_before(
+                                from_index,
+                                |c| unsafe { c.as_non_leaf_mut_unchecked() },
+                                |c| unsafe { *c.into_non_leaf_unchecked() },
+                            );
+                        }
+                    }
+                    Leaf => {
+                        let from_child = unsafe { from_child.as_leaf_mut_unchecked() };
+                        if !removed {
+                            from_child.remove(from_pos, count)?;
+                        }
+                        rebalanced = from_child.data.bulk.len() < CAP / 2;
+                        if rebalanced {
+                            for separator in &mut separators[from_index..] {
+                                separator.accum = separator.accum - count;
+                            }
+                            data.rebalance_after_underflow_before(
+                                from_index,
+                                |c| unsafe { c.as_leaf_mut_unchecked() },
+                                |c| unsafe { *c.into_leaf_unchecked() },
+                            );
+                        }
+                    }
+                }
+
+                let data = self.data.deref_mut();
+                let (separators, children) = data.bulk.both_as_mut();
+                if rebalanced {
+                    // Recalculate `to_index`.
+                    to_index = separators.partition_point(move |entry| entry.pos < to_pos);
+                    for separator in &mut separators[to_index..] {
+                        separator.accum = separator.accum + count;
+                    }
+                } else {
+                    // Update accums between `from_index` and `to_index`.
+                    if rightwards {
+                        for separator in &mut separators[left_index..right_index] {
+                            separator.accum = separator.accum - count;
+                        }
+                    } else {
+                        for separator in &mut separators[left_index..right_index] {
+                            separator.accum = separator.accum + count;
+                        }
+                    }
+                }
+
+                // Insert into `to_index`.
+                let result = match separators.get_mut(to_index) {
+                    Some(to_separator) if to_separator.pos == to_pos => None,
+                    _ => {
+                        let to_child = children
+                            .get_mut(to_index.wrapping_sub(1))
+                            .unwrap_or(&mut data.head);
+
+                        let insertion_result = match self.children_type {
+                            NonLeaf => {
+                                let to_child = unsafe { to_child.as_non_leaf_mut_unchecked() };
+                                to_child.insert(to_pos, count)
+                            }
+                            Leaf => {
+                                let to_child = unsafe { to_child.as_leaf_mut_unchecked() };
+                                to_child.insert(to_pos, count)
+                            }
+                        };
+
+                        // Deal with overflow.
+                        if let Some(split_off_part) = insertion_result {
+                            // The child node overflowed and was split into two, where `new_child` should become the new
+                            // neighbor of `child` to the right. The splitting operation ejected a separator at position
+                            // `separator_pos`, and `ejected_accum` is the weight of the left split + separator.
+                            if !rightwards {
+                                from_index += 1; // For underflow check below.
+                            }
+                            self.insert_child_node(
+                                to_index,
+                                split_off_part.pos,
+                                split_off_part.accum,
+                                split_off_part.right,
+                            )
+                        } else {
+                            None
+                        }
+                    }
+                };
+
+                Ok(result)
+            }
+            _ => {
+                // `left_pos` and `right_pos` are both in the same child:
+                let common_child = children
+                    .get_mut(left_index.wrapping_sub(1))
+                    .unwrap_or(&mut data.head);
+
+                let shift_result = match self.children_type {
+                    NonLeaf => {
+                        let common_child = unsafe { common_child.as_non_leaf_mut_unchecked() };
+                        let shift_result =
+                            common_child.shift(left_pos, right_pos, rightwards, count)?;
+                        if common_child.data.bulk.len() < CAP / 2 {
+                            data.rebalance_after_underflow_before(
+                                left_index,
+                                |c| unsafe { c.as_non_leaf_mut_unchecked() },
+                                |c| unsafe { *c.into_non_leaf_unchecked() },
+                            );
+                            return Ok(None);
+                        }
+                        shift_result
+                    }
+                    Leaf => {
+                        let common_child = unsafe { common_child.as_leaf_mut_unchecked() };
+                        let shift_result =
+                            common_child.shift(left_pos, right_pos, rightwards, count)?;
+                        if common_child.data.bulk.len() < CAP / 2 {
+                            data.rebalance_after_underflow_before(
+                                left_index,
+                                |c| unsafe { c.as_leaf_mut_unchecked() },
+                                |c| unsafe { *c.into_leaf_unchecked() },
+                            );
+                            return Ok(None);
+                        }
+                        shift_result
+                    }
+                };
+
+                if let Some(split_off_part) = shift_result {
+                    Ok(self.insert_child_node(
+                        left_index,
+                        split_off_part.pos,
+                        split_off_part.accum,
+                        split_off_part.right,
+                    ))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
     }
 
     /// May return a wrong separator if accum of the last separator is higher than the argument
@@ -1032,6 +1331,135 @@ where
             last
         }
     }
+
+    #[cfg(debug_assertions)]
+    fn assert_integrity(
+        &self,
+        is_root: bool,
+        lower_bound: Option<P>,
+        upper_bound: Option<(P, C)>,
+    ) -> C {
+        let data = self.data.deref();
+        let (separators, children) = data.bulk.both_as_ref();
+        if is_root {
+            assert!(separators.len() >= 1);
+        } else {
+            assert!(separators.len() >= CAP / 2);
+        }
+
+        let first_separator = *separators.first().unwrap();
+        if let Some(lower_pos) = lower_bound {
+            assert!(first_separator.pos > lower_pos);
+        }
+        let child_upper_bound = Some((first_separator.pos, first_separator.accum));
+        match self.children_type {
+            NonLeaf => {
+                let first_child = unsafe { data.head.as_non_leaf_unchecked() };
+                first_child.assert_integrity(false, lower_bound, child_upper_bound);
+            }
+            Leaf => {
+                let first_child = unsafe { data.head.as_leaf_unchecked() };
+                first_child.assert_integrity(false, lower_bound, child_upper_bound);
+            }
+        }
+        let mut prev_separator = first_separator;
+
+        for (child, right_separator) in children.iter().zip(separators.iter().skip(1)) {
+            assert!(right_separator.pos > prev_separator.pos);
+            assert!(right_separator.accum > prev_separator.accum);
+            let child_lower_bound = Some(prev_separator.pos);
+            let child_upper_bound = Some((
+                right_separator.pos,
+                right_separator.accum - prev_separator.accum,
+            ));
+            match self.children_type {
+                NonLeaf => {
+                    let child = unsafe { child.as_non_leaf_unchecked() };
+                    child.assert_integrity(false, child_lower_bound, child_upper_bound);
+                }
+                Leaf => {
+                    let child = unsafe { child.as_leaf_unchecked() };
+                    child.assert_integrity(false, child_lower_bound, child_upper_bound);
+                }
+            }
+            prev_separator = *right_separator;
+        }
+
+        let last_child = data.bulk.second_as_ref().last().unwrap();
+        let child_lower_bound = Some(prev_separator.pos);
+        let last_subtree_weight = match self.children_type {
+            NonLeaf => {
+                let last_child = unsafe { last_child.as_non_leaf_unchecked() };
+                last_child.assert_integrity(false, child_lower_bound, None)
+            }
+            Leaf => {
+                let last_child = unsafe { last_child.as_leaf_unchecked() };
+                last_child.assert_integrity(false, child_lower_bound, None)
+            }
+        };
+
+        if let Some((upper_pos, upper_accum)) = upper_bound {
+            assert!(prev_separator.pos < upper_pos);
+            assert!(prev_separator.accum < upper_accum);
+        }
+
+        prev_separator.accum + last_subtree_weight
+    }
+}
+
+///
+///
+///  # Safety
+///
+/// `left_child` must have type `children_type`.
+unsafe fn replace_pos_with_previous_if_accum_is<P, C, const CAP: usize>(
+    children_type: NodeType,
+    separator: &mut Entry<P, C>,
+    previous_separator: Option<&Entry<P, C>>,
+    new_accum: C,
+    left_child: &mut ChildPtr<P, C, CAP>,
+) -> Result<(), ()>
+where
+    P: Ord + Copy,
+    C: Default + Ord + Add<Output = C> + Sub<Output = C> + Copy,
+{
+    let previous_accum = previous_separator
+        .map(|entry| entry.accum)
+        .unwrap_or_default();
+    if previous_accum > new_accum {
+        return Err(());
+    }
+    let new_accum_in_left_subtree = new_accum - previous_accum;
+    match children_type {
+        NonLeaf => {
+            let child = unsafe { left_child.as_non_leaf_mut_unchecked() };
+            let last_entry_left = child.get_last_and_remove_if_accum_is(new_accum_in_left_subtree);
+            match last_entry_left.accum.cmp(&new_accum_in_left_subtree) {
+                Equal => {
+                    // Removed all counts at `pos`. Replace the separator with the last
+                    // entry of the left subtree, which we just removed.
+                    separator.pos = last_entry_left.pos;
+                }
+                Greater => return Err(()),
+                Less => (),
+            }
+        }
+        Leaf => {
+            let child = unsafe { left_child.as_leaf_mut_unchecked() };
+            let last_entry_left = child.get_last_and_remove_if_accum_is(new_accum_in_left_subtree);
+            match last_entry_left.accum.cmp(&new_accum_in_left_subtree) {
+                Equal => {
+                    // Removed all counts at `pos`. Replace the separator with the last
+                    // entry of the left subtree, which we just removed.
+                    separator.pos = last_entry_left.pos;
+                }
+                Greater => return Err(()),
+                Less => (),
+            }
+        }
+    };
+
+    Ok(())
 }
 
 impl<P, C, const CAP: usize> LeafNode<P, C, CAP>
@@ -1045,7 +1473,7 @@ where
         }
     }
 
-    fn insert(&mut self, pos: P, count: C) -> Option<(P, C, ChildPtr<P, C, CAP>)> {
+    fn insert(&mut self, pos: P, count: C) -> Option<SplitOffPart<P, C, CAP>> {
         // Check if the node already contains an entry with at the given `pos`.
         // If so, increment its accum and all accums to the right, then return.
         let insert_index = self
@@ -1168,7 +1596,11 @@ where
             .expect("there are CAP/2+1 > 0 data.bulk");
         let right_sibling_ref = ChildPtr::leaf(right_sibling);
 
-        Some((ejected_entry.pos, ejected_entry.accum, right_sibling_ref))
+        Some(SplitOffPart {
+            pos: ejected_entry.pos,
+            accum: ejected_entry.accum,
+            right: right_sibling_ref,
+        })
     }
 
     fn get_last_and_remove_if_accum_is(&mut self, accum: C) -> Entry<P, C> {
@@ -1177,6 +1609,161 @@ where
             self.data.bulk.pop();
         }
         last
+    }
+
+    fn shift(
+        &mut self,
+        left_pos: P,
+        right_pos: P,
+        rightwards: bool,
+        count: C,
+    ) -> Result<Option<SplitOffPart<P, C, CAP>>, ()>
+    where
+        C: PartialOrd,
+    {
+        let entries = self.data.bulk.first_as_mut();
+        let right_index = entries.partition_point(move |entry| entry.pos < right_pos);
+        let left_index = entries[..right_index].partition_point(move |entry| entry.pos < left_pos);
+
+        let (from_index, from_pos, to_index, to_pos) = if rightwards {
+            (left_index, left_pos, right_index, right_pos)
+        } else {
+            (right_index, right_pos, left_index, left_pos)
+        };
+
+        let from_entry = entries.get(from_index).ok_or(())?;
+        let from_count = from_entry.accum
+            - entries
+                .get(from_index.wrapping_sub(1))
+                .map(|entry| entry.accum)
+                .unwrap_or_default();
+        if from_count < count || from_entry.pos != from_pos {
+            return Err(());
+        }
+        let remove_from_entry = from_count == count && from_entry.pos == from_pos;
+
+        if rightwards {
+            for entry in &mut entries[left_index..right_index] {
+                entry.accum = entry.accum - count;
+            }
+        } else {
+            for entry in &mut entries[left_index..right_index] {
+                entry.accum = entry.accum + count;
+            }
+        }
+
+        let insert_to_entry = entries
+            .get(to_index)
+            .map(|entry| entry.pos != to_pos)
+            .unwrap_or(true);
+        let insert_to_entry = if insert_to_entry {
+            let insert_accum = entries
+                .get(to_index.wrapping_sub(1))
+                .map(|entry| entry.accum)
+                .unwrap_or_default()
+                + count;
+            Some(Entry::new(to_pos, insert_accum))
+        } else {
+            None
+        };
+
+        match (remove_from_entry, insert_to_entry) {
+            (false, None) => {}
+            (false, Some(mut new_entry)) => {
+                if self.data.bulk.try_insert(to_index, new_entry, ()).is_err() {
+                    // Inserting would overflow the leaf node. Split it into two.
+                    let mut right_sibling = LeafNode::new();
+                    if to_index <= CAP / 2 {
+                        // We're inserting into the left half or the parent
+                        let ejected_weight = if to_index == CAP / 2 {
+                            new_entry.accum
+                        } else {
+                            self.data
+                                .bulk
+                                .first_as_ref()
+                                .get(CAP / 2 - 1)
+                                .expect("node is full")
+                                .accum
+                        };
+                        let right_entries = self.data.bulk.chop(CAP / 2).expect("node is full");
+                        right_sibling
+                            .data
+                            .bulk
+                            .try_append_transform1(right_entries, move |entry| {
+                                Entry::new(entry.pos, entry.accum - ejected_weight)
+                            })
+                            .expect("can't overflow");
+                        self.data
+                            .bulk
+                            .try_insert(to_index, new_entry, ())
+                            .map_err(|_| ())
+                            .expect("can't overflow");
+                    } else {
+                        // We're inserting into the right half.
+                        let ejected_weight = self
+                            .data
+                            .bulk
+                            .first_as_ref()
+                            .get(CAP / 2)
+                            .expect("node is full")
+                            .accum;
+                        let right_entries = self.data.bulk.chop(CAP / 2 + 1).expect("node is full");
+                        let (before_insert, after_insert) =
+                            right_entries.split_at_mut(to_index - (CAP / 2 + 1));
+
+                        right_sibling
+                            .data
+                            .bulk
+                            .try_append_transform1(before_insert, move |entry| {
+                                Entry::new(entry.pos, entry.accum - ejected_weight)
+                            })
+                            .expect("can't overflow");
+
+                        new_entry.accum = new_entry.accum - ejected_weight;
+                        right_sibling
+                            .data
+                            .bulk
+                            .try_push(new_entry, ())
+                            .expect("can't overflow");
+
+                        right_sibling
+                            .data
+                            .bulk
+                            .try_append_transform1(after_insert, move |entry| {
+                                Entry::new(entry.pos, entry.accum - ejected_weight)
+                            })
+                            .expect("can't overflow");
+                    }
+
+                    let (ejected_entry, ()) = self
+                        .data
+                        .bulk
+                        .pop()
+                        .expect("there are CAP/2+1 > 0 data.bulk");
+                    let right_sibling_ref = ChildPtr::leaf(right_sibling);
+
+                    return Ok(Some(SplitOffPart {
+                        pos: ejected_entry.pos,
+                        accum: ejected_entry.accum,
+                        right: right_sibling_ref,
+                    }));
+                }
+            }
+            (true, None) => {
+                self.data.bulk.remove(from_index);
+            }
+            (true, Some(new_entry)) => {
+                if rightwards {
+                    entries[left_index..right_index].rotate_left(1);
+                    entries[right_index - 1] = new_entry;
+                } else {
+                    entries[left_index..=right_index].rotate_right(1);
+                    entries[left_index] = new_entry;
+                }
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -1337,6 +1924,17 @@ where
             Some((entry.pos, accum + entry.accum))
         }
     }
+}
+
+struct SplitOffPart<P, C, const CAP: usize> {
+    /// Position of the ejected separator
+    pos: P,
+
+    /// Weight of the remaining left part + ejected separator.
+    accum: C,
+
+    /// A new child to be inserted right to the child that was split in half.
+    right: ChildPtr<P, C, CAP>,
 }
 
 mod child_ptr {
@@ -2140,9 +2738,13 @@ mod tests {
     use rand::{distributions, seq::SliceRandom, Rng, RngCore, SeedableRng};
     use rand_xoshiro::Xoshiro256StarStar;
 
-    use crate::{F32, F64};
+    use crate::{NonNanFloat, F32, F64};
 
-    use super::AugmentedBTree;
+    use super::*;
+
+    fn f<F: num_traits::float::FloatCore>(x: F) -> NonNanFloat<F> {
+        NonNanFloat::<F>::new(x).unwrap()
+    }
 
     #[test]
     fn manual() {
@@ -2150,9 +2752,6 @@ mod tests {
         dbg!(manual_internal::<10>());
         dbg!(manual_internal::<5>());
         dbg!(manual_internal::<4>());
-        // dbg!(manual_internal::<3>());
-        // dbg!(manual_internal::<2>());
-        // dbg!(manual_internal::<1>());
 
         fn manual_internal<const CAP: usize>() {
             let mut tree = AugmentedBTree::<F32, u32, CAP>::new();
@@ -2172,10 +2771,10 @@ mod tests {
             for (pos, count, total, accum_before, left_neighbor_pos, right_neighbor_pos) in
                 insertions
             {
-                let pos = F32::new(pos).unwrap();
-                let right_neighbor_pos = right_neighbor_pos.map(|x| F32::new(x).unwrap());
-                let left_neighbor_pos = left_neighbor_pos.map(|x| F32::new(x).unwrap());
-                let epsilon = F32::new(1e-5).unwrap();
+                let pos = f(pos);
+                let right_neighbor_pos = right_neighbor_pos.map(f);
+                let left_neighbor_pos = left_neighbor_pos.map(f);
+                let epsilon = f(1e-5);
 
                 assert_eq!(tree.left_cumulative(pos), accum_before);
                 assert_eq!(tree.left_cumulative(pos + epsilon), accum_before);
@@ -2206,6 +2805,7 @@ mod tests {
                     tree.quantile_function(accum_before.wrapping_sub(1)),
                     left_neighbor_pos
                 );
+                tree.debug_assert_integrity();
             }
 
             // Test if `left_cumulative` returns the correct values on all insert positions,
@@ -2229,7 +2829,7 @@ mod tests {
             ];
 
             for (pos, expected_accum) in test_points {
-                let pos = F32::new(pos).unwrap();
+                let pos = f(pos);
                 assert_eq!(tree.left_cumulative(pos), expected_accum);
             }
             // Insert { -2.25=>3, 1.5=>10, 2.5=>9, 3.25=>7, 4.75=>3, 5.125=>2, 6.5=>1 } in some
@@ -2248,7 +2848,7 @@ mod tests {
 
             let mut last_expected_pos = None;
             for (accum, expected_pos) in test_quantiles {
-                let expected_pos = expected_pos.map(|pos| F32::new(pos).unwrap());
+                let expected_pos = expected_pos.map(|pos| f(pos));
                 assert_eq!(tree.quantile_function(accum), expected_pos);
                 assert_eq!(tree.quantile_function(accum + 1), expected_pos);
                 assert_eq!(
@@ -2275,8 +2875,8 @@ mod tests {
             ];
             let mut total = tree.total;
             for (pos, count, should_work, cdf, cdf_right_before, cdf_right_after) in removals {
-                let pos_right = F32::new(pos + 0.001).unwrap();
-                let pos = F32::new(pos).unwrap();
+                let pos_right = f(pos + 0.001);
+                let pos = f(pos);
                 assert_eq!(tree.left_cumulative(pos), cdf);
                 assert_eq!(tree.left_cumulative(pos_right), cdf_right_before);
 
@@ -2289,14 +2889,15 @@ mod tests {
                     total -= count
                 }
                 assert_eq!(tree.total, total);
+                tree.debug_assert_integrity();
             }
 
             let expected_tree = [(-2.25, 2), (1.5, 2), (4.75, 3), (5.125, 1), (6.5, 7)];
 
             let mut accum = 0;
             for &(pos, count) in &expected_tree {
-                let pos_right = F32::new(pos + 0.001).unwrap();
-                let pos = F32::new(pos).unwrap();
+                let pos_right = f(pos + 0.001);
+                let pos = f(pos);
                 assert_eq!(tree.left_cumulative(pos), accum);
                 accum += count;
                 assert_eq!(tree.left_cumulative(pos_right), accum);
@@ -2306,7 +2907,7 @@ mod tests {
             // Removing one more item should make sure the root node is a leaf node for all CAP >= 4.
             for &(pos, count) in &expected_tree {
                 let mut tree = tree.clone();
-                assert!(tree.remove(F32::new(pos).unwrap(), count).is_ok());
+                assert!(tree.remove(f(pos), count).is_ok());
                 assert_eq!(tree.total(), accum - count);
 
                 assert_eq!(tree.root_type, super::Leaf);
@@ -2326,10 +2927,12 @@ mod tests {
                 data.insert(index, (pos, count));
 
                 assert_eq!(data, &expected_tree);
+                tree.debug_assert_integrity();
             }
 
             for &(pos, count) in &expected_tree {
-                assert!(tree.remove(F32::new(pos).unwrap(), count).is_ok());
+                assert!(tree.remove(f(pos), count).is_ok());
+                tree.debug_assert_integrity();
             }
 
             assert_eq!(tree.total(), 0);
@@ -2353,14 +2956,11 @@ mod tests {
             dbg!(amt, random_data_internal::<10>(amt));
             dbg!(amt, random_data_internal::<5>(amt));
             dbg!(amt, random_data_internal::<4>(amt));
-            // dbg!(amt, random_data_internal::<3>(amt));
-            // dbg!(amt, random_data_internal::<2>(amt));
-            // dbg!(amt, random_data_internal::<1>(amt));
         }
 
         fn verify_tree<const CAP: usize>(tree: &AugmentedBTree<F64, u32, CAP>, cdf: &[(F64, u32)]) {
             let (mut last_pos, mut last_accum) = cdf[0]; // dummy entry at position -1.0 with accum=0
-            let half = F64::new(0.5).unwrap();
+            let half = f(0.5);
             for &(pos, accum) in &cdf[1..] {
                 let before = half * (last_pos + pos);
                 assert_eq!(tree.left_cumulative(before), last_accum);
@@ -2387,13 +2987,14 @@ mod tests {
             let repeat_distribution = distributions::Uniform::from(1..5);
             let count_distribution = distributions::Uniform::from(1..100);
 
+            // Insert random items into the tree, including repeated inserts at the same position.
             let mut insertions = Vec::new();
             for _ in 0..amt {
                 let repeats = rng.sample(repeat_distribution);
                 // Deliberately use a somewhat lower precision than what's supported by
                 // f64 so that we can always represent a mid-point between two positions.
                 let int_pos = rng.next_u64() >> 14;
-                let pos = F64::new(int_pos as f64 / (u64::MAX >> 14) as f64).unwrap();
+                let pos = f(int_pos as f64 / (u64::MAX >> 14) as f64);
                 for _ in 0..repeats {
                     insertions.push((pos, rng.sample(count_distribution)));
                 }
@@ -2404,7 +3005,7 @@ mod tests {
             assert!(num_insertions < 4 * amt);
 
             let mut tree = AugmentedBTree::<F64, u32, CAP>::new();
-            let two = F64::new(2.0).unwrap();
+            let two = f(2.0);
             for (i, &(pos, count)) in insertions.iter().enumerate() {
                 tree.insert(pos, count);
                 if tree.total != tree.left_cumulative(two) {
@@ -2414,10 +3015,11 @@ mod tests {
                 }
             }
 
+            // Calculate CDF manually and verify the tree's correctness
             let mut sorted_insertions = insertions;
             sorted_insertions.sort_unstable_by_key(|(pos, _)| *pos);
 
-            let mut last_pos = F64::new(-1.0).unwrap();
+            let mut last_pos = f(-1.0);
             let mut accum = 0;
             let mut cdf = sorted_insertions
                 .iter()
@@ -2439,12 +3041,73 @@ mod tests {
 
             assert_eq!(tree.total, cdf.last().unwrap().1);
             assert_eq!(
-                tree.left_cumulative(cdf.last().unwrap().0 + F64::new(0.1).unwrap()),
+                tree.left_cumulative(cdf.last().unwrap().0 + f(0.1)),
                 tree.total
             );
 
             verify_tree(&tree, &cdf);
+            tree.debug_assert_integrity();
 
+            {
+                let mut tree = tree.clone();
+                // Shift some probability mass around.
+                let mut pmf = cdf[1..]
+                    .iter()
+                    .scan(0, |prev, &(pos, accum)| {
+                        let mass = accum - *prev;
+                        *prev = accum;
+                        Some((pos, mass))
+                    })
+                    .collect::<Vec<_>>();
+
+                for _ in 0..amt {
+                    let from_index = rng.next_u32() as usize % pmf.len();
+                    let (from_pos, from_mass) = &mut pmf[from_index];
+                    let from_pos = *from_pos;
+                    let partial_move = *from_mass != 1 && rng.next_u32() % 2 == 0;
+                    let mass = if partial_move {
+                        let mass = 1 + rng.next_u32() % (*from_mass - 1);
+                        *from_mass -= mass;
+                        mass
+                    } else {
+                        let mass = *from_mass;
+                        pmf.remove(from_index);
+                        mass
+                    };
+
+                    let move_to_existing = rng.next_u32() % 2 == 0;
+                    if move_to_existing {
+                        let to_index = rng.next_u32() as usize % pmf.len();
+                        let (to_pos, to_mass) = &mut pmf[to_index];
+                        tree.shift(from_pos, *to_pos, mass).unwrap();
+                        *to_mass += mass;
+                    } else {
+                        // Find a random position where there isn't yet any entry in the tree.
+                        let (to_pos, to_index) = loop {
+                            let int_to_pos = rng.next_u64() >> 14;
+                            let to_pos =
+                                f(1.2 * (int_to_pos as f64 / (u64::MAX >> 14) as f64) - 0.1);
+                            let to_index = pmf.partition_point(|&(pos, _)| pos < to_pos);
+                            if pmf.get(to_index).map(|&(pos, _)| pos) != Some(to_pos) {
+                                break (to_pos, to_index);
+                            }
+                        };
+
+                        tree.shift(from_pos, to_pos, mass).unwrap();
+                        pmf.insert(to_index, (to_pos, mass));
+                    }
+                }
+                tree.debug_assert_integrity();
+                let cdf = pmf
+                    .into_iter()
+                    .scan(0, |accum, (pos, mass)| {
+                        *accum += mass;
+                        Some((pos, *accum))
+                    })
+                    .collect::<Vec<_>>();
+            }
+
+            // Remove some of the items in random order and verify the tree's correctness again.
             let mut removals = sorted_insertions;
             let partial_removal_probability = distributions::Bernoulli::new(0.1).unwrap();
             let mut cdf_iter = cdf.iter_mut();
@@ -2485,6 +3148,7 @@ mod tests {
             }
 
             verify_tree(&tree, &cdf);
+            tree.debug_assert_integrity();
 
             // Remove all remaining entries.
             let mut removals = cdf
@@ -2505,6 +3169,7 @@ mod tests {
             assert_eq!(tree.root_type, super::Leaf);
             let root = unsafe { tree.root.as_leaf_unchecked() };
             assert_eq!(root.data.bulk.len(), 0);
+            tree.debug_assert_integrity();
         }
     }
 
@@ -2533,7 +3198,7 @@ mod tests {
 
             let pmf = (0..amt)
                 .map(|i| {
-                    let pos = F32::new(i as f32).unwrap();
+                    let pos = f(i as f32);
                     let count = 1 + rng.next_u32() % 128;
                     (pos, count)
                 })
@@ -2557,5 +3222,748 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(pmf_from_iterator, pmf);
         }
+    }
+
+    #[test]
+    fn shift_leaf_node() {
+        fn expect_node<const CAP: usize>(node: &LeafNode<F32, u32, CAP>, expected: &[(f32, u32)]) {
+            assert_eq!(node.data.bulk.len(), expected.len());
+            for (entry, &(pos, accum)) in node.data.bulk.first_as_ref().iter().zip(expected) {
+                assert_eq!(entry, &Entry::new(f(pos), accum));
+            }
+        }
+
+        let mut node = LeafNode::<_, _, 10>::new();
+        let entries = [
+            (0.1f32, 2u32),
+            (0.2, 13),
+            (0.3, 16),
+            (0.4, 18),
+            (0.5, 19),
+            (0.6, 24),
+            (0.7, 28),
+        ];
+        for &(pos, accum) in &entries {
+            node.data
+                .bulk
+                .try_push(Entry::new(f(pos), accum), ())
+                .unwrap();
+        }
+
+        assert!(node.shift(f(0.25), f(0.4), true, 1).is_err());
+
+        assert!(node.shift(f(0.3), f(0.6), true, 1).unwrap().is_none());
+        expect_node(
+            &node,
+            &[
+                (0.1, 2),
+                (0.2, 13),
+                (0.3, 15),
+                (0.4, 17),
+                (0.5, 18),
+                (0.6, 24),
+                (0.7, 28),
+            ],
+        );
+
+        assert!(node.shift(f(0.4), f(0.5), true, 1).unwrap().is_none());
+        expect_node(
+            &node,
+            &[
+                (0.1, 2),
+                (0.2, 13),
+                (0.3, 15),
+                (0.4, 16),
+                (0.5, 18),
+                (0.6, 24),
+                (0.7, 28),
+            ],
+        );
+
+        assert!(node.shift(f(0.1), f(0.25), true, 1).unwrap().is_none());
+        expect_node(
+            &node,
+            &[
+                (0.1, 1),
+                (0.2, 12),
+                (0.25, 13),
+                (0.3, 15),
+                (0.4, 16),
+                (0.5, 18),
+                (0.6, 24),
+                (0.7, 28),
+            ],
+        );
+
+        assert!(node.shift(f(0.3), f(0.6), true, 2).unwrap().is_none());
+        expect_node(
+            &node,
+            &[
+                (0.1, 1),
+                (0.2, 12),
+                (0.25, 13),
+                (0.4, 14),
+                (0.5, 16),
+                (0.6, 24),
+                (0.7, 28),
+            ],
+        );
+
+        assert!(node.shift(f(0.2), f(0.65), true, 6).unwrap().is_none());
+        expect_node(
+            &node,
+            &[
+                (0.1, 1),
+                (0.2, 6),
+                (0.25, 7),
+                (0.4, 8),
+                (0.5, 10),
+                (0.6, 18),
+                (0.65, 24),
+                (0.7, 28),
+            ],
+        );
+
+        assert!(node.shift(f(0.1), f(0.65), false, 1).unwrap().is_none());
+        expect_node(
+            &node,
+            &[
+                (0.1, 2),
+                (0.2, 7),
+                (0.25, 8),
+                (0.4, 9),
+                (0.5, 11),
+                (0.6, 19),
+                (0.65, 24),
+                (0.7, 28),
+            ],
+        );
+
+        assert!(node.shift(f(0.05), f(0.65), false, 3).unwrap().is_none());
+        expect_node(
+            &node,
+            &[
+                (0.05, 3),
+                (0.1, 5),
+                (0.2, 10),
+                (0.25, 11),
+                (0.4, 12),
+                (0.5, 14),
+                (0.6, 22),
+                (0.65, 24),
+                (0.7, 28),
+            ],
+        );
+
+        assert!(node.shift(f(0.15), f(0.6), false, 2).unwrap().is_none());
+        expect_node(
+            &node,
+            &[
+                (0.05, 3),
+                (0.1, 5),
+                (0.15, 7),
+                (0.2, 12),
+                (0.25, 13),
+                (0.4, 14),
+                (0.5, 16),
+                (0.6, 22),
+                (0.65, 24),
+                (0.7, 28),
+            ],
+        );
+
+        {
+            let mut node = node.clone();
+            let split_off_part = node.shift(f(0.2), f(0.3), true, 2).unwrap().unwrap();
+            let right_sibling = unsafe { split_off_part.right.into_leaf_unchecked() };
+            assert_eq!(split_off_part.pos, f(0.3));
+            assert_eq!(split_off_part.accum, 13);
+            expect_node(
+                &node,
+                &[(0.05, 3), (0.1, 5), (0.15, 7), (0.2, 10), (0.25, 11)],
+            );
+            expect_node(
+                &*right_sibling,
+                &[(0.4, 1), (0.5, 3), (0.6, 9), (0.65, 11), (0.7, 15)],
+            );
+        }
+
+        {
+            let mut node = node.clone();
+            let split_off_part = node.shift(f(0.1), f(0.175), true, 1).unwrap().unwrap();
+            let right_sibling = unsafe { split_off_part.right.into_leaf_unchecked() };
+            assert_eq!(split_off_part.pos, f(0.25));
+            assert_eq!(split_off_part.accum, 13);
+            expect_node(
+                &node,
+                &[(0.05, 3), (0.1, 4), (0.15, 6), (0.175, 7), (0.2, 12)],
+            );
+            expect_node(
+                &*right_sibling,
+                &[(0.4, 1), (0.5, 3), (0.6, 9), (0.65, 11), (0.7, 15)],
+            );
+        }
+
+        {
+            let mut node = node.clone();
+            let split_off_part = node.shift(f(0.2), f(0.55), true, 3).unwrap().unwrap();
+            let right_sibling = unsafe { split_off_part.right.into_leaf_unchecked() };
+            assert_eq!(split_off_part.pos, f(0.4));
+            assert_eq!(split_off_part.accum, 11);
+            expect_node(
+                &node,
+                &[(0.05, 3), (0.1, 5), (0.15, 7), (0.2, 9), (0.25, 10)],
+            );
+            expect_node(
+                &*right_sibling,
+                &[(0.5, 2), (0.55, 5), (0.6, 11), (0.65, 13), (0.7, 17)],
+            );
+        }
+
+        {
+            let mut node = node.clone();
+            let split_off_part = node.shift(f(0.2), f(10.0), true, 3).unwrap().unwrap();
+            let right_sibling = unsafe { split_off_part.right.into_leaf_unchecked() };
+            assert_eq!(split_off_part.pos, f(0.4));
+            assert_eq!(split_off_part.accum, 11);
+            expect_node(
+                &node,
+                &[(0.05, 3), (0.1, 5), (0.15, 7), (0.2, 9), (0.25, 10)],
+            );
+            expect_node(
+                &*right_sibling,
+                &[(0.5, 2), (0.6, 8), (0.65, 10), (0.7, 14), (10.0, 17)],
+            );
+        }
+
+        {
+            let mut node = node.clone();
+            let split_off_part = node.shift(f(0.625), f(0.65), false, 1).unwrap().unwrap();
+            let right_sibling = unsafe { split_off_part.right.into_leaf_unchecked() };
+            assert_eq!(split_off_part.pos, f(0.4));
+            assert_eq!(split_off_part.accum, 14);
+            expect_node(
+                &node,
+                &[(0.05, 3), (0.1, 5), (0.15, 7), (0.2, 12), (0.25, 13)],
+            );
+            expect_node(
+                &*right_sibling,
+                &[(0.5, 2), (0.6, 8), (0.625, 9), (0.65, 10), (0.7, 14)],
+            );
+        }
+
+        {
+            let mut node = node.clone();
+            let split_off_part = node.shift(f(0.3), f(0.65), false, 1).unwrap().unwrap();
+            let right_sibling = unsafe { split_off_part.right.into_leaf_unchecked() };
+            assert_eq!(split_off_part.pos, f(0.3));
+            assert_eq!(split_off_part.accum, 14);
+            expect_node(
+                &node,
+                &[(0.05, 3), (0.1, 5), (0.15, 7), (0.2, 12), (0.25, 13)],
+            );
+            expect_node(
+                &*right_sibling,
+                &[(0.4, 1), (0.5, 3), (0.6, 9), (0.65, 10), (0.7, 14)],
+            );
+        }
+
+        {
+            let mut node = node.clone();
+            let split_off_part = node.shift(f(0.125), f(0.65), false, 1).unwrap().unwrap();
+            let right_sibling = unsafe { split_off_part.right.into_leaf_unchecked() };
+            assert_eq!(split_off_part.pos, f(0.25));
+            assert_eq!(split_off_part.accum, 14);
+            expect_node(
+                &node,
+                &[(0.05, 3), (0.1, 5), (0.125, 6), (0.15, 8), (0.2, 13)],
+            );
+            expect_node(
+                &*right_sibling,
+                &[(0.4, 1), (0.5, 3), (0.6, 9), (0.65, 10), (0.7, 14)],
+            );
+        }
+
+        {
+            let mut node = node.clone();
+            let split_off_part = node.shift(f(0.0), f(0.65), false, 1).unwrap().unwrap();
+            let right_sibling = unsafe { split_off_part.right.into_leaf_unchecked() };
+            assert_eq!(split_off_part.pos, f(0.25));
+            assert_eq!(split_off_part.accum, 14);
+            expect_node(
+                &node,
+                &[(0.0, 1), (0.05, 4), (0.1, 6), (0.15, 8), (0.2, 13)],
+            );
+            expect_node(
+                &*right_sibling,
+                &[(0.4, 1), (0.5, 3), (0.6, 9), (0.65, 10), (0.7, 14)],
+            );
+        }
+    }
+
+    #[test]
+    fn tree_shift_manual() {
+        fn expect_tree<const CAP: usize>(
+            tree: &AugmentedBTree<F32, u32, CAP>,
+            expected: &[(f32, u32)],
+        ) {
+            assert!(tree
+                .iter()
+                .eq(expected.iter().map(|&(pos, accum)| (f(pos), accum))));
+            tree.debug_assert_integrity();
+        }
+
+        dbg!(tree_shift_manual_internal::<20>());
+        dbg!(tree_shift_manual_internal::<12>());
+        dbg!(tree_shift_manual_internal::<11>());
+        dbg!(tree_shift_manual_internal::<10>());
+        dbg!(tree_shift_manual_internal::<9>());
+        dbg!(tree_shift_manual_internal::<8>());
+        dbg!(tree_shift_manual_internal::<7>());
+        dbg!(tree_shift_manual_internal::<6>());
+        dbg!(tree_shift_manual_internal::<5>());
+        dbg!(tree_shift_manual_internal::<4>());
+
+        fn tree_shift_manual_internal<const CAP: usize>() {
+            let mut tree = AugmentedBTree::<_, _, CAP>::new();
+            let insertions = [
+                (0.1f32, 2u32),
+                (0.2, 11),
+                (0.3, 3),
+                (0.4, 2),
+                (0.5, 1),
+                (0.6, 5),
+                (0.7, 4),
+            ];
+            for &(pos, count) in &insertions {
+                tree.insert(f(pos), count);
+            }
+            expect_tree(
+                &tree,
+                &[
+                    (0.1, 2),
+                    (0.2, 13),
+                    (0.3, 16),
+                    (0.4, 18),
+                    (0.5, 19),
+                    (0.6, 24),
+                    (0.7, 28),
+                ],
+            );
+
+            assert!(tree.shift(f(0.25), f(0.4), 1).is_err());
+
+            tree.shift(f(0.3), f(0.6), 1).unwrap();
+            expect_tree(
+                &tree,
+                &[
+                    (0.1, 2),
+                    (0.2, 13),
+                    (0.3, 15),
+                    (0.4, 17),
+                    (0.5, 18),
+                    (0.6, 24),
+                    (0.7, 28),
+                ],
+            );
+
+            tree.shift(f(0.4), f(0.5), 1).unwrap();
+            expect_tree(
+                &tree,
+                &[
+                    (0.1, 2),
+                    (0.2, 13),
+                    (0.3, 15),
+                    (0.4, 16),
+                    (0.5, 18),
+                    (0.6, 24),
+                    (0.7, 28),
+                ],
+            );
+
+            tree.shift(f(0.1), f(0.25), 1).unwrap();
+            expect_tree(
+                &tree,
+                &[
+                    (0.1, 1),
+                    (0.2, 12),
+                    (0.25, 13),
+                    (0.3, 15),
+                    (0.4, 16),
+                    (0.5, 18),
+                    (0.6, 24),
+                    (0.7, 28),
+                ],
+            );
+
+            tree.shift(f(0.3), f(0.6), 2).unwrap();
+            expect_tree(
+                &tree,
+                &[
+                    (0.1, 1),
+                    (0.2, 12),
+                    (0.25, 13),
+                    (0.4, 14),
+                    (0.5, 16),
+                    (0.6, 24),
+                    (0.7, 28),
+                ],
+            );
+
+            tree.shift(f(0.2), f(0.65), 6).unwrap();
+            expect_tree(
+                &tree,
+                &[
+                    (0.1, 1),
+                    (0.2, 6),
+                    (0.25, 7),
+                    (0.4, 8),
+                    (0.5, 10),
+                    (0.6, 18),
+                    (0.65, 24),
+                    (0.7, 28),
+                ],
+            );
+
+            tree.shift(f(0.65), f(0.1), 1).unwrap();
+            expect_tree(
+                &tree,
+                &[
+                    (0.1, 2),
+                    (0.2, 7),
+                    (0.25, 8),
+                    (0.4, 9),
+                    (0.5, 11),
+                    (0.6, 19),
+                    (0.65, 24),
+                    (0.7, 28),
+                ],
+            );
+
+            tree.shift(f(0.65), f(0.05), 3).unwrap();
+            expect_tree(
+                &tree,
+                &[
+                    (0.05, 3),
+                    (0.1, 5),
+                    (0.2, 10),
+                    (0.25, 11),
+                    (0.4, 12),
+                    (0.5, 14),
+                    (0.6, 22),
+                    (0.65, 24),
+                    (0.7, 28),
+                ],
+            );
+
+            tree.shift(f(0.6), f(0.15), 2).unwrap();
+            expect_tree(
+                &tree,
+                &[
+                    (0.05, 3),
+                    (0.1, 5),
+                    (0.15, 7),
+                    (0.2, 12),
+                    (0.25, 13),
+                    (0.4, 14),
+                    (0.5, 16),
+                    (0.6, 22),
+                    (0.65, 24),
+                    (0.7, 28),
+                ],
+            );
+
+            {
+                let mut tree = tree.clone();
+                tree.shift(f(0.2), f(0.3), 2).unwrap();
+                expect_tree(
+                    &tree,
+                    &[
+                        (0.05, 3),
+                        (0.1, 5),
+                        (0.15, 7),
+                        (0.2, 10),
+                        (0.25, 11),
+                        (0.3, 13),
+                        (0.4, 14),
+                        (0.5, 16),
+                        (0.6, 22),
+                        (0.65, 24),
+                        (0.7, 28),
+                    ],
+                );
+            }
+
+            {
+                let mut tree = tree.clone();
+                tree.shift(f(0.1), f(0.175), 1).unwrap();
+                expect_tree(
+                    &tree,
+                    &[
+                        (0.05, 3),
+                        (0.1, 4),
+                        (0.15, 6),
+                        (0.175, 7),
+                        (0.2, 12),
+                        (0.25, 13),
+                        (0.4, 14),
+                        (0.5, 16),
+                        (0.6, 22),
+                        (0.65, 24),
+                        (0.7, 28),
+                    ],
+                );
+            }
+
+            {
+                let mut tree = tree.clone();
+                tree.shift(f(0.2), f(0.55), 3).unwrap();
+                expect_tree(
+                    &tree,
+                    &[
+                        (0.05, 3),
+                        (0.1, 5),
+                        (0.15, 7),
+                        (0.2, 9),
+                        (0.25, 10),
+                        (0.4, 11),
+                        (0.5, 13),
+                        (0.55, 16),
+                        (0.6, 22),
+                        (0.65, 24),
+                        (0.7, 28),
+                    ],
+                );
+            }
+
+            {
+                let mut tree = tree.clone();
+                tree.shift(f(0.2), f(10.0), 3).unwrap();
+                expect_tree(
+                    &tree,
+                    &[
+                        (0.05, 3),
+                        (0.1, 5),
+                        (0.15, 7),
+                        (0.2, 9),
+                        (0.25, 10),
+                        (0.4, 11),
+                        (0.5, 13),
+                        (0.6, 19),
+                        (0.65, 21),
+                        (0.7, 25),
+                        (10.0, 28),
+                    ],
+                );
+            }
+
+            {
+                let mut tree = tree.clone();
+                tree.shift(f(0.65), f(0.625), 1).unwrap();
+                expect_tree(
+                    &tree,
+                    &[
+                        (0.05, 3),
+                        (0.1, 5),
+                        (0.15, 7),
+                        (0.2, 12),
+                        (0.25, 13),
+                        (0.4, 14),
+                        (0.5, 16),
+                        (0.6, 22),
+                        (0.625, 23),
+                        (0.65, 24),
+                        (0.7, 28),
+                    ],
+                );
+            }
+
+            {
+                let mut tree = tree.clone();
+                tree.shift(f(0.65), f(0.3), 1).unwrap();
+                expect_tree(
+                    &tree,
+                    &[
+                        (0.05, 3),
+                        (0.1, 5),
+                        (0.15, 7),
+                        (0.2, 12),
+                        (0.25, 13),
+                        (0.3, 14),
+                        (0.4, 15),
+                        (0.5, 17),
+                        (0.6, 23),
+                        (0.65, 24),
+                        (0.7, 28),
+                    ],
+                );
+            }
+
+            {
+                let mut tree = tree.clone();
+                tree.shift(f(0.65), f(0.125), 1).unwrap();
+                expect_tree(
+                    &tree,
+                    &[
+                        (0.05, 3),
+                        (0.1, 5),
+                        (0.125, 6),
+                        (0.15, 8),
+                        (0.2, 13),
+                        (0.25, 14),
+                        (0.4, 15),
+                        (0.5, 17),
+                        (0.6, 23),
+                        (0.65, 24),
+                        (0.7, 28),
+                    ],
+                );
+            }
+
+            {
+                let mut tree = tree.clone();
+                tree.shift(f(0.65), f(0.0), 1).unwrap();
+                expect_tree(
+                    &tree,
+                    &[
+                        (0.0, 1),
+                        (0.05, 4),
+                        (0.1, 6),
+                        (0.15, 8),
+                        (0.2, 13),
+                        (0.25, 14),
+                        (0.4, 15),
+                        (0.5, 17),
+                        (0.6, 23),
+                        (0.65, 24),
+                        (0.7, 28),
+                    ],
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tree_shift_random() {
+        #[cfg(not(miri))]
+        let amts = [100, 1000, 10_000, 100_000];
+
+        #[cfg(miri)]
+        let amts = [100];
+
+        for amt in amts {
+            for near in [false, true] {
+                dbg!(amt, near, tree_shift_random_internal::<128>(amt, near));
+                dbg!(amt, near, tree_shift_random_internal::<10>(amt, near));
+                dbg!(amt, near, tree_shift_random_internal::<5>(amt, near));
+                dbg!(amt, near, tree_shift_random_internal::<4>(amt, near));
+            }
+        }
+
+        fn tree_shift_random_internal<const CAP: usize>(amt: usize, near: bool) {
+            let (insertions, mut rng) = create_random_insertions(amt, (20231220, CAP, near));
+            let mut tree = AugmentedBTree::<F32, u32, CAP>::new();
+            for &(pos, count) in &insertions {
+                tree.insert(pos, count);
+            }
+            let mut pmf = tree
+                .iter()
+                .scan(0, |prev, (pos, accum)| {
+                    let mass = accum - *prev;
+                    *prev = accum;
+                    Some((pos, mass))
+                })
+                .collect::<Vec<_>>();
+
+            let shifts = (0..amt)
+                .map(|_| {
+                    let from_index = rng.next_u32() as usize % pmf.len();
+                    let (from_pos, from_mass) = &mut pmf[from_index];
+                    let from_pos = *from_pos;
+                    let partial_move = *from_mass != 1 && rng.next_u32() % 2 == 0;
+                    let mass = if partial_move {
+                        let mass = 1 + rng.next_u32() % (*from_mass - 1);
+                        *from_mass -= mass;
+                        mass
+                    } else {
+                        let mass = *from_mass;
+                        pmf.remove(from_index);
+                        mass
+                    };
+
+                    let move_to_existing = rng.next_u32() % 2 == 0;
+                    let near_offset = (amt / 20) as i32;
+                    let near_range = (2 * near_offset) as u32;
+                    if move_to_existing {
+                        let to_index = if near {
+                            ((rng.next_u32() as u32 % near_range) as i32 + from_index as i32
+                                - near_offset)
+                                .clamp(0, pmf.len() as i32 - 1) as usize
+                        } else {
+                            rng.next_u32() as usize % pmf.len()
+                        };
+                        let (to_pos, to_mass) = &mut pmf[to_index];
+                        *to_mass += mass;
+                        (from_pos, *to_pos, mass)
+                    } else {
+                        // Find a random position where there isn't yet any entry in the tree.
+                        let (to_pos, to_index) = loop {
+                            let int_to_pos = rng.next_u32() >> 14;
+                            let to_pos = F32::new(
+                                from_pos.get() - 0.05
+                                    + 0.1 * (int_to_pos as f32 / (u32::MAX >> 14) as f32),
+                            )
+                            .unwrap();
+                            let to_index = pmf.partition_point(|&(pos, _)| pos < to_pos);
+                            if pmf.get(to_index).map(|&(pos, _)| pos) != Some(to_pos) {
+                                break (to_pos, to_index);
+                            }
+                        };
+                        pmf.insert(to_index, (to_pos, mass));
+                        (from_pos, to_pos, mass)
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let orig_tree = tree.clone();
+
+            tree.debug_assert_integrity();
+            for &(from_pos, to_pos, mass) in &shifts {
+                tree.shift(from_pos, to_pos, mass).unwrap();
+            }
+            tree.debug_assert_integrity();
+
+            for &(to_pos, from_pos, mass) in shifts.iter().rev() {
+                tree.shift(from_pos, to_pos, mass).unwrap();
+            }
+            tree.debug_assert_integrity();
+
+            assert!(tree.iter().eq(orig_tree.iter()));
+        }
+    }
+
+    fn create_random_insertions(amt: usize, h: impl Hash) -> (Vec<(F32, u32)>, impl Rng) {
+        let mut hasher = DefaultHasher::new();
+        h.hash(&mut hasher);
+        (amt as u64).hash(&mut hasher);
+
+        let mut rng = Xoshiro256StarStar::seed_from_u64(hasher.finish());
+        let repeat_distribution = distributions::Uniform::from(1..5);
+        let count_distribution = distributions::Uniform::from(1..100);
+
+        let mut insertions = Vec::new();
+        for _ in 0..amt {
+            let repeats = rng.sample(repeat_distribution);
+            let int_pos = rng.next_u32();
+            let pos = F32::new(int_pos as f32 / u32::MAX as f32).unwrap();
+            for _ in 0..repeats {
+                insertions.push((pos, rng.sample(count_distribution)));
+            }
+        }
+        insertions.shuffle(&mut rng);
+        assert!(insertions.len() > 2 * amt);
+        assert!(insertions.len() < 4 * amt);
+
+        (insertions, rng)
     }
 }

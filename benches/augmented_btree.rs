@@ -11,7 +11,7 @@ use constriction::{quant::augmented_btree::AugmentedBTree, NonNanFloat};
 
 type F32 = NonNanFloat<f32>;
 
-criterion_group!(augmented_btree, insert, remove, cdf, quantile);
+criterion_group!(augmented_btree, insert, remove, cdf, quantile, shift);
 
 trait Benchmark {
     fn run<const CAP: usize>(name: &str, amt: usize, c: &mut Criterion);
@@ -22,7 +22,7 @@ fn run_benchmarks<B: Benchmark>(c: &mut Criterion) {
         .chars()
         .flat_map(char::to_lowercase)
         .collect::<String>();
-    for amt in [100, 1000, 10_000] {
+    for amt in [10_000, 1000, 100] {
         B::run::<8>(&format!("augmented_btree_{name}_8_{amt}"), amt, c);
         B::run::<16>(&format!("augmented_btree_{name}_16_{amt}"), amt, c);
         B::run::<32>(&format!("augmented_btree_{name}_32_{amt}"), amt, c);
@@ -150,6 +150,114 @@ impl Benchmark for Quantile {
 
 fn quantile(c: &mut Criterion) {
     run_benchmarks::<Quantile>(c);
+}
+
+struct Shift;
+
+impl Benchmark for Shift {
+    fn run<const CAP: usize>(name: &str, amt: usize, c: &mut Criterion) {
+        let mut shift_internals = |near| {
+            let (insertions, mut rng) = create_random_insertions(amt, (20231220, CAP, near));
+            let mut tree = AugmentedBTree::<F32, u32, CAP>::new();
+            for &(pos, count) in &insertions {
+                tree.insert(pos, count);
+            }
+            let mut pmf = tree
+                .iter()
+                .scan(0, |prev, (pos, accum)| {
+                    let mass = accum - *prev;
+                    *prev = accum;
+                    Some((pos, mass))
+                })
+                .collect::<Vec<_>>();
+
+            let shifts = (0..amt)
+                .map(|_| {
+                    let from_index = rng.next_u32() as usize % pmf.len();
+                    let (from_pos, from_mass) = &mut pmf[from_index];
+                    let from_pos = *from_pos;
+                    let partial_move = *from_mass != 1 && rng.next_u32() % 2 == 0;
+                    let mass = if partial_move {
+                        let mass = 1 + rng.next_u32() % (*from_mass - 1);
+                        *from_mass -= mass;
+                        mass
+                    } else {
+                        let mass = *from_mass;
+                        pmf.remove(from_index);
+                        mass
+                    };
+
+                    let move_to_existing = rng.next_u32() % 2 == 0;
+                    let near_offset = (amt / 20) as i32;
+                    let near_range = (2 * near_offset) as u32;
+                    if move_to_existing {
+                        let to_index = if near {
+                            ((rng.next_u32() as u32 % near_range) as i32 + from_index as i32
+                                - near_offset)
+                                .clamp(0, pmf.len() as i32 - 1) as usize
+                        } else {
+                            rng.next_u32() as usize % pmf.len()
+                        };
+                        let (to_pos, to_mass) = &mut pmf[to_index];
+                        *to_mass += mass;
+                        (from_pos, *to_pos, mass)
+                    } else {
+                        // Find a random position where there isn't yet any entry in the tree.
+                        let (to_pos, to_index) = loop {
+                            let int_to_pos = rng.next_u32() >> 14;
+                            let to_pos = F32::new(
+                                from_pos.get() - 0.05
+                                    + 0.1 * (int_to_pos as f32 / (u32::MAX >> 14) as f32),
+                            )
+                            .unwrap();
+                            let to_index = pmf.partition_point(|&(pos, _)| pos < to_pos);
+                            if pmf.get(to_index).map(|&(pos, _)| pos) != Some(to_pos) {
+                                break (to_pos, to_index);
+                            }
+                        };
+                        pmf.insert(to_index, (to_pos, mass));
+                        (from_pos, to_pos, mass)
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            c.bench_function(
+                &format!("{}_{}_naive", name, if near { "near" } else { "far" }),
+                |b| {
+                    b.iter(|| {
+                        for &(from_pos, to_pos, mass) in &shifts {
+                            tree.shift(from_pos, to_pos, mass).unwrap();
+                        }
+                        for &(to_pos, from_pos, mass) in shifts.iter().rev() {
+                            tree.shift(from_pos, to_pos, mass).unwrap();
+                        }
+                    })
+                },
+            );
+
+            c.bench_function(
+                &format!("{}_{}_specialized", name, if near { "near" } else { "far" }),
+                |b| {
+                    b.iter(|| {
+                        for (i, &(from_pos, to_pos, mass)) in shifts.iter().enumerate() {
+                            tree.shift(from_pos, to_pos, mass).unwrap();
+                        }
+                        for (i, &(to_pos, from_pos, mass)) in shifts.iter().rev().enumerate() {
+                            tree.shift(from_pos, to_pos, mass).unwrap();
+                        }
+                    })
+                },
+            );
+        };
+
+        shift_internals(true);
+        shift_internals(false);
+    }
+}
+
+// #[test]
+fn shift(c: &mut Criterion) {
+    run_benchmarks::<Shift>(c);
 }
 
 fn create_random_insertions(amt: usize, h: impl Hash) -> (Vec<(F32, u32)>, impl Rng) {
