@@ -269,7 +269,7 @@ where
         while node_type == NonLeaf {
             let node = unsafe { node_ref.as_non_leaf_unchecked() };
             let separators = node.data.bulk.first_as_ref();
-            let index = separators.partition_point(|entry| entry.pos < pos);
+            let index = separators.partition_point(move |entry| entry.pos < pos);
             if let Some(entry) = separators.get(index.wrapping_sub(1)) {
                 accum = accum + entry.accum
             }
@@ -287,7 +287,7 @@ where
             .data
             .bulk
             .first_as_ref()
-            .partition_point(|entry| entry.pos < pos);
+            .partition_point(move |entry| entry.pos < pos);
         accum = accum
             + leaf_node
                 .data
@@ -325,7 +325,7 @@ where
         while node_type == NonLeaf {
             let node = unsafe { node_ref.as_non_leaf_unchecked() };
             let separators = node.data.bulk.first_as_ref();
-            let index = separators.partition_point(|entry| entry.accum <= remaining);
+            let index = separators.partition_point(move |entry| entry.accum <= remaining);
             if let Some(right_separator) = separators.get(index) {
                 right_bound = Some(right_separator.pos);
             }
@@ -346,7 +346,7 @@ where
             .data
             .bulk
             .first_as_ref()
-            .partition_point(|entry| entry.accum <= remaining);
+            .partition_point(move |entry| entry.accum <= remaining);
         leaf_node
             .data
             .bulk
@@ -377,14 +377,14 @@ where
     P: Copy,
     C: Copy + Default + Add<Output = C> + Sub<Output = C>,
 {
-    fn by_key_mut_update_right<X: Ord>(
+    fn by_key_mut_update_right<X: Ord + Copy>(
         &mut self,
         key: X,
-        get_key: impl Fn(&Entry<P, C>) -> X,
+        get_key: impl Fn(&Entry<P, C>) -> X + Copy,
         update_right: impl Fn(&mut Entry<P, C>),
     ) -> Option<(usize, &mut L)> {
         let separators = self.bulk.first_as_mut();
-        let index = separators.partition_point(|entry| get_key(entry) < key);
+        let index = separators.partition_point(move |entry| get_key(entry) < key);
         let mut right_iter: core::iter::Skip<core::slice::IterMut<'_, Entry<P, C>>> =
             separators.iter_mut().skip(index);
 
@@ -477,8 +477,8 @@ where
                     stolen,
                     last_stolen_entry,
                     old_first_child,
-                    |entry| Entry::new(entry.pos, entry.accum - adjust_accums_left),
-                    |entry| Entry::new(entry.pos, entry.accum + adjust_accums_right),
+                    move |entry| Entry::new(entry.pos, entry.accum - adjust_accums_left),
+                    move |entry| Entry::new(entry.pos, entry.accum + adjust_accums_right),
                 )
                 .expect("can't overflow");
         } else if right_neighbor_len > CAP / 2 {
@@ -497,7 +497,7 @@ where
                 .accum;
             let mut stolen = right_neighbor
                 .bulk
-                .chop_front(amt_steal, |entry| {
+                .chop_front(amt_steal, move |entry| {
                     Entry::new(entry.pos, entry.accum - adjust_accums_right)
                 })
                 .expect("we steal at least one");
@@ -524,7 +524,7 @@ where
             child
                 .data_mut()
                 .bulk
-                .try_append_guarded_transform1(stolen, |entry| {
+                .try_append_guarded_transform1(stolen, move |entry| {
                     Entry::new(entry.pos, entry.accum + adjust_accums_left)
                 })
                 .expect("can't overflow");
@@ -563,7 +563,7 @@ where
                 .bulk
                 .first_as_ref()
                 .get(index_b.wrapping_sub(1))
-                .map(|entry| entry.accum)
+                .map(move |entry| entry.accum)
                 .unwrap_or_default();
             let mut child_b = into_downcast(child_b).leak_data();
 
@@ -610,8 +610,8 @@ where
                             child_b.bulk.take_all(),
                             first_stolen_entry,
                             first_child_c,
-                            |entry| entry,
-                            |entry| Entry::new(entry.pos, entry.accum + adjust_accums_c),
+                            move |entry| entry,
+                            move |entry| Entry::new(entry.pos, entry.accum + adjust_accums_c),
                         )
                         .expect("can't overflow");
                 } else {
@@ -637,8 +637,8 @@ where
                             tail_b,
                             tail_b_last_entry,
                             old_first_child_c,
-                            |entry| Entry::new(entry.pos, entry.accum - adjust_accums_c_left),
-                            |entry| Entry::new(entry.pos, entry.accum + adjust_accums_c_right),
+                            move |entry| Entry::new(entry.pos, entry.accum - adjust_accums_c_left),
+                            move |entry| Entry::new(entry.pos, entry.accum + adjust_accums_c_right),
                         )
                         .expect("can't overflow");
 
@@ -652,7 +652,7 @@ where
                     child_a
                         .data_mut()
                         .bulk
-                        .try_append_transform1(child_b.bulk.take_all(), |entry| {
+                        .try_append_transform1(child_b.bulk.take_all(), move |entry| {
                             Entry::new(entry.pos, entry.accum + adjust_accums_a_right)
                         })
                         .expect("can't overflow");
@@ -669,7 +669,7 @@ where
                 child_a
                     .data_mut()
                     .bulk
-                    .try_append_transform1(child_b.bulk.take_all(), |entry| {
+                    .try_append_transform1(child_b.bulk.take_all(), move |entry| {
                         Entry::new(entry.pos, entry.accum + adjust_accums)
                     })
                     .expect("can't overflow");
@@ -688,7 +688,7 @@ where
     fn remove(&mut self, pos: P, count: C) -> Result<(), ()> {
         let data = self.data.deref_mut();
         let (separators, children) = data.bulk.both_as_mut();
-        let index = separators.partition_point(|entry| entry.pos < pos);
+        let index = separators.partition_point(move |entry| entry.pos < pos);
         let child = children
             .get_mut(index.wrapping_sub(1))
             .unwrap_or(&mut data.head);
@@ -706,7 +706,7 @@ where
             if found {
                 let previous_accum = left_separators
                     .last()
-                    .map(|entry| entry.accum)
+                    .map(move |entry| entry.accum)
                     .unwrap_or_default();
                 if previous_accum > new_accum {
                     return Err(());
@@ -817,10 +817,10 @@ where
 
     fn remove(&mut self, pos: P, count: C) -> Result<(), ()> {
         let entries = self.data.bulk.first_as_mut();
-        let index = entries.partition_point(|entry| entry.pos < pos);
+        let index = entries.partition_point(move |entry| entry.pos < pos);
         let previous_accum = entries
             .get(index.wrapping_sub(1))
-            .map(|entry| entry.accum)
+            .map(move |entry| entry.accum)
             .unwrap_or_default();
 
         let mut right_iter = entries.iter_mut().skip(index);
@@ -831,7 +831,9 @@ where
         if entry.accum == previous_accum + count {
             self.data
                 .bulk
-                .remove_and_update1(index, |entry| Entry::new(entry.pos, entry.accum - count))
+                .remove_and_update1(index, move |entry| {
+                    Entry::new(entry.pos, entry.accum - count)
+                })
                 .expect("it exists");
         } else {
             entry.accum = entry.accum - count;
@@ -875,8 +877,8 @@ where
     fn insert(&mut self, pos: P, count: C) -> Option<(P, C, ChildPtr<P, C, CAP>)> {
         let (insert_index, child) = self.data.by_key_mut_update_right(
             pos,
-            |entry| entry.pos,
-            |entry| entry.accum = entry.accum + count,
+            move |entry| entry.pos,
+            move |entry| entry.accum = entry.accum + count,
         )?;
 
         let Some((separator_pos, ejected_accum, new_child)) = (match self.children_type {
@@ -895,7 +897,7 @@ where
             .bulk
             .first_as_ref()
             .get(insert_index.wrapping_sub(1))
-            .map(|entry| entry.accum)
+            .map(move |entry| entry.accum)
             .unwrap_or_default();
 
         let mut separator = Entry::new(separator_pos, preceding_accum + ejected_accum);
@@ -923,7 +925,7 @@ where
             };
             let chopped_off = self.data.bulk.chop(CAP / 2).expect("node is full");
             right_separated_children
-                .try_append_transform1(chopped_off, |entry| {
+                .try_append_transform1(chopped_off, move |entry| {
                     Entry::new(entry.pos, entry.accum - accum_of_ejected)
                 })
                 .expect("can't overflow");
@@ -951,7 +953,7 @@ where
                 .expect("CAP/2 < original insert_index <= len");
             let (before_insert, after_insert) = chopped_off.split_at_mut(insert_index);
             right_separated_children
-                .try_append_transform1(before_insert, |entry| {
+                .try_append_transform1(before_insert, move |entry| {
                     Entry::new(entry.pos, entry.accum - accum_of_ejected)
                 })
                 .expect("can't overflow");
@@ -960,7 +962,7 @@ where
                 .try_push(separator, new_child)
                 .expect("can't overflow");
             right_separated_children
-                .try_append_transform1(after_insert, |entry| {
+                .try_append_transform1(after_insert, move |entry| {
                     Entry::new(entry.pos, entry.accum - accum_of_ejected)
                 })
                 .expect("can't overflow");
@@ -1050,7 +1052,7 @@ where
             .data
             .bulk
             .first_as_ref()
-            .partition_point(|entry| entry.pos < pos);
+            .partition_point(move |entry| entry.pos < pos);
         let mut right_iter = self.data.bulk.iter_mut().skip(insert_index);
         match right_iter.next() {
             Some((right_entry, ())) if right_entry.pos == pos => {
@@ -1076,7 +1078,7 @@ where
         if self
             .data
             .bulk
-            .try_insert_and_update1(insert_index, insert_entry, (), |entry| {
+            .try_insert_and_update1(insert_index, insert_entry, (), move |entry| {
                 Entry::new(entry.pos, entry.accum + count)
             })
             .is_ok()
@@ -1105,14 +1107,14 @@ where
             right_sibling
                 .data
                 .bulk
-                .try_append_transform1(right_entries, |entry| {
+                .try_append_transform1(right_entries, move |entry| {
                     Entry::new(entry.pos, entry.accum - old_weight_before_right_sibling)
                 })
                 .expect("can't overflow");
 
             self.data
                 .bulk
-                .try_insert_and_update1(insert_index, insert_entry, (), |entry| {
+                .try_insert_and_update1(insert_index, insert_entry, (), move |entry| {
                     Entry::new(entry.pos, entry.accum + count)
                 })
                 .expect("there are `CAP - CAP/2` vacancies, which is >0 because CAP>0.");
@@ -1138,7 +1140,7 @@ where
             right_sibling
                 .data
                 .bulk
-                .try_append_transform1(before_insert, |entry| {
+                .try_append_transform1(before_insert, move |entry| {
                     Entry::new(entry.pos, entry.accum - weight_before_right_sibling)
                 })
                 .expect("can't overflow");
@@ -1153,7 +1155,7 @@ where
             right_sibling
                 .data
                 .bulk
-                .try_append_transform1(after_insert, |entry| {
+                .try_append_transform1(after_insert, move |entry| {
                     Entry::new(entry.pos, entry.accum - weight_before_right_sibling + count)
                 })
                 .expect("can't overflow");
