@@ -227,9 +227,14 @@ where
         self.0.insert(value, CountWrapper(C::one()))
     }
 
+    /// Removes a point at position `pos`.
+    ///
+    /// On success, returns `Some(remaining)` where `remaining` is the number of points that still
+    /// remain at position `pos` after the removal. Returns `None` if removal fails because there
+    /// was no point at position `pos`.
     #[allow(clippy::result_unit_err)]
-    pub fn remove(&mut self, value: V) -> Result<(), ()> {
-        self.0.remove(value, CountWrapper(C::one()))
+    pub fn remove(&mut self, value: V) -> Option<C> {
+        self.0.remove(value, CountWrapper(C::one())).map(|c| c.0)
     }
 }
 

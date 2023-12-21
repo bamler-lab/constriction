@@ -29,7 +29,7 @@ trait Node<P, C, const CAP: usize> {
     /// Tries to remove `count` items at position `pos`. Returns `Err(())` if there are fewer than
     /// `count` items at `pos`. In this case, the subtree rooted at this node has been restored
     /// into its original state at the time the method returns.
-    fn remove(&mut self, pos: P, count: C) -> Result<(), ()>;
+    fn remove(&mut self, pos: P, count: C) -> Option<C>;
 
     fn data_ref(&self) -> &Payload<P, C, Self::ChildRef, CAP>;
     fn data_mut(&mut self) -> &mut Payload<P, C, Self::ChildRef, CAP>;
@@ -210,26 +210,31 @@ where
         }
     }
 
-    pub fn remove(&mut self, pos: P, count: C) -> Result<(), ()> {
-        if count == C::default() {
-            return Ok(());
-        }
-
-        match self.root_type {
+    /// Removes `count > 0` entries at position `pos`.
+    ///
+    /// Returns `Some(remaining)` upon success, where `remaining` is the number of entries that
+    /// still remain at position `pos` after the removal (which could be zero).
+    ///
+    /// Returns `Err(())` if removal failed. This is usuall because there is no entry at `pos` but
+    /// also includes the case where `count == 0` regardless of whether or not there is an entry at
+    /// `pos`. In both error cases, the tree remains unchanged.
+    pub fn remove(&mut self, pos: P, count: C) -> Option<C> {
+        let result = match self.root_type {
             NonLeaf => {
                 let root = unsafe { self.root.as_non_leaf_mut_unchecked() };
-                root.remove(pos, count)?;
+                let result = root.remove(pos, count)?;
                 if root.data.bulk.len() == 0 {
                     unsafe {
                         self.pop_non_leaf_root();
                     }
                 }
+                result
             }
             Leaf => unsafe { self.root.as_leaf_mut_unchecked() }.remove(pos, count)?,
-        }
+        };
 
         self.total = self.total - count;
-        Ok(())
+        Some(result)
     }
 
     /// Removes the root node, assuming it is a `NonLeafNode`, and replaces it
@@ -718,7 +723,7 @@ where
 {
     type ChildRef = ChildPtr<P, C, CAP>;
 
-    fn remove(&mut self, pos: P, count: C) -> Result<(), ()> {
+    fn remove(&mut self, pos: P, count: C) -> Option<C> {
         let data = self.data.deref_mut();
         let (separators, children) = data.bulk.both_as_mut();
         let index = separators.partition_point(move |entry| entry.pos < pos);
@@ -728,24 +733,25 @@ where
         let (left_separators, right_separators) = separators.split_at_mut(index);
         let mut right_iter = right_separators.iter_mut();
 
-        let mut found = false;
+        let mut found = None;
         if let Some(right_separator) = right_iter.next() {
             if right_separator.accum < count {
-                return Err(());
+                return None;
             }
             let new_accum = right_separator.accum - count;
 
-            found = right_separator.pos == pos;
-            if found {
-                unsafe {
+            if right_separator.pos == pos {
+                let previous_accum = unsafe {
                     replace_pos_with_previous_if_accum_is(
                         self.children_type,
                         right_separator,
                         left_separators.last(),
                         new_accum,
                         child,
-                    )?;
-                }
+                    )
+                    .ok()?
+                };
+                found = Some(new_accum - previous_accum)
             }
 
             right_separator.accum = new_accum;
@@ -758,9 +764,9 @@ where
             match self.children_type {
                 NonLeaf => {
                     let child = unsafe { child.as_non_leaf_mut_unchecked() };
-                    if !found && child.remove(pos, count).is_err() {
+                    let Some(result) = found.or_else(|| child.remove(pos, count)) else {
                         break 'dispatch;
-                    }
+                    };
                     if child.data.bulk.len() < CAP / 2 {
                         self.data.rebalance_after_underflow_before(
                             index,
@@ -768,13 +774,14 @@ where
                             |c| unsafe { *c.into_non_leaf_unchecked() },
                         );
                     }
-                    return Ok(());
+                    return Some(result);
                 }
                 Leaf => {
                     let child = unsafe { child.as_leaf_mut_unchecked() };
-                    if !found && child.remove(pos, count).is_err() {
+                    let Some(result) = found.or_else(|| child.remove(pos, count)) else {
                         break 'dispatch;
-                    }
+                    };
+
                     if child.data.bulk.len() < CAP / 2 {
                         self.data.rebalance_after_underflow_before(
                             index,
@@ -782,7 +789,7 @@ where
                             |c| unsafe { *c.into_leaf_unchecked() },
                         );
                     }
-                    return Ok(());
+                    return Some(result);
                 }
             }
         }
@@ -792,7 +799,7 @@ where
             entry.accum = entry.accum + count;
         }
 
-        Err(())
+        None
     }
 
     fn data_ref(&self) -> &Payload<P, C, Self::ChildRef, CAP> {
@@ -819,7 +826,7 @@ where
 {
     type ChildRef = ();
 
-    fn remove(&mut self, pos: P, count: C) -> Result<(), ()> {
+    fn remove(&mut self, pos: P, count: C) -> Option<C> {
         let entries = self.data.bulk.first_as_mut();
         let index = entries.partition_point(move |entry| entry.pos < pos);
         let previous_accum = entries
@@ -828,9 +835,9 @@ where
             .unwrap_or_default();
 
         let mut right_iter = entries.iter_mut().skip(index);
-        let entry = right_iter.next().ok_or(())?;
+        let entry = right_iter.next()?;
         if entry.pos != pos || entry.accum < previous_accum + count {
-            return Err(());
+            return None;
         }
         if entry.accum == previous_accum + count {
             self.data
@@ -839,14 +846,14 @@ where
                     Entry::new(entry.pos, entry.accum - count)
                 })
                 .expect("it exists");
+            Some(C::default())
         } else {
             entry.accum = entry.accum - count;
             for entry in right_iter {
                 entry.accum = entry.accum - count;
             }
+            Some(entry.accum - previous_accum)
         }
-
-        Ok(())
     }
 
     fn data_ref(&self) -> &Payload<P, C, Self::ChildRef, CAP> {
@@ -1164,7 +1171,9 @@ where
     }
 }
 
-///
+/// Returns `Ok(last_accum)` where `last_accum <= new_accum` is the `accum` value of the subtree
+/// rooted at `left_child`, regardless of whether it was swapped out or not. Returns `Err(())` if
+/// `last_accum > new_accum`.
 ///
 ///  # Safety
 ///
@@ -1175,7 +1184,7 @@ unsafe fn replace_pos_with_previous_if_accum_is<P, C, const CAP: usize>(
     previous_separator: Option<&Entry<P, C>>,
     new_accum: C,
     left_child: &mut ChildPtr<P, C, CAP>,
-) -> Result<(), ()>
+) -> Result<C, ()>
 where
     P: Ord + Copy,
     C: Default + Ord + Add<Output = C> + Sub<Output = C> + Copy,
@@ -1187,11 +1196,13 @@ where
         return Err(());
     }
     let new_accum_in_left_subtree = new_accum - previous_accum;
+    let last_accum;
     match children_type {
         NonLeaf => {
             let child = unsafe { left_child.as_non_leaf_mut_unchecked() };
             let last_entry_left = child.get_last_and_remove_if_accum_is(new_accum_in_left_subtree);
-            match last_entry_left.accum.cmp(&new_accum_in_left_subtree) {
+            last_accum = last_entry_left.accum;
+            match last_accum.cmp(&new_accum_in_left_subtree) {
                 Equal => {
                     // Removed all counts at `pos`. Replace the separator with the last
                     // entry of the left subtree, which we just removed.
@@ -1204,7 +1215,8 @@ where
         Leaf => {
             let child = unsafe { left_child.as_leaf_mut_unchecked() };
             let last_entry_left = child.get_last_and_remove_if_accum_is(new_accum_in_left_subtree);
-            match last_entry_left.accum.cmp(&new_accum_in_left_subtree) {
+            last_accum = last_entry_left.accum;
+            match last_accum.cmp(&new_accum_in_left_subtree) {
                 Equal => {
                     // Removed all counts at `pos`. Replace the separator with the last
                     // entry of the left subtree, which we just removed.
@@ -1216,7 +1228,7 @@ where
         }
     };
 
-    Ok(())
+    Ok(last_accum)
 }
 
 impl<P, C, const CAP: usize> LeafNode<P, C, CAP>
@@ -2361,7 +2373,7 @@ mod tests {
             // { -2.25=>3, 1.5=>10, 2.5=>9, 3.25=>7, 4.75=>3, 5.125=>2, 6.5=>7 }.
             let removals = [
                 (5.125, 1, true, 32, 34, 33),
-                (2.7, 0, true, 22, 22, 22),
+                (2.7, 0, false, 22, 22, 22),
                 (0.1, 1, false, 3, 3, 3),
                 (1.5, 6, true, 3, 13, 7),
                 (3.25, 7, true, 16, 23, 16),
@@ -2379,7 +2391,7 @@ mod tests {
                 assert_eq!(tree.left_cumulative(pos), cdf);
                 assert_eq!(tree.left_cumulative(pos_right), cdf_right_before);
 
-                let worked = tree.remove(pos, count).is_ok();
+                let worked = tree.remove(pos, count).is_some();
 
                 assert_eq!(worked, should_work);
                 assert_eq!(tree.left_cumulative(pos), cdf);
@@ -2406,7 +2418,7 @@ mod tests {
             // Removing one more item should make sure the root node is a leaf node for all CAP >= 4.
             for &(pos, count) in &expected_tree {
                 let mut tree = tree.clone();
-                assert!(tree.remove(f(pos), count).is_ok());
+                assert!(tree.remove(f(pos), count).is_some());
                 assert_eq!(tree.total(), accum - count);
 
                 assert_eq!(tree.root_type, super::Leaf);
@@ -2430,7 +2442,7 @@ mod tests {
             }
 
             for &(pos, count) in &expected_tree {
-                assert!(tree.remove(f(pos), count).is_ok());
+                assert!(tree.remove(f(pos), count).is_some());
                 tree.debug_assert_integrity();
             }
 
@@ -2583,8 +2595,8 @@ mod tests {
                 .collect::<Vec<_>>();
 
             removals.shuffle(&mut rng);
-            for (i, &(pos, count)) in removals.iter().enumerate() {
-                assert_eq!((i, tree.remove(pos, count)), (i, Ok(())));
+            for &(pos, count) in &removals {
+                assert!(tree.remove(pos, count).is_some());
             }
 
             verify_tree(&tree, &cdf);
@@ -2601,8 +2613,8 @@ mod tests {
                 .collect::<Vec<_>>();
             removals.shuffle(&mut rng);
 
-            for (i, &(pos, count)) in removals.iter().enumerate() {
-                assert_eq!((i, tree.remove(pos, count)), (i, Ok(())));
+            for &(pos, count) in &removals {
+                assert!(tree.remove(pos, count).is_some());
             }
 
             assert_eq!(tree.total(), 0);
