@@ -2,7 +2,7 @@ use core::{
     cmp::Ordering::{Equal, Greater, Less},
     fmt::{Debug, Display},
     mem::ManuallyDrop,
-    ops::{Add, Deref, DerefMut, Sub},
+    ops::{Add, DerefMut, Sub},
 };
 
 use self::{bounded_vec::BoundedPairOfVecs, child_ptr::ChildPtr};
@@ -1103,8 +1103,9 @@ where
         lower_bound: Option<P>,
         upper_bound: Option<(P, C)>,
     ) -> C {
-        let data = self.data.deref();
-        let (separators, children) = data.bulk.both_as_ref();
+        let data = &*self.data;
+        let separators = data.bulk.first_as_ref();
+        let children = data.bulk.second_as_ref();
         if is_root {
             assert!(!separators.is_empty());
         } else {
@@ -1738,10 +1739,6 @@ mod bounded_vec {
 
         pub fn second_as_ref(&self) -> &[T2] {
             unsafe { core::mem::transmute(self.buf2.get_unchecked(..self.len)) }
-        }
-
-        pub fn both_as_ref(&self) -> (&[T1], &[T2]) {
-            (self.first_as_ref(), self.second_as_ref())
         }
 
         pub fn first_as_mut(&mut self) -> &mut [T1] {
