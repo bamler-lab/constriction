@@ -248,7 +248,12 @@ mod tests {
 
     #[test]
     fn dynamic_empirical_distribution() {
+        #[cfg(not(miri))]
         let amt = 1000;
+
+        #[cfg(miri)]
+        let amt = 100;
+
         let mut rng = Xoshiro256StarStar::seed_from_u64(202312115);
         let mut points = (0..amt)
             .flat_map(|_| {
@@ -263,8 +268,14 @@ mod tests {
 
         let dist = DynamicEmpiricalDistribution::<F32, u32>::try_from_points(&points).unwrap();
 
+        #[cfg(not(miri))]
+        let num_moves = 100;
+
+        #[cfg(miri)]
+        let num_moves = 10;
+
         assert_eq!(dist.total() as usize, points.len());
-        for _ in 0..100 {
+        for _ in 0..num_moves {
             let index = rng.next_u32() as usize % amt;
             let x = points[index];
             let expected = points.iter().filter(|&&y| y < x).count() as u32;

@@ -87,8 +87,13 @@ mod tests {
     use rand_xoshiro::Xoshiro256StarStar;
 
     #[test]
-    fn dynamic_empirical_distribution() {
+    fn vbq() {
+        #[cfg(not(miri))]
         let amt = 1000;
+
+        #[cfg(miri)]
+        let amt = 100;
+
         let mut rng = Xoshiro256StarStar::seed_from_u64(202312116);
         let mut points = (0..amt)
             .flat_map(|_| {
@@ -106,7 +111,13 @@ mod tests {
         dbg!(initial_entropy);
         let mut entropy_previous_coarseness = initial_entropy;
 
-        for coarseness in [0.00001, 0.001, 0.01, 0.1, 1.0] {
+        #[cfg(not(miri))]
+        let (num_repeats, coarsenesses) = (5, [0.00001, 0.001, 0.01, 0.1, 1.0]);
+
+        #[cfg(miri)]
+        let (num_repeats, coarsenesses) = (2, [0.001, 0.1]);
+
+        for coarseness in coarsenesses {
             dbg!(coarseness);
             let mut prior = prior.clone();
             let mut shifted_points = points.clone();
@@ -114,7 +125,7 @@ mod tests {
             let coarseness = F32::new(coarseness).unwrap();
             let mut previous_entropy = initial_entropy;
 
-            for i in 0..5 {
+            for i in 0..num_repeats {
                 for (point, shifted_point) in points.iter().zip(shifted_points.iter_mut()) {
                     let quant = vbq_quadratic_distortion::<f32, _, _>(
                         &prior,
