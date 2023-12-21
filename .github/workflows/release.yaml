@@ -115,7 +115,7 @@ jobs:
           RUSTFLAGS: "-Zrandomize-layout"
           MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-disable-isolation"
         run: |
-          cargo miri test --no-fail-fast --all-targets
+          cargo miri test --no-fail-fast --all-targets --features benchmark-internals
 
   python-test:
     runs-on: ${{ matrix.os }}
