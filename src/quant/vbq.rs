@@ -5,7 +5,7 @@ use super::EmpiricalDistribution;
 /// # Notes
 ///
 /// - `F` is the float type with which the bisection in quantile-space is performed.
-pub fn vbq_gaussian_posterior<F, V, C>(
+pub fn vbq_quadratic_distortion<F, V, C>(
     prior: &impl EmpiricalDistribution<V, C>,
     posterior_mean: V,
     posterior_variance: V,
@@ -116,7 +116,7 @@ mod tests {
 
             for i in 0..5 {
                 for (point, shifted_point) in points.iter().zip(shifted_points.iter_mut()) {
-                    let quant = vbq_gaussian_posterior::<f32, _, _>(
+                    let quant = vbq_quadratic_distortion::<f32, _, _>(
                         &prior,
                         *point,
                         posterior_variance,

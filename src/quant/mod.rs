@@ -241,13 +241,6 @@ where
     pub fn remove(&mut self, value: V) -> Result<(), ()> {
         self.0.remove(value, CountWrapper(C::one()))
     }
-
-    pub fn shift(&mut self, old: V, new: V) -> Result<(), ()> {
-        // TODO: replace with a dedicated optimized implementation.
-        self.remove(old)?;
-        self.insert(new);
-        Ok(())
-    }
 }
 
 #[cfg(test)]

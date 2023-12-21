@@ -1,3 +1,4 @@
+pub mod quant;
 pub mod stream;
 pub mod symbol;
 
@@ -174,9 +175,16 @@ use pyo3::{prelude::*, wrap_pymodule};
 #[pymodule]
 #[pyo3(name = "constriction")]
 fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+    module.add_wrapped(wrap_pymodule!(init_quant))?;
     module.add_wrapped(wrap_pymodule!(init_stream))?;
     module.add_wrapped(wrap_pymodule!(init_symbol))?;
     Ok(())
+}
+
+#[pymodule]
+#[pyo3(name = "quant")]
+fn init_quant(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+    quant::init_module(py, module)
 }
 
 /// Stream codes, i.e., entropy codes that amortize compressed bits over several symbols.
