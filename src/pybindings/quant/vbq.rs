@@ -169,7 +169,7 @@ fn parse_slice_indices(
                     step,
                     slicelength: _,
                 } = slice
-                    .indices(dims.next().expect("too long") as i64)
+                    .indices(dims.next().expect("too long") as core::ffi::c_long)
                     .expect("doesn't fit");
                 SliceInfoElem::Slice {
                     start,
