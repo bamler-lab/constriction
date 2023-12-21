@@ -126,10 +126,10 @@ impl VbqView {
                     posterior_variance,
                     coarseness,
                 );
-                *x = new_value.get();
-                *reference = new_value.get();
                 prior.remove(reference_val).expect("prior out of sync");
                 prior.insert(new_value);
+                *x = new_value.get();
+                *reference = new_value.get();
             }
         } else {
             for x in data.iter_mut() {
@@ -151,14 +151,14 @@ impl VbqView {
         Ok(())
     }
 
-    #[pyo3(signature = (new_values, update_prior))]
-    #[pyo3(text_signature = "(self, new_values, update_prior=False)")]
+    #[pyo3(text_signature = "(self, new_values, update_prior=False, reference=None)")]
     pub fn update(
         &mut self,
         py: Python<'_>,
         new_values: PyReadonlyArrayDyn<'_, f32>,
         update_prior: Option<bool>,
-    ) {
+        reference: Option<PyReadwriteArrayDyn<'_, f32>>,
+    ) -> PyResult<()> {
         let vbq = &mut *self.vbq.lock().unwrap();
         let mut data = vbq.data.as_ref(py).readwrite();
         let mut data = data.as_array_mut();
@@ -167,19 +167,40 @@ impl VbqView {
         let new_values = new_values.as_array();
         let prior = &mut vbq.prior;
 
-        if update_prior == Some(true) {
-            for (dst, &src) in data.iter_mut().zip(new_values.iter()) {
+        if let Some(mut reference) = reference {
+            if update_prior == Some(false) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Providing a `referenc` implies `update_prior=True`",
+                ));
+            }
+            let mut reference = reference.as_array_mut();
+            for ((dst, &src), reference) in data
+                .iter_mut()
+                .zip(new_values.iter())
+                .zip(reference.iter_mut())
+            {
+                prior
+                    .remove(NonNanFloat::new(*reference).unwrap())
+                    .expect("prior out of sync");
+                prior.insert(NonNanFloat::new(src).unwrap());
                 *dst = src;
+                *reference = src;
+            }
+        } else if update_prior == Some(true) {
+            for (dst, &src) in data.iter_mut().zip(new_values.iter()) {
                 prior
                     .remove(NonNanFloat::new(*dst).unwrap())
                     .expect("prior out of sync");
                 prior.insert(NonNanFloat::new(src).unwrap());
+                *dst = src;
             }
         } else {
             for (dst, &src) in data.iter_mut().zip(new_values.iter()) {
                 *dst = src;
             }
         }
+
+        Ok(())
     }
 }
 
