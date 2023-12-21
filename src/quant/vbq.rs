@@ -80,7 +80,7 @@ mod tests {
     use super::*;
 
     use super::super::DynamicEmpiricalDistribution;
-    use crate::{quant::vbq, F32};
+    use crate::F32;
 
     use alloc::vec::Vec;
     use rand::{seq::SliceRandom, RngCore, SeedableRng};
@@ -122,7 +122,8 @@ mod tests {
                         posterior_variance,
                         coarseness,
                     );
-                    prior.shift(*shifted_point, quant).unwrap();
+                    prior.remove(*shifted_point).unwrap();
+                    prior.insert(quant);
                     *shifted_point = quant;
                 }
                 let entropy = prior.entropy_base2::<f32>();

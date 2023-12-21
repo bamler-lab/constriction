@@ -13,17 +13,6 @@ use core::{
     ops::{Add, Sub},
 };
 
-use alloc::vec::Vec;
-
-#[cfg(feature = "std")]
-use std::collections::HashMap;
-
-#[cfg(not(feature = "std"))]
-use hashbrown::hash_map::{
-    Entry::{Occupied, Vacant},
-    HashMap,
-};
-
 use crate::{UnwrapInfallible, F32};
 
 use self::augmented_btree::AugmentedBTree;
@@ -175,29 +164,29 @@ where
         Ok(Self(tree))
     }
 
-    fn try_from_points_hashable<'a, F>(
-        points: impl IntoIterator<Item = &'a F>,
-    ) -> Result<Self, <V as TryFrom<F>>::Error>
-    where
-        Self: Sized,
-        V: TryFrom<F> + Hash,
-        F: Copy + 'a,
-    {
-        let mut counts = HashMap::new();
-        for &point in points {
-            let point = V::try_from(point)?;
-            counts
-                .entry(point)
-                .and_modify(|count| *count = *count + CountWrapper(C::one()))
-                .or_insert(CountWrapper(C::one()));
-        }
+    // fn try_from_points_hashable<'a, F>(
+    //     points: impl IntoIterator<Item = &'a F>,
+    // ) -> Result<Self, <V as TryFrom<F>>::Error>
+    // where
+    //     Self: Sized,
+    //     V: TryFrom<F> + Hash,
+    //     F: Copy + 'a,
+    // {
+    //     let mut counts = HashMap::new();
+    //     for &point in points {
+    //         let point = V::try_from(point)?;
+    //         counts
+    //             .entry(point)
+    //             .and_modify(|count| *count = *count + CountWrapper(C::one()))
+    //             .or_insert(CountWrapper(C::one()));
+    //     }
 
-        let mut sorted = counts.into_iter().collect::<Vec<_>>();
-        sorted.sort_unstable_by_key(|(v, _)| *v);
-        let tree = unsafe { AugmentedBTree::from_sorted_unchecked(&sorted) };
+    //     let mut sorted = counts.into_iter().collect::<Vec<_>>();
+    //     sorted.sort_unstable_by_key(|(v, _)| *v);
+    //     let tree = unsafe { AugmentedBTree::from_sorted_unchecked(&sorted) };
 
-        Ok(Self(tree))
-    }
+    //     Ok(Self(tree))
+    // }
 
     fn total(&self) -> C {
         self.0.total().0
@@ -238,6 +227,7 @@ where
         self.0.insert(value, CountWrapper(C::one()))
     }
 
+    #[allow(clippy::result_unit_err)]
     pub fn remove(&mut self, value: V) -> Result<(), ()> {
         self.0.remove(value, CountWrapper(C::one()))
     }

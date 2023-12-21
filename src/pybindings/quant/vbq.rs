@@ -8,17 +8,10 @@
 //!   - a posterior variance (for now just a scalar; later it will broadcast)
 //!   - a boolean switch `dynamic`, and possibly an optional parameter `reference`
 
-use core::{convert::TryFrom, fmt::Debug};
-
 use alloc::vec;
 use alloc::vec::Vec;
-use ndarray::{
-    s, Array, ArrayBase, Data, DataMut, IxDyn, OwnedRepr, RawData, RawDataClone, SliceInfo,
-    SliceInfoElem, ViewRepr,
-};
-use numpy::{
-    PyArray, PyArrayDyn, PyReadonlyArray, PyReadonlyArray0, PyReadonlyArrayDyn, PyReadwriteArrayDyn,
-};
+use ndarray::{IxDyn, SliceInfo, SliceInfoElem};
+use numpy::{PyArrayDyn, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
 use pyo3::{
     prelude::*,
     types::{PySlice, PySliceIndices, PyTuple},
@@ -99,7 +92,7 @@ impl Vbq {
                 );
                 *x = new_value.get();
                 *reference = new_value.get();
-                self.prior.remove(reference_val);
+                self.prior.remove(reference_val).expect("prior out of sync");
                 self.prior.insert(new_value);
             }
         } else {
@@ -136,8 +129,8 @@ impl Vbq {
         let mut data = data.as_array_mut();
         let mut data = data.slice_mut(&index);
 
-        let mut new_values = new_values.as_array();
-        let mut new_values = new_values.slice(index);
+        let new_values = new_values.as_array();
+        let new_values = new_values.slice(index);
 
         if update_prior == Some(true) {
             for (dst, &src) in data.iter_mut().zip(new_values.iter()) {
@@ -174,7 +167,7 @@ fn parse_slice_indices(
                     start,
                     stop,
                     step,
-                    slicelength,
+                    slicelength: _,
                 } = slice
                     .indices(dims.next().expect("too long") as i64)
                     .expect("doesn't fit");
