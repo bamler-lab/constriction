@@ -8,8 +8,10 @@
 //!   - a posterior variance (for now just a scalar; later it will broadcast)
 //!   - a boolean switch `dynamic`, and possibly an optional parameter `reference`
 
-use alloc::vec;
+use std::sync::Mutex;
+
 use alloc::vec::Vec;
+use alloc::{sync::Arc, vec};
 use ndarray::{IxDyn, SliceInfo, SliceInfoElem};
 use numpy::{PyArrayDyn, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
 use pyo3::{
@@ -29,11 +31,21 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 
 #[pyclass]
 #[derive(Debug, Clone)]
-struct Vbq {
-    prior: DynamicEmpiricalDistribution,
+struct Vbq(Arc<Mutex<VbqInternal>>);
 
-    #[pyo3(get)]
+#[derive(Debug, Clone)]
+struct VbqInternal {
+    prior: DynamicEmpiricalDistribution,
     data: Py<PyArrayDyn<f32>>,
+}
+
+type Slice = SliceInfo<Vec<ndarray::SliceInfoElem>, IxDyn, IxDyn>;
+
+#[pyclass]
+#[derive(Debug, Clone)]
+struct VbqView {
+    vbq: Arc<Mutex<VbqInternal>>,
+    slice: Slice,
 }
 
 #[pymethods]
@@ -47,30 +59,55 @@ impl Vbq {
             DynamicEmpiricalDistribution::try_from_points(unquantized.iter())
                 .expect("NaN encountered")
         };
-        Ok(Self {
+        Ok(Self(Arc::new(Mutex::new(VbqInternal {
             prior,
             data: unquantized,
-        })
+        }))))
     }
 
+    #[getter]
+    pub fn data(&self, py: Python<'_>) -> Py<PyArrayDyn<f32>> {
+        let this = self.0.lock().unwrap();
+        this.data.as_ref(py).to_owned()
+    }
+
+    pub fn __getitem__(&mut self, py: Python<'_>, index: &PyAny) -> VbqView {
+        let this = self.0.lock().unwrap();
+        let data = this.data.as_ref(py);
+        let slice = parse_slice(index, data.shape());
+        VbqView {
+            vbq: Arc::clone(&self.0),
+            slice,
+        }
+    }
+
+    #[pyo3(signature = ())]
+    pub fn prior_entropy_base2(&self) -> f32 {
+        let this = self.0.lock().unwrap();
+        this.prior.entropy_base2()
+    }
+}
+
+#[pymethods]
+impl VbqView {
     #[pyo3(
-        text_signature = "(self, index, posterior_variance, coarseness, [update_prior], [reference])"
+        text_signature = "(self, index, posterior_variance, coarseness, update_prior=False, reference=None)"
     )]
     pub fn quantize_with_quadratic_distortion(
         &mut self,
         py: Python<'_>,
-        index: &PyAny,
         posterior_variance: f32,
         coarseness: f32,
         update_prior: Option<bool>,
         reference: Option<PyReadwriteArrayDyn<'_, f32>>,
     ) -> PyResult<()> {
-        let index = parse_slice_indices(index, self.data.as_ref(py).shape());
-        let mut data = self.data.as_ref(py).readwrite();
+        let vbq = &mut *self.vbq.lock().unwrap();
+        let mut data = vbq.data.as_ref(py).readwrite();
         let mut data = data.as_array_mut();
-        let mut data = data.slice_mut(&index);
+        let mut data = data.slice_mut(&self.slice);
         let posterior_variance = NonNanFloat::new(posterior_variance).unwrap();
         let coarseness = NonNanFloat::new(coarseness).unwrap();
+        let prior = &mut vbq.prior;
 
         if let Some(mut reference) = reference {
             if update_prior == Some(false) {
@@ -79,35 +116,34 @@ impl Vbq {
                 ));
             }
             let mut reference = reference.as_array_mut();
-            let mut reference = reference.slice_mut(index);
 
             for (x, reference) in data.iter_mut().zip(reference.iter_mut()) {
                 let old_value = NonNanFloat::new(*x).unwrap();
                 let reference_val = NonNanFloat::new(*reference).unwrap();
                 let new_value = vbq_quadratic_distortion::<f32, _, _>(
-                    &self.prior,
+                    prior,
                     old_value,
                     posterior_variance,
                     coarseness,
                 );
                 *x = new_value.get();
                 *reference = new_value.get();
-                self.prior.remove(reference_val).expect("prior out of sync");
-                self.prior.insert(new_value);
+                prior.remove(reference_val).expect("prior out of sync");
+                prior.insert(new_value);
             }
         } else {
             for x in data.iter_mut() {
                 let old_value = NonNanFloat::new(*x).unwrap();
                 let new_value = vbq_quadratic_distortion::<f32, _, _>(
-                    &self.prior,
+                    prior,
                     old_value,
                     posterior_variance,
                     coarseness,
                 );
                 *x = new_value.get();
                 if update_prior == Some(true) {
-                    self.prior.remove(old_value).expect("prior out of sync");
-                    self.prior.insert(new_value);
+                    prior.remove(old_value).expect("prior out of sync");
+                    prior.insert(new_value);
                 }
             }
         }
@@ -115,30 +151,29 @@ impl Vbq {
         Ok(())
     }
 
-    #[pyo3(signature = (index, new_values, update_prior))]
-    #[pyo3(text_signature = "(self, index, new_values, [update_prior])")]
+    #[pyo3(signature = (new_values, update_prior))]
+    #[pyo3(text_signature = "(self, new_values, update_prior=False)")]
     pub fn update(
         &mut self,
         py: Python<'_>,
-        index: &PyAny,
         new_values: PyReadonlyArrayDyn<'_, f32>,
         update_prior: Option<bool>,
     ) {
-        let index = parse_slice_indices(index, self.data.as_ref(py).shape());
-        let mut data = self.data.as_ref(py).readwrite();
+        let vbq = &mut *self.vbq.lock().unwrap();
+        let mut data = vbq.data.as_ref(py).readwrite();
         let mut data = data.as_array_mut();
-        let mut data = data.slice_mut(&index);
+        let mut data = data.slice_mut(&self.slice);
 
         let new_values = new_values.as_array();
-        let new_values = new_values.slice(index);
+        let prior = &mut vbq.prior;
 
         if update_prior == Some(true) {
             for (dst, &src) in data.iter_mut().zip(new_values.iter()) {
                 *dst = src;
-                self.prior
+                prior
                     .remove(NonNanFloat::new(*dst).unwrap())
                     .expect("prior out of sync");
-                self.prior.insert(NonNanFloat::new(src).unwrap());
+                prior.insert(NonNanFloat::new(src).unwrap());
             }
         } else {
             for (dst, &src) in data.iter_mut().zip(new_values.iter()) {
@@ -146,17 +181,9 @@ impl Vbq {
             }
         }
     }
-
-    #[pyo3(signature = ())]
-    pub fn prior_entropy_base2(&self) -> f32 {
-        self.prior.entropy_base2()
-    }
 }
 
-fn parse_slice_indices(
-    index: &PyAny,
-    target_dims: &[usize],
-) -> SliceInfo<Vec<ndarray::SliceInfoElem>, IxDyn, IxDyn> {
+fn parse_slice(index: &PyAny, target_dims: &[usize]) -> Slice {
     fn convert_slice(i: &PyAny, dims: &mut impl Iterator<Item = usize>) -> SliceInfoElem {
         match i
             .extract::<Option<SimpleSlicePart<'_>>>()
