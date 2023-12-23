@@ -226,7 +226,8 @@ jobs:
 
       - name: generate license file
         run: |
-          cargo install cargo-about
+          cargo install cargo-quickinstall
+          cargo quickinstall cargo-about
           cargo about generate --features=pybindings about.hbs > website/license.html
           wc -l website/license.html
 
@@ -322,6 +323,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: generate license file
+        shell: bash
+        run: |
+          rm LICENSE.*
+          cargo install cargo-quickinstall
+          cargo quickinstall cargo-about
+          cargo about generate --features=pybindings about.hbs > LICENSE.html
+          ls -l LICENSE*
+          wc -l LICENSE*
+
       - name: Build wheels (unix)
         if: matrix.os != 'windows-latest'
         uses: messense/maturin-action@v1
@@ -336,12 +347,6 @@ jobs:
         with:
           command: build
           args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-7.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe
-
-      # For some reason, manylinux builds create wheels owned by the root user,
-      # which breaks our attempts to add the license file below.
-      - name: Fix wheel ownership on linux
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo chown -R runner:docker target
 
       - name: Cross-build wheels for Apple Silicon
         if: matrix.os == 'macos-latest'
@@ -365,32 +370,6 @@ jobs:
       - name: List wheels (windows)
         if: matrix.os == 'windows-latest'
         run: dir target\wheels\
-
-      - name: generate license file
-        run: |
-          cargo install cargo-about
-          cargo about generate --features=pybindings about.hbs > LICENSE.html
-          ls -l LICENSE.html
-          wc -l LICENSE.html
-
-      - name: Add LICENSE.html to all wheels (unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          for wheel in target/wheels/*.whl; do
-            zip -ur $wheel LICENSE.html
-          done
-
-      - name: Add LICENSE.html to all wheels (windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          [Reflection.Assembly]::LoadWithPartialName('System.IO.Compression.FileSystem') | Out-Null
-          Get-ChildItem "target\wheels\" -Filter *.whl |
-          Foreach-Object {
-            $zip = [System.IO.Compression.ZipFile]::Open($_.FullName, "Update")
-            $licenseFile = [System.IO.Path]::GetFileName("LICENSE.html")
-            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "LICENSE.html", $licenseFile, "Optimal") | Out-Null
-            $zip.Dispose()
-          }
 
       - name: Save artifact with wheels for ${{ matrix.os }}
         uses: actions/upload-artifact@v2

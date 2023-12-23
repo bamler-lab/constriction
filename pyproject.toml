@@ -14,14 +14,15 @@ classifiers = [
   "Intended Audience :: Science/Research",
 ]
 dependencies = [
-  "numpy~=1.19",
+  "numpy~=1.16",
 ]
+license = {text = "various (see LICENSE.html)"}
 maintainers = [
   {name = "Robert Bamler", email = "robert.bamler@uni-tuebingen.de"},
 ]
 name = "constriction"
 readme = "README-python.md"
-requires-python = ">=3.7,<3.13"
+requires-python = ">=3.7"
 
 [project.urls]
 changelog = "https://github.com/bamler-lab/constriction/releases"
@@ -35,14 +36,13 @@ description = "Entropy coders for research and production (Python and Rust)."
 documentation = "https://bamler-lab.github.io/constriction/apidoc/python/"
 homepage = "https://bamler-lab.github.io/constriction/"
 keywords = ["compression", "machine-learning", "entropy-coding", "range-coding", "ANS"]
-license = "MIT OR Apache-2.0 OR BSL-1.0"
 name = "constriction"
 repository = "https://github.com/bamler-lab/constriction/"
 version = "1.2.2"
 
 [tool.poetry.dependencies]
 numpy = [
-  {version = "^1.19", python = "<3.11"},
+  {version = "^1.16", python = "<3.11"},
   {version = "^1.23.2", python = ">=3.11,<3.12"},
   {version = "^1.26.1", python = ">=3.12"},
 ]

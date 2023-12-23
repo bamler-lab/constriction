@@ -95,6 +95,11 @@ where
         })
     });
 
+    encoder.clear();
+    encoder
+        .encode_iid_symbols_reverse(black_box(&data), &encoder_model)
+        .unwrap();
+
     let decoder_model =
     LookupDecoderModel::<u16,Probability,_,_,PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
         symbols,probabilities,false
@@ -186,6 +191,11 @@ where
             black_box(encoder.bulk()[index]);
         })
     });
+
+    encoder.clear();
+    encoder
+        .encode_iid_symbols(black_box(&data), &encoder_model)
+        .unwrap();
 
     let decoder_model =
     LookupDecoderModel::<u16,Probability,_,_,PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
