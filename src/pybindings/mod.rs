@@ -8,6 +8,8 @@ use alloc::borrow::Cow;
 use numpy::PyReadonlyArray;
 use pyo3::{prelude::*, wrap_pymodule};
 
+use crate::NanError;
+
 /// ## Entropy Coders for Research and Production
 ///
 /// The `constriction` library provides a set of composable entropy coding algorithms with a
@@ -372,6 +374,16 @@ impl<'py, D: ndarray::Dimension> PyReadonlyFloatArray<'py, D> {
         match self {
             PyReadonlyFloatArray::F32(x) => x.get(index).map(|&x| x as f64),
             PyReadonlyFloatArray::F64(x) => x.get(index).copied(),
+        }
+    }
+}
+
+impl From<NanError> for PyErr {
+    fn from(err: NanError) -> Self {
+        match err {
+            NanError::NaN => pyo3::exceptions::PyFloatingPointError::new_err(
+                "Floating point value is not a number (NaN).",
+            ),
         }
     }
 }

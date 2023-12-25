@@ -22,49 +22,7 @@ where
     V: Ord,
     C: Ord + num_traits::Num,
 {
-    fn try_from_points<'a, F>(
-        points: impl IntoIterator<Item = &'a F>,
-    ) -> Result<Self, <V as TryFrom<F>>::Error>
-    where
-        Self: Sized,
-        V: TryFrom<F>,
-        F: Copy + 'a;
-
-    fn from_points<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
-    where
-        Self: Sized,
-        V: Copy + 'a,
-    {
-        Self::try_from_points(points).unwrap_infallible()
-    }
-
-    fn try_from_points_hashable<'a, F>(
-        points: impl IntoIterator<Item = &'a F>,
-    ) -> Result<Self, <V as TryFrom<F>>::Error>
-    where
-        Self: Sized,
-        V: TryFrom<F> + Hash,
-        F: Copy + 'a,
-    {
-        Self::try_from_points(points)
-    }
-
-    fn from_points_hashable<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
-    where
-        Self: Sized,
-        V: Hash + Copy + 'a,
-    {
-        Self::try_from_points_hashable(points).unwrap_infallible()
-    }
-
-    fn total(&self) -> C;
-
     fn left_sided_cumulative(&self, x: V) -> C;
-
-    fn entropy_base2<F>(&self) -> F
-    where
-        F: num_traits::float::Float + 'static,
-        C: num_traits::AsPrimitive<F>;
 
     /// Returns the inverse of [`left_sided_cumulative`](Self::left_sided_cumulative)
     ///
@@ -82,6 +40,84 @@ where
     ///   is equal to `self.inverse_cumulative(cum).unwrap()` (assuming that the inner `unwrap()`
     ///   succeeds—in which case the outer `unwrap()` is guaranteed to succeed).
     fn inverse_cumulative(&self, cum: C) -> Option<V>;
+
+    fn total(&self) -> C;
+
+    fn entropy_base2<F>(&self) -> F
+    where
+        F: num_traits::float::Float + 'static,
+        C: num_traits::AsPrimitive<F>;
+
+    fn try_add_points<'a, F>(
+        &mut self,
+        points: impl IntoIterator<Item = &'a F>,
+    ) -> Result<(), <V as TryFrom<F>>::Error>
+    where
+        Self: Sized,
+        V: TryFrom<F>,
+        F: Copy + 'a;
+
+    fn try_from_points<'a, F>(
+        points: impl IntoIterator<Item = &'a F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        Self: Sized + Default,
+        V: TryFrom<F>,
+        F: Copy + 'a,
+    {
+        let mut this = Self::default();
+        this.try_add_points(points)?;
+        Ok(this)
+    }
+
+    fn add_points<'a>(&mut self, points: impl IntoIterator<Item = &'a V>)
+    where
+        Self: Sized,
+        V: Copy + 'a,
+    {
+        self.try_add_points(points).unwrap_infallible();
+    }
+
+    fn from_points<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
+    where
+        Self: Sized + Default,
+        V: Copy + 'a,
+    {
+        Self::try_from_points(points).unwrap_infallible()
+    }
+
+    fn try_add_points_hashable<'a, F>(
+        &mut self,
+        points: impl IntoIterator<Item = &'a F>,
+    ) -> Result<(), <V as TryFrom<F>>::Error>
+    where
+        Self: Sized,
+        V: TryFrom<F> + Hash,
+        F: Copy + 'a,
+    {
+        self.try_add_points(points)
+    }
+
+    fn try_from_points_hashable<'a, F>(
+        points: impl IntoIterator<Item = &'a F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        Self: Sized + Default,
+        V: TryFrom<F> + Hash,
+        F: Copy + 'a,
+    {
+        let mut this = Self::default();
+        this.try_add_points_hashable(points)?;
+        Ok(this)
+    }
+
+    fn from_points_hashable<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
+    where
+        Self: Sized + Default,
+        V: Hash + Copy + 'a,
+    {
+        Self::try_from_points_hashable(points).unwrap_infallible()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -144,24 +180,44 @@ impl<V: Copy, C: Copy> Clone for DynamicEmpiricalDistribution<V, C> {
     }
 }
 
+impl<V: Copy, C: Copy> Default for DynamicEmpiricalDistribution<V, C>
+where
+    V: Copy + Ord,
+    C: Ord + Copy + num_traits::Num,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<V, C> DynamicEmpiricalDistribution<V, C>
+where
+    V: Copy + Ord,
+    C: Ord + Copy + num_traits::Num,
+{
+    pub fn new() -> Self {
+        Self(AugmentedBTree::new())
+    }
+}
+
 impl<V, C> EmpiricalDistribution<V, C> for DynamicEmpiricalDistribution<V, C>
 where
     V: Copy + Ord,
     C: Copy + Ord + num_traits::Num,
 {
-    fn try_from_points<'a, F>(
+    fn try_add_points<'a, F>(
+        &mut self,
         points: impl IntoIterator<Item = &'a F>,
-    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    ) -> Result<(), <V as TryFrom<F>>::Error>
     where
         V: TryFrom<F>,
         F: Copy + 'a,
     {
-        let mut tree = AugmentedBTree::new();
         for &point in points {
-            tree.insert(V::try_from(point)?, CountWrapper(C::one()))
+            self.0.insert(V::try_from(point)?, CountWrapper(C::one()))
         }
 
-        Ok(Self(tree))
+        Ok(())
     }
 
     // fn try_from_points_hashable<'a, F>(

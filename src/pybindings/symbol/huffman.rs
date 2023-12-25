@@ -2,10 +2,7 @@ use std::prelude::v1::*;
 
 use pyo3::prelude::*;
 
-use crate::{
-    pybindings::PyReadonlyFloatArray1,
-    symbol::huffman::{self, NanError},
-};
+use crate::{pybindings::PyReadonlyFloatArray1, symbol::huffman};
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<EncoderHuffmanTree>()?;
@@ -74,13 +71,5 @@ impl DecoderHuffmanTree {
         )?;
 
         Ok(Self { inner })
-    }
-}
-
-impl From<NanError> for PyErr {
-    fn from(err: NanError) -> Self {
-        match err {
-            NanError::NaN => pyo3::exceptions::PyValueError::new_err("NaN probability provided."),
-        }
     }
 }
