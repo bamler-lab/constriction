@@ -1,5 +1,9 @@
-use numpy::{PyReadonlyArrayDyn, PyReadwriteArrayDyn};
-use pyo3::prelude::*;
+use core::borrow::Borrow;
+
+use alloc::vec::Vec;
+use ndarray::{ArrayBase, IxDyn, RawData};
+use numpy::{PyArray, PyArrayDyn, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
+use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
     quant::{
@@ -10,6 +14,7 @@ use crate::{
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<EmpiricalDistribution>()?;
+    module.add_function(wrap_pyfunction!(vbq, module)?)?;
     module.add_function(wrap_pyfunction!(vbq_, module)?)?;
     Ok(())
 }
@@ -21,18 +26,19 @@ pub struct EmpiricalDistribution(DynamicEmpiricalDistribution);
 #[pymethods]
 impl EmpiricalDistribution {
     #[new]
-    #[pyo3(text_signature = "(points=None)")]
-    pub fn new(py: Python<'_>, points: Option<PyReadonlyArrayDyn<'_, f32>>) -> PyResult<Py<Self>> {
-        let mut distribution = DynamicEmpiricalDistribution::new();
-        if let Some(points) = points {
-            distribution.try_add_points(points.as_array())?;
-        }
-
-        Py::new(py, Self(distribution))
+    #[pyo3(signature = (*args))]
+    pub fn new(py: Python<'_>, args: &PyTuple) -> PyResult<Py<Self>> {
+        let mut distribution = Self(DynamicEmpiricalDistribution::new());
+        distribution.add_points(args)?;
+        Py::new(py, distribution)
     }
 
-    pub fn add_points(&mut self, points: PyReadonlyArrayDyn<'_, f32>) -> PyResult<()> {
-        self.0.try_add_points(points.as_array())?;
+    #[pyo3(signature = (*args))]
+    pub fn add_points(&mut self, args: &PyTuple) -> PyResult<()> {
+        for points in args.iter() {
+            let points = points.extract::<PyReadonlyArrayDyn<'_, f32>>()?;
+            self.0.try_add_points(points.as_array())?;
+        }
         Ok(())
     }
 
@@ -72,6 +78,32 @@ impl EmpiricalDistribution {
 }
 
 #[pyfunction]
+fn vbq<'a>(
+    py: Python<'a>,
+    unquantized: PyReadonlyArrayDyn<'a, f32>,
+    prior: Py<EmpiricalDistribution>,
+    posterior_variance: f32,
+    coarseness: f32,
+    update_prior: Option<bool>,
+    reference: Option<PyReadwriteArrayDyn<'a, f32>>,
+) -> PyResult<&'a PyArrayDyn<f32>> {
+    let mut quantized = Vec::with_capacity(unquantized.len());
+    vbq_internal(
+        py,
+        unquantized.as_array(),
+        prior,
+        posterior_variance,
+        coarseness,
+        update_prior,
+        reference,
+        |_, src| quantized.push(src),
+    )?;
+    let quantized = ArrayBase::from_shape_vec(unquantized.dims(), quantized)
+        .expect("Vec should have correct len");
+    Ok(PyArray::from_owned_array(py, quantized))
+}
+
+#[pyfunction]
 fn vbq_(
     py: Python<'_>,
     mut unquantized: PyReadwriteArrayDyn<'_, f32>,
@@ -81,9 +113,36 @@ fn vbq_(
     update_prior: Option<bool>,
     reference: Option<PyReadwriteArrayDyn<'_, f32>>,
 ) -> PyResult<()> {
+    vbq_internal(
+        py,
+        unquantized.as_array_mut(),
+        prior,
+        posterior_variance,
+        coarseness,
+        update_prior,
+        reference,
+        |dst, src| *dst = src,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn vbq_internal<S>(
+    py: Python<'_>,
+    unquantized: ArrayBase<S, IxDyn>,
+    prior: Py<EmpiricalDistribution>,
+    posterior_variance: f32,
+    coarseness: f32,
+    update_prior: Option<bool>,
+    reference: Option<PyReadwriteArrayDyn<'_, f32>>,
+    mut update: impl FnMut(<ArrayBase<S, IxDyn> as IntoIterator>::Item, f32),
+) -> PyResult<()>
+where
+    S: RawData,
+    ArrayBase<S, IxDyn>: IntoIterator,
+    <ArrayBase<S, IxDyn> as IntoIterator>::Item: Borrow<f32>,
+{
     let posterior_variance = NonNanFloat::new(posterior_variance)?;
     let coarseness = NonNanFloat::new(coarseness)?;
-    let mut unquantized = unquantized.as_array_mut();
 
     if let Some(mut reference) = reference {
         if update_prior == Some(false) {
@@ -91,7 +150,7 @@ fn vbq_(
                 "providing a `reference` implies `update_prior=True`",
             ));
         }
-        if reference.dims() != unquantized.dim() {
+        if reference.dims() != unquantized.raw_dim() {
             return Err(pyo3::exceptions::PyAssertionError::new_err(
                 "`reference` must have the same shape as `unquantized`.",
             ));
@@ -100,8 +159,8 @@ fn vbq_(
         let prior = &mut *prior.borrow_mut(py);
         let mut reference = reference.as_array_mut();
 
-        for (x, reference) in unquantized.iter_mut().zip(&mut reference) {
-            let old_value = NonNanFloat::new(*x)?;
+        for (x, reference) in unquantized.into_iter().zip(&mut reference) {
+            let old_value = NonNanFloat::new(*x.borrow())?;
             let reference_val = NonNanFloat::new(*reference)?;
             let new_value = vbq_quadratic_distortion::<f32, _, _>(
                 &prior.0,
@@ -116,20 +175,20 @@ fn vbq_(
                 )
             })?;
             prior.0.insert(new_value);
-            *x = new_value.get();
+            update(x, new_value.get());
             *reference = new_value.get();
         }
     } else {
         let prior = &mut *prior.borrow_mut(py);
-        for x in unquantized.iter_mut() {
-            let old_value = NonNanFloat::new(*x)?;
+        for x in unquantized {
+            let old_value = NonNanFloat::new(*x.borrow())?;
             let new_value = vbq_quadratic_distortion::<f32, _, _>(
                 &prior.0,
                 old_value,
                 posterior_variance,
                 coarseness,
             );
-            *x = new_value.get();
+            update(x, new_value.get());
             if update_prior == Some(true) {
                 prior.0.remove(old_value).ok_or_else(|| {
                     pyo3::exceptions::PyKeyError::new_err(
