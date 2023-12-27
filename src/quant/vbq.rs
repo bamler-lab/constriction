@@ -5,10 +5,11 @@ use super::EmpiricalDistribution;
 /// # Notes
 ///
 /// - `F` is the float type with which the bisection in quantile-space is performed.
-pub fn vbq_quadratic_distortion<F, V, C>(
+pub fn vbq<F, V, C, D>(
     prior: &impl EmpiricalDistribution<V, C>,
     unquantized: V,
     beta: V,
+    mut distortion: D,
 ) -> V
 where
     F: Copy + num_traits::float::FloatCore + num_traits::AsPrimitive<C> + 'static,
@@ -20,6 +21,7 @@ where
         + num_traits::Bounded
         + 'static,
     C: Copy + Ord + num_traits::Num + num_traits::AsPrimitive<F>,
+    D: FnMut(V) -> V,
 {
     let half = F::one() / (F::one() + F::one());
     let mut lower = F::zero();
@@ -53,8 +55,7 @@ where
             .inverse_cumulative(mid_int)
             .expect("`mid_int < prior.total()`");
         let deviation = candidate - unquantized;
-        let distortion = deviation * deviation;
-        let current_objective = distortion + current_rate;
+        let current_objective = distortion(deviation) + current_rate;
         if current_objective <= record_objective {
             record_point = candidate;
             record_objective = current_objective;
@@ -124,7 +125,7 @@ mod tests {
 
             for i in 0..num_repeats {
                 for (point, shifted_point) in points.iter().zip(shifted_points.iter_mut()) {
-                    let quant = vbq_quadratic_distortion::<f32, _, _>(&prior, *point, beta);
+                    let quant = super::vbq::<f32, _, _, _>(&prior, *point, beta, |x| x * x);
                     prior.remove(*shifted_point).unwrap();
                     prior.insert(quant);
                     *shifted_point = quant;

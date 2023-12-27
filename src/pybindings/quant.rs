@@ -6,9 +6,7 @@ use numpy::{PyArray, PyArrayDyn, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
-    quant::{
-        vbq::vbq_quadratic_distortion, DynamicEmpiricalDistribution, EmpiricalDistribution as ED,
-    },
+    quant::{DynamicEmpiricalDistribution, EmpiricalDistribution as ED},
     NonNanFloat, F32,
 };
 
@@ -224,7 +222,8 @@ where
             for ((x, reference), beta) in unquantized.into_iter().zip(&mut reference).zip(beta) {
                 let unquantized = NonNanFloat::new(*x.borrow())?;
                 let reference_val = NonNanFloat::new(*reference)?;
-                let quantized = vbq_quadratic_distortion::<f32, _, _>(&prior.0, unquantized, beta?);
+                let quantized =
+                    crate::quant::vbq::vbq::<f32, _, _, _>(&prior.0, unquantized, beta?, |x| x * x);
                 prior.0.remove(reference_val).ok_or_else(|| {
                     pyo3::exceptions::PyKeyError::new_err(
                         "An uncompressed value does not exist in the distribution. \
@@ -239,7 +238,8 @@ where
             let prior = &mut *prior.borrow_mut(py);
             for (x, beta) in unquantized.into_iter().zip(beta) {
                 let unquantized = NonNanFloat::new(*x.borrow())?;
-                let quantized = vbq_quadratic_distortion::<f32, _, _>(&prior.0, unquantized, beta?);
+                let quantized =
+                    crate::quant::vbq::vbq::<f32, _, _, _>(&prior.0, unquantized, beta?, |x| x * x);
                 update(x, quantized.get());
                 if update_prior == Some(true) {
                     prior.0.remove(unquantized).ok_or_else(|| {
