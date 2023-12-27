@@ -7,9 +7,8 @@ use super::EmpiricalDistribution;
 /// - `F` is the float type with which the bisection in quantile-space is performed.
 pub fn vbq_quadratic_distortion<F, V, C>(
     prior: &impl EmpiricalDistribution<V, C>,
-    posterior_mean: V,
-    posterior_variance: V,
-    coarseness: V,
+    unquantized: V,
+    beta: V,
 ) -> V
 where
     F: Copy + num_traits::float::FloatCore + num_traits::AsPrimitive<C> + 'static,
@@ -29,11 +28,10 @@ where
     let mut last_mid_int = upper + C::one();
     let mut upper = upper.as_();
 
-    let target = prior.left_sided_cumulative(posterior_mean).as_();
-    let rate_per_bit = (coarseness + coarseness) * posterior_variance;
+    let target = prior.left_sided_cumulative(unquantized).as_();
 
     let mut current_rate = V::zero();
-    let mut record_point = posterior_mean; // Will be overwritten at least once.
+    let mut record_point = unquantized; // Will be overwritten at least once.
     let mut record_objective = V::max_value();
 
     loop {
@@ -54,7 +52,7 @@ where
         let candidate = prior
             .inverse_cumulative(mid_int)
             .expect("`mid_int < prior.total()`");
-        let deviation = candidate - posterior_mean;
+        let deviation = candidate - unquantized;
         let distortion = deviation * deviation;
         let current_objective = distortion + current_rate;
         if current_objective <= record_objective {
@@ -62,7 +60,7 @@ where
             record_objective = current_objective;
         }
 
-        current_rate = current_rate + rate_per_bit;
+        current_rate = current_rate + beta;
         if current_rate >= record_objective {
             // We won't be able to improve upon `record_objective` because all subsequent
             // candidate objectives will be lower bounded by `current_rate`.
@@ -112,27 +110,21 @@ mod tests {
         let mut entropy_previous_coarseness = initial_entropy;
 
         #[cfg(not(miri))]
-        let (num_repeats, coarsenesses) = (5, [0.00001, 0.001, 0.01, 0.1, 1.0]);
+        let (num_repeats, betas) = (5, [1e-7, 1e-5, 0.001, 0.01, 0.1]);
 
         #[cfg(miri)]
-        let (num_repeats, coarsenesses) = (2, [0.001, 0.1]);
+        let (num_repeats, betas) = (2, [0.001, 0.1]);
 
-        for coarseness in coarsenesses {
-            dbg!(coarseness);
+        for beta in betas {
+            dbg!(beta);
+            let beta = F32::new(beta).unwrap();
             let mut prior = prior.clone();
             let mut shifted_points = points.clone();
-            let posterior_variance = F32::new(0.01).unwrap();
-            let coarseness = F32::new(coarseness).unwrap();
             let mut previous_entropy = initial_entropy;
 
             for i in 0..num_repeats {
                 for (point, shifted_point) in points.iter().zip(shifted_points.iter_mut()) {
-                    let quant = vbq_quadratic_distortion::<f32, _, _>(
-                        &prior,
-                        *point,
-                        posterior_variance,
-                        coarseness,
-                    );
+                    let quant = vbq_quadratic_distortion::<f32, _, _>(&prior, *point, beta);
                     prior.remove(*shifted_point).unwrap();
                     prior.insert(quant);
                     *shifted_point = quant;
