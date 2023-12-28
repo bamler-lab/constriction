@@ -771,21 +771,40 @@ pub struct NonNanFloat<F: FloatCore>(F);
 pub type F32 = NonNanFloat<f32>;
 pub type F64 = NonNanFloat<f64>;
 
+impl<F: FloatCore> num_traits::Zero for NonNanFloat<F> {
+    fn zero() -> Self {
+        Self::new(F::zero()).expect("zero is a number")
+    }
+
+    fn is_zero(&self) -> bool {
+        self.get().is_zero()
+    }
+}
+
+impl<F: FloatCore> num_traits::One for NonNanFloat<F> {
+    fn one() -> Self {
+        Self::new(F::one()).expect("one is a number")
+    }
+
+    fn is_one(&self) -> bool
+    where
+        Self: PartialEq,
+    {
+        self.get().is_one()
+    }
+}
+
+impl<F: FloatCore + 'static> num_traits::AsPrimitive<F> for NonNanFloat<F> {
+    fn as_(self) -> F {
+        self.get()
+    }
+}
+
 impl TryFrom<f32> for F32 {
     type Error = NanError;
 
     fn try_from(value: f32) -> Result<Self, Self::Error> {
         Self::new(value)
-    }
-}
-
-impl num_traits::Zero for F32 {
-    fn zero() -> Self {
-        Self::new(0.0).unwrap()
-    }
-
-    fn is_zero(&self) -> bool {
-        self.0.is_zero()
     }
 }
 
@@ -804,16 +823,6 @@ impl TryFrom<f64> for F64 {
 
     fn try_from(value: f64) -> Result<Self, Self::Error> {
         Self::new(value)
-    }
-}
-
-impl num_traits::Zero for F64 {
-    fn zero() -> Self {
-        Self::new(0.0).unwrap()
-    }
-
-    fn is_zero(&self) -> bool {
-        self.0.is_zero()
     }
 }
 

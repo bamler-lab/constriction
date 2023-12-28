@@ -5,10 +5,7 @@ use ndarray::{ArrayBase, IxDyn, RawData};
 use numpy::{PyArray, PyArrayDyn, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
 use pyo3::{prelude::*, types::PyTuple};
 
-use crate::{
-    quant::{DynamicEmpiricalDistribution, EmpiricalDistribution as ED},
-    NonNanFloat, F32,
-};
+use crate::{quant::UnnormalizedDistribution, F32};
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<EmpiricalDistribution>()?;
@@ -26,14 +23,14 @@ use PyReadonlyF32ArrayOrScalar::*;
 
 #[pyclass]
 #[derive(Debug)]
-pub struct EmpiricalDistribution(DynamicEmpiricalDistribution);
+pub struct EmpiricalDistribution(crate::quant::EmpiricalDistribution);
 
 #[pymethods]
 impl EmpiricalDistribution {
     #[new]
     #[pyo3(signature = (*args))]
     pub fn new(py: Python<'_>, args: &PyTuple) -> PyResult<Py<Self>> {
-        let mut distribution = Self(DynamicEmpiricalDistribution::new());
+        let mut distribution = Self(crate::quant::EmpiricalDistribution::new());
         distribution.add_points(args)?;
         Py::new(py, distribution)
     }
@@ -54,22 +51,22 @@ impl EmpiricalDistribution {
     ) -> PyResult<()> {
         match (old, new) {
             (Scalar(old), Scalar(new)) => {
-                self.0.remove(NonNanFloat::new(old)?).ok_or_else(|| {
+                self.0.remove(F32::new(old)?).ok_or_else(|| {
                     pyo3::exceptions::PyKeyError::new_err(
                         "The `old` value does not exist in the distribution.",
                     )
                 })?;
-                self.0.insert(NonNanFloat::new(new)?);
+                self.0.insert(F32::new(new)?);
                 Ok(())
             }
             (Array(old), Array(new)) if old.dims() == new.dims() => {
                 for (old, &new) in old.as_array().iter().zip(&new.as_array()) {
-                    self.0.remove(NonNanFloat::new(*old)?).ok_or_else(|| {
+                    self.0.remove(F32::new(*old)?).ok_or_else(|| {
                         pyo3::exceptions::PyKeyError::new_err(
                             "One of the entries in `old` does not exist in the distribution.",
                         )
                     })?;
-                    self.0.insert(NonNanFloat::new(new)?);
+                    self.0.insert(F32::new(new)?);
                 }
                 Ok(())
             }
@@ -162,26 +159,26 @@ where
                 ));
             }
             let two_coarseness = 2.0 * coarseness;
-            let beta = posterior_variance.as_array();
-            let beta = beta.iter().map(|&x| F32::new(two_coarseness * x));
+            let bit_penalty = posterior_variance.as_array();
+            let bit_penalty = bit_penalty.iter().map(|&x| F32::new(two_coarseness * x));
             internal(
                 py,
                 unquantized,
                 prior,
-                beta,
+                bit_penalty,
                 update_prior,
                 reference,
                 update,
             )
         }
         Scalar(posterior_variance) => {
-            let beta = F32::new(2.0 * coarseness * posterior_variance)?;
-            let beta = core::iter::repeat(Result::<_, Infallible>::Ok(beta));
+            let bit_penalty = F32::new(2.0 * coarseness * posterior_variance)?;
+            let bit_penalty = core::iter::repeat(Result::<_, Infallible>::Ok(bit_penalty));
             internal(
                 py,
                 unquantized,
                 prior,
-                beta,
+                bit_penalty,
                 update_prior,
                 reference,
                 update,
@@ -193,7 +190,7 @@ where
         py: Python<'_>,
         unquantized: ArrayBase<SS, IxDyn>,
         prior: Py<EmpiricalDistribution>,
-        beta: impl IntoIterator<Item = Result<F32, E>>,
+        bit_penalty: impl IntoIterator<Item = Result<F32, E>>,
         update_prior: Option<bool>,
         reference: Option<PyReadwriteArrayDyn<'_, f32>>,
         mut update: impl FnMut(<ArrayBase<SS, IxDyn> as IntoIterator>::Item, f32),
@@ -219,11 +216,12 @@ where
             let prior = &mut *prior.borrow_mut(py);
             let mut reference = reference.as_array_mut();
 
-            for ((x, reference), beta) in unquantized.into_iter().zip(&mut reference).zip(beta) {
-                let unquantized = NonNanFloat::new(*x.borrow())?;
-                let reference_val = NonNanFloat::new(*reference)?;
-                let quantized =
-                    crate::quant::vbq::vbq::<f32, _, _, _>(&prior.0, unquantized, beta?, |x| x * x);
+            for ((x, reference), bit_penalty) in
+                unquantized.into_iter().zip(&mut reference).zip(bit_penalty)
+            {
+                let unquantized = F32::new(*x.borrow())?;
+                let reference_val = F32::new(*reference)?;
+                let quantized = crate::quant::vbq(unquantized, &prior.0, |x| x * x, bit_penalty?);
                 prior.0.remove(reference_val).ok_or_else(|| {
                     pyo3::exceptions::PyKeyError::new_err(
                         "An uncompressed value does not exist in the distribution. \
@@ -236,10 +234,9 @@ where
             }
         } else {
             let prior = &mut *prior.borrow_mut(py);
-            for (x, beta) in unquantized.into_iter().zip(beta) {
-                let unquantized = NonNanFloat::new(*x.borrow())?;
-                let quantized =
-                    crate::quant::vbq::vbq::<f32, _, _, _>(&prior.0, unquantized, beta?, |x| x * x);
+            for (x, bit_penalty) in unquantized.into_iter().zip(bit_penalty) {
+                let unquantized = F32::new(*x.borrow())?;
+                let quantized = crate::quant::vbq(unquantized, &prior.0, |x| x * x, bit_penalty?);
                 update(x, quantized.get());
                 if update_prior == Some(true) {
                     prior.0.remove(unquantized).ok_or_else(|| {
