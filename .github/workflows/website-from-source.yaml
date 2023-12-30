@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: "3.12"
 
@@ -24,29 +24,19 @@ jobs:
           poetry install
 
       - name: Install latest stable Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-
-      - name: Get rust version
-        id: versions
-        run: |
-          version=$(rustc --version | awk '{ print $2 }')
-          echo "Found version: $version"
-          echo "rustc=$version" >> $GITHUB_OUTPUT
+        uses: dtolnay/rust-toolchain@stable
+        id: install-rust
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: |
             target
             .cargo_home
             .cargo
-          key: ${{ runner.os }}-pybindings-rust-${{ steps.versions.outputs.rustc }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-pybindings-rust-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-pybindings-rust-${{ steps.versions.outputs.rustc }}-
+            ${{ runner.os }}-pybindings-rust-${{ steps.install-rust.outputs.cachekey }}-
 
       - name: checkout website template
         run: |
@@ -58,7 +48,8 @@ jobs:
 
       - name: generate license file
         run: |
-          cargo install cargo-about
+          cargo install cargo-quickinstall
+          cargo quickinstall cargo-about
           cargo about generate --features=pybindings about.hbs > website/license.html
           wc -l website/license.html
 
@@ -70,7 +61,7 @@ jobs:
           rmdir website/apidoc/python/constriction
 
       - name: Save artifact with website
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: website
           path: ./website

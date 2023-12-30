@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: "3.12"
 
@@ -51,7 +51,7 @@ jobs:
           rmdir website/apidoc/python/constriction
 
       - name: Save artifact with website
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: website
           path: ./website
