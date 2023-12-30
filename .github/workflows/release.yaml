@@ -25,43 +25,27 @@ jobs:
         uses: actions/checkout@v1
 
       - name: Install latest stable Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
           components: rustfmt, clippy
 
-      - name: Lint with rustfmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: -- --check
+      - name: Check rust formatting
+        run: cargo fmt -- --check
 
       - name: Lint with clippy
-        uses: actions-rs/cargo@v1
         env:
           RUSTFLAGS: "-D warnings"
-        with:
-          command: clippy
-          args: --all-targets --all-features
+        run: cargo clippy --all-targets --all-features
 
       - name: Test in development mode
-        uses: actions-rs/cargo@v1.0.1
         env:
           RUSTFLAGS: "-D warnings"
-        with:
-          command: test
-          toolchain: stable
+        run: cargo test
 
       - name: Test in release mode
-        uses: actions-rs/cargo@v1.0.1
         env:
           RUSTFLAGS: "-D warnings"
-        with:
-          command: test
-          toolchain: stable
-          args: --release
+        run: cargo test --release
 
   miri-test:
     name: no_std and miri
@@ -75,8 +59,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
 
-      - name: Get latest rust nightly version that has miri
-        id: versions
+      - name: Find out latest rust nightly version that has miri
+        id: rust-version
         shell: bash
         run: |
           case ${{ matrix.os }} in
@@ -97,25 +81,22 @@ jobs:
           echo "Found version: $version"
           echo "rustc=$version" >> $GITHUB_OUTPUT
 
-      - name: Install rust ${{ steps.versions.outputs.rustc }}
-        uses: actions-rs/toolchain@v1
+      - name: Install rust ${{ steps.rust-version.outputs.rustc }}
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ steps.versions.outputs.rustc }}
-          profile: minimal
+          toolchain: ${{ steps.rust-version.outputs.rustc }}
           components: miri, rust-src
-          override: true
 
       - name: Test `no_std` compatibility
         shell: bash
         working-directory: ensure_no_std
-        run: cargo +${{ steps.versions.outputs.rustc }} build
+        run: cargo +${{ steps.rust-version.outputs.rustc }} build
 
       - name: Run tests in miri
         env:
           RUSTFLAGS: "-Zrandomize-layout"
           MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-disable-isolation"
-        run: |
-          cargo miri test --no-fail-fast --all-targets
+        run: cargo +${{ steps.rust-version.outputs.rustc }} miri test --no-fail-fast --all-targets
 
   python-test:
     runs-on: ${{ matrix.os }}
@@ -130,7 +111,7 @@ jobs:
         uses: actions/checkout@v1
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -141,11 +122,7 @@ jobs:
           poetry install
 
       - name: Install latest stable Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Build Python package
         run: poetry run maturin develop --release --features pybindings
@@ -156,8 +133,8 @@ jobs:
           poetry run pytest tests/python | tee pytest.out
           exit ${PIPESTATUS[0]}
 
-      - name: Verify that pytest used correct python version (unix)
-        if: matrix.os != 'windows-latest'
+      - name: Verify that pytest used correct python version
+        shell: bash
         run: |
           USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
           echo "Expected python version: ${{ matrix.python-version }}"
@@ -168,21 +145,6 @@ jobs:
             echo "ERROR: versions don't match."
             exit 1
           fi
-
-      - name: Verify that pytest used correct python version (windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          $USED_PYTHON_VERSION = grep -A1 -iE '^=+ test session starts =+$' pytest.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }'
-          echo "Expected python version: ${{ matrix.python-version }}"
-          echo "Found python version:    $USED_PYTHON_VERSION"
-          if ( "x${{ matrix.python-version }}y" -eq "x${USED_PYTHON_VERSION}y" )
-          {
-            echo "Versions match."
-          }
-          else
-          {
-            throw "ERROR: versions don't match."
-          }
 
   testall:
     runs-on: ubuntu-latest
@@ -199,7 +161,7 @@ jobs:
       - uses: actions/checkout@v1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: "3.12"
 
@@ -210,11 +172,7 @@ jobs:
           poetry install
 
       - name: Install latest stable Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: checkout website template
         run: |
@@ -239,7 +197,7 @@ jobs:
           rmdir website/apidoc/python/constriction
 
       - name: Save artifact with website
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: website
           path: ./website
@@ -258,11 +216,8 @@ jobs:
     steps:
       - uses: actions/checkout@v1
 
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+      - name: Install latest stable Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Publish on crates.io
         if: github.event_name == 'release'
@@ -281,45 +236,41 @@ jobs:
       - uses: actions/checkout@v1
 
       - name: Install latest stable Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Python 3.7
         id: setup-python-3-7
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: 3.7
 
       - name: Set up Python 3.8
         id: setup-python-3-8
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: 3.8
 
       - name: Set up Python 3.9
         id: setup-python-3-9
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: 3.9
 
       - name: Set up Python 3.10
         id: setup-python-3-10
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
       - name: Set up Python 3.11
         id: setup-python-3-11
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: "3.11"
 
       - name: Set up Python 3.12
         id: setup-python-3-12
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: "3.12"
 
@@ -363,22 +314,18 @@ jobs:
           command: build
           args: --release --strip --features pybindings --universal2 -i python3.7 python3.8 python3.9 python3.10 python3.11 python3.12
 
-      - name: List wheels (unix)
-        if: matrix.os != 'windows-latest'
+      - name: List wheels
+        shell: bash
         run: ls -l ./target/wheels/
 
-      - name: List wheels (windows)
-        if: matrix.os == 'windows-latest'
-        run: dir target\wheels\
-
       - name: Save artifact with wheels for ${{ matrix.os }}
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
           path: ./target/wheels/
 
-      - name: Test install wheels (unix)
-        if: matrix.os != 'windows-latest'
+      - name: Test install wheels
+        shell: bash
         run: |
           for i in target/wheels/*.whl; do
             echo "Running: pip install $i ..."
@@ -392,30 +339,6 @@ jobs:
             echo
           done
 
-      - name: Test install wheels (windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          $wheels = Get-ChildItem "target\wheels\"
-          foreach ($wheel in $wheels){
-            echo "Running: pip install $($wheel.FullName) ..."
-            try {
-              pip install "$($wheel.FullName)"
-            } catch {
-              echo "WARNING: unable to install $($wheel.FullName)"
-            }
-
-            echo "Testing if we can import constriction and numpy ..."
-            try {
-              python -c 'import constriction; import numpy; print(constriction.__file__)'
-            } catch {
-              echo "WARNING: unable to import constriction or numpy ($($wheel.FullName))"
-            }
-
-            echo "Running: pip uninstall -y constriction numpy ..."
-            pip uninstall -y constriction numpy
-            echo ""
-          }
-
       - name: Install Python dependencies (for twine)
         run: |
           python -m pip install --upgrade pip
@@ -423,24 +346,12 @@ jobs:
           poetry install
 
       - name: Publish wheels (unix)
-        if: matrix.os != 'windows-latest' && github.event_name == 'release'
+        if: github.event_name == 'release'
+        shell: bash
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI }}
-        run: |
-          poetry run twine upload target/wheels/*.whl
-
-      - name: Publish wheels (windows)
-        if: matrix.os == 'windows-latest' && github.event_name == 'release'
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI }}
-        run: |
-          $wheels = Get-ChildItem "target\wheels\"
-          foreach ($wheel in $wheels){
-            echo "Uploading $($wheel.FullName)"
-            poetry run twine upload "$($wheel.FullName)"
-          }
+        run: poetry run twine upload target/wheels/*.whl
 
       - name: Add wheels to Github release
         if: github.event_name == 'release'
