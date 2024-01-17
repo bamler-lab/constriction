@@ -24,7 +24,20 @@ pub trait UnnormalizedDistribution {
 
     fn total(&self) -> Self::Count;
 
-    fn left_sided_cumulative(&self, x: Self::Value) -> Self::Count;
+    /// Calculates the cumulative distribution function (CDF).
+    ///
+    /// For discrete distributions, it is recommended to return the *left-sided* CDF, i.e., the
+    /// density or mass *strictly below* `x`. However, adapters of externally implemented
+    /// distributions may not be able to control whether this method returns the left-sided or
+    /// right-sided CDF, or something in-between. Therefore, algorithms must not rely on the
+    /// assumption that this method returns the left-sided CDF (especially not for memory safety),
+    /// and they should still work reasonably well if this method returns the right-sided CDF.
+    /// (What "reasonably well" means in this context depends on the algorithm; for example, the
+    /// function [`vbq`] still works exactly as expected if `cdf` returns the right-sided CDF as
+    /// long as [`UnnormalizedInverse::ppf`] behaves accordingly; and if `cdf` and `ppf` follow
+    /// opposite conventions then `vbq` still terminates and quantizes to a grid point from the
+    /// provided `prior`, but the quantization might be biased towards rounding up or down).
+    fn cdf(&self, x: Self::Value) -> Self::Count;
 }
 
 impl<T> UnnormalizedDistribution for T
@@ -39,37 +52,60 @@ where
         1.0
     }
 
-    /// TODO: for discrete distributions, this might not actually give us the *left-sided* cdf.
-    fn left_sided_cumulative(&self, x: Self::Value) -> Self::Count {
+    /// Note for discrete distributions that this might not be the *left-sided* cdf, see discussion
+    /// in the [trait documentation](UnnormalizedDistribution::cdf).
+    fn cdf(&self, x: Self::Value) -> Self::Count {
         self.distribution(x.as_())
     }
 }
 
 pub trait UnnormalizedInverse: UnnormalizedDistribution {
-    /// Returns the inverse of [`left_sided_cumulative`](UnnormalizedDistribution::left_sided_cumulative)
+    /// Returns the inverse of [`cdf`](UnnormalizedDistribution::cdf).
     ///
-    /// More precisely, the return value is the right-sided inverse of the left-sided CDF, i.e.,
-    /// it is the right-most position where the left-sided CDF is smaller than or equal to the
-    /// argument `cum`. Returns `None` if `cum >= self.total()` (in this case, the left-sided
-    /// CDF is smaller than or equal to `cum` everywhere, so there is no *single* right-most
-    /// position that satisfies this criterion).
+    /// For discrete distributions, it is recommended to return the right-sided inverse of the
+    /// left-sided CDF, i.e., the right-most position where the left-sided CDF is smaller than or
+    /// equal to the argument `cum`. However, adapters of externally implemented distributions may
+    /// not be able to guarantee this convention, see discussion in
+    /// [`cdf`](UnnormalizedDistribution::cdf).
     ///
-    /// The following two relations hold (where `self` is an `EmpiricalDistribution`):
+    /// Returns `None` if `cum < 0` or `cum > self.total()`. If this method follows the precise
+    /// recommended convention described above (i.e., if it is the right-sided inverse of the
+    /// left-sided CDF), then it should return `None` also for `cum == self.total()`. In all of
+    /// these cases, there is no clear right-most position where the left-sided CDF is smaller than
+    /// or equal to the argument `cum`, either because (i) no position satisfies the criterion (in
+    /// the case of `cum < 0`) or (ii) because all positions satisfy the criterion (in the case of
+    /// `cum >= self.total()`), and so the the right-most one would just be the largest number that
+    /// can be represented by `Self::Value` (e.g., `f32::INFINITY`), which is probably not what
+    /// callers would expect.
     ///
-    /// - `self.left_cumulative(self.inverse_cumulative(self.left_cumulative(pos)).unwrap())` is
-    ///   equal to `self.left_cumulative(pos)` (assuming that `unwrap()` succeeds).
-    /// - `self.inverse_cumulative(self.left_cumulative(self.inverse_cumulative(cum).unwrap())).unwrap())`
-    ///   is equal to `self.inverse_cumulative(cum).unwrap()` (assuming that the inner `unwrap()`
-    ///   succeeds—in which case the outer `unwrap()` is guaranteed to succeed).
-    fn inverse_cumulative(&self, cum: Self::Count) -> Option<Self::Value>;
+    /// # Precise Relation to [`cdf`](UnnormalizedDistribution::cdf)
+    ///
+    /// For discrete (unnormalized) distributions that follow the recommended convention, and for
+    /// continuous (unnormalized) distributions, the following two relations hold :
+    ///
+    /// - `self.cdf(self.ppf(self.cdf(pos)).unwrap()) == self.cdf(pos)` (assuming that `.unwrap()`
+    ///   succeeds).
+    /// - `self.ppf(self.cdf(self.ppf(cum).unwrap())).unwrap()) == self.ppf(cum).unwrap()`
+    ///   (assuming that the inner `.unwrap()` on the left-hand side succeeds—in which case the
+    ///   outer `.unwrap()` is guaranteed to succeed).
+    fn ppf(&self, cum: Self::Count) -> Option<Self::Value>;
 }
 
-// impl<T: probability::distribution::Inverse> UnnormalizedInverse for T {
-//     /// TODO: this does not necessary have exactly the described semantics for discrete distributions.
-//     fn inverse_cumulative(&self, cum: Self::Count) -> Option<Self::Value> {
-//         Some(self.inverse(cum))
-//     }
-// }
+impl<T> UnnormalizedInverse for T
+where
+    T: probability::distribution::Inverse,
+    T::Value: num_traits::AsPrimitive<f64>,
+{
+    /// Note for discrete distributions that this might not follow the recommended convention
+    /// described in the [trait documentation](UnnormalizedInverse::ppf).
+    fn ppf(&self, cum: Self::Count) -> Option<Self::Value> {
+        if (0.0..=1.0).contains(&cum) {
+            Some(self.inverse(cum))
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CountWrapper<C>(C);
@@ -270,7 +306,9 @@ where
         self.0.total().0
     }
 
-    fn left_sided_cumulative(&self, x: Self::Value) -> Self::Count {
+    /// This is the *left-sided* CDF, as recommended in the
+    /// [trait documentation](UnnormalizedDistribution::cdf).
+    fn cdf(&self, x: Self::Value) -> Self::Count {
         self.0.left_cumulative(x).0
     }
 }
@@ -280,7 +318,9 @@ where
     V: Copy + Ord,
     C: Copy + Ord + num_traits::Num + 'static,
 {
-    fn inverse_cumulative(&self, cum: C) -> Option<V> {
+    /// This method follows the recommended convention described in the
+    /// [trait documentation](UnnormalizedInverse::ppf).
+    fn ppf(&self, cum: C) -> Option<V> {
         self.0.quantile_function(CountWrapper(cum))
     }
 }
@@ -400,7 +440,7 @@ where
     let mut upper = total * conversion;
     let mut prev_mid_converted = total;
 
-    let target = conversion * prior.left_sided_cumulative(unquantized);
+    let target = conversion * prior.cdf(unquantized);
 
     let mut current_rate = L::zero();
     let mut record_point = unquantized; // Will be overwritten at least once.
@@ -423,7 +463,7 @@ where
         prev_mid_converted = mid_converted;
 
         let candidate = prior
-            .inverse_cumulative(mid_converted)
+            .ppf(mid_converted)
             .expect("`mid_converted < prior.total()`");
         let deviation = candidate - unquantized;
         let current_objective = distortion(deviation) + current_rate;
@@ -485,8 +525,8 @@ mod tests {
             let x = points[index];
             let expected = points.iter().filter(|&&y| y < x).count() as u32;
             let x = F32::new(x).unwrap();
-            assert_eq!(dist.left_sided_cumulative(x), expected);
-            assert_eq!(dist.inverse_cumulative(expected).unwrap(), x);
+            assert_eq!(dist.cdf(x), expected);
+            assert_eq!(dist.ppf(expected).unwrap(), x);
         }
     }
 
