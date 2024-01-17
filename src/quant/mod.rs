@@ -494,6 +494,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::F64;
+
     use super::*;
 
     use alloc::vec::Vec;
@@ -541,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn vbq() {
+    fn vbq_empirical() {
         #[cfg(not(miri))]
         let amt = 1000;
 
@@ -578,7 +580,7 @@ mod tests {
 
             for i in 0..num_repeats {
                 for (point, shifted_point) in points.iter().zip(shifted_points.iter_mut()) {
-                    let quant = super::vbq(*point, &prior, |x| x * x, beta);
+                    let quant = vbq(*point, &prior, |x| x * x, beta);
                     prior.remove(*shifted_point).unwrap();
                     prior.insert(quant);
                     *shifted_point = quant;
@@ -596,6 +598,56 @@ mod tests {
 
             assert!(previous_entropy < entropy_previous_coarseness);
             entropy_previous_coarseness = previous_entropy;
+        }
+    }
+
+    #[test]
+    fn vbq_gaussian() {
+        #[cfg(not(miri))]
+        let amt = 1000;
+
+        #[cfg(miri)]
+        let amt = 100;
+
+        let mut rng = Xoshiro256StarStar::seed_from_u64(20240117);
+        let mut points = (0..amt)
+            .flat_map(|_| {
+                let num_repeats = 1 + rng.next_u32() % 4;
+                let value = rng.next_u32() as f64 / (u32::MAX / 2) as f64 - 1.0;
+                core::iter::repeat(value).take(num_repeats as usize)
+            })
+            .collect::<Vec<_>>();
+        points.shuffle(&mut rng);
+        assert!(points.len() > amt);
+        assert!(points.len() < 5 * amt);
+
+        let empirical_distribution =
+            EmpiricalDistribution::<F64, u32>::try_from_points(points.iter().copied()).unwrap();
+        let initial_entropy = empirical_distribution.entropy_base2::<f64>();
+        core::mem::drop(empirical_distribution);
+
+        let prior = probability::distribution::Gaussian::new(0.1, 1.3);
+
+        #[cfg(not(miri))]
+        let betas = [1e-7, 1e-5, 0.001, 0.01, 0.1, 1.0];
+
+        #[cfg(miri)]
+        let betas = [0.001, 0.1];
+
+        let mut previous_entropy = initial_entropy;
+
+        for beta in betas {
+            let shifted_points = points
+                .iter()
+                .map(|&point| vbq(point, &prior, |x| x * x, beta));
+            let empirical_distribution =
+                EmpiricalDistribution::<F64, u32>::try_from_points(shifted_points).unwrap();
+            let entropy = empirical_distribution.entropy_base2::<f64>();
+            core::mem::drop(empirical_distribution);
+            assert!(entropy < previous_entropy);
+            assert!(entropy > 0.0);
+
+            previous_entropy = entropy
         }
     }
 }
