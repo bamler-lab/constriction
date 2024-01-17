@@ -5,6 +5,7 @@ mod augmented_btree;
 pub mod augmented_btree;
 
 use core::{
+    borrow::Borrow,
     convert::TryFrom,
     fmt::{Debug, Display},
     hash::Hash,
@@ -162,81 +163,85 @@ where
         Self(AugmentedBTree::new())
     }
 
-    pub fn try_add_points<'a, F>(
+    pub fn try_add_points<F>(
         &mut self,
-        points: impl IntoIterator<Item = &'a F>,
+        points: impl IntoIterator<Item = F>,
     ) -> Result<(), <V as TryFrom<F>>::Error>
     where
         V: TryFrom<F>,
-        F: Copy + 'a,
+        F: Copy,
     {
-        for &point in points {
+        for point in points {
             self.0.insert(V::try_from(point)?, CountWrapper(C::one()))
         }
 
         Ok(())
     }
 
-    pub fn try_from_points<'a, F>(
-        points: impl IntoIterator<Item = &'a F>,
+    pub fn try_from_points<F>(
+        points: impl IntoIterator<Item = F>,
     ) -> Result<Self, <V as TryFrom<F>>::Error>
     where
         Self: Sized + Default,
         V: TryFrom<F>,
-        F: Copy + 'a,
+        F: Copy,
     {
         let mut this = Self::default();
         this.try_add_points(points)?;
         Ok(this)
     }
 
-    pub fn add_points<'a>(&mut self, points: impl IntoIterator<Item = &'a V>)
+    pub fn add_points<I>(&mut self, points: I)
     where
         Self: Sized,
-        V: Copy + 'a,
+        I: IntoIterator,
+        <I as IntoIterator>::Item: Borrow<V>,
     {
-        self.try_add_points(points).unwrap_infallible();
+        self.try_add_points(points.into_iter().map(|x| *x.borrow()))
+            .unwrap_infallible();
     }
 
-    pub fn from_points<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
+    pub fn from_points<I>(points: I) -> Self
     where
         Self: Sized + Default,
-        V: Copy + 'a,
+        I: IntoIterator,
+        <I as IntoIterator>::Item: Borrow<V>,
     {
-        Self::try_from_points(points).unwrap_infallible()
+        Self::try_from_points(points.into_iter().map(|x| *x.borrow())).unwrap_infallible()
     }
 
-    pub fn try_add_points_hashable<'a, F>(
+    pub fn try_add_points_hashable<F>(
         &mut self,
-        points: impl IntoIterator<Item = &'a F>,
+        points: impl IntoIterator<Item = F>,
     ) -> Result<(), <V as TryFrom<F>>::Error>
     where
-        Self: Sized,
         V: TryFrom<F> + Hash,
-        F: Copy + 'a,
+        F: Copy,
     {
         self.try_add_points(points)
     }
 
-    pub fn try_from_points_hashable<'a, F>(
-        points: impl IntoIterator<Item = &'a F>,
+    pub fn try_from_points_hashable<F>(
+        points: impl IntoIterator<Item = F>,
     ) -> Result<Self, <V as TryFrom<F>>::Error>
     where
         Self: Sized + Default,
         V: TryFrom<F> + Hash,
-        F: Copy + 'a,
+        F: Copy,
     {
         let mut this = Self::default();
         this.try_add_points_hashable(points)?;
         Ok(this)
     }
 
-    pub fn from_points_hashable<'a>(points: impl IntoIterator<Item = &'a V>) -> Self
+    pub fn from_points_hashable<I>(points: I) -> Self
     where
         Self: Sized + Default,
-        V: Hash + Copy + 'a,
+        V: Hash,
+        I: IntoIterator,
+        <I as IntoIterator>::Item: Borrow<V>,
     {
-        Self::try_from_points_hashable(points).unwrap_infallible()
+        Self::try_from_points_hashable(points.into_iter().map(|x| *x.borrow())).unwrap_infallible()
     }
 
     // pub fn try_from_points_hashable<'a, F>(
@@ -419,9 +424,9 @@ pub fn vbq<P, L>(
 ) -> P::Value
 where
     P: UnnormalizedInverse,
-    P::Count: Ord + Bounded,
+    P::Count: PartialOrd + Bounded,
     P::Value: Sub<Output = P::Value>,
-    L: Copy + Ord + Zero + Bounded,
+    L: Copy + PartialOrd + Zero + Bounded,
 {
     let total = prior.total();
     assert!(total != P::Count::zero());
@@ -473,7 +478,11 @@ where
         }
 
         current_rate = current_rate + bit_penalty;
-        if current_rate >= record_objective {
+
+        // The check below is stated as "not less than" rather than "greater or equal than" so that
+        // we break also if either side is `NaN` (in case `L` is a float type). This should never
+        // happen for a well defined prior, but it still seems like a good defensive strategy.
+        if !(current_rate < record_objective) {
             // We won't be able to improve upon `record_objective` because all subsequent
             // candidate objectives will be lower bounded by `current_rate`.
             break;
@@ -511,7 +520,8 @@ mod tests {
         assert!(points.len() > amt);
         assert!(points.len() < 5 * amt);
 
-        let dist = EmpiricalDistribution::<F32, u32>::try_from_points(&points).unwrap();
+        let dist =
+            EmpiricalDistribution::<F32, u32>::try_from_points(points.iter().copied()).unwrap();
 
         #[cfg(not(miri))]
         let num_moves = 100;
@@ -550,7 +560,7 @@ mod tests {
         assert!(points.len() > amt);
         assert!(points.len() < 5 * amt);
 
-        let prior = EmpiricalDistribution::<F32, u32>::try_from_points(&points).unwrap();
+        let prior = EmpiricalDistribution::<F32, u32>::from_points(&points);
         let initial_entropy = prior.entropy_base2::<f32>();
         let mut entropy_previous_coarseness = initial_entropy;
 
@@ -588,7 +598,4 @@ mod tests {
             entropy_previous_coarseness = previous_entropy;
         }
     }
-
-    // TODO: add test for VBQ with a prior that implements `probability::distribution::inverse`,
-    // and that is not an `EmpiricalDistribution`
 }

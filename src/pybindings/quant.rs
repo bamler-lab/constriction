@@ -39,7 +39,7 @@ impl EmpiricalDistribution {
     pub fn add_points(&mut self, args: &PyTuple) -> PyResult<()> {
         for points in args.iter() {
             let points = points.extract::<PyReadonlyArrayDyn<'_, f32>>()?;
-            self.0.try_add_points(points.as_array())?;
+            self.0.try_add_points(points.as_array().iter().copied())?;
         }
         Ok(())
     }
