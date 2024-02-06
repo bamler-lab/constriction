@@ -15,7 +15,8 @@ version = "0.1.0"
 
 [dependencies]
 constriction = {path = "..", default-features = false}
-simple-chunk-allocator = "0.1.5"
+spin = "0.9.8"
+talc = "4.2.0"
 
 [profile.dev]
 panic = "abort"

@@ -4,14 +4,15 @@
 #![feature(const_mut_refs)]
 
 use core::panic::PanicInfo;
-use simple_chunk_allocator::{heap, heap_bitmap, GlobalChunkAllocator, PageAligned};
 
-static mut HEAP: PageAligned<[u8; 1048576]> = heap!();
-static mut HEAP_BITMAP: PageAligned<[u8; 512]> = heap_bitmap!();
+use talc::*;
+
+static mut ARENA: [u8; 10000] = [0; 10000];
 
 #[global_allocator]
-static ALLOCATOR: GlobalChunkAllocator =
-    unsafe { GlobalChunkAllocator::new(HEAP.deref_mut_const(), HEAP_BITMAP.deref_mut_const()) };
+static ALLOCATOR: Talck<spin::Mutex<()>, ClaimOnOom> =
+    Talc::new(unsafe { ClaimOnOom::new(Span::from_const_array(core::ptr::addr_of!(ARENA))) })
+        .lock();
 
 #[allow(unused_imports)]
 use constriction;
