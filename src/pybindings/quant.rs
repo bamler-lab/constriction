@@ -218,7 +218,7 @@ impl EmpiricalDistribution {
     }
 
     #[pyo3(signature = ())]
-    pub fn points_and_counts<'p>(&self, py: Python<'p>) -> (PyObject, PyObject) {
+    pub fn points_and_counts(&self, py: Python<'_>) -> (PyObject, PyObject) {
         match &self.0 {
             EmpiricalDistributionImpl::Single(distribution) => {
                 let (points, counts): (Vec<_>, Vec<_>) = distribution

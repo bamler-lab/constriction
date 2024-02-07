@@ -485,13 +485,18 @@ where
 
         current_rate = current_rate + bit_penalty;
 
-        // The check below is stated as "not less than" rather than "greater or equal than" so that
-        // we break also if either side is `NaN` (in case `L` is a float type). This should never
-        // happen for a well defined prior, but it still seems like a good defensive strategy.
-        if !(current_rate < record_objective) {
-            // We won't be able to improve upon `record_objective` because all subsequent
-            // candidate objectives will be lower bounded by `current_rate`.
-            break;
+        match current_rate.partial_cmp(&record_objective) {
+            Some(core::cmp::Ordering::Less) => {
+                // Continue with the next iteration since we might still be able to improve
+                // upon `record_objective`.
+            }
+            None | Some(_) => {
+                // We either won't be able to improve upon `record_objective` (because all
+                // subsequent candidate objectives will be lower bounded by `current_rate`), or
+                // we encountered NaN (which should never happen for a well defined prior, but
+                // if it does then it's probably best to break).
+                break;
+            }
         }
     }
 
