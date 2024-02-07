@@ -273,16 +273,22 @@ where
         F: num_traits::float::Float + 'static,
         C: num_traits::AsPrimitive<F>,
     {
-        let mut last_accum = C::zero();
         let mut sum_count_log_count = F::zero();
-        for (_, accum) in self.0.iter() {
-            let count = (accum.0 - last_accum).as_();
-            sum_count_log_count = sum_count_log_count + count * count.log2();
-            last_accum = accum.0;
+        for (_value, count) in self.iter() {
+            let count = count.as_();
+            sum_count_log_count = sum_count_log_count + count * count.log2()
         }
 
-        let total = self.0.total().0.as_();
+        let total = self.total().as_();
         total.log2() - sum_count_log_count / total
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (V, C)> + '_ {
+        self.0.iter().scan(C::zero(), |prev_accum, (value, accum)| {
+            let count = accum.0 - *prev_accum;
+            *prev_accum = accum.0;
+            Some((value, count))
+        })
     }
 
     pub fn insert(&mut self, value: V) {
