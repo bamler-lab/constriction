@@ -107,8 +107,7 @@
 //! While constraints (1) and (4) above are strictly enforced (for types defined in this
 //! module), constraints (2) and (3) hold in practice but must not be relied on for memory
 //! safety as they can technically be violated without the use of `unsafe` (by using a
-//! [`LeakyQuantizer`] with an invalid
-//! [`Distribution`](probability::distribution::Distribution), i.e., one whose cumulative
+//! [`LeakyQuantizer`] with an invalid [`Distribution`], i.e., one whose cumulative
 //! distribution function either isn't monotonic or has an image that exceeds the interval
 //! `[0, 1]`).
 //!

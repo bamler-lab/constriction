@@ -73,7 +73,7 @@ impl EmpiricalDistribution {
                 for points in args.iter() {
                     let points = points.extract::<PyReadonlyArrayDyn<'_, f32>>()?;
                     let points = points.as_array();
-                    distribution.try_add_points(points.iter().copied())?;
+                    distribution.try_insert_points(points.iter().copied())?;
                 }
             }
             EmpiricalDistributionImpl::Multiple {
@@ -97,7 +97,7 @@ impl EmpiricalDistribution {
                         .into_par_iter()
                         .zip(distributions.into_par_iter())
                         .try_for_each(|(points, distribution)| {
-                            distribution.try_add_points(points.iter().copied())
+                            distribution.try_insert_points(points.iter().copied())
                         })?;
                 }
             }

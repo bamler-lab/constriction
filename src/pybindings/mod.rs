@@ -183,6 +183,14 @@ fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
+/// Experimental quantization methods
+///
+/// This module is a work in progress that will provide fast quantization methods that go beyond
+/// simple rounding to a uniform grid. Quantization is mostly necessary for lossy compression of
+/// continuous (i.e., floating point) data. However, quantization can also arise in lossless
+/// compression for discrete data if one uses a latent variable model with continuous latents. Also,
+/// the quantization methods provided in this module are generic over data types and not restricted
+/// to floating point data as long as a distortion metric exists.
 #[pymodule]
 #[pyo3(name = "quant")]
 fn init_quant(py: Python<'_>, module: &PyModule) -> PyResult<()> {
@@ -381,7 +389,7 @@ impl<'py, D: ndarray::Dimension> PyReadonlyFloatArray<'py, D> {
 impl From<NanError> for PyErr {
     fn from(err: NanError) -> Self {
         match err {
-            NanError::NaN => pyo3::exceptions::PyFloatingPointError::new_err(
+            NanError => pyo3::exceptions::PyFloatingPointError::new_err(
                 "Floating point value is not a number (NaN).",
             ),
         }

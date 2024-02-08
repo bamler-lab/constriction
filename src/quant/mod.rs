@@ -1,3 +1,57 @@
+//! Experimental quantization methods
+//!
+//! This module is a work in progress that will provide fast quantization methods that go beyond
+//! simple rounding to a uniform grid. Quantization is mostly necessary for lossy compression of
+//! continuous (i.e., floating point) data. However, quantization can also arise in lossless
+//! compression for discrete data if one uses a latent variable model with continuous latents. Also,
+//! the quantization methods provided in this module are generic over data types and not restricted
+//! to floating point data as long as a distortion metric exists.
+//!
+//! ## The Quantization Problem
+//!
+//! Quantizing a collection of points involves solving three optimization problems:
+//! 1. finding a good discrete set of *grid points* to which we quantize the original points;
+//! 2. mapping each point to a grid point that is close (in some distortion metric) to the original
+//!    point; and
+//! 3. making sure the collection of all quantized points has low entropy.
+//!
+//! For optimal performance, all three quantization techniques should ideally be optimized jointly.
+//! However, this is difficult to do in practice, and various quantization techniques make different
+//! tradeoffs. For example, the simplest form of quantization rounds to the nearest neighbor in a
+//! uniform grid, which neglects optimization problems 1 and 3. On the other hand, various vector
+//! quantization methods focus on optimization problem 1, but they often neglect problem 3, and they
+//! often use a rather simple distortion metric (e.g., Euclidean distance) for optimization
+//! problem 2. [Variational Bayesian Quantization (VBQ)] uses a more advanced distortion metric, and
+//! it addresses optimization problem 3 through a rate/distortion optimization, where the "rate"
+//! term is a somewhat heuristic approximation of the entropy of the quantized points. However, the
+//! original version of VBQ addresses optimization problem 1 rather poorly, especially in the
+//! low-bit rate regime.
+//!
+//! ## Module Structure
+//!
+//! The core of this module is the type [`EmpiricalDistribution`], which is a dynamic data structure
+//! that can be used to represent the empirical frequencies of values in a collection of points that
+//! one wants to quantize. Quantization methods use an `EmpiricalDistribution` to inform the
+//! (original) positioning of grid points (optimization problem 1 above), and to quickly estimate
+//! how many points out of the collection will be mapped to each grid point (for optimization
+//! problem 3 above). The actual APIs are more generic in that they accept not only an
+//! `EmpiricalDistribution` but instead any type that implements, depending on context, either the
+//! trait [`UnnormalizedDistribution`] or [`UnnormalizedInverse`]. These traits are both implemented
+//! by `EmpiricalDistribution`, but also by parametric distributions defined in the [`probability`]
+//! crate (see traits [`Distribution`](crate::stream::model::Distribution) and
+//! [`Inverse`](crate::stream::model::Inverse), which are the same traits used for entropy coding
+//! with a [LeakyQuantizer](crate::stream::model::LeakyQuantizer)).
+//!
+//! Currently, the only implemented quantization method is Variational Bayesian Quantization (see
+//! function [`vbq`]). But the plan for future versions of `constriction` is to add other
+//! quantization methods, and to design them modular enough so that they can be combined in order
+//! to address all three of the above optimization problems. How to achieve this modularity is an
+//! ongoing research question, which is why the APIs in this module are less stable than the APIs in
+//! the [`stream`](crate::stream) and [`symbol`](crate::symbol) modules, and will likely change
+//! significantly in future versions of `constriction` (in accordance with SemVer guarantees).
+//!
+//! [Variational Bayesian Quantization (VBQ)]: http://proceedings.mlr.press/v119/yang20a/yang20a.pdf
+
 #[cfg(not(feature = "benchmark-internals"))]
 mod augmented_btree;
 
@@ -18,11 +72,47 @@ use crate::{UnwrapInfallible, F32};
 
 use self::augmented_btree::AugmentedBTree;
 
+/// A trait for unnormalized distributions over ordered data
+///
+/// This trait is similar to the [`Distribution`](crate::stream::model::Distribution) trait
+/// re-exported from the [`probability`] crate, but more generic. Firstly, a distribution that
+/// implements this trait does not need to be (explicitly) normalized (i.e., the cumulative
+/// distribution method [`cdf`] may range from zero to any positive value, not necessarily one).
+/// Secondly, because the distribution does not need to be normalized, quantiles (i.e., return
+/// values of the method `cdf`) are not restricted to floating point numbers; they may be integers
+/// if more appropriate for the use case (see, e.g., [`EmpiricalDistribution`]).
+///
+/// # Compatibility With Normalized Distributions
+///
+/// We provide a [blanket implementation](#impl-UnnormalizedDistribution-for-T) for (normalized)
+/// distributions from the [`probability`] crate.
+///
+/// # See also
+///
+/// - [`UnnormalizedInverse`]
+///
+/// [`cdf`]: UnnormalizedDistribution::cdf
 pub trait UnnormalizedDistribution {
+    /// The type of outcomes, analogous to [`probability::distribution::Distribution::Value`].
     type Value: Copy;
 
+    /// The type used to represent unnormalized (probability) mass.
+    ///
+    /// This type is called "`Count`" since [`EmpiricalDistribution`] uses this type to represent
+    /// empirical counts of values, typically using an integer type. But `Count` is not limited to
+    /// integer types (e.g., the [blanket implementation](#impl-UnnormalizedDistribution-for-T) for
+    /// normalized distributions from the `probability` crate sets `Count = f64` and uses it to
+    /// represent probabilities and quantiles in the interval `[0, 1]`).
     type Count: Copy + num_traits::Num;
 
+    /// Returns the normalization constant.
+    ///
+    /// This has to be larger or equal to the largest value that [`cdf`] can return (if it is larger
+    /// than the largest possible return value of `cdf`, then difference between the two is the
+    /// (unnormalized) mass that the distribution puts on the highest value representable by
+    /// `Self::Value`).
+    ///
+    /// [`cdf`]: UnnormalizedDistribution::cdf
     fn total(&self) -> Self::Count;
 
     /// Calculates the cumulative distribution function (CDF).
@@ -38,6 +128,10 @@ pub trait UnnormalizedDistribution {
     /// long as [`UnnormalizedInverse::ppf`] behaves accordingly; and if `cdf` and `ppf` follow
     /// opposite conventions then `vbq` still terminates and quantizes to a grid point from the
     /// provided `prior`, but the quantization might be biased towards rounding up or down).
+    ///
+    /// ## Example
+    ///
+    /// See [example for `EmpiricalDistribution`](EmpiricalDistribution#lookup).
     fn cdf(&self, x: Self::Value) -> Self::Count;
 }
 
@@ -60,6 +154,15 @@ where
     }
 }
 
+/// A trait for unnormalized distributions over ordered data whose CDF can be inverted
+///
+/// This trait is similar to the [`Inverse`](crate::stream::model::Inverse) trait re-exported from
+/// the [`probability`] crate, but more generic (see discussion in [`UnnormalizedDistribution`]).
+///
+/// # Compatibility With Normalized Distributions
+///
+/// We provide a [blanket implementation](#impl-UnnormalizedInverse-for-T) for (normalized)
+/// distributions from the [`probability`] crate.
 pub trait UnnormalizedInverse: UnnormalizedDistribution {
     /// Returns the inverse of [`cdf`](UnnormalizedDistribution::cdf).
     ///
@@ -75,9 +178,9 @@ pub trait UnnormalizedInverse: UnnormalizedDistribution {
     /// these cases, there is no clear right-most position where the left-sided CDF is smaller than
     /// or equal to the argument `cum`, either because (i) no position satisfies the criterion (in
     /// the case of `cum < 0`) or (ii) because all positions satisfy the criterion (in the case of
-    /// `cum >= self.total()`), and so the the right-most one would just be the largest number that
-    /// can be represented by `Self::Value` (e.g., `f32::INFINITY`), which is probably not what
-    /// callers would expect.
+    /// `cum >= self.total()`), and so the right-most one would just be the largest number that can
+    /// be represented by `Self::Value` (e.g., `f32::INFINITY`), which is probably not what callers
+    /// would expect.
     ///
     /// # Precise Relation to [`cdf`](UnnormalizedDistribution::cdf)
     ///
@@ -89,6 +192,10 @@ pub trait UnnormalizedInverse: UnnormalizedDistribution {
     /// - `self.ppf(self.cdf(self.ppf(cum).unwrap())).unwrap()) == self.ppf(cum).unwrap()`
     ///   (assuming that the inner `.unwrap()` on the left-hand side succeeds—in which case the
     ///   outer `.unwrap()` is guaranteed to succeed).
+    ///
+    /// ## Example
+    ///
+    /// See [example for `EmpiricalDistribution`](EmpiricalDistribution#lookup).
     fn ppf(&self, cum: Self::Count) -> Option<Self::Value>;
 }
 
@@ -152,55 +259,205 @@ impl<C: Sub<Output = C>> Sub for CountWrapper<C> {
     }
 }
 
-pub struct EmpiricalDistribution<V = F32, C = u32>(AugmentedBTree<V, CountWrapper<C>, 64>);
+/// Dynamic data structure for frequencies of values within a finite set of points.
+///
+/// An `EmpiricalDistribution` counts how many times each value appears within a finite set of
+/// points, and it provides efficient access to the cumulative and inverse cumulative distribution
+/// functions (by implementing [`UnnormalizedDistribution`] and [`UnnormalizedInverse`],
+/// respectively). `EmpiricalDistribution` is a dynamic data structure, i.e., it provides methods to
+/// efficiently [remove](Self::remove) existing points and [insert](Self::insert) new points.
+///
+/// # Examples
+///
+/// ## Construction And Iteration
+///
+/// The following example constructs an `EmpiricalDistribution` over a set of floating point
+/// numbers. Since the value type `V` has to be totally ordered (i.e., it has to implement [`Ord`]),
+/// we have to wrap floating point numbers in a [`NonNanFloat`](crate::NonNanFloat), which fails if
+/// we encounter `NaN`.
+///
+/// ```
+/// use constriction::{F32, quant::EmpiricalDistribution};
+///
+/// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
+/// let distribution = EmpiricalDistribution::<F32, u32>::try_from_points(
+///     points.iter().copied()
+/// ).unwrap();
+///
+/// // Iterate over entries sorted by value:
+/// let points_and_counts = distribution
+///     .iter()
+///     .map(|(point, count)| (point.get(), count))
+///     .collect::<Vec<_>>();
+/// assert_eq!(points_and_counts, [(-0.3, 2), (0.1, 1), (1.5, 3), (4.2, 1)]);
+///
+/// // The following fails because `points2` contains `NaN`:
+/// let points2 = [0.1, -0.3, 0.0 / 0.0 /* <-- NaN */, -0.3, 4.2, 1.5, 1.5];
+/// let distribution2 = EmpiricalDistribution::<F32, u32>::try_from_points(points2.iter().copied());
+/// assert_eq!(distribution2.unwrap_err(), constriction::NanError);
+/// ```
+///
+/// ## Lookup
+///
+/// ```
+/// use constriction::{
+///     F32, quant::{EmpiricalDistribution, UnnormalizedDistribution, UnnormalizedInverse}
+/// };
+///
+/// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
+/// let distribution = EmpiricalDistribution::<F32, u32>::try_from_points(
+///     points.iter().copied()
+/// ).unwrap();
+/// // `distribution` contains: -0.3 (2x), 0.1 (1x), 1.5 (3x), and 4.2 (1x)
+///
+/// assert_eq!(distribution.total(), 7); // Total number of (not necessarily distinct) entries.
+///
+/// // Look up values in the cumulative distribution function (CDF):
+/// assert_eq!(distribution.cdf(F32::new(-1.0).unwrap()), 0);
+/// assert_eq!(distribution.cdf(F32::new(1.0).unwrap()), 3);
+/// assert_eq!(distribution.cdf(F32::new(1.5).unwrap()), 3); // CDF is left-sided
+/// assert_eq!(distribution.cdf(F32::new(1.50001).unwrap()), 6); // CDF is left-sided
+/// assert_eq!(distribution.cdf(F32::new(100.0).unwrap()), 7);
+///
+/// // Look up values in the inverse of the CDF (also known as percent point function, PPF):
+/// assert_eq!(distribution.ppf(0), Some(F32::new(-0.3).unwrap()));
+/// assert_eq!(distribution.ppf(1), Some(F32::new(-0.3).unwrap()));
+/// assert_eq!(distribution.ppf(2), Some(F32::new(0.1).unwrap()));
+/// assert_eq!(distribution.ppf(6), Some(F32::new(4.2).unwrap()));
+/// assert_eq!(distribution.ppf(7), None); // See documentation of `UnnormalizedInverse::ppf`.
+/// ```
+///
+/// # Runtime Complexity
+///
+/// For an `EmpiricalDistribution<V, C, CAP>` over `n`` *distinct* entries, we have:
+///
+/// - lookups for both the [cumulative distribution function (CDF)](UnnormalizedDistribution::cdf)
+///   and the [inverse CDF](UnnormalizedInverse::ppf) take `O(log n)` time; and
+/// - [inserts](Self::insert) and [removals](Self::remove) take `O(CAP + log n)` time (where
+///   `CAP=64` by default).
+///
+/// # Details
+///
+/// ## Const Generic Parameter `CAP`
+///
+/// The const generic `CAP: usize` controls the size of contiguous memory allocations. We statically
+/// enforce `CAP >= 4`. The current implementation uses an augmented B-tree whose nodes have a
+/// capacity to hold at most `CAP` entries (and which never hold fewer than `CAP / 2` entries except
+/// if `n < CAP / 2`). The default value for `CAP` was chosen by optimizing for speed in relatively
+/// simple benchmarks, but it was not tuned very heavily since performance appeared relatively
+/// stable over a range of values for CAP. Changing `CAP` hardly affects total memory consumption
+/// (except if `n < CAP`) but it affects the number of memory allocations, memory fragmentation, and
+/// the overhead for inserting and removing entries, see runtime complexities stated above.
+///
+/// ## Floating Point Edge Cases
+///
+/// `EmpiricalDistribution<V, C, CAP>` requires the value type `V` to be totally ordered (i.e., `V`
+/// has to implement [`Ord`]). Unfortunately, the floating point types `f32` and `f64` only
+/// implement [`PartialOrd`] but not `Ord` because the possibility of having `NaN` values breaks
+/// total order. To use an `EmpiricalDistribution` over float types, the floats have to be wrapped
+/// in a [`NonNanFloat`](crate::NonNanFloat), see [example above](Self#construction-and-iteration).
+/// The wrapper `NonNanFloat` implements `Ord` because it ensures that it never wraps a `NaN` value.
+///
+/// In addition to `NaN`, there are a few more edge cases with floating point numbers:
+/// - **zero:** like the comparison operators in rust, `EmpiricalDistribution` considers positive
+///   and negative zero equal. So if we insert both positive and a negative zero values into an
+///   `EmpiricalDistribution`, the distribution lumps them together and keeps track of only their
+///   total count. We can [`remove`](Self::remove) zeros by providing either positive or negative
+///   zero as a key, regardless of which variant was inserted how many times. See code below.
+/// - **subnormal numbers:** no special treatment, see code below.
+/// - **infinity:** technically not treated special, but infinities might still lead to surprising
+///   behavior (e.g., if an `EmpiricalDistribution` contains some positive infinite values, then,
+///   by definition of the left-sided CDF, [`UnnormalizedDistribution::cdf`] always returns a
+///   cumulative that is strictly smaller than [`UnnormalizedDistribution::total`]).
+///
+/// Examples of edge cases involving floating point zeros and subnormal numbers:
+///
+/// ```
+/// # use constriction::{
+/// #     F32, quant::{EmpiricalDistribution, UnnormalizedDistribution, UnnormalizedInverse}
+/// # };
+/// #
+/// let positive_zero = 0.0_f32;
+/// let negative_zero = -0.0_f32;
+/// assert!(positive_zero.to_bits() != negative_zero.to_bits()); // They have different bit patterns
+/// assert!(positive_zero == negative_zero); // ... but are still specified to compare as equal.
+/// assert!(!positive_zero.is_subnormal());  // Zero is *not* considered subnormal.
+/// assert!(!negative_zero.is_subnormal());
+///
+/// let positive_subnormal1 = 1.0e-40_f32;
+/// let positive_subnormal2 = 4.0e-40_f32;
+/// let negative_subnormal = -1.0e-40_f32;
+/// assert!(positive_subnormal1.is_subnormal());
+/// assert!(positive_subnormal2.is_subnormal());
+/// assert!(negative_subnormal.is_subnormal());
+///
+/// // Insert positive and negative zero and some subnormal numbers into an `EmpiricalDistribution`:
+/// let mut distribution = EmpiricalDistribution::<F32, u32>::new();
+/// distribution.insert(F32::new(positive_zero).unwrap());
+/// distribution.insert(F32::new(negative_zero).unwrap());
+/// distribution.insert(F32::new(positive_subnormal1).unwrap());
+/// distribution.insert(F32::new(positive_subnormal2).unwrap());
+/// distribution.insert(F32::new(negative_subnormal).unwrap());
+///
+/// // Inspect how the inserted values are stored in the `EmpiricalDistribution`:
+/// let values_and_counts = distribution.iter().collect::<Vec<_>>();
+/// assert_eq!(
+///     values_and_counts,
+///     [
+///         (F32::new(negative_subnormal).unwrap(), 1),
+///         (F32::new(0.0).unwrap(), 2), // Positive and negative zero get lumped together.
+///         (F32::new(positive_subnormal1).unwrap(), 1), // But different subnormal numbers
+///         (F32::new(positive_subnormal2).unwrap(), 1), // are distinguished.
+///     ]
+/// );
+///
+/// // We got back the variant of zero that was inserted first:
+/// assert_eq!(values_and_counts[1].0.get().to_bits(), positive_zero.to_bits());
+///
+/// // Lookups in the CDF don't distinguish between positive and negative zero:
+/// assert_eq!(distribution.cdf(F32::new(negative_zero).unwrap()), 1);
+/// assert_eq!(distribution.cdf(F32::new(positive_zero).unwrap()), 1);
+///
+/// // But they do distinguish the tiny differences between subnormal numbers:
+/// assert_eq!(distribution.cdf(F32::new(positive_subnormal1).unwrap()), 3);
+/// assert_eq!(distribution.cdf(F32::new(2e-40_f32).unwrap()), 4);
+/// assert_eq!(distribution.cdf(F32::new(positive_subnormal2).unwrap()), 4);
+/// assert_eq!(distribution.cdf(F32::new(5e-40_f32).unwrap()), 5);
+///
+/// // Lookups in the PPF return the variant of zero that was inserted first.
+/// assert_eq!(distribution.ppf(0).unwrap().get(), negative_subnormal);
+/// assert_eq!(distribution.ppf(1).unwrap().get().to_bits(), positive_zero.to_bits());
+/// assert_eq!(distribution.ppf(2).unwrap().get().to_bits(), positive_zero.to_bits());
+/// assert_eq!(distribution.ppf(3).unwrap().get(), positive_subnormal1);
+/// assert_eq!(distribution.ppf(4).unwrap().get(), positive_subnormal2);
+/// assert_eq!(distribution.ppf(5), None);
+///
+/// // When removing a zero value, we can use either positive or negative zero as the key:
+/// assert_eq!(distribution.remove(F32::new(positive_zero).unwrap()), Some(1));
+/// assert_eq!(distribution.remove(F32::new(negative_zero).unwrap()), Some(0));
+/// assert_eq!(distribution.remove(F32::new(positive_zero).unwrap()), None);
+/// ```
+pub struct EmpiricalDistribution<V = F32, C = u32, const CAP: usize = 64>(
+    AugmentedBTree<V, CountWrapper<C>, CAP>,
+);
 
 impl<V, C> EmpiricalDistribution<V, C>
 where
     V: Copy + Ord,
     C: Copy + Ord + num_traits::Num,
 {
+    /// Creates an empty `EmpiricalDistribution`.
+    ///
+    /// This currently allocates one (empty) tree node (which is different from how
+    /// [`Vec::new`](alloc::vec::Vec::new) operates).
     pub fn new() -> Self {
         Self(AugmentedBTree::new())
     }
 
-    pub fn try_add_points<F>(
-        &mut self,
-        points: impl IntoIterator<Item = F>,
-    ) -> Result<(), <V as TryFrom<F>>::Error>
-    where
-        V: TryFrom<F>,
-        F: Copy,
-    {
-        for point in points {
-            self.0.insert(V::try_from(point)?, CountWrapper(C::one()))
-        }
-
-        Ok(())
-    }
-
-    pub fn try_from_points<F>(
-        points: impl IntoIterator<Item = F>,
-    ) -> Result<Self, <V as TryFrom<F>>::Error>
-    where
-        Self: Sized + Default,
-        V: TryFrom<F>,
-        F: Copy,
-    {
-        let mut this = Self::default();
-        this.try_add_points(points)?;
-        Ok(this)
-    }
-
-    pub fn add_points<I>(&mut self, points: I)
-    where
-        Self: Sized,
-        I: IntoIterator,
-        <I as IntoIterator>::Item: Borrow<V>,
-    {
-        self.try_add_points(points.into_iter().map(|x| *x.borrow()))
-            .unwrap_infallible();
-    }
-
+    /// Creates an `EmpiricalDistribution` that counts occurrences in a provided collection.
+    ///
+    /// If the distribution is over floating point values, then you might be better off with
+    /// [`try_from_points`](Self::try_from_points).
     pub fn from_points<I>(points: I) -> Self
     where
         Self: Sized + Default,
@@ -210,39 +467,104 @@ where
         Self::try_from_points(points.into_iter().map(|x| *x.borrow())).unwrap_infallible()
     }
 
-    pub fn try_add_points_hashable<F>(
-        &mut self,
-        points: impl IntoIterator<Item = F>,
-    ) -> Result<(), <V as TryFrom<F>>::Error>
-    where
-        V: TryFrom<F> + Hash,
-        F: Copy,
-    {
-        self.try_add_points(points)
-    }
-
-    pub fn try_from_points_hashable<F>(
+    /// Fallible variant of [`from_points`](Self::from_points).
+    ///
+    /// This is mostly intended for `EmpiricalDistribution`s over floating point values, which have
+    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted. See [example
+    /// in the struct-level documentation](Self#construction-and-iteration).
+    pub fn try_from_points<F>(
         points: impl IntoIterator<Item = F>,
     ) -> Result<Self, <V as TryFrom<F>>::Error>
     where
         Self: Sized + Default,
-        V: TryFrom<F> + Hash,
-        F: Copy,
+        V: TryFrom<F>,
     {
         let mut this = Self::default();
-        this.try_add_points_hashable(points)?;
+        this.try_insert_points(points)?;
         Ok(this)
     }
 
-    pub fn from_points_hashable<I>(points: I) -> Self
+    /// Inserts multiple points.
+    pub fn insert_points<I>(&mut self, points: I)
     where
-        Self: Sized + Default,
-        V: Hash,
+        Self: Sized,
         I: IntoIterator,
         <I as IntoIterator>::Item: Borrow<V>,
     {
-        Self::try_from_points_hashable(points.into_iter().map(|x| *x.borrow())).unwrap_infallible()
+        self.try_insert_points(points.into_iter().map(|x| *x.borrow()))
+            .unwrap_infallible();
     }
+
+    /// Fallible variant of [`insert_points`](Self::insert_points)
+    ///
+    /// This is mostly intended for `EmpiricalDistribution`s over floating point values, which have
+    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted. See
+    /// [`try_from_points`](Self::try_from_points) and [example in the struct-level
+    /// documentation](Self#construction-and-iteration).
+    pub fn try_insert_points<F>(
+        &mut self,
+        points: impl IntoIterator<Item = F>,
+    ) -> Result<(), <V as TryFrom<F>>::Error>
+    where
+        V: TryFrom<F>,
+    {
+        for point in points {
+            self.0.insert(V::try_from(point)?, CountWrapper(C::one()))
+        }
+
+        Ok(())
+    }
+
+    /// Inserts a single point into the distribution.
+    ///
+    /// If the distribution already has some point(s) with the same `value`, then no allocation
+    /// is required and only the count for `value` is increased. Otherwise, a new entry with count
+    /// `1` is inserted.
+    pub fn insert(&mut self, value: V) {
+        self.0.insert(value, CountWrapper(C::one()))
+    }
+
+    /// Removes a point with the provided `value`.
+    ///
+    /// On success, returns `Some(remaining)`, where `remaining` is the number of points that still
+    /// remain at `value` after the removal (which can be zero). Returns `None` if removal fails
+    /// because there was no point at `value` (in this case, the `EmpiricalDistribution` remains
+    /// unchanged).
+    pub fn remove(&mut self, value: V) -> Option<C> {
+        self.0.remove(value, CountWrapper(C::one())).map(|c| c.0)
+    }
+
+    // pub fn try_insert_points_hashable<F>(
+    //     &mut self,
+    //     points: impl IntoIterator<Item = F>,
+    // ) -> Result<(), <V as TryFrom<F>>::Error>
+    // where
+    //     V: TryFrom<F> + Hash,
+    // {
+    //     self.try_insert_points(points)
+    // }
+
+    // pub fn try_from_points_hashable<F>(
+    //     points: impl IntoIterator<Item = F>,
+    // ) -> Result<Self, <V as TryFrom<F>>::Error>
+    // where
+    //     Self: Sized + Default,
+    //     V: TryFrom<F> + Hash,
+    // {
+    //     let mut this = Self::default();
+    //     this.try_insert_points_hashable(points)?;
+    //     Ok(this)
+    // }
+
+    // pub fn from_points_hashable<I>(points: I) -> Self
+    // where
+    //     Self: Sized + Default,
+    //     V: Hash,
+    //     I: IntoIterator,
+    //     <I as IntoIterator>::Item: Borrow<V>,
+    // {
+    //     Self::try_from_points_hashable(points.into_iter().map(|x| *x.borrow())).unwrap_infallible()
+    // }
 
     // pub fn try_from_points_hashable<'a, F>(
     //     points: impl IntoIterator<Item = &'a F>,
@@ -250,7 +572,6 @@ where
     // where
     //     Self: Sized,
     //     V: TryFrom<F> + Hash,
-    //     F: Copy + 'a,
     // {
     //     let mut counts = HashMap::new();
     //     for &point in points {
@@ -268,6 +589,74 @@ where
     //     Ok(Self(tree))
     // }
 
+    /// Iterate over unique values in sorted order.
+    ///
+    /// For each unique value in the distribution, the iteration yields a pair `(value, count)`,
+    /// where `count` is the number of times that `value` appears in the distribution. See
+    /// [example in the struct-level documentation](Self#construction-and-iteration).
+    pub fn iter(&self) -> impl Iterator<Item = (V, C)> + '_ {
+        self.0.iter().scan(C::zero(), |prev_accum, (value, accum)| {
+            let count = accum.0 - *prev_accum;
+            *prev_accum = accum.0;
+            Some((value, count))
+        })
+    }
+
+    /// Calculates the entropy of the (corresponding normalized) distribution.
+    ///
+    /// The entropy is defined as
+    ///
+    /// `entropy = - sum_i( (count_i / total) * log_2(count_i / total) )`
+    ///
+    /// where `log_2` is the logarithm to base 2, the sum runs over all *distinct* values in the
+    /// distribution, and `(count_i / total)` is the frequency with which the `i`th value appears in
+    /// the distribution.
+    ///
+    /// The calculation (including the logarithm) is performed in the number space `F`, which may
+    /// need to be specified explicitly if it cannot be inferred by the return type, see example
+    /// below.
+    ///
+    /// # Examples
+    ///
+    /// A distribution over two values where each value occurs exactly half of the time has an
+    /// entropy of 1 bit:
+    ///
+    /// ```
+    /// use constriction::{F32, quant::EmpiricalDistribution};
+    ///
+    /// let points1 = [0.2, 3.5, 3.5, 0.2, 3.5, 0.2];
+    /// let distribution1 = EmpiricalDistribution::<F32, u32>::try_from_points(
+    ///     points1.iter().copied()
+    /// ).unwrap();
+    /// assert!((distribution1.entropy_base2::<f32>() - 1.0).abs() < 1e-6);
+    /// ```
+    ///
+    /// More generally, a uniform distribution over `2^n` values has an entropy of `n` bit. If the
+    /// distribution is only approximately uniform then its entropy is slightly lower:
+    ///
+    /// ```
+    /// # use constriction::{F32, quant::EmpiricalDistribution};
+    /// let points2 = [0.1, 0.2, 0.3, 0.4, 0.1, 0.3, 0.4]; // 4 distinct values, approximately uniform.
+    /// let distribution2 = EmpiricalDistribution::<F32, u32>::try_from_points(
+    ///     points2.iter().copied()
+    /// ).unwrap();
+    /// assert!((distribution2.entropy_base2::<f32>() - 1.9502121).abs() < 1e-6); // almost 2 bit.
+    /// ```
+    ///
+    /// If the distribution is very non-uniform (i.e., strongly peaked) then its entropy can be
+    /// significantly lower. For very peaked distributions, the entropy can even drop below 1 bit,
+    /// and this can happen even with distributions over more than two distinct values:
+    ///
+    /// ```
+    /// # use constriction::{F32, quant::EmpiricalDistribution};
+    /// let points3 = [0.2, 0.2, 0.2, 0.2, 10.5, 0.2, 0.2, 0.2, 0.2, -20.8, 0.2, 0.2];
+    /// let distribution3 = EmpiricalDistribution::<F32, u32>::try_from_points(
+    ///     points3.iter().copied()
+    /// ).unwrap();
+    /// assert!((distribution3.entropy_base2::<f32>() - 0.8166891).abs() < 1e-6); // less than 1 bit.
+    /// ```
+    ///
+
     pub fn entropy_base2<F>(&self) -> F
     where
         F: num_traits::float::Float + 'static,
@@ -281,27 +670,6 @@ where
 
         let total = self.total().as_();
         total.log2() - sum_count_log_count / total
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (V, C)> + '_ {
-        self.0.iter().scan(C::zero(), |prev_accum, (value, accum)| {
-            let count = accum.0 - *prev_accum;
-            *prev_accum = accum.0;
-            Some((value, count))
-        })
-    }
-
-    pub fn insert(&mut self, value: V) {
-        self.0.insert(value, CountWrapper(C::one()))
-    }
-
-    /// Removes a point at position `pos`.
-    ///
-    /// On success, returns `Some(remaining)` where `remaining` is the number of points that still
-    /// remain at position `pos` after the removal. Returns `None` if removal fails because there
-    /// was no point at position `pos`.
-    pub fn remove(&mut self, value: V) -> Option<C> {
-        self.0.remove(value, CountWrapper(C::one())).map(|c| c.0)
     }
 }
 
