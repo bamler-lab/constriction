@@ -672,7 +672,7 @@ pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq + Hash + 'static {
 /// initial zero chunks.
 fn bit_array_to_chunks_truncated<Data, Chunk>(
     data: Data,
-) -> impl Iterator<Item = Chunk> + ExactSizeIterator + DoubleEndedIterator
+) -> impl ExactSizeIterator<Item = Chunk> + DoubleEndedIterator
 where
     Data: BitArray + AsPrimitive<Chunk>,
     Chunk: BitArray,
