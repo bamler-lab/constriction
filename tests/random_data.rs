@@ -22,7 +22,7 @@ use constriction::{
 fn make_random_normal(
     amt: usize,
     domain: RangeInclusive<i32>,
-) -> impl Iterator<Item = (i32, Gaussian)> + DoubleEndedIterator + Clone {
+) -> impl DoubleEndedIterator<Item = (i32, Gaussian)> + Clone {
     let mut hasher = DefaultHasher::new();
     (amt as u64).hash(&mut hasher);
 
