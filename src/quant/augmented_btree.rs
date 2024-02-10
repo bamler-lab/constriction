@@ -1172,9 +1172,9 @@ where
     }
 }
 
-/// Returns `Ok(last_accum)` where `last_accum <= new_accum` is the `accum` value of the subtree
-/// rooted at `left_child`, regardless of whether it was swapped out or not. Returns `Err(())` if
-/// `last_accum > new_accum`.
+/// Returns `Ok(last_accum)` where `last_accum <= accum` is the `accum` value of the the last entry
+/// of the subtree rooted at `left_child`, measured in its parent node (regardless of whether it was
+/// swapped out or not). Returns `Err(())` if `last_accum > new_accum`.
 ///
 ///  # Safety
 ///
@@ -1183,7 +1183,7 @@ unsafe fn replace_pos_with_previous_if_accum_is<P, C, const CAP: usize>(
     children_type: NodeType,
     separator: &mut Entry<P, C>,
     previous_separator: Option<&Entry<P, C>>,
-    new_accum: C,
+    accum: C,
     left_child: &mut ChildPtr<P, C, CAP>,
 ) -> Result<C, ()>
 where
@@ -1193,10 +1193,10 @@ where
     let previous_accum = previous_separator
         .map(|entry| entry.accum)
         .unwrap_or_default();
-    if previous_accum > new_accum {
+    if previous_accum > accum {
         return Err(());
     }
-    let new_accum_in_left_subtree = new_accum - previous_accum;
+    let new_accum_in_left_subtree = accum - previous_accum;
     let last_accum;
     match children_type {
         NonLeaf => {
@@ -1229,7 +1229,7 @@ where
         }
     };
 
-    Ok(last_accum)
+    Ok(last_accum + previous_accum)
 }
 
 impl<P, C, const CAP: usize> LeafNode<P, C, CAP>
