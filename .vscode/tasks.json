@@ -124,6 +124,16 @@
 			"presentation": {
 				"clear": true
 			},
+		},
+		{
+			"label": "Test Python module (without rebuilding)",
+			"type": "shell",
+			"command": "poetry run pytest tests/python",
+			"group": "build",
+			"problemMatcher": [],
+			"presentation": {
+				"clear": true
+			},
 		}
 	]
 }
