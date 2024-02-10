@@ -2240,7 +2240,10 @@ mod bounded_vec {
 #[cfg(test)]
 mod tests {
     use core::hash::{Hash, Hasher};
-    use std::{collections::hash_map::DefaultHasher, dbg};
+    use std::{
+        collections::{hash_map::DefaultHasher, HashMap},
+        dbg,
+    };
 
     use alloc::vec::Vec;
     use rand::{distributions, seq::SliceRandom, Rng, RngCore, SeedableRng};
@@ -2556,6 +2559,19 @@ mod tests {
             verify_tree(&tree, &cdf);
             tree.debug_assert_integrity();
 
+            // Create a hash map so we can keep track of how many entries are supposed to be
+            // at each position as we keep removing entries.
+            let mut hash_map = cdf
+                .iter()
+                .scan(0, |previous_accum, &(pos, accum)| {
+                    let count = accum - *previous_accum;
+                    *previous_accum = accum;
+                    // Using `.to_bits()` is a dirty hack to make `pos` hashable. It works
+                    // here because we don't have NaNs, and all zeros have the same sign.
+                    Some((pos.get().to_bits(), count))
+                })
+                .collect::<HashMap<_, _>>();
+
             // Remove some of the items in random order and verify the tree's correctness again.
             let mut removals = sorted_insertions;
             let partial_removal_probability = distributions::Bernoulli::new(0.1).unwrap();
@@ -2593,7 +2609,9 @@ mod tests {
 
             removals.shuffle(&mut rng);
             for &(pos, count) in &removals {
-                assert!(tree.remove(pos, count).is_some());
+                let expected_full_count = hash_map.get_mut(&pos.get().to_bits()).unwrap();
+                assert_eq!(tree.remove(pos, count), Some(*expected_full_count - count));
+                *expected_full_count -= count;
             }
 
             verify_tree(&tree, &cdf);
@@ -2611,7 +2629,9 @@ mod tests {
             removals.shuffle(&mut rng);
 
             for &(pos, count) in &removals {
-                assert!(tree.remove(pos, count).is_some());
+                let expected_full_count = hash_map.get_mut(&pos.get().to_bits()).unwrap();
+                assert_eq!(tree.remove(pos, count), Some(*expected_full_count - count));
+                *expected_full_count -= count;
             }
 
             assert_eq!(tree.total(), 0);
