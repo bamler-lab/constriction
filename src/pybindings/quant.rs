@@ -4,7 +4,7 @@ use core::{borrow::Borrow, convert::Infallible};
 use ndarray::parallel::prelude::*;
 use ndarray::{ArrayBase, Axis, IxDyn};
 use numpy::{PyArray, PyArrayDyn, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
-use pyo3::{prelude::*, types::PyTuple};
+use pyo3::prelude::*;
 
 use crate::quant::UnnormalizedDistribution;
 use crate::F32;
@@ -23,6 +23,80 @@ pub enum PyReadonlyF32ArrayOrScalar<'py> {
 }
 use PyReadonlyF32ArrayOrScalar::*;
 
+/// Dynamic data structure for frequencies of values within one or numpy arrays.
+///
+/// An `EmpiricalDistribution` counts how many times each value appears within within one or numpy
+/// arrays. `EmpiricalDistribution` is a dynamic data structure, i.e., it provides methods to
+/// efficiently [`remove`](#constriction.quant.EmpiricalDistribution.remove) and
+/// [`update`](#constriction.quant.EmpiricalDistribution.update) existing points, and to
+/// [`insert`](#constriction.quant.EmpiricalDistribution.insert) new points.
+///
+/// The constructor initializes the distribution from the provided numpy array `points`. If
+/// `specialize_along_axis` is set to an integer, then the `EmpiricalDistribution` represents each
+/// slice of `points` along the specified axis by an individual distribution, see Example 2 below.
+///
+/// ## Example 1: Marginal Distribution
+///
+/// Without setting `specialize_along_axis`, we obtain a distribution that counts occurrences over
+/// the entire provided array:
+///
+/// ```python
+/// rng = np.random.default_rng(123)
+/// matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+/// print(f"matrix = {matrix}\n")
+///
+/// distribution = constriction.quant.EmpiricalDistribution(matrix)
+/// points, counts = distribution.points_and_counts()
+/// for point, count in zip(points, counts):
+///     print(f"The matrix contains {count} instances of the value {point}.")
+/// print(f"Entropy per entry: {distribution.entropy_base2()} bit")
+/// ```
+///
+/// This prints:
+///
+/// ```text
+/// matrix = [[4. 1. 2. 2. 2.]
+///  [4. 5. 2. 4. 5.]
+///  [3. 2. 4. 2. 4.]
+///  [3. 5. 2. 4. 3.]]
+///
+/// The matrix contains 1 instances of the value 1.0.
+/// The matrix contains 7 instances of the value 2.0.
+/// The matrix contains 3 instances of the value 3.0.
+/// The matrix contains 6 instances of the value 4.0.
+/// The matrix contains 3 instances of the value 5.0.
+/// Entropy per entry: 2.088376522064209 bit
+/// ```
+///
+/// ## Example 2: Specialization Along an Axis
+///
+/// The example below uses the same matrix as Example 1 above, but constructs the
+/// `EmpiricalDistribution` with argument `specialize_along_axis=0`. This creates a separate
+/// distribution for each row (axis zero) of the matrix.
+///
+/// ```python
+/// distribution = constriction.quant.EmpiricalDistribution(
+///     matrix, specialize_along_axis=0)
+/// entropies = distribution.entropy_base2()
+/// points, counts = distribution.points_and_counts()
+/// for i, (entropy, points, counts) in enumerate(zip(entropies, points, counts)):
+///     summary = ", ".join(f"{p} ({c}x)" for (p, c) in zip(points, counts))
+///     print(f"Row {i} has entropy {entropy:.2f} per entry and contains: {summary}.")
+/// print(f"Mean entropy per entry: {entropies.mean()}")
+/// ```
+///
+/// This prints:
+///
+/// ```text
+/// Row 0 has entropy 1.37 per entry and contains: 1.0 (1x), 2.0 (3x), 4.0 (1x).
+/// Row 1 has entropy 1.52 per entry and contains: 2.0 (1x), 4.0 (2x), 5.0 (2x).
+/// Row 2 has entropy 1.52 per entry and contains: 2.0 (2x), 3.0 (1x), 4.0 (2x).
+/// Row 3 has entropy 1.92 per entry and contains: 2.0 (1x), 3.0 (2x), 4.0 (1x), 5.0 (1x).
+/// Mean entropy per entry: 1.5841835737228394
+/// ```
+///
+/// Note that the mean entropy per entry is lower (or equal) if we model each row individually. This
+/// is true in general.
 #[pyclass]
 #[derive(Debug)]
 pub struct EmpiricalDistribution(EmpiricalDistributionImpl);
@@ -66,39 +140,175 @@ impl EmpiricalDistribution {
         Py::new(py, Self(distribution))
     }
 
-    #[pyo3(signature = (*args))]
-    pub fn add_points(&mut self, args: &PyTuple) -> PyResult<()> {
-        match &mut self.0 {
-            EmpiricalDistributionImpl::Single(distribution) => {
-                for points in args.iter() {
-                    let points = points.extract::<PyReadonlyArrayDyn<'_, f32>>()?;
-                    let points = points.as_array();
-                    distribution.try_insert_points(points.iter().copied())?;
+    /// Add one or more values to the distribution.
+    ///
+    /// The argument `new` can be a scalar or a python array. If the distribution was constructed
+    /// with `specialize_along_axis=i` for some `i` then `insert` must either be called with
+    /// argument `index=j` (in which case, the point(s) in `new` will be inserted in the `j`th
+    /// distribution), or `new` must be an array whose dimension along axis `i` equals the dimension
+    /// of axis `i` of the array provided to the constructor (in this case, the array `new` is
+    /// logically split into slices along axis `i`, and each slice is inserted into the
+    /// corresponding distribution).
+    ///
+    /// ## Example 1: Adding Points to a Marginal Distribution
+    ///
+    /// ```python
+    /// rng = np.random.default_rng(123)
+    /// matrix1 = rng.binomial(10, 0.3, size=(3, 5)).astype(np.float32)
+    /// matrix2 = rng.binomial(10, 0.3, size=(3, 5)).astype(np.float32)
+    /// print(f"matrix1 = {matrix1}\n")
+    /// print(f"matrix2 = {matrix2}\n")
+    ///
+    /// distribution = constriction.quant.EmpiricalDistribution(matrix1)
+    /// points, counts = distribution.points_and_counts()
+    /// for point, count in zip(points, counts):
+    ///     print(f"matrix1 contains {count} instances of the value {point}.")
+    /// print()
+    ///
+    /// distribution.insert(matrix2)
+    /// points, counts = distribution.points_and_counts()
+    /// for point, count in zip(points, counts):
+    ///     print(f"both matrices combined contain {count} instances of the value {point}.")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// matrix1 = [[4. 1. 2. 2. 2.]
+    ///  [4. 5. 2. 4. 5.]
+    ///  [3. 2. 4. 2. 4.]]
+    ///
+    /// matrix2 = [[3. 5. 2. 4. 3.]
+    ///  [2. 2. 3. 3. 2.]
+    ///  [0. 3. 4. 5. 3.]]
+    ///
+    /// matrix1 contains 1 instances of the value 1.0.
+    /// matrix1 contains 6 instances of the value 2.0.
+    /// matrix1 contains 1 instances of the value 3.0.
+    /// matrix1 contains 5 instances of the value 4.0.
+    /// matrix1 contains 2 instances of the value 5.0.
+    ///
+    /// both matrices combined contain 1 instances of the value 0.0.
+    /// both matrices combined contain 1 instances of the value 1.0.
+    /// both matrices combined contain 10 instances of the value 2.0.
+    /// both matrices combined contain 7 instances of the value 3.0.
+    /// both matrices combined contain 7 instances of the value 4.0.
+    /// both matrices combined contain 4 instances of the value 5.0.
+    /// ```
+    ///
+    /// ## Example 2: Specialization Along an Axis
+    ///
+    /// The example below uses the same matrices as Example 1 above, but it constructs the
+    /// `EmpiricalDistribution` with argument `specialize_along_axis=0`. This creates a separate
+    /// distribution for each row (axis zero) of the matrix. Calling `insert` inserts the contents
+    /// of each row of the provided matrix to its corresponding distribution.
+    ///
+    /// ```python
+    /// distribution = constriction.quant.EmpiricalDistribution(
+    ///     matrix1, specialize_along_axis=0)
+    /// points, counts = distribution.points_and_counts()
+    /// for i, (points, counts) in enumerate(zip(points, counts)):
+    ///     summary = ", ".join(f"{p} ({c}x)" for (p, c) in zip(points, counts))
+    ///     print(f"Row {i} of matrix1 contains: {summary}.")
+    /// print()
+    ///
+    /// # Insert each row of `matrix2` its corresponding distribution:
+    /// distribution.insert(matrix2)
+    ///
+    /// # Insert a point into only the distribution with index 2 (instead of a single value `4.0`,
+    /// # you could also provide a numpy array with arbitrary shape here):
+    /// distribution.insert(4.0, index=2)
+    ///
+    /// points, counts = distribution.points_and_counts()
+    /// for i, (points, counts) in enumerate(zip(points, counts)):
+    ///     summary = ", ".join(f"{p} ({c}x)" for (p, c) in zip(points, counts))
+    ///     print(f"Rows {i} of matrix1 and matrix2 contain: {summary}.")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// Row 0 of matrix1 contains: 1.0 (1x), 2.0 (3x), 4.0 (1x).
+    /// Row 1 of matrix1 contains: 2.0 (1x), 4.0 (2x), 5.0 (2x).
+    /// Row 2 of matrix1 contains: 2.0 (2x), 3.0 (1x), 4.0 (2x).
+    ///
+    /// Rows 0 of matrix1 and 2 contain: 1.0 (1x), 2.0 (4x), 3.0 (2x), 4.0 (2x), 5.0 (1x).
+    /// Rows 1 of matrix1 and 2 contain: 2.0 (4x), 3.0 (2x), 4.0 (2x), 5.0 (2x).
+    /// Rows 2 of matrix1 and 2 contain: 0.0 (1x), 2.0 (2x), 3.0 (3x), 4.0 (4x), 5.0 (1x).
+    /// ```
+    pub fn insert(
+        &mut self,
+        new: PyReadonlyF32ArrayOrScalar<'_>,
+        index: Option<usize>,
+    ) -> PyResult<()> {
+        if let Some(index) = index {
+            let EmpiricalDistributionImpl::Multiple { distributions, .. } = &mut self.0 else {
+                return Err(pyo3::exceptions::PyIndexError::new_err(
+                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
+                    was created with argument `specialize_along_axis`.",
+                ));
+            };
+
+            let distribution = distributions
+                .get_mut(index)
+                .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
+
+            match new {
+                Scalar(new) => distribution.insert(F32::new(new)?),
+                Array(new) => {
+                    for &new in new.as_array() {
+                        distribution.insert(F32::new(new)?);
+                    }
                 }
             }
-            EmpiricalDistributionImpl::Multiple {
-                distributions,
-                axis,
-            } => {
-                let len = distributions.len();
-                for points in args.iter() {
-                    let points = points.extract::<PyReadonlyArrayDyn<'_, f32>>()?;
-                    let points = points.as_array();
-                    let points = points.axis_iter(Axis(*axis));
-                    if points.len() != len {
-                        return Err(pyo3::exceptions::PyIndexError::new_err(alloc::format!(
-                            "Axis {} has wrong dimension: expected {} but found {}.",
-                            axis,
-                            len,
-                            points.len()
-                        )));
+        } else {
+            match new {
+                Scalar(new) => match &mut self.0 {
+                    EmpiricalDistributionImpl::Single(distribution) => {
+                        distribution.insert(F32::new(new)?);
                     }
-                    points
-                        .into_par_iter()
-                        .zip(distributions.into_par_iter())
-                        .try_for_each(|(points, distribution)| {
-                            distribution.try_insert_points(points.iter().copied())
-                        })?;
+                    EmpiricalDistributionImpl::Multiple { .. } => {
+                        return Err(pyo3::exceptions::PyAssertionError::new_err(
+                            "Scalar updates with an `EmpiricalDistribution` that was created with \
+                            argument `specialize_along_axis` require argument `index`.",
+                        ));
+                    }
+                },
+                Array(new) => {
+                    let new = new.as_array();
+
+                    match &mut self.0 {
+                        EmpiricalDistributionImpl::Single(distribution) => {
+                            for &new in &new {
+                                distribution.insert(F32::new(new)?);
+                            }
+                        }
+                        EmpiricalDistributionImpl::Multiple {
+                            distributions,
+                            axis,
+                        } => {
+                            let new = new.axis_iter(Axis(*axis));
+                            if new.len() != distributions.len() {
+                                return Err(pyo3::exceptions::PyIndexError::new_err(
+                                    alloc::format!(
+                                        "Axis {} has wrong dimension: expected {} but found {}.",
+                                        axis,
+                                        distributions.len(),
+                                        new.len()
+                                    ),
+                                ));
+                            }
+
+                            new.into_par_iter().zip(distributions).try_for_each(
+                                |(new, distribution)| {
+                                    for &new in &new {
+                                        distribution.insert(F32::new(new)?);
+                                    }
+                                    Ok::<(), PyErr>(())
+                                },
+                            )?;
+                        }
+                    }
                 }
             }
         }
@@ -106,14 +316,162 @@ impl EmpiricalDistribution {
         Ok(())
     }
 
+    /// Remove one or more values from the distribution.
+    ///
+    /// The argument `old` can be a scalar or a python array. If the distribution was constructed
+    /// with `specialize_along_axis=i` for some `i` then `insert` must either be called with
+    /// argument `index=j` (in which case, the point(s) in `old` will be removed from the `j`th
+    /// distribution), or `old` must be an array whose dimension along axis `i` equals the dimension
+    /// of axis `i` of the array provided to the constructor (in this case, the array `old` is
+    /// logically split into slices along axis `i`, and the points from each slice are removed from
+    /// the corresponding distribution).
+    ///
+    /// Returns an
+    ///
+    /// For code examples, see documentation of the method
+    /// [`insert`](#constriction.quant.EmpiricalDistribution.insert), which has an analogous API.
+    pub fn remove(
+        &mut self,
+        old: PyReadonlyF32ArrayOrScalar<'_>,
+        index: Option<usize>,
+    ) -> PyResult<()> {
+        if let Some(index) = index {
+            let EmpiricalDistributionImpl::Multiple { distributions, .. } = &mut self.0 else {
+                return Err(pyo3::exceptions::PyIndexError::new_err(
+                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
+                    was created with argument `specialize_along_axis`.",
+                ));
+            };
+
+            let distribution = distributions
+                .get_mut(index)
+                .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
+
+            match old {
+                Scalar(old) => {
+                    distribution.remove(F32::new(old)?).ok_or_else(|| {
+                        pyo3::exceptions::PyKeyError::new_err(
+                            "The `old` value does not exist in the distribution.",
+                        )
+                    })?;
+                }
+                Array(old) => {
+                    for &old in old.as_array() {
+                        distribution.remove(F32::new(old)?).ok_or_else(|| {
+                            pyo3::exceptions::PyKeyError::new_err(
+                                "One of the entries in `old` does not exist in the distribution.",
+                            )
+                        })?;
+                    }
+                }
+            }
+        } else {
+            match old {
+                Scalar(old) => match &mut self.0 {
+                    EmpiricalDistributionImpl::Single(distribution) => {
+                        distribution.remove(F32::new(old)?).ok_or_else(|| {
+                            pyo3::exceptions::PyKeyError::new_err(
+                                "The `old` value does not exist in the distribution.",
+                            )
+                        })?;
+                    }
+                    EmpiricalDistributionImpl::Multiple { .. } => {
+                        return Err(pyo3::exceptions::PyAssertionError::new_err(
+                            "Scalar updates with an `EmpiricalDistribution` that was created with \
+                        argument `specialize_along_axis` require argument `index`.",
+                        ));
+                    }
+                },
+                Array(old) => {
+                    let old = old.as_array();
+
+                    match &mut self.0 {
+                        EmpiricalDistributionImpl::Single(distribution) => {
+                            for &old in &old {
+                                distribution.remove(F32::new(old)?).ok_or_else(|| {
+                                    pyo3::exceptions::PyKeyError::new_err(
+                                        "One of the entries in `old` does not exist in the distribution.",
+                                    )
+                                })?;
+                            }
+                        }
+                        EmpiricalDistributionImpl::Multiple {
+                            distributions,
+                            axis,
+                        } => {
+                            let old = old.axis_iter(Axis(*axis));
+                            if old.len() != distributions.len() {
+                                return Err(pyo3::exceptions::PyIndexError::new_err(
+                                    alloc::format!(
+                                        "Axis {} has wrong dimension: expected {} but found {}.",
+                                        axis,
+                                        distributions.len(),
+                                        old.len()
+                                    ),
+                                ));
+                            }
+
+                            old
+                            .into_par_iter()
+                            .zip(distributions)
+                            .try_for_each(|(old, distribution)| {
+                                for &old in &old {
+                                     distribution.remove(F32::new(old)?).ok_or_else(|| {
+                                        pyo3::exceptions::PyKeyError::new_err(
+                                            "One of the entries in `old` does not exist in the distribution.",
+                                        )
+                                    })?;
+                                }
+                                Ok::<(),PyErr>(())
+                            })?;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Update the positions of one or more values in the distribution.
+    ///
+    /// Calling `empirical_distribution.update(old, new)` is equivalent to:
+    ///
+    /// ```python
+    /// empirical_distribution.remove(old)
+    /// empirical_distribution.insert(new)
+    /// ```
+    ///
+    /// However, `update` checks that `old` and `new` have matching dimensions. Also, if the values
+    /// change only by small amounts then calling `update` might be faster because it should require
+    /// fewer restructurings of the internal tree structure.
+    ///
+    /// The optional argument `index` has the same meaning as in the methods
+    /// [`insert`](#constriction.quant.EmpiricalDistribution.insert) and
+    /// [`remove`](#constriction.quant.EmpiricalDistribution.remove).
+    ///
+    /// For code examples, see documentation of the method
+    /// [`insert`](#constriction.quant.EmpiricalDistribution.insert), which has an analogous API.
     pub fn update(
         &mut self,
         old: PyReadonlyF32ArrayOrScalar<'_>,
         new: PyReadonlyF32ArrayOrScalar<'_>,
+        index: Option<usize>,
     ) -> PyResult<()> {
-        match (old, new) {
-            (Scalar(old), Scalar(new)) => match &mut self.0 {
-                EmpiricalDistributionImpl::Single(distribution) => {
+        if let Some(index) = index {
+            let EmpiricalDistributionImpl::Multiple { distributions, .. } = &mut self.0 else {
+                return Err(pyo3::exceptions::PyIndexError::new_err(
+                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
+                    was created with argument `specialize_along_axis`.",
+                ));
+            };
+
+            let distribution = distributions
+                .get_mut(index)
+                .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
+
+            match (old, new) {
+                (Scalar(old), Scalar(new)) => {
                     distribution.remove(F32::new(old)?).ok_or_else(|| {
                         pyo3::exceptions::PyKeyError::new_err(
                             "The `old` value does not exist in the distribution.",
@@ -121,48 +479,78 @@ impl EmpiricalDistribution {
                     })?;
                     distribution.insert(F32::new(new)?);
                 }
-                EmpiricalDistributionImpl::Multiple { .. } => {
-                    return Err(pyo3::exceptions::PyAssertionError::new_err(
-                        "Scalar updates not possible with an empirical distribution that is specialized along an axis."
-                    ));
-                }
-            },
-            (Array(old), Array(new)) if old.dims() == new.dims() => {
-                let old = old.as_array();
-                let new = new.as_array();
-
-                match &mut self.0 {
-                    EmpiricalDistributionImpl::Single(distribution) => {
-                        for (old, &new) in old.iter().zip(&new) {
-                            distribution.remove(F32::new(*old)?).ok_or_else(|| {
-                                pyo3::exceptions::PyKeyError::new_err(
-                                    "One of the entries in `old` does not exist in the distribution.",
-                                )
-                            })?;
-                            distribution.insert(F32::new(new)?);
-                        }
+                (Array(old), Array(new)) if old.dims() == new.dims() => {
+                    for (&old, &new) in old.as_array().iter().zip(&new.as_array()) {
+                        distribution.remove(F32::new(old)?).ok_or_else(|| {
+                            pyo3::exceptions::PyKeyError::new_err(
+                                "One of the entries in `old` does not exist in the distribution.",
+                            )
+                        })?;
+                        distribution.insert(F32::new(new)?);
                     }
-                    EmpiricalDistributionImpl::Multiple {
-                        distributions,
-                        axis,
-                    } => {
-                        let old = old.axis_iter(Axis(*axis));
-                        if old.len() != distributions.len() {
-                            return Err(pyo3::exceptions::PyIndexError::new_err(alloc::format!(
-                                "Axis {} has wrong dimension: expected {} but found {}.",
-                                axis,
-                                distributions.len(),
-                                old.len()
-                            )));
-                        }
+                }
+                _ => {
+                    return Err(pyo3::exceptions::PyAssertionError::new_err(
+                        "`old` and `new` must have the same shape.",
+                    ))
+                }
+            }
+        } else {
+            match (old, new) {
+                (Scalar(old), Scalar(new)) => match &mut self.0 {
+                    EmpiricalDistributionImpl::Single(distribution) => {
+                        distribution.remove(F32::new(old)?).ok_or_else(|| {
+                            pyo3::exceptions::PyKeyError::new_err(
+                                "The `old` value does not exist in the distribution.",
+                            )
+                        })?;
+                        distribution.insert(F32::new(new)?);
+                    }
+                    EmpiricalDistributionImpl::Multiple { .. } => {
+                        return Err(pyo3::exceptions::PyAssertionError::new_err(
+                            "Scalar updates with an `EmpiricalDistribution` that was created with \
+                            argument `specialize_along_axis` require argument `index`.",
+                        ));
+                    }
+                },
+                (Array(old), Array(new)) if old.dims() == new.dims() => {
+                    let old = old.as_array();
+                    let new = new.as_array();
 
-                        old
+                    match &mut self.0 {
+                        EmpiricalDistributionImpl::Single(distribution) => {
+                            for (&old, &new) in old.iter().zip(&new) {
+                                distribution.remove(F32::new(old)?).ok_or_else(|| {
+                                    pyo3::exceptions::PyKeyError::new_err(
+                                        "One of the entries in `old` does not exist in the distribution.",
+                                    )
+                                })?;
+                                distribution.insert(F32::new(new)?);
+                            }
+                        }
+                        EmpiricalDistributionImpl::Multiple {
+                            distributions,
+                            axis,
+                        } => {
+                            let old = old.axis_iter(Axis(*axis));
+                            if old.len() != distributions.len() {
+                                return Err(pyo3::exceptions::PyIndexError::new_err(
+                                    alloc::format!(
+                                        "Axis {} has wrong dimension: expected {} but found {}.",
+                                        axis,
+                                        distributions.len(),
+                                        old.len()
+                                    ),
+                                ));
+                            }
+
+                            old
                             .into_par_iter()
                             .zip(new.axis_iter(Axis(*axis)))
                             .zip(distributions)
                             .try_for_each(|((old, new), distribution)| {
-                                for (old, &new) in old.iter().zip(&new) {
-                                     distribution.remove(F32::new(*old)?).ok_or_else(|| {
+                                for (&old, &new) in old.iter().zip(&new) {
+                                    distribution.remove(F32::new(old)?).ok_or_else(|| {
                                         pyo3::exceptions::PyKeyError::new_err(
                                             "One of the entries in `old` does not exist in the distribution.",
                                         )
@@ -171,68 +559,226 @@ impl EmpiricalDistribution {
                                 }
                                 Ok::<(),PyErr>(())
                             })?;
+                        }
                     }
                 }
-            }
-            _ => {
-                return Err(pyo3::exceptions::PyAssertionError::new_err(
-                    "`old` and `new` must have the same shape.",
-                ))
+                _ => {
+                    return Err(pyo3::exceptions::PyAssertionError::new_err(
+                        "`old` and `new` must have the same shape.",
+                    ))
+                }
             }
         }
 
         Ok(())
     }
 
-    #[pyo3(signature = ())]
-    pub fn total(&self, py: Python<'_>) -> PyObject {
-        match &self.0 {
-            EmpiricalDistributionImpl::Single(distribution) => distribution.total().to_object(py),
-            EmpiricalDistributionImpl::Multiple {
-                distributions,
-                axis: _,
-            } => {
+    /// Returns the total number of points that are represented by the distribution.
+    ///
+    /// For a new `EmpiricalDistribution`, the method `total` returns the number of elements in the
+    /// numpy array that was provided to the constructor. Calling `insert` or `remove` increases or
+    /// decreases, respectively, the value returned by `total`. Calling `update` leaves it
+    /// invariant.
+    ///
+    /// If the `EmpiricalDistribution` was constructed with argument `specialize_along_axis` set,
+    /// then `total` returns the number of points in slice specified by `index` (if provided), or a
+    /// list of totals for each slice (if no `index` is provided).
+    ///
+    /// ## Examples
+    ///
+    /// ```python
+    /// rng = np.random.default_rng(123)
+    /// matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+    /// print(f"matrix = {matrix}\n")
+    ///
+    /// marginal_distribution = constriction.quant.EmpiricalDistribution(matrix)
+    /// specialized_distribution = constriction.quant.EmpiricalDistribution(
+    ///     matrix, specialize_along_axis=0)
+    ///
+    /// specialized_distribution.insert(10., index=2) # Insert only into the slice at index=2.
+    ///
+    /// print(f"marginal_distribution.total() = {marginal_distribution.total()}")
+    /// print(f"specialized_distribution.total() = {specialized_distribution.total()}")
+    /// print(f"specialized_distribution.total(2) = {specialized_distribution.total(2)}")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// matrix = [[4. 1. 2. 2. 2.]
+    ///  [4. 5. 2. 4. 5.]
+    ///  [3. 2. 4. 2. 4.]
+    ///  [3. 5. 2. 4. 3.]]
+    ///
+    /// marginal_distribution.total() = 20
+    /// specialized_distribution.total() = [5 5 6 5]
+    /// specialized_distribution.total(2) = 6
+    /// ```
+    pub fn total(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
+        match (index, &self.0) {
+            (Some(_), EmpiricalDistributionImpl::Single { .. }) => {
+                Err(pyo3::exceptions::PyIndexError::new_err(
+                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
+                    was created with argument `specialize_along_axis`.",
+                ))
+            }
+            (
+                Some(index),
+                EmpiricalDistributionImpl::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
+                let distribution = distributions.get(index).ok_or_else(|| {
+                    pyo3::exceptions::PyIndexError::new_err("`index` out of bounds")
+                })?;
+                Ok(distribution.total().to_object(py))
+            }
+            (None, EmpiricalDistributionImpl::Single(distribution)) => {
+                Ok(distribution.total().to_object(py))
+            }
+            (
+                None,
+                EmpiricalDistributionImpl::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
                 let totals = distributions.iter().map(|d| d.total()).collect::<Vec<_>>();
-                PyArray::from_vec(py, totals).to_object(py)
+                Ok(PyArray::from_vec(py, totals).to_object(py))
             }
         }
     }
 
-    #[pyo3(signature = ())]
-    pub fn entropy_base2(&self, py: Python<'_>) -> PyObject {
-        match &self.0 {
-            EmpiricalDistributionImpl::Single(distribution) => {
-                distribution.entropy_base2::<f32>().to_object(py)
+    /// Returns the Shannon entropy per entry, to base 2.
+    ///
+    /// If the `EmpiricalDistribution` was constructed with argument `specialize_along_axis` set,
+    /// then this method returns the entropy of the slice specified by `index` (if provided), or a
+    /// list of entropies for each slice (if no `index` is provided).
+    ///
+    /// ## Example
+    ///
+    /// ```python
+    /// rng = np.random.default_rng(123)
+    /// matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+    /// print(f"matrix = {matrix}\n")
+    ///
+    /// marginal_distribution = constriction.quant.EmpiricalDistribution(matrix)
+    /// specialized_distribution = constriction.quant.EmpiricalDistribution(
+    ///     matrix, specialize_along_axis=0)
+    ///
+    /// print(f"marginal_distribution.entropy_base2() = {marginal_distribution.entropy_base2()}")
+    /// print(f"specialized_distribution.entropy_base2() = {specialized_distribution.entropy_base2()}")
+    /// print(f"specialized_distribution.entropy_base2(2) = {specialized_distribution.entropy_base2(2)}")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// matrix = [[4. 1. 2. 2. 2.]
+    ///  [4. 5. 2. 4. 5.]
+    ///  [3. 2. 4. 2. 4.]
+    ///  [3. 5. 2. 4. 3.]]
+    ///
+    /// marginal_distribution.entropy_base2() = 2.088376522064209
+    /// specialized_distribution.entropy_base2() = [1.3709505 1.5219281 1.5219281 1.921928 ]
+    /// specialized_distribution.entropy_base2(2) = 1.521928071975708
+    /// ```
+    pub fn entropy_base2(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
+        match (index, &self.0) {
+            (Some(_), EmpiricalDistributionImpl::Single { .. }) => {
+                Err(pyo3::exceptions::PyIndexError::new_err(
+                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
+                    was created with argument `specialize_along_axis`.",
+                ))
             }
-            EmpiricalDistributionImpl::Multiple {
-                distributions,
-                axis: _,
-            } => {
-                let totals = distributions
+            (
+                Some(index),
+                EmpiricalDistributionImpl::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
+                let distribution = distributions.get(index).ok_or_else(|| {
+                    pyo3::exceptions::PyIndexError::new_err("`index` out of bounds")
+                })?;
+                Ok(distribution.entropy_base2::<f32>().to_object(py))
+            }
+            (None, EmpiricalDistributionImpl::Single(distribution)) => {
+                Ok(distribution.entropy_base2::<f32>().to_object(py))
+            }
+            (
+                None,
+                EmpiricalDistributionImpl::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
+                let entropies = distributions
                     .iter()
                     .map(|d| d.entropy_base2::<f32>())
                     .collect::<Vec<_>>();
-                PyArray::from_vec(py, totals).to_object(py)
+                Ok(PyArray::from_vec(py, entropies).to_object(py))
             }
         }
     }
 
-    #[pyo3(signature = ())]
-    pub fn points_and_counts(&self, py: Python<'_>) -> (PyObject, PyObject) {
-        match &self.0 {
-            EmpiricalDistributionImpl::Single(distribution) => {
+    /// Returns a tuple `(points, counts)`, which are both 1d numpy arrays of equal length, where
+    /// `points` contains a sorted list of all *distinct* values represented by the
+    /// `EmpiricalDistribution`, and `counts` contains their respective multiplicities, i.e., how
+    /// often each point occurs in the data.
+    ///
+    /// If the `EmpiricalDistribution` was constructed with argument `specialize_along_axis` set,
+    /// then `points_and_counts` returns the points and counts for the slice specified by `index`
+    /// (if provided), or a list of tuples `(points, counts)`, with one tuple per slice.
+    ///
+    /// See code examples in the top-level documentation of the class `EmpiricalDistribution`.
+    pub fn points_and_counts(
+        &self,
+        py: Python<'_>,
+        index: Option<usize>,
+    ) -> PyResult<(PyObject, PyObject)> {
+        match (index, &self.0) {
+            (Some(_), EmpiricalDistributionImpl::Single { .. }) => {
+                Err(pyo3::exceptions::PyIndexError::new_err(
+                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
+                    was created with argument `specialize_along_axis`.",
+                ))
+            }
+            (
+                Some(index),
+                EmpiricalDistributionImpl::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
+                let distribution = distributions.get(index).ok_or_else(|| {
+                    pyo3::exceptions::PyIndexError::new_err("`index` out of bounds")
+                })?;
                 let (points, counts): (Vec<_>, Vec<_>) = distribution
                     .iter()
                     .map(|(value, count)| (value.get(), count))
                     .unzip();
                 let points = PyArray::from_vec(py, points).to_object(py);
                 let counts = PyArray::from_vec(py, counts).to_object(py);
-                (points, counts)
+                Ok((points, counts))
             }
-            EmpiricalDistributionImpl::Multiple {
-                distributions,
-                axis: _,
-            } => {
+            (None, EmpiricalDistributionImpl::Single(distribution)) => {
+                let (points, counts): (Vec<_>, Vec<_>) = distribution
+                    .iter()
+                    .map(|(value, count)| (value.get(), count))
+                    .unzip();
+                let points = PyArray::from_vec(py, points).to_object(py);
+                let counts = PyArray::from_vec(py, counts).to_object(py);
+                Ok((points, counts))
+            }
+            (
+                None,
+                EmpiricalDistributionImpl::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
                 let vecs = distributions
                     .par_iter()
                     .map(|distribution| {
@@ -252,12 +798,248 @@ impl EmpiricalDistribution {
                     .unzip();
                 let points = PyArray::from_vec(py, points).to_object(py);
                 let counts = PyArray::from_vec(py, counts).to_object(py);
-                (points, counts)
+                Ok((points, counts))
             }
         }
     }
 }
 
+/// Quantizes an array of values using [Variational Bayesian Quantization (VBQ)].
+///
+/// Returns an array of quantized values with the same shape and dtype as the argument
+/// `unquantized`. If you want to instead overwrite the original array with its quantized values
+/// then use `vbq_` (with trailing underscore) instead.
+///
+/// VBQ is a quantization method that takes into account (i) the "prior" distribution of
+/// unquantized points (putting a higher density of grid points in regions of high prior density)
+/// and (ii) the saliency of the value that we quantize, i.e., how much a given distortion of a
+/// single value would hurt the overall quality of the quantization of a collection of values.
+///
+/// ## Overview of the VBQ Method
+///
+/// For each entry in the argument `unquantized`, VBQ returns a point `quantized` by minimizing the
+/// following objective function:
+///
+/// `loss(quantized) = distortion(quantized - unquantized) + coarseness * rate_estimate(quantized)`
+///
+/// where the Python API is currently restricted to a quadratic distortion,
+///
+/// `distortion(quantized - unquantized) = (quantized - unquantized)**2 / (2 * posterior_variance)`.
+///
+/// Future versions of `constriction` might provide support for more general distortion metrics
+/// (the Rust API of constriction
+/// [already does](https://docs.rs/constriction/latest/constriction/quant/fn.vbq.html)).
+///
+/// Here, the `rate_estimate` in the above objective function is calculated based on the provided
+/// `prior` distribution and on some theoretical considerations of how the VBQ algorithm works. You
+/// will get better estimates (and therefore better  quantization results) if the `prior`
+/// approximates the distribution of quantized points. Since you don't have access to the quantized
+/// points before running VBQ, it is recommended to run VBQ on a given set of points several times
+/// in a row. In the first run, set the `prior` to the empirical distribution of *unquantized*
+/// points. In  subsequent runs of VBQ, set the prior to the empirical distribution of the quantized
+/// points you obtained in the previous run).
+///
+/// Here, `coarseness` is a nonnegative scalar that controls how much distortion is acceptable
+/// (higher values for `coarseness` lead to a sparser quantization grid and lower entropy of the
+/// quantized values, while lower values for `coarseness` ensure that quantized values stay close
+/// to their unquantized counterparts). The argument `posterior_variance` is typically a numpy array
+/// of the same dimension as `unquantized` (although it can also be a scalar to support edge cases).
+///
+///
+///  and the scalar `bit_penalty` are provided by the caller, and
+/// `rate_estimate` is an estimate of the information content that the result `quantized` will have
+/// under the empirical distribution of the collection of all quantized points (see below). To use
+/// VBQ as described in the [original paper] (Eq. 9), set `bit_penalty = 2.0 * lambda *
+/// posterior_variance`, where `lambda > 0` is a parameter that trades off between rate and
+/// distortion (`lambda` is the same for all points you want to quantize) and `posterior_variance`
+/// is an estimate of the variance of the point you currently want to quantize under its Bayesian
+/// posterior distribution (`posterior_variance` will typically be different for each point you
+/// want to quantize, or else a different quantization method may be more suitable).
+///
+/// ## Arguments
+///
+/// - `unquantized`: a numpy array of values that you want to quantize.
+/// - `prior`: an `EmpiricalDistribution` that influences how VBQ distributes its grid points.
+///   You typically want to use `prior = EmpiricalDistribution(unquantized)` or
+///   `prior = EmpiricalDistribution(unquantized, specialize_along_axis=some_axis)` here, so that
+///   VBQ uses the empirical distribution of unquantized values to inform its positioning of grid
+///   points. However, if you already have a better idea of where grid points will likely end up
+///   (e.g., because you already ran VBQ once with argument `update_prior=True`, then it can be
+///   better to provide the distribution over estimated quantized points instead).
+/// - `posterior_variance`: typically a numpy array ith the same dimensions as `unquantized`
+///   (although it can also be a scalar to support edge cases). The `posterior_variance` controls
+///   how important a faithful quantization of each entry of `unquantized` is, relative to the other
+///   entries. See objective function stated above. Entries with higher `posterior_variance` will
+///   generally be quantized to grid points that can be further away from their unquantized values
+///   than entries with lower `posterior_variance`.
+/// - `coarseness`: a nonnegative scalar that controls how much distortion is acceptable globally
+///   (higher values for `coarseness` lead to a sparser quantization grid and lower entropy of the
+///   quantized values, while lower values for `coarseness` ensure that quantized values stay close
+///   to their unquantized counterparts). The argument `coarseness` is a convenience. Setting
+///   `coarseness` to a value different from `1.0` has the same effect as multiplying all entries of
+///   `posterior_variance` by `coarseness`.
+/// - `update_prior`: optional boolean that decides whether the provided `prior` will be updated
+///   after quantizing each entry of `unquantized`. Defaults to `false` if now `reference` is
+///   provided. Providing a `reverence` implies `update_prior=True.`
+///   Setting `update_prior=True` has two effects:
+///   (i) once `vbq` terminates, all `unquantized` (or `reference`) points are removed from `prior`
+///   and replaced by the (returned) quantized points; and
+///   (ii) since the updates occur by piecemeal immediately once each entry was quantized, entries
+///   towards the end of the array `unquantized` are quantized with a better estimate of the final
+///   distribution of quantized points. However, this also means that each entry of `unquantized`
+///   gets quantized with a different prior, and therefore potentially to a slightly different grid,
+///   which can result in spurious clusters of grid points that lie very close to each other. For
+///   this reason, setting `update_prior=True` is recommended only for intermediate runs of VBQ that
+///   are part of some convergence process. Any final run of VBQ should set `update_prior=False`.
+/// - `reference`: an optional array with same dimensions as `unquantized`. Providing a `reference`
+///   implies `update_prior=True`, and it changes how prior updates are carried out: *without* a
+///   `reference`, prior updates are carried out under the assumption that `prior` is the
+///   distribution of values in the array `unquantized`; thus, prior updates remove an entry of
+///   `unquantized` from the `prior` and replace it with the corresponding quantized value. By
+///   contrast, if a `reference` is provided, then prior updates are carried out under the
+///   assumption that `prior` is the distribution of values in `reference`; thus, prior updates
+///   remove an entry of `reference` from the `prior` and replace it with the quantized value of the
+///   corresponding entry of `unquantized`.
+///
+/// ## Example 1: quantization with a *global* prior (i.e. without `specialize_along_axis`)
+///
+/// ```python
+/// rng = np.random.default_rng(123)
+/// unquantized = rng.normal(size=(4, 5)).astype(np.float32)
+/// print(f"unquantized values:\n{unquantized}\n")
+///
+/// prior = constriction.quant.EmpiricalDistribution(unquantized)
+///
+/// print(f"entropy before quantization: {prior.entropy_base2()}")
+/// print(f"(this is simply log_2(20) = {np.log2(20)} since all matrix entries are different)")
+/// print()
+///
+/// # Allow larger quantization errors in upper left corner of the matrix by using a high variance:
+/// posterior_variance = np.array([
+///     [10.0, 10.0, 1.0, 1.0, 1.0],
+///     [10.0, 10.0, 1.0, 1.0, 1.0],
+///     [1.0, 1.0, 1.0, 1.0, 1.0],
+///     [1.0, 1.0, 1.0, 1.0, 1.0],
+/// ], dtype=np.float32)
+///
+/// quantized_fine = constriction.quant.vbq(unquantized, prior, posterior_variance, 0.01)
+/// quantized_coarse = constriction.quant.vbq(unquantized, prior, posterior_variance, 0.1)
+///
+/// print(f"quantized to a fine grid:\n{quantized_fine}\n")
+/// print(f"quantization errors:\n{np.abs(unquantized - quantized_fine)}\n")
+///
+/// print(f"quantized to a coarse grid:\n{quantized_coarse}\n")
+/// print(f"quantization errors:\n{np.abs(unquantized - quantized_coarse)}\n")
+/// ```
+///
+/// This prints:
+///
+/// ```text
+/// unquantized values:
+/// [[-0.9891214  -0.36778665  1.2879252   0.19397442  0.9202309 ]
+///  [ 0.5771038  -0.63646364  0.5419522  -0.31659546 -0.32238913]
+///  [ 0.09716732 -1.5259304   1.1921661  -0.67108965  1.0002694 ]
+///  [ 0.13632113  1.5320331  -0.6599694  -0.31179485  0.33776912]]
+///
+/// entropy before quantization: 4.321928024291992
+/// (this is simply log_2(20) = 4.321928094887363 since all matrix entries are different)
+///
+/// quantized to a fine grid:
+/// [[-0.67108965 -0.36778665  1.1921661   0.13632113  0.9202309 ]
+///  [ 0.13632113 -0.36778665  0.5419522  -0.36778665 -0.36778665]
+///  [ 0.13632113 -1.5259304   1.1921661  -0.67108965  0.9202309 ]
+///  [ 0.13632113  1.5320331  -0.67108965 -0.36778665  0.33776912]]
+///
+/// quantization errors:
+/// [[0.31803173 0.         0.09575915 0.05765329 0.        ]
+///  [0.44078267 0.268677   0.         0.05119118 0.04539752]
+///  [0.03915381 0.         0.         0.         0.08003849]
+///  [0.         0.         0.01112026 0.0559918  0.        ]]
+///
+/// quantized to a coarse grid:
+/// [[ 0.13632113  0.13632113  0.9202309   0.13632113  0.9202309 ]
+///  [ 0.13632113  0.13632113  0.13632113 -0.36778665 -0.36778665]
+///  [ 0.13632113 -1.5259304   0.9202309  -0.36778665  0.9202309 ]
+///  [ 0.13632113  1.1921661  -0.36778665  0.13632113  0.13632113]]
+///
+/// quantization errors:
+/// [[1.1254425  0.5041078  0.36769432 0.05765329 0.        ]
+///  [0.44078267 0.77278477 0.40563107 0.05119118 0.04539752]
+///  [0.03915381 0.         0.27193516 0.303303   0.08003849]
+///  [0.         0.339867   0.29218274 0.44811597 0.201448  ]]
+/// ```
+///
+/// Note that, with both low and high `coarseness`, the quantization error tends to be larger in the
+/// upper left 2x2 block of the matrix. This is because we set the `posterior_variance` high in this
+/// block, which tells `vbq` to care less about distortion for the corresponding values.
+///
+/// ## Example 2: quantization with `specialize_along_axis`
+///
+/// We can quantize to a different grid for each row of the matrix by replacing the following line
+/// in Example 1 above:
+///
+/// ```python
+/// prior = constriction.quant.EmpiricalDistribution(unquantized)
+/// ```
+///
+/// with
+///
+/// ```python
+/// prior = constriction.quant.EmpiricalDistribution(unquantized, specialize_along_axis=0)
+/// ```
+///
+/// With this change, we obtain the following output:
+///
+/// ```text
+/// unquantized values:
+/// [[-0.9891214  -0.36778665  1.2879252   0.19397442  0.9202309 ]
+///  [ 0.5771038  -0.63646364  0.5419522  -0.31659546 -0.32238913]
+///  [ 0.09716732 -1.5259304   1.1921661  -0.67108965  1.0002694 ]
+///  [ 0.13632113  1.5320331  -0.6599694  -0.31179485  0.33776912]]
+///
+/// Row entropies before quantization: [2.321928 2.321928 2.321928 2.321928]
+/// (this is simply log_2(5) = 2.321928094887362 since each row contains 5 distinct values)
+///
+/// quantized to a fine grid:
+/// [[-0.9891214  -0.36778665  1.2879252   0.19397442  0.9202309 ]
+///  [ 0.5419522  -0.31659546  0.5419522  -0.31659546 -0.31659546]
+///  [ 0.09716732 -1.5259304   1.1921661  -0.67108965  1.0002694 ]
+///  [ 0.13632113  1.5320331  -0.6599694  -0.31179485  0.33776912]]
+///
+/// quantization errors:
+/// [[0.         0.         0.         0.         0.        ]
+///  [0.0351516  0.31986818 0.         0.         0.00579366]
+///  [0.         0.         0.         0.         0.        ]
+///  [0.         0.         0.         0.         0.        ]]
+///
+/// quantized to a coarse grid:
+/// [[ 0.19397442  0.19397442  0.9202309   0.19397442  0.9202309 ]
+///  [-0.31659546 -0.31659546  0.5419522  -0.31659546 -0.31659546]
+///  [ 0.09716732 -1.5259304   1.0002694  -0.67108965  1.0002694 ]
+///  [ 0.13632113  1.5320331  -0.31179485 -0.31179485  0.13632113]]
+///
+/// quantization errors:
+/// [[1.1830958  0.5617611  0.36769432 0.         0.        ]
+///  [0.8936993  0.31986818 0.         0.         0.00579366]
+///  [0.         0.         0.19189668 0.         0.        ]
+///  [0.         0.         0.34817454 0.         0.201448  ]]
+/// ```
+///
+/// Notice that both quantized matrices have repeating entries within rows, but no repeats within
+/// columns. This is because each row of the matrix is quantized using a different slice of the
+/// `prior`, and thus VBQ constructs a different grid for each row.
+///
+/// ## References
+///
+/// VBQ was originally proposed and empirically evaluated for the compression of images and word
+/// embeddings by [Yang et al., ICML 2020]. For an empirical evaluation of VBQ for the compression
+/// of neural network weights, see [Tan and Bamler, Deploy & Monitor ML Workshop @ NeurIPS 2022].
+///
+/// [Variational Bayesian Quantization (VBQ)]: http://proceedings.mlr.press/v119/yang20a/yang20a.pdf
+/// [Yang et al., ICML 2020]: http://proceedings.mlr.press/v119/yang20a/yang20a.pdf
+/// [original paper]: http://proceedings.mlr.press/v119/yang20a/yang20a.pdf
+/// [Tan and Bamler, Deploy & Monitor ML Workshop @ NeurIPS 2022]:
+///   https://raw.githubusercontent.com/dmml-workshop/dmml-neurips-2022/main/accepted-papers/paper_21.pdf
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 fn vbq<'a>(
@@ -679,6 +1461,14 @@ where
     Ok(())
 }
 
+/// In-place variant of `vbq`
+///
+/// This function is equivalent to `vbq`, except that it quantizes in-place. Thus, instead of
+/// returning an array of quantized values, the entries of the argument `unquantized` get
+/// overwritten with their quantized values. This avoids allocating a new array in memory.
+///
+/// The use of a trailing underscore in the function name to indicate in-place operation follows the
+/// convention used by the pytorch machine-learning framework.
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 fn vbq_(

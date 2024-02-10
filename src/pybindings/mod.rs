@@ -183,7 +183,7 @@ fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-/// Experimental quantization methods
+/// Experimental quantization methods.
 ///
 /// This module is a work in progress that will provide fast quantization methods that go beyond
 /// simple rounding to a uniform grid. Quantization is mostly necessary for lossy compression of
@@ -191,6 +191,46 @@ fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// compression for discrete data if one uses a latent variable model with continuous latents. Also,
 /// the quantization methods provided in this module are generic over data types and not restricted
 /// to floating point data as long as a distortion metric exists.
+///
+/// ## The Quantization Problem
+///
+/// Quantizing a collection of points involves solving three optimization problems:
+///
+/// 1. finding a good discrete set of *grid points* to which we quantize the original points;
+/// 2. mapping each point to a grid point that is close (in some distortion metric) to the original
+///    point; and
+/// 3. making sure the collection of all quantized points has low entropy.
+///
+/// For optimal performance, all three quantization techniques should ideally be optimized jointly.
+/// However, this is difficult to do in practice, and various quantization techniques make different
+/// tradeoffs. For example, the simplest form of quantization rounds to the nearest neighbor in a
+/// uniform grid, which neglects optimization problems 1 and 3. On the other hand, various vector
+/// quantization methods focus on optimization problem 1, but they often neglect problem 3, and they
+/// often use a rather simple distortion metric (e.g., Euclidean distance) for optimization
+/// problem 2. [Variational Bayesian Quantization (VBQ)] uses a more advanced distortion metric, and
+/// it addresses optimization problem 3 through a rate/distortion optimization, where the "rate"
+/// term is a somewhat heuristic approximation of the entropy of the quantized points. However, the
+/// original version of VBQ addresses optimization problem 1 rather poorly, especially in the
+/// low-bit rate regime.
+///
+/// ## Module Structure
+///
+/// The core of this module is the class `EmpiricalDistribution`, which is a dynamic data structure
+/// that can be used to represent the empirical frequencies of values in a collection of points that
+/// one wants to quantize. Quantization methods use an `EmpiricalDistribution` to inform the
+/// (original) positioning of grid points (optimization problem 1 above), and to quickly estimate
+/// how many points out of the collection will be mapped to each grid point (for optimization
+/// problem 3 above).
+///
+/// Currently, the only implemented quantization method is Variational Bayesian Quantization (see
+/// functions `vbq` and `vbq_`). But the plan for future versions of `constriction` is to add other
+/// quantization methods, and to design them modular enough so that they can be combined in order
+/// to address all three of the above optimization problems. How to achieve this modularity is an
+/// ongoing research question, which is why the APIs in this module are less stable than the APIs in
+/// the `stream` and `symbol` modules, and will likely change significantly in future versions of
+/// `constriction` (in accordance with SemVer guarantees).
+///
+/// [Variational Bayesian Quantization (VBQ)]: http://proceedings.mlr.press/v119/yang20a/yang20a.pdf
 #[pymodule]
 #[pyo3(name = "quant")]
 fn init_quant(py: Python<'_>, module: &PyModule) -> PyResult<()> {
@@ -320,7 +360,7 @@ fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// print(f"(in binary: {[bin(word) for word in compressed]}")
 ///
 /// # Decode the message (we could explicitly construct a decoder:
-/// # `decoder = constritcion.symbol.StackCoder(compressed)`
+/// # `decoder = constriction.symbol.StackCoder(compressed)`
 /// # but we can also also reuse our existing `coder` for decoding):
 /// decoded = []
 /// decoder_codebook = constriction.symbol.huffman.DecoderHuffmanTree(probabils)

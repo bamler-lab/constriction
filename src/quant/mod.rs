@@ -1,4 +1,4 @@
-//! Experimental quantization methods
+//! Experimental quantization methods.
 //!
 //! This module is a work in progress that will provide fast quantization methods that go beyond
 //! simple rounding to a uniform grid. Quantization is mostly necessary for lossy compression of
@@ -480,39 +480,10 @@ where
         V: TryFrom<F>,
     {
         let mut this = Self::default();
-        this.try_insert_points(points)?;
-        Ok(this)
-    }
-
-    /// Inserts multiple points.
-    pub fn insert_points<I>(&mut self, points: I)
-    where
-        Self: Sized,
-        I: IntoIterator,
-        <I as IntoIterator>::Item: Borrow<V>,
-    {
-        self.try_insert_points(points.into_iter().map(|x| *x.borrow()))
-            .unwrap_infallible();
-    }
-
-    /// Fallible variant of [`insert_points`](Self::insert_points)
-    ///
-    /// This is mostly intended for `EmpiricalDistribution`s over floating point values, which have
-    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted. See
-    /// [`try_from_points`](Self::try_from_points) and [example in the struct-level
-    /// documentation](Self#construction-and-iteration).
-    pub fn try_insert_points<F>(
-        &mut self,
-        points: impl IntoIterator<Item = F>,
-    ) -> Result<(), <V as TryFrom<F>>::Error>
-    where
-        V: TryFrom<F>,
-    {
         for point in points {
-            self.0.insert(V::try_from(point)?, CountWrapper(C::one()))
+            this.0.insert(V::try_from(point)?, CountWrapper(C::one()))
         }
-
-        Ok(())
+        Ok(this)
     }
 
     /// Inserts a single point into the distribution.
@@ -735,7 +706,7 @@ where
 /// and (ii) the saliency of the value that we quantize, i.e., how much a given distortion of a
 /// single value would hurt the overall quality of the quantization of a collection of values.
 ///
-/// # Overview of the Method
+/// # Overview of the VBQ Method
 ///
 /// For a given input `unquantized`, VBQ returns a point `quantized` by minimizing the following
 /// objective function:
