@@ -505,6 +505,13 @@ where
         self.0.remove(value, CountWrapper(C::one())).map(|c| c.0)
     }
 
+    /// Removes *all* points with the provided `value`.
+    ///
+    /// Returns the number of removed points (which can be zero).
+    pub fn remove_all(&mut self, value: V) -> C {
+        self.0.remove_all(value).0
+    }
+
     // pub fn try_insert_points_hashable<F>(
     //     &mut self,
     //     points: impl IntoIterator<Item = F>,

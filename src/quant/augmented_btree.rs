@@ -31,6 +31,9 @@ trait Node<P, C, const CAP: usize> {
     /// into its original state at the time the method returns.
     fn remove(&mut self, pos: P, count: C) -> Option<C>;
 
+    /// Removes all items at position `pos` and returns how many were removed (which might be zero).
+    fn remove_all(&mut self, pos: P) -> C;
+
     fn data_ref(&self) -> &Payload<P, C, Self::ChildRef, CAP>;
     fn data_mut(&mut self) -> &mut Payload<P, C, Self::ChildRef, CAP>;
 
@@ -235,6 +238,28 @@ where
 
         self.total = self.total - count;
         Some(result)
+    }
+
+    /// Removes all entries at position `pos`.
+    ///
+    /// Returns the number of removed entries (which can be zero).
+    pub fn remove_all(&mut self, pos: P) -> C {
+        let count = match self.root_type {
+            NonLeaf => {
+                let root = unsafe { self.root.as_non_leaf_mut_unchecked() };
+                let result = root.remove_all(pos);
+                if root.data.bulk.len() == 0 {
+                    unsafe {
+                        self.pop_non_leaf_root();
+                    }
+                }
+                result
+            }
+            Leaf => unsafe { self.root.as_leaf_mut_unchecked() }.remove_all(pos),
+        };
+
+        self.total = self.total - count;
+        count
     }
 
     /// Removes the root node, assuming it is a `NonLeafNode`, and replaces it
@@ -754,6 +779,8 @@ where
                 found = Some(new_accum - previous_accum)
             }
 
+            // Change `accum`s in this node optimistically in case we have to rebalance below.
+            // (If removal ends up failing then we restore `accum`s at the end of the method body.)
             right_separator.accum = new_accum;
             for entry in right_iter {
                 entry.accum = entry.accum - count;
@@ -800,6 +827,71 @@ where
         }
 
         None
+    }
+
+    fn remove_all(&mut self, pos: P) -> C {
+        let data = self.data.deref_mut();
+        let (separators, children) = data.bulk.both_as_mut();
+        let index = separators.partition_point(move |entry| entry.pos < pos);
+        let child = children
+            .get_mut(index.wrapping_sub(1))
+            .unwrap_or(&mut data.head);
+        let (left_separators, right_separators) = separators.split_at_mut(index);
+        let mut right_iter = right_separators.iter_mut();
+
+        let found = match right_iter.next() {
+            Some(right_separator) if right_separator.pos == pos => {
+                let previous_accum = unsafe {
+                    replace_pos_with_previous(
+                        self.children_type,
+                        right_separator,
+                        left_separators.last(),
+                        child,
+                    )
+                };
+                Some(right_separator.accum - previous_accum)
+            }
+            _ => None,
+        };
+
+        let count;
+        match self.children_type {
+            NonLeaf => {
+                let child = unsafe { child.as_non_leaf_mut_unchecked() };
+                count = found.unwrap_or_else(|| child.remove_all(pos));
+                if child.data.bulk.len() < CAP / 2 {
+                    for entry in &mut self.data.bulk.first_as_mut()[index..] {
+                        entry.accum = entry.accum - count;
+                    }
+                    self.data.rebalance_after_underflow_before(
+                        index,
+                        |c| unsafe { c.as_non_leaf_mut_unchecked() },
+                        |c| unsafe { *c.into_non_leaf_unchecked() },
+                    );
+                    return count;
+                }
+            }
+            Leaf => {
+                let child = unsafe { child.as_leaf_mut_unchecked() };
+                count = found.unwrap_or_else(|| child.remove_all(pos));
+                if child.data.bulk.len() < CAP / 2 {
+                    for entry in &mut self.data.bulk.first_as_mut()[index..] {
+                        entry.accum = entry.accum - count;
+                    }
+                    self.data.rebalance_after_underflow_before(
+                        index,
+                        |c| unsafe { c.as_leaf_mut_unchecked() },
+                        |c| unsafe { *c.into_leaf_unchecked() },
+                    );
+                    return count;
+                }
+            }
+        }
+
+        for entry in &mut self.data.bulk.first_as_mut()[index..] {
+            entry.accum = entry.accum - count;
+        }
+        count
     }
 
     fn data_ref(&self) -> &Payload<P, C, Self::ChildRef, CAP> {
@@ -854,6 +946,29 @@ where
             }
             Some(entry.accum - previous_accum)
         }
+    }
+
+    fn remove_all(&mut self, pos: P) -> C {
+        let entries = self.data.bulk.first_as_mut();
+        let index = entries.partition_point(move |entry| entry.pos < pos);
+        let previous_accum = entries
+            .get(index.wrapping_sub(1))
+            .map(|entry| entry.accum)
+            .unwrap_or_default();
+
+        let mut right_iter = entries.iter_mut().skip(index);
+        let count = match right_iter.next() {
+            Some(entry) if entry.pos == pos => entry.accum - previous_accum,
+            _ => return C::default(),
+        };
+
+        self.data
+            .bulk
+            .remove_and_update1(index, move |entry| {
+                Entry::new(entry.pos, entry.accum - count)
+            })
+            .expect("it exists");
+        count
     }
 
     fn data_ref(&self) -> &Payload<P, C, Self::ChildRef, CAP> {
@@ -1096,6 +1211,46 @@ where
         }
     }
 
+    /// Like `get_last_and_remove_if_accum_is` but unconditional.
+    fn get_last_and_remove(&mut self) -> Entry<P, C> {
+        let len = self.data.bulk.len();
+        let (&mut last_separator, last_child) = self
+            .data
+            .bulk
+            .last_mut()
+            .expect("invariant bulk.len() >= 2");
+        let offset = last_separator.accum;
+
+        let mut last = match self.children_type {
+            NonLeaf => {
+                let last_child = unsafe { last_child.as_non_leaf_mut_unchecked() };
+                let last = last_child.get_last_and_remove();
+                if last_child.data.bulk.len() < CAP / 2 {
+                    self.data.rebalance_after_underflow_before(
+                        len,
+                        |c| unsafe { c.as_non_leaf_mut_unchecked() },
+                        |c| unsafe { *c.into_non_leaf_unchecked() },
+                    );
+                }
+                last
+            }
+            Leaf => {
+                let last_child = unsafe { last_child.as_leaf_mut_unchecked() };
+                let last = last_child.get_last_and_remove();
+                if last_child.data.bulk.len() < CAP / 2 {
+                    self.data.rebalance_after_underflow_before(
+                        len,
+                        |c| unsafe { c.as_leaf_mut_unchecked() },
+                        |c| unsafe { *c.into_leaf_unchecked() },
+                    );
+                }
+                last
+            }
+        };
+        last.accum = last.accum + offset;
+        last
+    }
+
     #[cfg(debug_assertions)]
     fn assert_integrity(
         &self,
@@ -1174,9 +1329,12 @@ where
 
 /// Returns `Ok(last_accum)` where `last_accum <= accum` is the `accum` value of the the last entry
 /// of the subtree rooted at `left_child`, measured in its parent node (regardless of whether it was
-/// swapped out or not). Returns `Err(())` if `last_accum > new_accum`.
+/// removed or not). Returns `Err(())` if `last_accum > new_accum`.
 ///
-///  # Safety
+/// Does not rebalance the immediate `left_child` (so this has to be done by the caller), but does
+/// rebalance grand children (etc.) if necessary.
+///
+/// # Safety
 ///
 /// `left_child` must have type `children_type`.
 unsafe fn replace_pos_with_previous_if_accum_is<P, C, const CAP: usize>(
@@ -1230,6 +1388,39 @@ where
     };
 
     Ok(last_accum + previous_accum)
+}
+
+/// Like `replace_pos_with_previous_if_accum_is` but always performs the swap.
+unsafe fn replace_pos_with_previous<P, C, const CAP: usize>(
+    children_type: NodeType,
+    separator: &mut Entry<P, C>,
+    previous_separator: Option<&Entry<P, C>>,
+    left_child: &mut ChildPtr<P, C, CAP>,
+) -> C
+where
+    P: Ord + Copy,
+    C: Default + Ord + Add<Output = C> + Sub<Output = C> + Copy,
+{
+    let last_accum;
+    match children_type {
+        NonLeaf => {
+            let child = unsafe { left_child.as_non_leaf_mut_unchecked() };
+            let last_entry_left = child.get_last_and_remove();
+            last_accum = last_entry_left.accum;
+            separator.pos = last_entry_left.pos;
+        }
+        Leaf => {
+            let child = unsafe { left_child.as_leaf_mut_unchecked() };
+            let last_entry_left = child.get_last_and_remove();
+            last_accum = last_entry_left.accum;
+            separator.pos = last_entry_left.pos;
+        }
+    };
+
+    let previous_accum = previous_separator
+        .map(|entry| entry.accum)
+        .unwrap_or_default();
+    last_accum + previous_accum
 }
 
 impl<P, C, const CAP: usize> LeafNode<P, C, CAP>
@@ -1373,12 +1564,20 @@ where
         })
     }
 
+    /// Note: does not rebalance, so this has to be done by the caller (rebalancing can only be
+    /// performed from a parent's perspective because it requires access to siblings)
     fn get_last_and_remove_if_accum_is(&mut self, accum: C) -> Entry<P, C> {
         let (&mut last, ()) = self.data.bulk.last_mut().expect("isn't empty");
         if last.accum == accum {
             self.data.bulk.pop();
         }
         last
+    }
+
+    /// Note: does not rebalance, so this has to be done by the caller (rebalancing can only be
+    /// performed from a parent's perspective because it requires access to siblings)
+    fn get_last_and_remove(&mut self) -> Entry<P, C> {
+        self.data.bulk.pop().expect("isn't empty").0
     }
 }
 
@@ -2561,7 +2760,7 @@ mod tests {
 
             // Create a hash map so we can keep track of how many entries are supposed to be
             // at each position as we keep removing entries.
-            let mut hash_map = cdf
+            let hash_map = cdf
                 .iter()
                 .scan(0, |previous_accum, &(pos, accum)| {
                     let count = accum - *previous_accum;
@@ -2572,6 +2771,23 @@ mod tests {
                 })
                 .collect::<HashMap<_, _>>();
 
+            test_remove(
+                &mut rng,
+                tree.clone(),
+                sorted_insertions,
+                cdf.clone(),
+                hash_map.clone(),
+            );
+            test_remove_all(&mut rng, tree, cdf, hash_map);
+        }
+
+        fn test_remove<const CAP: usize>(
+            mut rng: impl Rng,
+            mut tree: AugmentedBTree<NonNanFloat<f64>, u32, CAP>,
+            sorted_insertions: Vec<(NonNanFloat<f64>, u32)>,
+            mut cdf: Vec<(NonNanFloat<f64>, u32)>,
+            mut hash_map: HashMap<u64, u32>,
+        ) {
             // Remove some of the items in random order and verify the tree's correctness again.
             let mut removals = sorted_insertions;
             let partial_removal_probability = distributions::Bernoulli::new(0.1).unwrap();
@@ -2595,9 +2811,9 @@ mod tests {
             cdf_entry.1 -= accumulated_removals;
             core::mem::drop((cdf_iter, cdf_entry));
             let mut last_accum = 0;
-            let cdf = cdf
-                .iter()
-                .filter_map(|&(pos, accum)| {
+            let reduced_cdf = cdf
+                .into_iter()
+                .filter_map(|(pos, accum)| {
                     if accum == last_accum {
                         None
                     } else {
@@ -2609,16 +2825,18 @@ mod tests {
 
             removals.shuffle(&mut rng);
             for &(pos, count) in &removals {
+                let fake_pos = pos + f(1.0_f64 / (u64::MAX >> 15) as f64);
+                assert_eq!(tree.remove(fake_pos, 1), None);
                 let expected_full_count = hash_map.get_mut(&pos.get().to_bits()).unwrap();
                 assert_eq!(tree.remove(pos, count), Some(*expected_full_count - count));
                 *expected_full_count -= count;
             }
 
-            verify_tree(&tree, &cdf);
+            verify_tree(&tree, &reduced_cdf);
             tree.debug_assert_integrity();
 
             // Remove all remaining entries.
-            let mut removals = cdf
+            let mut removals = reduced_cdf
                 .iter()
                 .scan(0, |a, &(pos, accum)| {
                     let old_a = *a;
@@ -2629,11 +2847,60 @@ mod tests {
             removals.shuffle(&mut rng);
 
             for &(pos, count) in &removals {
+                let fake_pos = pos + f(1.0_f64 / (u64::MAX >> 15) as f64);
+                assert_eq!(tree.remove(fake_pos, 1), None);
                 let expected_full_count = hash_map.get_mut(&pos.get().to_bits()).unwrap();
                 assert_eq!(tree.remove(pos, count), Some(*expected_full_count - count));
                 *expected_full_count -= count;
             }
 
+            assert_eq!(tree.total(), 0);
+            assert_eq!(tree.root_type, super::Leaf);
+            let root = unsafe { tree.root.as_leaf_unchecked() };
+            assert_eq!(root.data.bulk.len(), 0);
+            tree.debug_assert_integrity();
+        }
+
+        fn test_remove_all<const CAP: usize>(
+            mut rng: impl Rng,
+            mut tree: AugmentedBTree<NonNanFloat<f64>, u32, CAP>,
+            cdf: Vec<(NonNanFloat<f64>, u32)>,
+            mut hash_map: HashMap<u64, u32>,
+        ) {
+            let mut removals = cdf;
+            removals.shuffle(&mut rng);
+
+            // Remove all entries at half of the positions in the tree.
+            for &(pos, _) in &removals[..removals.len() / 2] {
+                let fake_pos = pos + f(1.0_f64 / (u64::MAX >> 15) as f64);
+                assert_eq!(tree.remove_all(fake_pos), 0);
+                let expected_count = hash_map.remove(&pos.get().to_bits()).unwrap();
+                assert_eq!(tree.remove_all(pos), expected_count);
+            }
+
+            let mut remaining_cdf = hash_map
+                .iter()
+                .map(|(&pos, &count)| (f(f64::from_bits(pos)), count))
+                .collect::<Vec<_>>();
+            remaining_cdf.sort_unstable();
+            let mut accum = 0;
+            for (_, count) in &mut remaining_cdf {
+                accum += *count;
+                *count = accum;
+            }
+
+            verify_tree(&tree, &remaining_cdf);
+            tree.debug_assert_integrity();
+
+            // Remove remaining entries.
+            for &(pos, _count) in &removals[removals.len() / 2..] {
+                let fake_pos = pos + f(1.0_f64 / (u64::MAX >> 15) as f64);
+                assert_eq!(tree.remove_all(fake_pos), 0);
+                let expected_count = hash_map.remove(&pos.get().to_bits()).unwrap();
+                assert_eq!(tree.remove_all(pos), expected_count);
+            }
+
+            assert!(hash_map.is_empty());
             assert_eq!(tree.total(), 0);
             assert_eq!(tree.root_type, super::Leaf);
             let root = unsafe { tree.root.as_leaf_unchecked() };
