@@ -433,9 +433,9 @@ impl<C: Sub<Output = C>> Sub for CountWrapper<C> {
 /// assert_eq!(distribution.ppf(5), None);
 ///
 /// // When removing a zero value, we can use either positive or negative zero as the key:
-/// assert_eq!(distribution.remove(F32::new(positive_zero).unwrap()), Some(1));
-/// assert_eq!(distribution.remove(F32::new(negative_zero).unwrap()), Some(0));
-/// assert_eq!(distribution.remove(F32::new(positive_zero).unwrap()), None);
+/// assert_eq!(distribution.remove(F32::new(positive_zero).unwrap()), Ok(2));
+/// assert_eq!(distribution.remove(F32::new(negative_zero).unwrap()), Ok(1));
+/// assert!(distribution.remove(F32::new(positive_zero).unwrap()).is_err());
 /// ```
 pub struct EmpiricalDistribution<V = F32, C = u32, const CAP: usize = 64>(
     AugmentedBTree<V, CountWrapper<C>, CAP>,
@@ -497,12 +497,17 @@ where
 
     /// Removes a point with the provided `value`.
     ///
-    /// On success, returns `Some(remaining)`, where `remaining` is the number of points that still
-    /// remain at `value` after the removal (which can be zero). Returns `None` if removal fails
-    /// because there was no point at `value` (in this case, the `EmpiricalDistribution` remains
-    /// unchanged).
-    pub fn remove(&mut self, value: V) -> Option<C> {
-        self.0.remove(value, CountWrapper(C::one())).map(|c| c.0)
+    /// On success, returns `Ok(original_count)`, where `original_count >= 1` is the number of
+    /// points with the provided `value` that were present *before* the removal (thus, once the
+    /// method returns, there are only `original_count - 1` points with the provided `value` left).
+    ///
+    /// Returns `Err(NotFoundError)` if removal fails because there is no point at `value` (in this
+    /// case, the `EmpiricalDistribution` remains unchanged).
+    pub fn remove(&mut self, value: V) -> Result<C, NotFoundError> {
+        self.0
+            .remove(value, CountWrapper(C::one()))
+            .map(|c| c.0)
+            .ok_or(NotFoundError)
     }
 
     /// Removes *all* points with the provided `value`.
@@ -705,6 +710,22 @@ where
         Self::new()
     }
 }
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct NotFoundError;
+
+impl Display for NotFoundError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "Attempted to remove a value from an `EmpiricalDistribution` that does not exist in \
+            the distribution."
+        )
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for NotFoundError {}
 
 /// Quantizes a single value using [Variational Bayesian Quantization (VBQ)].
 ///

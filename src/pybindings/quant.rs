@@ -349,19 +349,11 @@ impl EmpiricalDistribution {
 
             match old {
                 Scalar(old) => {
-                    distribution.remove(F32::new(old)?).ok_or_else(|| {
-                        pyo3::exceptions::PyKeyError::new_err(
-                            "The `old` value does not exist in the distribution.",
-                        )
-                    })?;
+                    distribution.remove(F32::new(old)?)?;
                 }
                 Array(old) => {
                     for &old in old.as_array() {
-                        distribution.remove(F32::new(old)?).ok_or_else(|| {
-                            pyo3::exceptions::PyKeyError::new_err(
-                                "One of the entries in `old` does not exist in the distribution.",
-                            )
-                        })?;
+                        distribution.remove(F32::new(old)?)?;
                     }
                 }
             }
@@ -369,11 +361,7 @@ impl EmpiricalDistribution {
             match old {
                 Scalar(old) => match &mut self.0 {
                     EmpiricalDistributionImpl::Single(distribution) => {
-                        distribution.remove(F32::new(old)?).ok_or_else(|| {
-                            pyo3::exceptions::PyKeyError::new_err(
-                                "The `old` value does not exist in the distribution.",
-                            )
-                        })?;
+                        distribution.remove(F32::new(old)?)?;
                     }
                     EmpiricalDistributionImpl::Multiple { .. } => {
                         return Err(pyo3::exceptions::PyAssertionError::new_err(
@@ -388,11 +376,7 @@ impl EmpiricalDistribution {
                     match &mut self.0 {
                         EmpiricalDistributionImpl::Single(distribution) => {
                             for &old in &old {
-                                distribution.remove(F32::new(old)?).ok_or_else(|| {
-                                    pyo3::exceptions::PyKeyError::new_err(
-                                        "One of the entries in `old` does not exist in the distribution.",
-                                    )
-                                })?;
+                                distribution.remove(F32::new(old)?)?;
                             }
                         }
                         EmpiricalDistributionImpl::Multiple {
@@ -411,19 +395,14 @@ impl EmpiricalDistribution {
                                 ));
                             }
 
-                            old
-                            .into_par_iter()
-                            .zip(distributions)
-                            .try_for_each(|(old, distribution)| {
-                                for &old in &old {
-                                     distribution.remove(F32::new(old)?).ok_or_else(|| {
-                                        pyo3::exceptions::PyKeyError::new_err(
-                                            "One of the entries in `old` does not exist in the distribution.",
-                                        )
-                                    })?;
-                                }
-                                Ok::<(),PyErr>(())
-                            })?;
+                            old.into_par_iter().zip(distributions).try_for_each(
+                                |(old, distribution)| {
+                                    for &old in &old {
+                                        distribution.remove(F32::new(old)?)?;
+                                    }
+                                    Ok::<(), PyErr>(())
+                                },
+                            )?;
                         }
                     }
                 }
@@ -472,20 +451,12 @@ impl EmpiricalDistribution {
 
             match (old, new) {
                 (Scalar(old), Scalar(new)) => {
-                    distribution.remove(F32::new(old)?).ok_or_else(|| {
-                        pyo3::exceptions::PyKeyError::new_err(
-                            "The `old` value does not exist in the distribution.",
-                        )
-                    })?;
+                    distribution.remove(F32::new(old)?)?;
                     distribution.insert(F32::new(new)?);
                 }
                 (Array(old), Array(new)) if old.dims() == new.dims() => {
                     for (&old, &new) in old.as_array().iter().zip(&new.as_array()) {
-                        distribution.remove(F32::new(old)?).ok_or_else(|| {
-                            pyo3::exceptions::PyKeyError::new_err(
-                                "One of the entries in `old` does not exist in the distribution.",
-                            )
-                        })?;
+                        distribution.remove(F32::new(old)?)?;
                         distribution.insert(F32::new(new)?);
                     }
                 }
@@ -499,11 +470,7 @@ impl EmpiricalDistribution {
             match (old, new) {
                 (Scalar(old), Scalar(new)) => match &mut self.0 {
                     EmpiricalDistributionImpl::Single(distribution) => {
-                        distribution.remove(F32::new(old)?).ok_or_else(|| {
-                            pyo3::exceptions::PyKeyError::new_err(
-                                "The `old` value does not exist in the distribution.",
-                            )
-                        })?;
+                        distribution.remove(F32::new(old)?)?;
                         distribution.insert(F32::new(new)?);
                     }
                     EmpiricalDistributionImpl::Multiple { .. } => {
@@ -520,11 +487,7 @@ impl EmpiricalDistribution {
                     match &mut self.0 {
                         EmpiricalDistributionImpl::Single(distribution) => {
                             for (&old, &new) in old.iter().zip(&new) {
-                                distribution.remove(F32::new(old)?).ok_or_else(|| {
-                                    pyo3::exceptions::PyKeyError::new_err(
-                                        "One of the entries in `old` does not exist in the distribution.",
-                                    )
-                                })?;
+                                distribution.remove(F32::new(old)?)?;
                                 distribution.insert(F32::new(new)?);
                             }
                         }
@@ -544,21 +507,16 @@ impl EmpiricalDistribution {
                                 ));
                             }
 
-                            old
-                            .into_par_iter()
-                            .zip(new.axis_iter(Axis(*axis)))
-                            .zip(distributions)
-                            .try_for_each(|((old, new), distribution)| {
-                                for (&old, &new) in old.iter().zip(&new) {
-                                    distribution.remove(F32::new(old)?).ok_or_else(|| {
-                                        pyo3::exceptions::PyKeyError::new_err(
-                                            "One of the entries in `old` does not exist in the distribution.",
-                                        )
-                                    })?;
-                                    distribution.insert(F32::new(new)?);
-                                }
-                                Ok::<(),PyErr>(())
-                            })?;
+                            old.into_par_iter()
+                                .zip(new.axis_iter(Axis(*axis)))
+                                .zip(distributions)
+                                .try_for_each(|((old, new), distribution)| {
+                                    for (&old, &new) in old.iter().zip(&new) {
+                                        distribution.remove(F32::new(old)?)?;
+                                        distribution.insert(F32::new(new)?);
+                                    }
+                                    Ok::<(), PyErr>(())
+                                })?;
                         }
                     }
                 }
@@ -1413,12 +1371,7 @@ where
                 coarseness,
                 update,
                 |prior, old, new, _reference| {
-                    prior.remove(old).ok_or_else(|| {
-                        pyo3::exceptions::PyKeyError::new_err(
-                            "An uncompressed value does not exist in the distribution. \
-                                You might have to provide a `reference` argument.",
-                        )
-                    })?;
+                    prior.remove(old)?;
                     prior.insert(new);
                     Ok::<(), PyErr>(())
                 },
@@ -1444,11 +1397,7 @@ where
                 coarseness,
                 update,
                 |prior, _old, new, reference| {
-                    prior.remove(F32::new(*reference)?).ok_or_else(|| {
-                        pyo3::exceptions::PyKeyError::new_err(
-                            "A reference value does not exist in the distribution.",
-                        )
-                    })?;
+                    prior.remove(F32::new(*reference)?)?;
                     prior.insert(new);
                     *reference = new.get();
                     Ok::<(), PyErr>(())
@@ -1630,12 +1579,7 @@ where
                 let unquantized = F32::new(*src.borrow())?;
                 let reference_val = F32::new(*reference)?;
                 let quantized = crate::quant::vbq(unquantized, prior, |x| x * x, bit_penalty?);
-                prior.remove(reference_val).ok_or_else(|| {
-                    pyo3::exceptions::PyKeyError::new_err(
-                        "An uncompressed value does not exist in the distribution. \
-                    You might have to provide a `reference` argument.",
-                    )
-                })?;
+                prior.remove(reference_val)?;
                 prior.insert(quantized);
                 update(src, dst, quantized.get());
                 *reference = quantized.get();
@@ -1645,12 +1589,7 @@ where
                 let unquantized = F32::new(*src.borrow())?;
                 let quantized = crate::quant::vbq(unquantized, prior, |x| x * x, bit_penalty?);
                 update(src, dst, quantized.get());
-                prior.remove(unquantized).ok_or_else(|| {
-                    pyo3::exceptions::PyKeyError::new_err(
-                        "An uncompressed value does not exist in the distribution. \
-                        You might have to provide a `reference` argument.",
-                    )
-                })?;
+                prior.remove(unquantized)?;
                 prior.insert(quantized);
             }
         }
@@ -1675,4 +1614,13 @@ where
         update(sd, quantized.get());
         PyResult::Ok(())
     })
+}
+
+impl From<crate::quant::NotFoundError> for PyErr {
+    fn from(_err: crate::quant::NotFoundError) -> Self {
+        pyo3::exceptions::PyKeyError::new_err(
+            "Attempted to remove a value from an `EmpiricalDistribution` that does not exist in \
+            the distribution.",
+        )
+    }
 }

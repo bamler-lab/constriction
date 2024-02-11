@@ -26,9 +26,10 @@ enum NodeType {
 trait Node<P, C, const CAP: usize> {
     type ChildRef;
 
-    /// Tries to remove `count` items at position `pos`. Returns `Err(())` if there are fewer than
-    /// `count` items at `pos`. In this case, the subtree rooted at this node has been restored
-    /// into its original state at the time the method returns.
+    /// Tries to remove `count >= 1` items at position `pos`. Returns `None` if there are fewer than
+    /// `count` items at `pos` (and possibly also if `count == 0`, which is an invalid argument). In
+    /// this case, the subtree rooted at this node has been restored into its original state at the
+    /// time the method returns.
     fn remove(&mut self, pos: P, count: C) -> Option<C>;
 
     /// Removes all items at position `pos` and returns how many were removed (which might be zero).
@@ -215,8 +216,8 @@ where
 
     /// Removes `count > 0` entries at position `pos`.
     ///
-    /// Returns `Some(remaining)` upon success, where `remaining` is the number of entries that
-    /// still remain at position `pos` after the removal (which could be zero).
+    /// Returns `Some(original_count)` upon success, where `original_count` is the number of entries
+    /// that were present at position `pos` *before* the removal (which could be zero).
     ///
     /// Returns `Err(())` if removal failed. This is usuall because there is no entry at `pos` but
     /// also includes the case where `count == 0` regardless of whether or not there is an entry at
@@ -776,7 +777,7 @@ where
                     )
                     .ok()?
                 };
-                found = Some(new_accum - previous_accum)
+                found = Some(right_separator.accum - previous_accum)
             }
 
             // Change `accum`s in this node optimistically in case we have to rebalance below.
@@ -931,21 +932,25 @@ where
         if entry.pos != pos || entry.accum < previous_accum + count {
             return None;
         }
-        if entry.accum == previous_accum + count {
-            self.data
-                .bulk
-                .remove_and_update1(index, move |entry| {
-                    Entry::new(entry.pos, entry.accum - count)
-                })
-                .expect("it exists");
-            Some(C::default())
-        } else {
-            entry.accum = entry.accum - count;
-            for entry in right_iter {
-                entry.accum = entry.accum - count;
+        let original_count = entry.accum - previous_accum;
+        match (entry.pos == pos, original_count.cmp(&count)) {
+            (false, _) | (_, Less) => return None,
+            (true, Equal) => {
+                self.data
+                    .bulk
+                    .remove_and_update1(index, move |entry| {
+                        Entry::new(entry.pos, entry.accum - count)
+                    })
+                    .expect("it exists");
             }
-            Some(entry.accum - previous_accum)
+            (true, Greater) => {
+                entry.accum = entry.accum - count;
+                for entry in right_iter {
+                    entry.accum = entry.accum - count;
+                }
+            }
         }
+        Some(original_count)
     }
 
     fn remove_all(&mut self, pos: P) -> C {
@@ -2828,7 +2833,7 @@ mod tests {
                 let fake_pos = pos + f(1.0_f64 / (u64::MAX >> 15) as f64);
                 assert_eq!(tree.remove(fake_pos, 1), None);
                 let expected_full_count = hash_map.get_mut(&pos.get().to_bits()).unwrap();
-                assert_eq!(tree.remove(pos, count), Some(*expected_full_count - count));
+                assert_eq!(tree.remove(pos, count), Some(*expected_full_count));
                 *expected_full_count -= count;
             }
 
@@ -2850,7 +2855,7 @@ mod tests {
                 let fake_pos = pos + f(1.0_f64 / (u64::MAX >> 15) as f64);
                 assert_eq!(tree.remove(fake_pos, 1), None);
                 let expected_full_count = hash_map.get_mut(&pos.get().to_bits()).unwrap();
-                assert_eq!(tree.remove(pos, count), Some(*expected_full_count - count));
+                assert_eq!(tree.remove(pos, count), Some(*expected_full_count));
                 *expected_full_count -= count;
             }
 

@@ -427,11 +427,9 @@ impl<'py, D: ndarray::Dimension> PyReadonlyFloatArray<'py, D> {
 }
 
 impl From<NanError> for PyErr {
-    fn from(err: NanError) -> Self {
-        match err {
-            NanError => pyo3::exceptions::PyFloatingPointError::new_err(
-                "Floating point value is not a number (NaN).",
-            ),
-        }
+    fn from(_err: NanError) -> Self {
+        pyo3::exceptions::PyFloatingPointError::new_err(
+            "Floating point value is not a number (NaN).",
+        )
     }
 }
