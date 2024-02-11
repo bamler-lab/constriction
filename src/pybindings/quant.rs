@@ -254,10 +254,10 @@ impl EmpiricalDistribution {
                 .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
 
             match new {
-                Scalar(new) => distribution.insert(F32::new(new)?),
+                Scalar(new) => distribution.insert(F32::new(new)?, 1),
                 Array(new) => {
                     for &new in new.as_array() {
-                        distribution.insert(F32::new(new)?);
+                        distribution.insert(F32::new(new)?, 1);
                     }
                 }
             }
@@ -265,7 +265,7 @@ impl EmpiricalDistribution {
             match new {
                 Scalar(new) => match &mut self.0 {
                     EmpiricalDistributionImpl::Single(distribution) => {
-                        distribution.insert(F32::new(new)?);
+                        distribution.insert(F32::new(new)?, 1);
                     }
                     EmpiricalDistributionImpl::Multiple { .. } => {
                         return Err(pyo3::exceptions::PyAssertionError::new_err(
@@ -280,7 +280,7 @@ impl EmpiricalDistribution {
                     match &mut self.0 {
                         EmpiricalDistributionImpl::Single(distribution) => {
                             for &new in &new {
-                                distribution.insert(F32::new(new)?);
+                                distribution.insert(F32::new(new)?, 1);
                             }
                         }
                         EmpiricalDistributionImpl::Multiple {
@@ -302,7 +302,7 @@ impl EmpiricalDistribution {
                             new.into_par_iter().zip(distributions).try_for_each(
                                 |(new, distribution)| {
                                     for &new in &new {
-                                        distribution.insert(F32::new(new)?);
+                                        distribution.insert(F32::new(new)?, 1);
                                     }
                                     Ok::<(), PyErr>(())
                                 },
@@ -349,11 +349,11 @@ impl EmpiricalDistribution {
 
             match old {
                 Scalar(old) => {
-                    distribution.remove(F32::new(old)?)?;
+                    distribution.remove(F32::new(old)?, 1)?;
                 }
                 Array(old) => {
                     for &old in old.as_array() {
-                        distribution.remove(F32::new(old)?)?;
+                        distribution.remove(F32::new(old)?, 1)?;
                     }
                 }
             }
@@ -361,7 +361,7 @@ impl EmpiricalDistribution {
             match old {
                 Scalar(old) => match &mut self.0 {
                     EmpiricalDistributionImpl::Single(distribution) => {
-                        distribution.remove(F32::new(old)?)?;
+                        distribution.remove(F32::new(old)?, 1)?;
                     }
                     EmpiricalDistributionImpl::Multiple { .. } => {
                         return Err(pyo3::exceptions::PyAssertionError::new_err(
@@ -376,7 +376,7 @@ impl EmpiricalDistribution {
                     match &mut self.0 {
                         EmpiricalDistributionImpl::Single(distribution) => {
                             for &old in &old {
-                                distribution.remove(F32::new(old)?)?;
+                                distribution.remove(F32::new(old)?, 1)?;
                             }
                         }
                         EmpiricalDistributionImpl::Multiple {
@@ -398,7 +398,7 @@ impl EmpiricalDistribution {
                             old.into_par_iter().zip(distributions).try_for_each(
                                 |(old, distribution)| {
                                     for &old in &old {
-                                        distribution.remove(F32::new(old)?)?;
+                                        distribution.remove(F32::new(old)?, 1)?;
                                     }
                                     Ok::<(), PyErr>(())
                                 },
@@ -451,13 +451,13 @@ impl EmpiricalDistribution {
 
             match (old, new) {
                 (Scalar(old), Scalar(new)) => {
-                    distribution.remove(F32::new(old)?)?;
-                    distribution.insert(F32::new(new)?);
+                    distribution.remove(F32::new(old)?, 1)?;
+                    distribution.insert(F32::new(new)?, 1);
                 }
                 (Array(old), Array(new)) if old.dims() == new.dims() => {
                     for (&old, &new) in old.as_array().iter().zip(&new.as_array()) {
-                        distribution.remove(F32::new(old)?)?;
-                        distribution.insert(F32::new(new)?);
+                        distribution.remove(F32::new(old)?, 1)?;
+                        distribution.insert(F32::new(new)?, 1);
                     }
                 }
                 _ => {
@@ -470,8 +470,8 @@ impl EmpiricalDistribution {
             match (old, new) {
                 (Scalar(old), Scalar(new)) => match &mut self.0 {
                     EmpiricalDistributionImpl::Single(distribution) => {
-                        distribution.remove(F32::new(old)?)?;
-                        distribution.insert(F32::new(new)?);
+                        distribution.remove(F32::new(old)?, 1)?;
+                        distribution.insert(F32::new(new)?, 1);
                     }
                     EmpiricalDistributionImpl::Multiple { .. } => {
                         return Err(pyo3::exceptions::PyAssertionError::new_err(
@@ -487,8 +487,8 @@ impl EmpiricalDistribution {
                     match &mut self.0 {
                         EmpiricalDistributionImpl::Single(distribution) => {
                             for (&old, &new) in old.iter().zip(&new) {
-                                distribution.remove(F32::new(old)?)?;
-                                distribution.insert(F32::new(new)?);
+                                distribution.remove(F32::new(old)?, 1)?;
+                                distribution.insert(F32::new(new)?, 1);
                             }
                         }
                         EmpiricalDistributionImpl::Multiple {
@@ -512,8 +512,108 @@ impl EmpiricalDistribution {
                                 .zip(distributions)
                                 .try_for_each(|((old, new), distribution)| {
                                     for (&old, &new) in old.iter().zip(&new) {
-                                        distribution.remove(F32::new(old)?)?;
-                                        distribution.insert(F32::new(new)?);
+                                        distribution.remove(F32::new(old)?, 1)?;
+                                        distribution.insert(F32::new(new)?, 1);
+                                    }
+                                    Ok::<(), PyErr>(())
+                                })?;
+                        }
+                    }
+                }
+                _ => {
+                    return Err(pyo3::exceptions::PyAssertionError::new_err(
+                        "`old` and `new` must have the same shape.",
+                    ))
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn update_all(
+        &mut self,
+        old: PyReadonlyF32ArrayOrScalar<'_>,
+        new: PyReadonlyF32ArrayOrScalar<'_>,
+        index: Option<usize>,
+    ) -> PyResult<()> {
+        if let Some(index) = index {
+            let EmpiricalDistributionImpl::Multiple { distributions, .. } = &mut self.0 else {
+                return Err(pyo3::exceptions::PyIndexError::new_err(
+                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
+                    was created with argument `specialize_along_axis`.",
+                ));
+            };
+
+            let distribution = distributions
+                .get_mut(index)
+                .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
+
+            match (old, new) {
+                (Scalar(old), Scalar(new)) => {
+                    let count = distribution.remove_all(F32::new(old)?);
+                    distribution.insert(F32::new(new)?, count);
+                }
+                (Array(old), Array(new)) if old.dims() == new.dims() => {
+                    for (&old, &new) in old.as_array().iter().zip(&new.as_array()) {
+                        distribution.remove(F32::new(old)?, 1)?;
+                        distribution.insert(F32::new(new)?, 1);
+                    }
+                }
+                _ => {
+                    return Err(pyo3::exceptions::PyAssertionError::new_err(
+                        "`old` and `new` must have the same shape.",
+                    ))
+                }
+            }
+        } else {
+            match (old, new) {
+                (Scalar(old), Scalar(new)) => match &mut self.0 {
+                    EmpiricalDistributionImpl::Single(distribution) => {
+                        distribution.remove(F32::new(old)?, 1)?;
+                        distribution.insert(F32::new(new)?, 1);
+                    }
+                    EmpiricalDistributionImpl::Multiple { .. } => {
+                        return Err(pyo3::exceptions::PyAssertionError::new_err(
+                            "Scalar updates with an `EmpiricalDistribution` that was created with \
+                            argument `specialize_along_axis` require argument `index`.",
+                        ));
+                    }
+                },
+                (Array(old), Array(new)) if old.dims() == new.dims() => {
+                    let old = old.as_array();
+                    let new = new.as_array();
+
+                    match &mut self.0 {
+                        EmpiricalDistributionImpl::Single(distribution) => {
+                            for (&old, &new) in old.iter().zip(&new) {
+                                distribution.remove(F32::new(old)?, 1)?;
+                                distribution.insert(F32::new(new)?, 1);
+                            }
+                        }
+                        EmpiricalDistributionImpl::Multiple {
+                            distributions,
+                            axis,
+                        } => {
+                            let old = old.axis_iter(Axis(*axis));
+                            if old.len() != distributions.len() {
+                                return Err(pyo3::exceptions::PyIndexError::new_err(
+                                    alloc::format!(
+                                        "Axis {} has wrong dimension: expected {} but found {}.",
+                                        axis,
+                                        distributions.len(),
+                                        old.len()
+                                    ),
+                                ));
+                            }
+
+                            old.into_par_iter()
+                                .zip(new.axis_iter(Axis(*axis)))
+                                .zip(distributions)
+                                .try_for_each(|((old, new), distribution)| {
+                                    for (&old, &new) in old.iter().zip(&new) {
+                                        distribution.remove(F32::new(old)?, 1)?;
+                                        distribution.insert(F32::new(new)?, 1);
                                     }
                                     Ok::<(), PyErr>(())
                                 })?;
@@ -1371,8 +1471,8 @@ where
                 coarseness,
                 update,
                 |prior, old, new, _reference| {
-                    prior.remove(old)?;
-                    prior.insert(new);
+                    prior.remove(old, 1)?;
+                    prior.insert(new, 1);
                     Ok::<(), PyErr>(())
                 },
                 rayon::iter::repeat(core::iter::repeat(())).take(priors.len()),
@@ -1397,8 +1497,8 @@ where
                 coarseness,
                 update,
                 |prior, _old, new, reference| {
-                    prior.remove(F32::new(*reference)?)?;
-                    prior.insert(new);
+                    prior.remove(F32::new(*reference)?, 1)?;
+                    prior.insert(new, 1);
                     *reference = new.get();
                     Ok::<(), PyErr>(())
                 },
@@ -1579,8 +1679,8 @@ where
                 let unquantized = F32::new(*src.borrow())?;
                 let reference_val = F32::new(*reference)?;
                 let quantized = crate::quant::vbq(unquantized, prior, |x| x * x, bit_penalty?);
-                prior.remove(reference_val)?;
-                prior.insert(quantized);
+                prior.remove(reference_val, 1)?;
+                prior.insert(quantized, 1);
                 update(src, dst, quantized.get());
                 *reference = quantized.get();
             }
@@ -1589,8 +1689,8 @@ where
                 let unquantized = F32::new(*src.borrow())?;
                 let quantized = crate::quant::vbq(unquantized, prior, |x| x * x, bit_penalty?);
                 update(src, dst, quantized.get());
-                prior.remove(unquantized)?;
-                prior.insert(quantized);
+                prior.remove(unquantized, 1)?;
+                prior.insert(quantized, 1);
             }
         }
 

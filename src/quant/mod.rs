@@ -393,11 +393,11 @@ impl<C: Sub<Output = C>> Sub for CountWrapper<C> {
 ///
 /// // Insert positive and negative zero and some subnormal numbers into an `EmpiricalDistribution`:
 /// let mut distribution = EmpiricalDistribution::<F32, u32>::new();
-/// distribution.insert(F32::new(positive_zero).unwrap());
-/// distribution.insert(F32::new(negative_zero).unwrap());
-/// distribution.insert(F32::new(positive_subnormal1).unwrap());
-/// distribution.insert(F32::new(positive_subnormal2).unwrap());
-/// distribution.insert(F32::new(negative_subnormal).unwrap());
+/// distribution.insert(F32::new(positive_zero).unwrap(), 1);
+/// distribution.insert(F32::new(negative_zero).unwrap(), 1);
+/// distribution.insert(F32::new(positive_subnormal1).unwrap(), 1);
+/// distribution.insert(F32::new(positive_subnormal2).unwrap(), 1);
+/// distribution.insert(F32::new(negative_subnormal).unwrap(), 1);
 ///
 /// // Inspect how the inserted values are stored in the `EmpiricalDistribution`:
 /// let values_and_counts = distribution.iter().collect::<Vec<_>>();
@@ -433,9 +433,9 @@ impl<C: Sub<Output = C>> Sub for CountWrapper<C> {
 /// assert_eq!(distribution.ppf(5), None);
 ///
 /// // When removing a zero value, we can use either positive or negative zero as the key:
-/// assert_eq!(distribution.remove(F32::new(positive_zero).unwrap()), Ok(2));
-/// assert_eq!(distribution.remove(F32::new(negative_zero).unwrap()), Ok(1));
-/// assert!(distribution.remove(F32::new(positive_zero).unwrap()).is_err());
+/// assert_eq!(distribution.remove(F32::new(positive_zero).unwrap(), 1), Ok(2));
+/// assert_eq!(distribution.remove(F32::new(negative_zero).unwrap(), 1), Ok(1));
+/// assert!(distribution.remove(F32::new(positive_zero).unwrap(), 1).is_err());
 /// ```
 pub struct EmpiricalDistribution<V = F32, C = u32, const CAP: usize = 64>(
     AugmentedBTree<V, CountWrapper<C>, CAP>,
@@ -486,16 +486,20 @@ where
         Ok(this)
     }
 
-    /// Inserts a single point into the distribution.
+    /// Inserts `count` points with the provided `value` into the distribution.
     ///
     /// If the distribution already has some point(s) with the same `value`, then no allocation
-    /// is required and only the count for `value` is increased. Otherwise, a new entry with count
-    /// `1` is inserted.
-    pub fn insert(&mut self, value: V) {
-        self.0.insert(value, CountWrapper(C::one()))
+    /// is required and only the count for `value` is increased. Otherwise, a new entry with the
+    /// provided `count` is inserted.
+    pub fn insert(&mut self, value: V, count: C) {
+        self.0.insert(value, CountWrapper(count))
     }
 
-    /// Removes a point with the provided `value`.
+    /// Removes `count` points with the provided `value`.
+    ///
+    /// `count` should be nonzero. If `count` is zero, then the tree remains unchanged but whether
+    /// the method returns `Ok(..)` or `Err(..)` is unspecified and may depend not only of the
+    /// contents but even of the history of the `EmpiricalDistribution`.
     ///
     /// On success, returns `Ok(original_count)`, where `original_count >= 1` is the number of
     /// points with the provided `value` that were present *before* the removal (thus, once the
@@ -503,9 +507,9 @@ where
     ///
     /// Returns `Err(NotFoundError)` if removal fails because there is no point at `value` (in this
     /// case, the `EmpiricalDistribution` remains unchanged).
-    pub fn remove(&mut self, value: V) -> Result<C, NotFoundError> {
+    pub fn remove(&mut self, value: V, count: C) -> Result<C, NotFoundError> {
         self.0
-            .remove(value, CountWrapper(C::one()))
+            .remove(value, CountWrapper(count))
             .map(|c| c.0)
             .ok_or(NotFoundError)
     }
@@ -959,8 +963,8 @@ mod tests {
             for i in 0..num_repeats {
                 for (point, shifted_point) in points.iter().zip(shifted_points.iter_mut()) {
                     let quant = vbq(*point, &prior, |x| x * x, beta);
-                    prior.remove(*shifted_point).unwrap();
-                    prior.insert(quant);
+                    prior.remove(*shifted_point, 1).unwrap();
+                    prior.insert(quant, 1);
                     *shifted_point = quant;
                 }
                 let entropy = prior.entropy_base2::<f32>();
