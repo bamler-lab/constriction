@@ -1,8 +1,10 @@
+use alloc::format;
 use alloc::vec::Vec;
 use core::{borrow::Borrow, convert::Infallible};
+use pyo3::types::PyList;
 
 use ndarray::parallel::prelude::*;
-use ndarray::{ArrayBase, Axis, IxDyn};
+use ndarray::{ArrayBase, Axis, Dimension, IxDyn};
 use numpy::{PyArray, PyArrayDyn, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
 use pyo3::prelude::*;
 
@@ -531,12 +533,17 @@ impl EmpiricalDistribution {
         Ok(())
     }
 
-    pub fn update_all(
-        &mut self,
-        old: PyReadonlyF32ArrayOrScalar<'_>,
-        new: PyReadonlyF32ArrayOrScalar<'_>,
-        index: Option<usize>,
-    ) -> PyResult<()> {
+    /// Move all entries with a given `old` value to a new `value`.
+    ///
+    /// The argument `old` can be a scalar or a python array. If the distribution was constructed
+    /// with `specialize_along_axis=i` for some `i` then `shift` must either be called with argument
+    /// `index=j` (in which case, only the `j`th distribution will be affected), or `old` and `new`
+    /// must both be a list of scalars or rank 1 numpy arrays. In the latter case, the length of the
+    /// list must equal the dimension of axis `i` of the array provided to the constructor, and each
+    /// list entry specifies how the corresponding distribution is updated.
+    ///
+    /// TODO: examples
+    pub fn shift(&mut self, old: &PyAny, new: &PyAny, index: Option<usize>) -> PyResult<()> {
         if let Some(index) = index {
             let EmpiricalDistributionImpl::Multiple { distributions, .. } = &mut self.0 else {
                 return Err(pyo3::exceptions::PyIndexError::new_err(
@@ -549,86 +556,87 @@ impl EmpiricalDistribution {
                 .get_mut(index)
                 .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
 
-            match (old, new) {
-                (Scalar(old), Scalar(new)) => {
-                    let count = distribution.remove_all(F32::new(old)?);
-                    distribution.insert(F32::new(new)?, count);
-                }
-                (Array(old), Array(new)) if old.dims() == new.dims() => {
-                    for (&old, &new) in old.as_array().iter().zip(&new.as_array()) {
-                        distribution.remove(F32::new(old)?, 1)?;
-                        distribution.insert(F32::new(new)?, 1);
-                    }
-                }
-                _ => {
-                    return Err(pyo3::exceptions::PyAssertionError::new_err(
-                        "`old` and `new` must have the same shape.",
-                    ))
-                }
-            }
+            return shift_single(old, new, distribution, || {
+                pyo3::exceptions::PyAssertionError::new_err(
+                    "If `index` is set then `old` and `new` must both be scalars or rank-1 \
+                        arrays (with the same shape).",
+                )
+            });
         } else {
-            match (old, new) {
-                (Scalar(old), Scalar(new)) => match &mut self.0 {
-                    EmpiricalDistributionImpl::Single(distribution) => {
-                        distribution.remove(F32::new(old)?, 1)?;
-                        distribution.insert(F32::new(new)?, 1);
-                    }
-                    EmpiricalDistributionImpl::Multiple { .. } => {
-                        return Err(pyo3::exceptions::PyAssertionError::new_err(
-                            "Scalar updates with an `EmpiricalDistribution` that was created with \
-                            argument `specialize_along_axis` require argument `index`.",
-                        ));
-                    }
-                },
-                (Array(old), Array(new)) if old.dims() == new.dims() => {
-                    let old = old.as_array();
-                    let new = new.as_array();
-
-                    match &mut self.0 {
-                        EmpiricalDistributionImpl::Single(distribution) => {
-                            for (&old, &new) in old.iter().zip(&new) {
-                                distribution.remove(F32::new(old)?, 1)?;
-                                distribution.insert(F32::new(new)?, 1);
-                            }
-                        }
-                        EmpiricalDistributionImpl::Multiple {
-                            distributions,
-                            axis,
-                        } => {
-                            let old = old.axis_iter(Axis(*axis));
-                            if old.len() != distributions.len() {
-                                return Err(pyo3::exceptions::PyIndexError::new_err(
-                                    alloc::format!(
-                                        "Axis {} has wrong dimension: expected {} but found {}.",
-                                        axis,
-                                        distributions.len(),
-                                        old.len()
-                                    ),
-                                ));
+            // No `index` argument provided.
+            match &mut self.0 {
+                EmpiricalDistributionImpl::Single(distribution) => {
+                    return shift_single(old, new, distribution, || {
+                        pyo3::exceptions::PyAssertionError::new_err(
+                            "`old` and `new` must both be scalars or rank-1 tensors (with same shape).",
+                        )
+                    });
+                }
+                EmpiricalDistributionImpl::Multiple { distributions, .. } => {
+                    if let Ok(old) = old.extract::<&PyList>() {
+                        if let Ok(new) = new.extract::<&PyList>() {
+                            if old.len() != distributions.len() || new.len() != distributions.len()
+                            {
+                                return Err(pyo3::exceptions::PyAssertionError::new_err(format!(
+                                    "Lists `old` and `new` must have length {} but have \
+                                    lengths {} and {}, respectively.",
+                                    distributions.len(),
+                                    old.len(),
+                                    new.len(),
+                                )));
                             }
 
-                            old.into_par_iter()
-                                .zip(new.axis_iter(Axis(*axis)))
+                            return old.iter()
+                                .zip(new)
                                 .zip(distributions)
                                 .try_for_each(|((old, new), distribution)| {
-                                    for (&old, &new) in old.iter().zip(&new) {
-                                        distribution.remove(F32::new(old)?, 1)?;
-                                        distribution.insert(F32::new(new)?, 1);
-                                    }
-                                    Ok::<(), PyErr>(())
-                                })?;
+                                    shift_single(
+                                        old,
+                                        new,
+                                        distribution,
+                                        || pyo3::exceptions::PyAssertionError::new_err(
+                                            "Each element of the lists `old` and `new` must be a scalar or a rank-1 array, and dimensions of corresponding entries must match."
+                                        )
+                                    )
+                                });
                         }
                     }
-                }
-                _ => {
+
                     return Err(pyo3::exceptions::PyAssertionError::new_err(
-                        "`old` and `new` must have the same shape.",
-                    ))
+                        "If no `index` argument is provided then `old` and `new` must both be lits."
+                    ));
                 }
             }
         }
 
-        Ok(())
+        fn shift_single(
+            old: &PyAny,
+            new: &PyAny,
+            distribution: &mut crate::quant::EmpiricalDistribution,
+            mk_err: impl Fn() -> PyErr,
+        ) -> Result<(), PyErr> {
+            if let Ok(old) = old.extract::<f32>() {
+                if let Ok(new) = new.extract::<f32>() {
+                    let count = distribution.remove_all(F32::new(old)?);
+                    distribution.insert(F32::new(new)?, count);
+                    return Ok(());
+                }
+            } else if let Ok(old) = old.extract::<PyReadonlyArrayDyn<'_, f32>>() {
+                if let Ok(new) = new.extract::<PyReadonlyArrayDyn<'_, f32>>() {
+                    if old.dims() == new.dims() && old.dims().ndim() == 1 {
+                        let old = old.as_array();
+                        let new = new.as_array();
+
+                        for (&old, &new) in old.iter().zip(&new) {
+                            let count = distribution.remove_all(F32::new(old)?);
+                            distribution.insert(F32::new(new)?, count);
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+            Err(mk_err())
+        }
     }
 
     /// Returns the total number of points that are represented by the distribution.

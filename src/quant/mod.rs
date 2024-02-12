@@ -491,6 +491,8 @@ where
     /// If the distribution already has some point(s) with the same `value`, then no allocation
     /// is required and only the count for `value` is increased. Otherwise, a new entry with the
     /// provided `count` is inserted.
+    ///
+    /// If `count` is zero then this is a noop.
     pub fn insert(&mut self, value: V, count: C) {
         self.0.insert(value, CountWrapper(count))
     }
