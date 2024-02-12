@@ -473,6 +473,7 @@ where
         Some((index, child_ref))
     }
 
+    #[cold]
     fn rebalance_after_underflow_before<CN>(
         &mut self,
         index: usize,
@@ -1339,9 +1340,14 @@ where
 /// Does not rebalance the immediate `left_child` (so this has to be done by the caller), but does
 /// rebalance grand children (etc.) if necessary.
 ///
+/// This function is marked with attribute `#[cold]` because it is only called when removing an
+/// entry from a non-leaf node, which happens with probability < `2 / CAP` in a non-adversarial
+/// setting.
+///
 /// # Safety
 ///
 /// `left_child` must have type `children_type`.
+#[cold]
 unsafe fn replace_pos_with_previous_if_accum_is<P, C, const CAP: usize>(
     children_type: NodeType,
     separator: &mut Entry<P, C>,
@@ -1396,6 +1402,11 @@ where
 }
 
 /// Like `replace_pos_with_previous_if_accum_is` but always performs the swap.
+///
+/// This function is marked with attribute `#[cold]` because it is only called when removing an
+/// entry from a non-leaf node, which happens with probability < `2 / CAP` in a non-adversarial
+/// setting.
+#[cold]
 unsafe fn replace_pos_with_previous<P, C, const CAP: usize>(
     children_type: NodeType,
     separator: &mut Entry<P, C>,
