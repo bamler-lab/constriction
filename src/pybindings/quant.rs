@@ -5,7 +5,7 @@ use pyo3::types::PyList;
 
 use ndarray::parallel::prelude::*;
 use ndarray::{ArrayBase, Axis, Dimension, IxDyn};
-use numpy::{PyArray, PyArrayDyn, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
+use numpy::{PyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
 use pyo3::prelude::*;
 
 use crate::quant::UnnormalizedDistribution;
@@ -36,6 +36,16 @@ use PyReadonlyF32ArrayOrScalar::*;
 /// The constructor initializes the distribution from the provided numpy array `points`. If
 /// `specialize_along_axis` is set to an integer, then the `EmpiricalDistribution` represents each
 /// slice of `points` along the specified axis by an individual distribution, see Example 2 below.
+///
+/// The optional argument `counts` can be used to provide a multiplicity for each inserted point.
+/// If `counts` is provided, then `points` and `counts` must be in exactly the format that is
+/// returned by the method
+/// [`points_and_counts`](#constriction.quant.EmpiricalDistribution.points_and_counts) (except that
+/// `points` don't need to be sorted). Thus, `points` must have `dtype=np.uint32`, and `points` and
+/// `counts` must either be equally sized rank-1 numpy arrays (if `specialize_along_axis` is not
+/// set) or equal length lists of rank-1 numpy arrays where corresponding entries match (if
+/// `specialize_along_axis` is set). See example in the documentation of
+/// [`points_and_counts`](#constriction.quant.EmpiricalDistribution.points_and_counts).
 ///
 /// ## Example 1: Marginal Distribution
 ///
@@ -117,26 +127,78 @@ impl EmpiricalDistribution {
     #[new]
     pub fn new(
         py: Python<'_>,
-        points: PyReadonlyArrayDyn<'_, f32>,
+        points: &PyAny,
+        counts: Option<&PyAny>,
         specialize_along_axis: Option<usize>,
     ) -> PyResult<Py<Self>> {
-        let points = points.as_array();
-        let distribution = if let Some(axis) = specialize_along_axis {
-            let distributions = points
-                .axis_iter(Axis(axis))
-                .into_par_iter()
-                .map(|points| {
-                    crate::quant::EmpiricalDistribution::try_from_points(points.iter().copied())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            EmpiricalDistributionImpl::Multiple {
-                distributions,
-                axis,
+        let distribution = if let Some(counts) = counts {
+            if let Some(axis) = specialize_along_axis {
+                let points = points.extract::<&PyList>()?;
+                let counts = counts.extract::<&PyList>()?;
+                if points.len() != counts.len() {
+                    return Err(pyo3::exceptions::PyAssertionError::new_err(
+                        "Lists `points` and `counts` must have the same length.",
+                    ));
+                }
+
+                // This currently can't easily be parallelized due to a limitation of `pyo3`.
+                let distributions = points
+                    .iter()
+                    .zip(counts)
+                    .map(|(points, counts)| {
+                        let points = points.extract::<PyReadonlyArray1<'_, f32>>()?;
+                        let points = points.as_array();
+                        let counts = counts.extract::<PyReadonlyArray1<'_, u32>>()?;
+                        let counts = counts.as_array();
+                        if points.len() != counts.len() {
+                            return Err(pyo3::exceptions::PyAssertionError::new_err(
+                                "The lengths of corresponding entries of `points` and `counts` must match.",
+                            ));
+                        }
+                        Ok(crate::quant::EmpiricalDistribution::try_from_points_and_counts(
+                            points.iter().copied().zip(counts.iter().copied()),
+                        )?)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                EmpiricalDistributionImpl::Multiple {
+                    distributions,
+                    axis,
+                }
+            } else {
+                let points = points.extract::<PyReadonlyArray1<'_, f32>>()?;
+                let points = points.as_array();
+                let counts = counts.extract::<PyReadonlyArray1<'_, u32>>()?;
+                let counts = counts.as_array();
+                if points.len() != counts.len() {
+                    return Err(pyo3::exceptions::PyAssertionError::new_err(
+                        "`points` and `counts` must have equal length.",
+                    ));
+                }
+                let distribution = crate::quant::EmpiricalDistribution::try_from_points_and_counts(
+                    points.iter().copied().zip(counts.iter().copied()),
+                )?;
+                EmpiricalDistributionImpl::Single(distribution)
             }
         } else {
-            let distribution =
-                crate::quant::EmpiricalDistribution::try_from_points(points.iter().copied())?;
-            EmpiricalDistributionImpl::Single(distribution)
+            let points = points.extract::<PyReadonlyArrayDyn<'_, f32>>()?;
+            let points = points.as_array();
+            if let Some(axis) = specialize_along_axis {
+                let distributions = points
+                    .axis_iter(Axis(axis))
+                    .into_par_iter()
+                    .map(|points| {
+                        crate::quant::EmpiricalDistribution::try_from_points(points.iter().copied())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                EmpiricalDistributionImpl::Multiple {
+                    distributions,
+                    axis,
+                }
+            } else {
+                let distribution =
+                    crate::quant::EmpiricalDistribution::try_from_points(points.iter().copied())?;
+                EmpiricalDistributionImpl::Single(distribution)
+            }
         };
 
         Py::new(py, Self(distribution))
@@ -578,7 +640,7 @@ impl EmpiricalDistribution {
                             if old.len() != distributions.len() || new.len() != distributions.len()
                             {
                                 return Err(pyo3::exceptions::PyAssertionError::new_err(format!(
-                                    "Lists `old` and `new` must have length {} but have \
+                                    "Lists `old` and `new` must both have length {} but they have \
                                     lengths {} and {}, respectively.",
                                     distributions.len(),
                                     old.len(),
@@ -586,19 +648,18 @@ impl EmpiricalDistribution {
                                 )));
                             }
 
-                            return old.iter()
-                                .zip(new)
-                                .zip(distributions)
-                                .try_for_each(|((old, new), distribution)| {
-                                    shift_single(
-                                        old,
-                                        new,
-                                        distribution,
-                                        || pyo3::exceptions::PyAssertionError::new_err(
-                                            "Each element of the lists `old` and `new` must be a scalar or a rank-1 array, and dimensions of corresponding entries must match."
+                            // This currently can't easily be parallelized due to a limitation of `pyo3`.
+                            return old.iter().zip(new).zip(distributions).try_for_each(
+                                |((old, new), distribution)| {
+                                    shift_single(old, new, distribution, || {
+                                        pyo3::exceptions::PyAssertionError::new_err(
+                                            "Each element of the lists `old` and `new` must be a \
+                                            scalar or a rank-1 array, and dimensions of \
+                                            corresponding entries must match.",
                                         )
-                                    )
-                                });
+                                    })
+                                },
+                            );
                         }
                     }
 
@@ -650,7 +711,7 @@ impl EmpiricalDistribution {
     /// then `total` returns the number of points in slice specified by `index` (if provided), or a
     /// list of totals for each slice (if no `index` is provided).
     ///
-    /// ## Examples
+    /// ## Example
     ///
     /// ```python
     /// rng = np.random.default_rng(123)
@@ -798,7 +859,77 @@ impl EmpiricalDistribution {
     /// then `points_and_counts` returns the points and counts for the slice specified by `index`
     /// (if provided), or a list of tuples `(points, counts)`, with one tuple per slice.
     ///
-    /// See code examples in the top-level documentation of the class `EmpiricalDistribution`.
+    /// A possible use case of this method is to serialize an `EmpiricalDistribution`. You can save
+    /// the returned `points` and `counts` in a file, read them back later, and then pass them as
+    /// arguments `points` and `counts` to the constructor of `EmpiricalDistribution` to reconstruct
+    /// the distribution.
+    ///
+    /// ## Example 1: Without `specialize_along_axis`
+    ///
+    /// ```python
+    /// rng = np.random.default_rng(123)
+    /// matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+    /// print(f"matrix = {matrix}\n")
+    ///
+    /// distribution = constriction.quant.EmpiricalDistribution(matrix)
+    /// print(f"entropy = {distribution.entropy_base2()}")
+    /// points, counts = distribution.points_and_counts()
+    /// print(f"points = {points}")
+    /// print(f"counts = {counts}")
+    ///
+    /// # ... save `points` and `counts` to a file and load them back later ...
+    ///
+    /// reconstructed_distribution = constriction.quant.EmpiricalDistribution(
+    ///     points, counts=counts)
+    /// print(f"reconstructed_distribution = {reconstructed_distribution.entropy_base2()}")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// matrix = [[4. 1. 2. 2. 2.]
+    ///  [4. 5. 2. 4. 5.]
+    ///  [3. 2. 4. 2. 4.]
+    ///  [3. 5. 2. 4. 3.]]
+    ///
+    /// entropy = 2.088376522064209
+    /// points = [1. 2. 3. 4. 5.]
+    /// counts = [1 7 3 6 3]
+    /// reconstructed_distribution = 2.088376522064209
+    /// ```
+    ///
+    /// Note that the reconstructed distribution has the same entropy as the original distribution
+    /// because it's the same distribution.
+    ///
+    /// ## Example 2: With `specialize_along_axis`
+    ///
+    /// The following example uses the same `matrix` as Example 1 above:
+    ///
+    /// ```python
+    /// distribution = constriction.quant.EmpiricalDistribution(matrix, specialize_along_axis=0)
+    /// print(f"entropies = {distribution.entropy_base2()}")
+    /// points, counts = distribution.points_and_counts()
+    /// print(f"points = [{', '.join(str(p) for p in points)}]")
+    /// print(f"counts = [{', '.join(str(c) for c in counts)}]")
+    ///
+    /// # ... save `points` and `counts` to a file and load them back later ...
+    ///
+    /// reconstructed_distribution = constriction.quant.EmpiricalDistribution(
+    ///     points, counts=counts, specialize_along_axis=0)
+    /// print(f"reconstructed_distribution = {reconstructed_distribution.entropy_base2()}")    /// ```
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// entropies = [1.3709505 1.5219281 1.5219281 1.921928 ]
+    /// points = [[1. 2. 4.], [2. 4. 5.], [2. 3. 4.], [2. 3. 4. 5.]]
+    /// counts = [[1 3 1], [1 2 2], [2 1 2], [1 2 1 1]]
+    /// reconstructed_distribution = [1.3709505 1.5219281 1.5219281 1.921928 ]
+    /// ```
+    ///
+    /// Note that the reconstructed distribution has the same per-row entropies as the original
+    /// distribution because it's the same distribution.
     pub fn points_and_counts(
         &self,
         py: Python<'_>,
@@ -862,8 +993,8 @@ impl EmpiricalDistribution {
                         (points, counts)
                     })
                     .unzip();
-                let points = PyArray::from_vec(py, points).to_object(py);
-                let counts = PyArray::from_vec(py, counts).to_object(py);
+                let points = PyList::new(py, points).to_object(py);
+                let counts = PyList::new(py, counts).to_object(py);
                 Ok((points, counts))
             }
         }

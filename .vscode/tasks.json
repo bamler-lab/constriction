@@ -91,7 +91,12 @@
 				"$rustc"
 			],
 			"group": "build",
-			"label": "cargo check with pybindings"
+			"label": "cargo check with pybindings",
+			"presentation": {
+				"focus": true,
+				"showReuseMessage": true,
+				"clear": true
+			},
 		},
 		{
 			"label": "Build Python module and start REPL",

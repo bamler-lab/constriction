@@ -464,7 +464,56 @@ where
         I: IntoIterator,
         <I as IntoIterator>::Item: Borrow<V>,
     {
-        Self::try_from_points(points.into_iter().map(|x| *x.borrow())).unwrap_infallible()
+        Self::try_from_points(points.into_iter().map(|point| *point.borrow())).unwrap_infallible()
+    }
+
+    /// Reconstructs an `EmpiricalDistribution` from a compact representation
+    ///
+    /// This can, e.g., be used for serialization / deserialization. The argument
+    /// `points_and_counts` can be an iterator returned by [`Self::iter`] (but it does not have to
+    /// iterate over points in sorted order).
+    ///
+    /// If the points contain duplicates then their corresponding counts are added up.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use constriction::{F32, quant::EmpiricalDistribution};
+    ///
+    /// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
+    /// let original_distribution = EmpiricalDistribution::<F32, u32>::try_from_points(
+    ///     points.iter().copied()
+    /// ).unwrap();
+    ///
+    /// let original_entropy = original_distribution.entropy_base2::<f32>();
+    /// assert!((original_entropy - 1.842371).abs() < 1e-6);
+    ///
+    /// let (points, counts): (Vec<F32>, Vec<u32>) = original_distribution.iter().unzip();
+    ///
+    /// // ... save `points` and `counts` to a file and load them back later ...
+    ///
+    /// let reconstructed_distribution = EmpiricalDistribution::<F32, u32>::from_points_and_counts(
+    ///     points.iter().zip(&counts)
+    /// );
+    /// assert_eq!(reconstructed_distribution.entropy_base2::<f32>(), original_entropy);
+    /// ```
+    ///
+    /// ## See also
+    ///
+    /// - [`Self::try_from_points_and_counts`]
+    pub fn from_points_and_counts<I, VV, CC>(points_and_counts: I) -> Self
+    where
+        Self: Sized + Default,
+        I: IntoIterator<Item = (VV, CC)>,
+        VV: Borrow<V>,
+        CC: Borrow<C>,
+    {
+        Self::try_from_points_and_counts(
+            points_and_counts
+                .into_iter()
+                .map(|(point, count)| (*point.borrow(), *count.borrow())),
+        )
+        .unwrap_infallible()
     }
 
     /// Fallible variant of [`from_points`](Self::from_points).
@@ -482,6 +531,52 @@ where
         let mut this = Self::default();
         for point in points {
             this.0.insert(V::try_from(point)?, CountWrapper(C::one()))
+        }
+        Ok(this)
+    }
+
+    /// Fallible variant of [`from_points_and_counts`](Self::from_points_and_counts).
+    ///
+    /// This is mostly intended for `EmpiricalDistribution`s over floating point values, which have
+    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted. See [example
+    /// for the similar `from_points` method in the struct-level
+    /// documentation](Self#construction-and-iteration).
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use constriction::{F32, quant::EmpiricalDistribution};
+    ///
+    /// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
+    /// let original_distribution = EmpiricalDistribution::<F32, u32>::try_from_points(
+    ///     points.iter().copied()
+    /// ).unwrap();
+    ///
+    /// let original_entropy = original_distribution.entropy_base2::<f32>();
+    /// assert!((original_entropy - 1.842371).abs() < 1e-6);
+    ///
+    /// let (points, counts): (Vec<f32>, Vec<u32>) = original_distribution
+    ///     .iter()
+    ///     .map(|(point, count)| (point.get(), count))
+    ///     .unzip();
+    ///
+    /// // ... save `points` and `counts` to a file and load them back later ...
+    ///
+    /// let reconstructed_distribution = EmpiricalDistribution::<F32, u32>::try_from_points_and_counts(
+    ///     points.iter().copied().zip(counts.iter().copied())
+    /// ).unwrap();
+    /// assert_eq!(reconstructed_distribution.entropy_base2::<f32>(), original_entropy);
+    /// ```
+    pub fn try_from_points_and_counts<F>(
+        points_and_counts: impl IntoIterator<Item = (F, C)>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        Self: Sized + Default,
+        V: TryFrom<F>,
+    {
+        let mut this = Self::default();
+        for (point, count) in points_and_counts {
+            this.0.insert(V::try_from(point)?, CountWrapper(count))
         }
         Ok(this)
     }

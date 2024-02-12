@@ -293,3 +293,49 @@ def test_total():
     assert marginal_distribution.total() == 20
     assert np.all(specialized_distribution.total() == [5, 5, 6, 5])
     assert specialized_distribution.total(2) == 6
+
+
+def test_points_and_counts_example1():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+    distribution = constriction.quant.EmpiricalDistribution(matrix)
+    original_entropy = distribution.entropy_base2()
+    assert np.allclose(original_entropy, 2.088376522064209)
+
+    points, counts = distribution.points_and_counts()
+    reconstructed_distribution = constriction.quant.EmpiricalDistribution(
+        points, counts=counts)
+    reconstructed_entropy = reconstructed_distribution.entropy_base2()
+    assert reconstructed_entropy == original_entropy
+
+
+def test_points_and_counts_example2a():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+    distribution = constriction.quant.EmpiricalDistribution(
+        matrix, specialize_along_axis=0)
+    expected_entropies = np.array([1.3709505, 1.5219281, 1.5219281, 1.921928])
+    original_entropies = distribution.entropy_base2()
+    assert np.allclose(original_entropies, expected_entropies)
+
+    points, counts = distribution.points_and_counts()
+    reconstructed_distribution = constriction.quant.EmpiricalDistribution(
+        points, counts=counts, specialize_along_axis=0)
+    reconstructed_entropies = reconstructed_distribution.entropy_base2()
+    assert np.all(reconstructed_entropies == original_entropies)
+
+
+def test_points_and_counts_example2b():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+    distribution = constriction.quant.EmpiricalDistribution(
+        matrix, specialize_along_axis=1)
+    expected_entropies = np.array([1., 1.5, 0.8112781, 1., 2.])
+    original_entropies = distribution.entropy_base2()
+    assert np.allclose(original_entropies, expected_entropies)
+
+    points, counts = distribution.points_and_counts()
+    reconstructed_distribution = constriction.quant.EmpiricalDistribution(
+        points, counts=counts, specialize_along_axis=1)
+    reconstructed_entropies = reconstructed_distribution.entropy_base2()
+    assert np.all(reconstructed_entropies == original_entropies)
