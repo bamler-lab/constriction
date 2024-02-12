@@ -341,23 +341,6 @@ def test_points_and_counts_example2b():
     assert np.all(reconstructed_entropies == original_entropies)
 
 
-def test_shift_warning():
-    original_points = np.array([1.1, 2.1, 7.1], dtype=np.float32)
-    original_counts = np.array([10, 20, 70], dtype=np.uint32)
-    distribution = constriction.quant.EmpiricalDistribution(
-        original_points, counts=original_counts)
-
-    # Warning: this does not swap the entries. It merges them into position `1.1`.
-    distribution.shift(
-        np.array([1.1, 2.1], dtype=np.float32),
-        np.array([2.1, 1.1], dtype=np.float32)
-    )
-
-    points, counts = distribution.points_and_counts()
-    assert np.allclose(points, [1.1, 7.1])
-    assert np.all(counts == [30, 70])
-
-
 def test_shift_example1():
     rng = np.random.default_rng(123)
     matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
@@ -381,7 +364,7 @@ def test_shift_example1():
     assert distribution.entropy_base2() < entropy1
 
 
-def test_shift_example2():
+def test_shift_example2a():
     rng = np.random.default_rng(123)
     matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
 
@@ -400,6 +383,28 @@ def test_shift_example2():
     assert np.all(points == [1., 2.5, 4., 5.])
     assert np.all(counts == [1, 10, 6, 3])
     assert distribution.entropy_base2() < entropy1
+
+
+def test_shift_example2b():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+
+    distribution = constriction.quant.EmpiricalDistribution(matrix)
+    points, counts = distribution.points_and_counts()
+    assert np.all(points == [1., 2., 3., 4., 5.])
+    assert np.all(counts == [1, 7, 3, 6, 3])
+    entropy1 = distribution.entropy_base2()
+
+    # Swap the 7 entries at position `2` with the 6 entries at position `4`:
+    distribution.shift(
+        np.array([2., 4.], dtype=np.float32),
+        np.array([4., 2.], dtype=np.float32)
+    )
+
+    points, counts = distribution.points_and_counts()
+    assert np.all(points == [1., 2., 3., 4., 5.])
+    assert np.all(counts == [1, 6, 3, 7, 3])
+    assert np.allclose(distribution.entropy_base2(), entropy1)
 
 
 def test_shift_example3a():
@@ -423,21 +428,21 @@ def test_shift_example3a():
         2.,
         np.array([], dtype=np.float32),
         np.array([3., 2.], dtype=np.float32),
-        np.array([3.], dtype=np.float32),
+        np.array([3., 4.], dtype=np.float32),
     ]
     target_positions = [
         2.1,
         np.array([], dtype=np.float32),
-        np.array([3.3, 2.3], dtype=np.float32),
-        np.array([30.], dtype=np.float32),
+        np.array([2., 3.], dtype=np.float32),
+        np.array([30., 4.4], dtype=np.float32),
     ]
 
     distribution.shift(original_positions, target_positions)
 
     points, counts = distribution.points_and_counts()
     points_expected = [[1., 2.1, 4.], [2., 4., 5.],
-                       [2.3, 3.3, 4.], [2., 4., 5., 30.]]
-    counts_expected = [[1, 3, 1], [1, 2, 2], [2, 1, 2], [1, 1, 1, 2]]
+                       [2., 3., 4.], [2., 4.4, 5., 30.]]
+    counts_expected = [[1, 3, 1], [1, 2, 2], [1, 2, 2], [1, 1, 1, 2]]
     for (p, pe) in zip(points, points_expected):
         assert np.allclose(p, pe)
     for (c, ce) in zip(counts, counts_expected):

@@ -604,38 +604,6 @@ impl EmpiricalDistribution {
     /// list must equal the dimension of axis `i` of the array provided to the constructor, and each
     /// list entry specifies how the corresponding distribution is updated.
     ///
-    /// ## Warning
-    ///
-    /// When shifting multiple grid points, they will be shifted one after the other. This can lead
-    /// to surprising results if any of the entries in `new` and `old` coincide. For example, one
-    /// might think that the following example would swap the points at positions `1.1` and `2.1`.
-    /// But this is not what it does. Instead, it moves all 10 points at position `1.1` to position
-    /// `2.1`, thus merging them with the `20` points that are already there. It then moves the
-    /// resulting 30 points at `2.1` to position `1.1`, ending up with 30 points at position `1.1`
-    /// and the original 70 points at position `7.1`.
-    ///
-    /// ```python
-    /// original_points = np.array([1.1, 2.1, 7.1], dtype=np.float32)
-    /// original_counts = np.array([10, 20, 70], dtype=np.uint32)
-    /// distribution = constriction.quant.EmpiricalDistribution(
-    ///     original_points, counts=original_counts)
-    ///
-    /// # Warning: this does not swap the entries. It merges them into position `1.1`.
-    /// distribution.shift(
-    ///     np.array([1.1, 2.1], dtype=np.float32),
-    ///     np.array([2.1, 1.1], dtype=np.float32)
-    /// )
-    ///
-    /// points, counts = distribution.points_and_counts()
-    /// print(f"points and counts after first shift: {points}, {counts}")    
-    /// ```
-    ///
-    /// This prints:
-    ///
-    /// ```text
-    /// points and counts after first shift: [1.1 7.1], [30 70]
-    /// ```
-    ///
     /// ## Example 1: shifting a single point
     ///
     /// ```python
@@ -690,6 +658,40 @@ impl EmpiricalDistribution {
     /// )
     /// ```
     ///
+    /// Multiple shifts are carried out independently (i.e., we first remove *all* grid points that
+    /// are listed in `old` from the distribution, record their respective counts, and we then
+    /// insert the recorded counts at the positions listed in `new`). Thus, `shift` can also be used
+    /// to swap entries:
+    ///
+    /// ```python
+    /// # (using same `matrix` as in Example 1 above)
+    ///
+    /// distribution = constriction.quant.EmpiricalDistribution(matrix)
+    /// points, counts = distribution.points_and_counts()
+    /// print(f"points before swapping: [{', '.join(str(p) for p in points)}]")
+    /// print(f"counts before swapping: [{', '.join(str(c) for c in counts)}]\n")
+    ///
+    /// # Swap the 7 entries at position `2` with the 6 entries at position `4`:
+    /// distribution.shift(
+    ///     np.array([2., 4.], dtype=np.float32),
+    ///     np.array([4., 2.], dtype=np.float32)
+    /// )
+    ///
+    /// points, counts = distribution.points_and_counts()
+    /// print(f"points after swapping: [{', '.join(str(p) for p in points)}]")
+    /// print(f"counts after swapping: [{', '.join(str(c) for c in counts)}]")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// points before swapping: [1.0, 2.0, 3.0, 4.0, 5.0]
+    /// counts before swapping: [1, 7, 3, 6, 3]
+    ///
+    /// points after swapping: [1.0, 2.0, 3.0, 4.0, 5.0]
+    /// counts after swapping: [1, 6, 3, 7, 3]
+    /// ```
+    ///
     /// ## Example 3: shifting multiple points, with `specialize_along_axis`
     ///
     /// The following example still uses the same `matrix` as Examples 1 and 2 above:
@@ -703,14 +705,14 @@ impl EmpiricalDistribution {
     /// original_positions = [
     ///     2.,                                     # move all `2.`s in the first row ...
     ///     np.array([], dtype=np.float32),         # move nothing in the second row ...
-    ///     np.array([3., 2.], dtype=np.float32),   # move all `3.`s and `2.`s in the third row ...
-    ///     np.array([3.], dtype=np.float32),       # move all `3.`s in the fourth row ...
+    ///     np.array([3., 2.], dtype=np.float32),   # swap all `3.`s and `2.`s in the third row ...
+    ///     np.array([3., 4.], dtype=np.float32),   # move all `3.`s and `4.`s in the fourth row ...
     /// ]
     /// target_positions = [
     ///     2.1,                                    # ... to `2.1`.
     ///     np.array([], dtype=np.float32),         # ... to nothing.
-    ///     np.array([3.3, 2.3], dtype=np.float32), # ... to `3.3` and `2.3`, respectively.
-    ///     np.array([30.], dtype=np.float32),      # ... to `30.`.
+    ///     np.array([2., 3.], dtype=np.float32),   # ... with the same positions in reverse order.
+    ///     np.array([30., 4.4], dtype=np.float32), # ... to `30.` and `4.4`, respectively.
     /// ]
     ///
     /// distribution.shift(original_positions, target_positions)
@@ -726,8 +728,8 @@ impl EmpiricalDistribution {
     /// points before shifting: [[1. 2. 4.], [2. 4. 5.], [2. 3. 4.], [2. 3. 4. 5.]]
     /// counts before shifting: [[1 3 1], [1 2 2], [2 1 2], [1 2 1 1]]
     ///
-    /// points after shifting: [[1.  2.1 4. ], [2. 4. 5.], [2.3 3.3 4. ], [ 2.  4.  5. 30.]]
-    /// counts after shifting: [[1 3 1], [1 2 2], [2 1 2], [1 1 1 2]]
+    /// points after shifting: [[1.  2.1 4. ], [2. 4. 5.], [2. 3. 4.], [ 2.   4.4  5.  30. ]]
+    /// counts after shifting: [[1 3 1], [1 2 2], [1 2 2], [1 1 1 2]]
     /// ```
     pub fn shift(&mut self, old: &PyAny, new: &PyAny, index: Option<usize>) -> PyResult<()> {
         if let Some(index) = index {
@@ -742,7 +744,7 @@ impl EmpiricalDistribution {
                 .get_mut(index)
                 .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
 
-            return shift_single(old, new, distribution, || {
+            return shift_single(old, new, &mut Vec::new(), distribution, || {
                 pyo3::exceptions::PyAssertionError::new_err(
                     "If `index` is set then `old` and `new` must both be scalars or rank-1 \
                         arrays (with the same shape).",
@@ -752,7 +754,7 @@ impl EmpiricalDistribution {
             // No `index` argument provided.
             match &mut self.0 {
                 EmpiricalDistributionImpl::Single(distribution) => {
-                    return shift_single(old, new, distribution, || {
+                    return shift_single(old, new, &mut Vec::new(), distribution, || {
                         pyo3::exceptions::PyAssertionError::new_err(
                             "`old` and `new` must both be scalars or rank-1 tensors (with same shape).",
                         )
@@ -773,9 +775,10 @@ impl EmpiricalDistribution {
                             }
 
                             // This currently can't easily be parallelized due to a limitation of `pyo3`.
+                            let mut buf = Vec::new();
                             return old.iter().zip(new).zip(distributions).try_for_each(
                                 |((old, new), distribution)| {
-                                    shift_single(old, new, distribution, || {
+                                    shift_single(old, new, &mut buf, distribution, || {
                                         pyo3::exceptions::PyAssertionError::new_err(
                                             "Each element of the lists `old` and `new` must be a \
                                             scalar or a rank-1 array, and dimensions of \
@@ -797,6 +800,7 @@ impl EmpiricalDistribution {
         fn shift_single(
             old: &PyAny,
             new: &PyAny,
+            buf: &mut Vec<u32>,
             distribution: &mut crate::quant::EmpiricalDistribution,
             mk_err: impl Fn() -> PyErr,
         ) -> Result<(), PyErr> {
@@ -805,9 +809,13 @@ impl EmpiricalDistribution {
                     if old.dims() == new.dims() && old.dims().ndim() == 1 {
                         let old = old.as_array();
                         let new = new.as_array();
+                        buf.clear();
+                        buf.reserve(old.len());
 
-                        for (&old, &new) in old.iter().zip(&new) {
-                            let count = distribution.remove_all(F32::new(old)?);
+                        for &old in old.iter() {
+                            buf.push(distribution.remove_all(F32::new(old)?));
+                        }
+                        for (&new, &count) in new.iter().zip(&*buf) {
                             distribution.insert(F32::new(new)?, count);
                         }
                         return Ok(());
