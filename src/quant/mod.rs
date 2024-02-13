@@ -63,9 +63,10 @@ use core::{
     convert::TryFrom,
     fmt::{Debug, Display},
     hash::Hash,
-    ops::{Add, Sub},
+    ops::{Add, Mul, Sub},
 };
 
+use alloc::{collections::BTreeMap, vec::Vec};
 use num_traits::{AsPrimitive, Bounded, One, Zero};
 
 use crate::{UnwrapInfallible, F32};
@@ -729,7 +730,8 @@ where
     ///
     /// If the distribution is very non-uniform (i.e., strongly peaked) then its entropy can be
     /// significantly lower. For very peaked distributions, the entropy can even drop below 1 bit,
-    /// and this can happen even with distributions over more than two distinct values:
+    /// and this can happen even with distributions that have support on  more than two distinct
+    /// values:
     ///
     /// ```
     /// # use constriction::{F32, quant::EmpiricalDistribution};
@@ -739,14 +741,12 @@ where
     /// ).unwrap();
     /// assert!((distribution3.entropy_base2::<f32>() - 0.8166891).abs() < 1e-6); // less than 1 bit.
     /// ```
-    ///
-
-    pub fn entropy_base2<F>(&self) -> F
+    pub fn entropy_base2<R>(&self) -> R
     where
-        F: num_traits::float::Float + 'static,
-        C: num_traits::AsPrimitive<F>,
+        R: num_traits::real::Real + 'static,
+        C: num_traits::AsPrimitive<R>,
     {
-        let mut sum_count_log_count = F::zero();
+        let mut sum_count_log_count = R::zero();
         for (_value, count) in self.iter() {
             let count = count.as_();
             sum_count_log_count = sum_count_log_count + count * count.log2()
@@ -754,6 +754,14 @@ where
 
         let total = self.total().as_();
         total.log2() - sum_count_log_count / total
+    }
+
+    pub fn rated_grid<R>(&self) -> RatedGrid<V, R>
+    where
+        R: num_traits::real::Real + 'static,
+        C: num_traits::AsPrimitive<R>,
+    {
+        self.into()
     }
 }
 
@@ -809,6 +817,166 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RatedGrid<V = F32, R = F32> {
+    /// Nonempty Vec of tuples `(grid_point, rate)`, sorted by increasing rate.
+    grid: Vec<(V, R)>,
+    entropy: R,
+}
+
+/// TODO: documentation with code examples
+impl<V, R> RatedGrid<V, R> {
+    /// Creates a `RatedGrid` whose rates are the information content based on the empirical frequencies.
+    ///
+    /// If the distribution is over floating point values, then you might be better off with
+    /// [`try_from_points`](Self::try_from_points).
+    pub fn from_points<C, I>(points: I) -> Self
+    where
+        R: num_traits::real::Real + 'static,
+        V: Copy + Ord,
+        C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
+        I: IntoIterator,
+        <I as IntoIterator>::Item: Borrow<V>,
+    {
+        Self::try_from_points::<C, _>(points.into_iter().map(|point| *point.borrow()))
+            .unwrap_infallible()
+    }
+
+    /// Fallible variant of [`from_points`](Self::from_points).
+    ///
+    /// This is mostly intended for `RatedGrid`s over floating point values, which have
+    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted.
+    pub fn try_from_points<C, F>(
+        points: impl IntoIterator<Item = F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        R: num_traits::real::Real + 'static,
+        V: Copy + Ord + TryFrom<F>,
+        C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
+    {
+        let mut map = BTreeMap::new();
+        for point in points {
+            map.entry(V::try_from(point)?)
+                .and_modify(|count| *count = *count + C::one())
+                .or_insert(C::one());
+        }
+
+        Ok(Self::from_points_and_counts(map.into_iter().collect()))
+    }
+
+    pub fn from_points_and_counts<C>(mut points_and_counts: Vec<(V, C)>) -> Self
+    where
+        R: num_traits::real::Real + 'static,
+        V: Copy + Ord,
+        C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
+    {
+        assert!(!points_and_counts.is_empty(), "Empty grid");
+
+        // We sort by counts rather than by log-counts to avoid spurious ties due to rounding
+        // errors. It's also probably faster (but requires an additional conversion below).
+        points_and_counts.sort_unstable_by(|&(point1, count1), &(point2, count2)| {
+            (count2, point1).cmp(&(count1, point2))
+        });
+
+        let mut total = C::zero();
+        for &(_point, count) in &points_and_counts {
+            total = total + count
+        }
+        let total = total.as_();
+
+        // This conversion seems to directly reuse the existing allocation as long as `C` and `F`
+        // have the same memory layout (e.g., if `C=u32` and `F=f32`, or if `C=u64` and `F=f64`).
+        let mut entropy = R::zero();
+        let grid = points_and_counts
+            .into_iter()
+            .map(|(point, count)| {
+                let freq = count.as_() / total;
+                let rate = -freq.log2();
+                entropy = entropy + freq * rate;
+                (point, rate)
+            })
+            .collect::<Vec<_>>();
+
+        Self { grid, entropy }
+    }
+
+    pub fn try_from_points_and_counts<C, F>(
+        points_and_counts: Vec<(F, C)>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        R: num_traits::real::Real + 'static,
+        V: Copy + Ord,
+        C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
+        V: TryFrom<F>,
+    {
+        // TODO: check if this allocates (if it does, we might as well accept an iterator instead)
+        let points_and_counts = points_and_counts
+            .into_iter()
+            .map(|(point, count)| Ok((V::try_from(point)?, count)))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self::from_points_and_counts(points_and_counts))
+    }
+
+    // pub fn from_points_and_rates<C>(mut points_and_rates: Vec<(V, R)>) -> Self
+    // where
+    //     R: num_traits::real::Real + Ord + 'static,
+    //     V: Copy + Ord,
+    //     C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
+    // {
+    //     assert!(!points_and_rates.is_empty(), "Empty grid");
+
+    //     points_and_rates.sort_unstable_by_key(|&(point, rate)| (rate, point));
+    //     Self {
+    //         grid: points_and_rates,
+    //     }
+    // }
+
+    // pub fn try_from_points_and_rates<C, F>(
+    //     points_and_rates: Vec<(F, R)>,
+    // ) -> Result<Self, <V as TryFrom<F>>::Error>
+    // where
+    //     R: num_traits::real::Real + Ord + 'static,
+    //     V: Copy + Ord,
+    //     C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
+    //     V: TryFrom<F>,
+    // {
+    //     // TODO: check if this allocates (if it does, we might as well accept an iterator instead)
+    //     let points_and_rates = points_and_rates
+    //         .into_iter()
+    //         .map(|(point, rate)| Ok((V::try_from(point)?, rate)))
+    //         .collect::<Result<Vec<_>, _>>()?;
+    //     Ok(Self::from_points_and_rates::<C>(points_and_rates))
+    // }
+
+    /// Returns the grid points and their associated bit rates, sorted decreasingly by rate.
+    pub fn points_and_rates(&self) -> &[(V, R)] {
+        &self.grid
+    }
+
+    /// Returns the grid points and their associated bit rates, sorted decreasingly by rate.
+    pub fn into_points_and_rates(self) -> Vec<(V, R)> {
+        self.grid
+    }
+
+    pub fn entropy_base2(&self) -> R
+    where
+        R: num_traits::real::Real + 'static,
+    {
+        self.entropy
+    }
+}
+
+impl<'a, V, C, R> From<&'a EmpiricalDistribution<V, C>> for RatedGrid<V, R>
+where
+    R: num_traits::real::Real + 'static,
+    V: Copy + Ord,
+    C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
+{
+    fn from(distribution: &'a EmpiricalDistribution<V, C>) -> Self {
+        RatedGrid::from_points_and_counts(distribution.iter().collect())
     }
 }
 
@@ -971,6 +1139,39 @@ where
     record_point
 }
 
+pub fn rate_distortion_quantization<V, R>(
+    unquantized: V,
+    grid: &RatedGrid<V, R>,
+    mut distortion: impl FnMut(V) -> R,
+    bit_penalty: R,
+) -> V
+where
+    V: Copy + Sub<Output = V>,
+    R: Copy + PartialOrd + Zero + Bounded + Mul<Output = R>,
+{
+    let mut grid = grid.grid.iter();
+    let (mut record_candidate, rate) = *grid.next().expect("grid isn't empty");
+    let first_distortion = distortion(record_candidate - unquantized);
+    let mut record_loss = first_distortion + bit_penalty * rate;
+
+    for &(candidate, rate) in grid {
+        let scaled_rate = bit_penalty * rate;
+        if scaled_rate >= record_loss {
+            // Rate is monotonically nondecreasing, and distortion is nonnegative. So once we're at
+            // this point, there won't be any better candidate than the best we've found so far.
+            break;
+        }
+        let candidate_distortion = distortion(candidate - unquantized);
+        let loss = candidate_distortion + scaled_rate;
+        if loss < record_loss {
+            record_loss = loss;
+            record_candidate = candidate
+        }
+    }
+
+    record_candidate
+}
+
 #[cfg(test)]
 mod tests {
     use crate::F64;
@@ -1127,6 +1328,76 @@ mod tests {
             assert!(entropy > 0.0);
 
             previous_entropy = entropy
+        }
+    }
+
+    #[test]
+    fn rate_distortion_quantization() {
+        #[cfg(not(miri))]
+        let amt = 1000;
+
+        #[cfg(miri)]
+        let amt = 100;
+
+        let mut rng = Xoshiro256StarStar::seed_from_u64(20240213);
+        let mut points = (0..amt)
+            .flat_map(|_| {
+                let num_repeats = 1 + rng.next_u32() % 4;
+                let value = F32::new(rng.next_u32() as f32 / u32::MAX as f32).unwrap();
+                core::iter::repeat(value).take(num_repeats as usize)
+            })
+            .collect::<Vec<_>>();
+        points.shuffle(&mut rng);
+        assert!(points.len() > amt);
+        assert!(points.len() < 5 * amt);
+
+        let prior = EmpiricalDistribution::<F32, u32>::from_points(&points);
+        let initial_entropy = prior.entropy_base2::<f32>();
+        let mut entropy_previous_coarseness = initial_entropy;
+
+        #[cfg(not(miri))]
+        let (num_repeats, betas) = (3, [1e-7, 1e-5, 0.001, 0.01, 0.1]);
+
+        #[cfg(miri)]
+        let (num_repeats, betas) = (2, [0.001, 0.1]);
+
+        for beta in betas {
+            let beta = F32::new(beta).unwrap();
+            let prior = prior.clone();
+            let mut previous_entropy = initial_entropy;
+
+            // Run VBQ once to get an estimate of the grid.
+            let mut quantized = points
+                .iter()
+                .map(|point| vbq(*point, &prior, |x| x * x, beta))
+                .collect::<Vec<_>>();
+
+            for i in 0..num_repeats {
+                let grid = RatedGrid::<_, f32>::from_points::<u32, _>(&quantized);
+                let entropy = grid.entropy_base2();
+                if i < 2 {
+                    assert!(entropy < previous_entropy);
+                }
+                previous_entropy = entropy;
+
+                // TODO: maybe use `NonNanFloat` for `R`
+                for point in quantized.iter_mut() {
+                    *point = super::rate_distortion_quantization(
+                        *point,
+                        &grid,
+                        |x| (x * x).get(),
+                        beta.get(),
+                    )
+                }
+            }
+
+            let grid = RatedGrid::<F32, f32>::from_points::<u32, _>(&quantized);
+            let entropy = grid.entropy_base2();
+            assert!(entropy == previous_entropy);
+            previous_entropy = entropy;
+
+            assert!(previous_entropy < entropy_previous_coarseness);
+            entropy_previous_coarseness = previous_entropy;
         }
     }
 }
