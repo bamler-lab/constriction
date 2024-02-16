@@ -8,7 +8,7 @@ use ndarray::{ArrayBase, Axis, Dimension, IxDyn};
 use numpy::{PyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
 use pyo3::prelude::*;
 
-use crate::quant::UnnormalizedDistribution;
+use crate::quant::{FromPoints, UnnormalizedDistribution};
 use crate::F32;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
@@ -111,27 +111,24 @@ use PyReadonlyF32ArrayOrScalar::*;
 /// is true in general.
 #[pyclass]
 #[derive(Debug)]
-pub struct EmpiricalDistribution(EmpiricalDistributionImpl);
+pub struct EmpiricalDistribution(MaybeMultiplexed<crate::quant::EmpiricalDistribution>);
 
 #[derive(Debug)]
-enum EmpiricalDistributionImpl {
-    Single(crate::quant::EmpiricalDistribution),
-    Multiple {
-        distributions: Vec<crate::quant::EmpiricalDistribution>,
-        axis: usize,
-    },
+enum MaybeMultiplexed<T> {
+    Single(T),
+    Multiple { distributions: Vec<T>, axis: usize },
 }
 
-#[pymethods]
-impl EmpiricalDistribution {
-    #[new]
+impl<T> MaybeMultiplexed<T>
+where
+    T: FromPoints<F32, u32> + Send,
+{
     pub fn new(
-        py: Python<'_>,
         points: &PyAny,
         counts: Option<&PyAny>,
         specialize_along_axis: Option<usize>,
-    ) -> PyResult<Py<Self>> {
-        let distribution = if let Some(counts) = counts {
+    ) -> PyResult<Self> {
+        let result = if let Some(counts) = counts {
             if let Some(axis) = specialize_along_axis {
                 let points = points.extract::<&PyList>()?;
                 let counts = counts.extract::<&PyList>()?;
@@ -155,12 +152,12 @@ impl EmpiricalDistribution {
                                 "The lengths of corresponding entries of `points` and `counts` must match.",
                             ));
                         }
-                        Ok(crate::quant::EmpiricalDistribution::try_from_points_and_counts(
+                        Ok(T::try_from_points_and_counts(
                             points.iter().copied().zip(counts.iter().copied()),
                         )?)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                EmpiricalDistributionImpl::Multiple {
+                Self::Multiple {
                     distributions,
                     axis,
                 }
@@ -174,10 +171,10 @@ impl EmpiricalDistribution {
                         "`points` and `counts` must have equal length.",
                     ));
                 }
-                let distribution = crate::quant::EmpiricalDistribution::try_from_points_and_counts(
+                let distribution = T::try_from_points_and_counts(
                     points.iter().copied().zip(counts.iter().copied()),
                 )?;
-                EmpiricalDistributionImpl::Single(distribution)
+                Self::Single(distribution)
             }
         } else {
             let points = points.extract::<PyReadonlyArrayDyn<'_, f32>>()?;
@@ -186,22 +183,39 @@ impl EmpiricalDistribution {
                 let distributions = points
                     .axis_iter(Axis(axis))
                     .into_par_iter()
-                    .map(|points| {
-                        crate::quant::EmpiricalDistribution::try_from_points(points.iter().copied())
-                    })
+                    .map(|points| T::try_from_points(points.iter().copied()))
                     .collect::<Result<Vec<_>, _>>()?;
-                EmpiricalDistributionImpl::Multiple {
+                Self::Multiple {
                     distributions,
                     axis,
                 }
             } else {
-                let distribution =
-                    crate::quant::EmpiricalDistribution::try_from_points(points.iter().copied())?;
-                EmpiricalDistributionImpl::Single(distribution)
+                let distribution = T::try_from_points(points.iter().copied())?;
+                Self::Single(distribution)
             }
         };
 
-        Py::new(py, Self(distribution))
+        Ok(result)
+    }
+}
+
+#[pymethods]
+impl EmpiricalDistribution {
+    #[new]
+    pub fn new(
+        py: Python<'_>,
+        points: &PyAny,
+        counts: Option<&PyAny>,
+        specialize_along_axis: Option<usize>,
+    ) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            Self(MaybeMultiplexed::new(
+                points,
+                counts,
+                specialize_along_axis,
+            )?),
+        )
     }
 
     /// Add one or more values to the distribution.
@@ -306,7 +320,7 @@ impl EmpiricalDistribution {
         index: Option<usize>,
     ) -> PyResult<()> {
         if let Some(index) = index {
-            let EmpiricalDistributionImpl::Multiple { distributions, .. } = &mut self.0 else {
+            let MaybeMultiplexed::Multiple { distributions, .. } = &mut self.0 else {
                 return Err(pyo3::exceptions::PyIndexError::new_err(
                     "The `index` argument can only be used with an `EmpiricalDistribution` that \
                     was created with argument `specialize_along_axis`.",
@@ -328,10 +342,10 @@ impl EmpiricalDistribution {
         } else {
             match new {
                 Scalar(new) => match &mut self.0 {
-                    EmpiricalDistributionImpl::Single(distribution) => {
+                    MaybeMultiplexed::Single(distribution) => {
                         distribution.insert(F32::new(new)?, 1);
                     }
-                    EmpiricalDistributionImpl::Multiple { .. } => {
+                    MaybeMultiplexed::Multiple { .. } => {
                         return Err(pyo3::exceptions::PyAssertionError::new_err(
                             "Scalar updates with an `EmpiricalDistribution` that was created with \
                             argument `specialize_along_axis` require argument `index`.",
@@ -342,12 +356,12 @@ impl EmpiricalDistribution {
                     let new = new.as_array();
 
                     match &mut self.0 {
-                        EmpiricalDistributionImpl::Single(distribution) => {
+                        MaybeMultiplexed::Single(distribution) => {
                             for &new in &new {
                                 distribution.insert(F32::new(new)?, 1);
                             }
                         }
-                        EmpiricalDistributionImpl::Multiple {
+                        MaybeMultiplexed::Multiple {
                             distributions,
                             axis,
                         } => {
@@ -400,7 +414,7 @@ impl EmpiricalDistribution {
         index: Option<usize>,
     ) -> PyResult<()> {
         if let Some(index) = index {
-            let EmpiricalDistributionImpl::Multiple { distributions, .. } = &mut self.0 else {
+            let MaybeMultiplexed::Multiple { distributions, .. } = &mut self.0 else {
                 return Err(pyo3::exceptions::PyIndexError::new_err(
                     "The `index` argument can only be used with an `EmpiricalDistribution` that \
                     was created with argument `specialize_along_axis`.",
@@ -424,10 +438,10 @@ impl EmpiricalDistribution {
         } else {
             match old {
                 Scalar(old) => match &mut self.0 {
-                    EmpiricalDistributionImpl::Single(distribution) => {
+                    MaybeMultiplexed::Single(distribution) => {
                         distribution.remove(F32::new(old)?, 1)?;
                     }
-                    EmpiricalDistributionImpl::Multiple { .. } => {
+                    MaybeMultiplexed::Multiple { .. } => {
                         return Err(pyo3::exceptions::PyAssertionError::new_err(
                             "Scalar updates with an `EmpiricalDistribution` that was created with \
                         argument `specialize_along_axis` require argument `index`.",
@@ -438,12 +452,12 @@ impl EmpiricalDistribution {
                     let old = old.as_array();
 
                     match &mut self.0 {
-                        EmpiricalDistributionImpl::Single(distribution) => {
+                        MaybeMultiplexed::Single(distribution) => {
                             for &old in &old {
                                 distribution.remove(F32::new(old)?, 1)?;
                             }
                         }
-                        EmpiricalDistributionImpl::Multiple {
+                        MaybeMultiplexed::Multiple {
                             distributions,
                             axis,
                         } => {
@@ -502,7 +516,7 @@ impl EmpiricalDistribution {
         index: Option<usize>,
     ) -> PyResult<()> {
         if let Some(index) = index {
-            let EmpiricalDistributionImpl::Multiple { distributions, .. } = &mut self.0 else {
+            let MaybeMultiplexed::Multiple { distributions, .. } = &mut self.0 else {
                 return Err(pyo3::exceptions::PyIndexError::new_err(
                     "The `index` argument can only be used with an `EmpiricalDistribution` that \
                     was created with argument `specialize_along_axis`.",
@@ -533,11 +547,11 @@ impl EmpiricalDistribution {
         } else {
             match (old, new) {
                 (Scalar(old), Scalar(new)) => match &mut self.0 {
-                    EmpiricalDistributionImpl::Single(distribution) => {
+                    MaybeMultiplexed::Single(distribution) => {
                         distribution.remove(F32::new(old)?, 1)?;
                         distribution.insert(F32::new(new)?, 1);
                     }
-                    EmpiricalDistributionImpl::Multiple { .. } => {
+                    MaybeMultiplexed::Multiple { .. } => {
                         return Err(pyo3::exceptions::PyAssertionError::new_err(
                             "Scalar updates with an `EmpiricalDistribution` that was created with \
                             argument `specialize_along_axis` require argument `index`.",
@@ -549,13 +563,13 @@ impl EmpiricalDistribution {
                     let new = new.as_array();
 
                     match &mut self.0 {
-                        EmpiricalDistributionImpl::Single(distribution) => {
+                        MaybeMultiplexed::Single(distribution) => {
                             for (&old, &new) in old.iter().zip(&new) {
                                 distribution.remove(F32::new(old)?, 1)?;
                                 distribution.insert(F32::new(new)?, 1);
                             }
                         }
-                        EmpiricalDistributionImpl::Multiple {
+                        MaybeMultiplexed::Multiple {
                             distributions,
                             axis,
                         } => {
@@ -733,7 +747,7 @@ impl EmpiricalDistribution {
     /// ```
     pub fn shift(&mut self, old: &PyAny, new: &PyAny, index: Option<usize>) -> PyResult<()> {
         if let Some(index) = index {
-            let EmpiricalDistributionImpl::Multiple { distributions, .. } = &mut self.0 else {
+            let MaybeMultiplexed::Multiple { distributions, .. } = &mut self.0 else {
                 return Err(pyo3::exceptions::PyIndexError::new_err(
                     "The `index` argument can only be used with an `EmpiricalDistribution` that \
                     was created with argument `specialize_along_axis`.",
@@ -753,14 +767,14 @@ impl EmpiricalDistribution {
         } else {
             // No `index` argument provided.
             match &mut self.0 {
-                EmpiricalDistributionImpl::Single(distribution) => {
+                MaybeMultiplexed::Single(distribution) => {
                     return shift_single(old, new, &mut Vec::new(), distribution, || {
                         pyo3::exceptions::PyAssertionError::new_err(
                             "`old` and `new` must both be scalars or rank-1 tensors (with same shape).",
                         )
                     });
                 }
-                EmpiricalDistributionImpl::Multiple { distributions, .. } => {
+                MaybeMultiplexed::Multiple { distributions, .. } => {
                     if let Ok(old) = old.extract::<&PyList>() {
                         if let Ok(new) = new.extract::<&PyList>() {
                             if old.len() != distributions.len() || new.len() != distributions.len()
@@ -875,7 +889,7 @@ impl EmpiricalDistribution {
     /// ```
     pub fn total(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
         match (index, &self.0) {
-            (Some(_), EmpiricalDistributionImpl::Single { .. }) => {
+            (Some(_), MaybeMultiplexed::Single { .. }) => {
                 Err(pyo3::exceptions::PyIndexError::new_err(
                     "The `index` argument can only be used with an `EmpiricalDistribution` that \
                     was created with argument `specialize_along_axis`.",
@@ -883,7 +897,7 @@ impl EmpiricalDistribution {
             }
             (
                 Some(index),
-                EmpiricalDistributionImpl::Multiple {
+                MaybeMultiplexed::Multiple {
                     distributions,
                     axis: _,
                 },
@@ -893,12 +907,12 @@ impl EmpiricalDistribution {
                 })?;
                 Ok(distribution.total().to_object(py))
             }
-            (None, EmpiricalDistributionImpl::Single(distribution)) => {
+            (None, MaybeMultiplexed::Single(distribution)) => {
                 Ok(distribution.total().to_object(py))
             }
             (
                 None,
-                EmpiricalDistributionImpl::Multiple {
+                MaybeMultiplexed::Multiple {
                     distributions,
                     axis: _,
                 },
@@ -945,7 +959,7 @@ impl EmpiricalDistribution {
     /// ```
     pub fn entropy_base2(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
         match (index, &self.0) {
-            (Some(_), EmpiricalDistributionImpl::Single { .. }) => {
+            (Some(_), MaybeMultiplexed::Single { .. }) => {
                 Err(pyo3::exceptions::PyIndexError::new_err(
                     "The `index` argument can only be used with an `EmpiricalDistribution` that \
                     was created with argument `specialize_along_axis`.",
@@ -953,7 +967,7 @@ impl EmpiricalDistribution {
             }
             (
                 Some(index),
-                EmpiricalDistributionImpl::Multiple {
+                MaybeMultiplexed::Multiple {
                     distributions,
                     axis: _,
                 },
@@ -963,12 +977,12 @@ impl EmpiricalDistribution {
                 })?;
                 Ok(distribution.entropy_base2::<f32>().to_object(py))
             }
-            (None, EmpiricalDistributionImpl::Single(distribution)) => {
+            (None, MaybeMultiplexed::Single(distribution)) => {
                 Ok(distribution.entropy_base2::<f32>().to_object(py))
             }
             (
                 None,
-                EmpiricalDistributionImpl::Multiple {
+                MaybeMultiplexed::Multiple {
                     distributions,
                     axis: _,
                 },
@@ -1068,7 +1082,7 @@ impl EmpiricalDistribution {
         index: Option<usize>,
     ) -> PyResult<(PyObject, PyObject)> {
         match (index, &self.0) {
-            (Some(_), EmpiricalDistributionImpl::Single { .. }) => {
+            (Some(_), MaybeMultiplexed::Single { .. }) => {
                 Err(pyo3::exceptions::PyIndexError::new_err(
                     "The `index` argument can only be used with an `EmpiricalDistribution` that \
                     was created with argument `specialize_along_axis`.",
@@ -1076,7 +1090,7 @@ impl EmpiricalDistribution {
             }
             (
                 Some(index),
-                EmpiricalDistributionImpl::Multiple {
+                MaybeMultiplexed::Multiple {
                     distributions,
                     axis: _,
                 },
@@ -1092,7 +1106,7 @@ impl EmpiricalDistribution {
                 let counts = PyArray::from_vec(py, counts).to_object(py);
                 Ok((points, counts))
             }
-            (None, EmpiricalDistributionImpl::Single(distribution)) => {
+            (None, MaybeMultiplexed::Single(distribution)) => {
                 let (points, counts): (Vec<_>, Vec<_>) = distribution
                     .iter()
                     .map(|(value, count)| (value.get(), count))
@@ -1103,7 +1117,7 @@ impl EmpiricalDistribution {
             }
             (
                 None,
-                EmpiricalDistributionImpl::Multiple {
+                MaybeMultiplexed::Multiple {
                     distributions,
                     axis: _,
                 },
@@ -1381,7 +1395,7 @@ fn vbq<'a>(
     reference: Option<PyReadwriteArrayDyn<'a, f32>>,
 ) -> PyResult<&'a PyArrayDyn<f32>> {
     match &mut prior.borrow_mut(py).0 {
-        EmpiricalDistributionImpl::Single(distribution) => vbq_single(
+        MaybeMultiplexed::Single(distribution) => vbq_single(
             py,
             unquantized,
             distribution,
@@ -1390,7 +1404,7 @@ fn vbq<'a>(
             update_prior,
             reference,
         ),
-        EmpiricalDistributionImpl::Multiple {
+        MaybeMultiplexed::Multiple {
             distributions,
             axis,
         } => vbq_multiplexed(
@@ -1676,10 +1690,9 @@ where
                             src.into_iter().zip(dst).zip(&var).zip(reference)
                         {
                             let old = F32::new(*src.borrow())?;
-                            let new = crate::quant::vbq(
+                            let new = prior.vbq(
                                 old,
-                                prior,
-                                |x| x * x,
+                                |x, y| (x - y) * (x - y),
                                 F32::new(two_coarseness * var)?,
                             );
                             update(src, dst, new.get());
@@ -1697,7 +1710,7 @@ where
                     .try_for_each(|(((src, dst), prior), reference)| {
                         for ((src, dst), reference) in src.into_iter().zip(dst).zip(reference) {
                             let old = F32::new(*src.borrow())?;
-                            let new = crate::quant::vbq(old, prior, |x| x * x, bit_penalty);
+                            let new = prior.vbq(old, |x, y| (x - y) * (x - y), bit_penalty);
                             update(src, dst, new.get());
                             update_prior(prior, old, new, reference)?
                         }
@@ -1801,7 +1814,7 @@ fn vbq_(
     reference: Option<PyReadwriteArrayDyn<'_, f32>>,
 ) -> PyResult<()> {
     match &mut prior.borrow_mut(py).0 {
-        EmpiricalDistributionImpl::Single(distribution) => vbq_single_inplace(
+        MaybeMultiplexed::Single(distribution) => vbq_single_inplace(
             unquantized,
             distribution,
             posterior_variance,
@@ -1809,7 +1822,7 @@ fn vbq_(
             update_prior,
             reference,
         ),
-        EmpiricalDistributionImpl::Multiple {
+        MaybeMultiplexed::Multiple {
             distributions,
             axis,
         } => vbq_multiplexed_inplace(
@@ -1949,7 +1962,7 @@ where
             for (((src, dst), bit_penalty), reference) in src_dst_penalty.zip(&mut reference) {
                 let unquantized = F32::new(*src.borrow())?;
                 let reference_val = F32::new(*reference)?;
-                let quantized = crate::quant::vbq(unquantized, prior, |x| x * x, bit_penalty?);
+                let quantized = prior.vbq(unquantized, |x, y| (x - y) * (x - y), bit_penalty?);
                 prior.remove(reference_val, 1)?;
                 prior.insert(quantized, 1);
                 update(src, dst, quantized.get());
@@ -1958,7 +1971,7 @@ where
         } else {
             for ((src, dst), bit_penalty) in src_dst_penalty {
                 let unquantized = F32::new(*src.borrow())?;
-                let quantized = crate::quant::vbq(unquantized, prior, |x| x * x, bit_penalty?);
+                let quantized = prior.vbq(unquantized, |x, y| (x - y) * (x - y), bit_penalty?);
                 update(src, dst, quantized.get());
                 prior.remove(unquantized, 1)?;
                 prior.insert(quantized, 1);
@@ -1981,7 +1994,7 @@ where
 {
     src_dst_penalty.try_for_each(move |(sd, bit_penalty)| {
         let unquantized = F32::new(extract(&sd))?;
-        let quantized = crate::quant::vbq(unquantized, prior, |x| x * x, bit_penalty?);
+        let quantized = prior.vbq(unquantized, |x, y| (x - y) * (x - y), bit_penalty?);
         update(sd, quantized.get());
         PyResult::Ok(())
     })

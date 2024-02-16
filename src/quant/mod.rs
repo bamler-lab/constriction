@@ -43,7 +43,7 @@
 //! with a [LeakyQuantizer](crate::stream::model::LeakyQuantizer)).
 //!
 //! Currently, the only implemented quantization method is Variational Bayesian Quantization (see
-//! function [`vbq`]). But the plan for future versions of `constriction` is to add other
+//! type [`Vbq`]). But the plan for future versions of `constriction` is to add other
 //! quantization methods, and to design them modular enough so that they can be combined in order
 //! to address all three of the above optimization problems. How to achieve this modularity is an
 //! ongoing research question, which is why the APIs in this module are less stable than the APIs in
@@ -125,7 +125,7 @@ pub trait UnnormalizedDistribution {
     /// assumption that this method returns the left-sided CDF (especially not for memory safety),
     /// and they should still work reasonably well if this method returns the right-sided CDF.
     /// (What "reasonably well" means in this context depends on the algorithm; for example, the
-    /// function [`vbq`] still works exactly as expected if `cdf` returns the right-sided CDF as
+    /// type [`Vbq`] still works exactly as expected if `cdf` returns the right-sided CDF as
     /// long as [`UnnormalizedInverse::ppf`] behaves accordingly; and if `cdf` and `ppf` follow
     /// opposite conventions then `vbq` still terminates and quantizes to a grid point from the
     /// provided `prior`, but the quantization might be biased towards rounding up or down).
@@ -331,6 +331,26 @@ where
 
 pub trait ToPointsAndCounts<V, C> {
     fn points_and_counts_iter(&self) -> impl Iterator<Item = (V, C)> + '_;
+}
+
+/// TODO: document
+pub trait QuantizationMethod<Grid, V, L> {
+    /// Quantize a given `unquantized` point to the provided `grid`.
+    ///
+    /// The quantization method should minimize the rate/distortion tradeoff
+    ///
+    /// `distortion(unquantized, quantized) + bit_penalty * rate_estimate(quantized)`
+    ///
+    /// where `rate_estimate` is some estimate of the information content of the candidate
+    /// quantization point. How this estimate is defined depends on the implementor, and the range
+    /// of `quantized` points over which the optimization runs depends on the provided `grid`.
+    fn quantize(
+        &self,
+        unquantized: V,
+        grid: Grid,
+        distortion: impl Fn(V, V) -> L,
+        bit_penalty: L,
+    ) -> V;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -699,6 +719,21 @@ where
     {
         self.into()
     }
+
+    /// Quantizes a given value using [Variational Bayesian Quantization (VBQ)].
+    ///
+    /// This is a convenience method that just forwards to `Vbq::quantize`, using `self` as the
+    /// `grid` argument. See documentation of [`Vbq`].
+    ///
+    /// [Variational Bayesian Quantization (VBQ)]: http://proceedings.mlr.press/v119/yang20a/yang20a.pdf
+    pub fn vbq<L>(&self, unquantized: V, distortion: impl Fn(V, V) -> L, bit_penalty: L) -> V
+    where
+        C: PartialOrd + Bounded + 'static,
+        V: Sub<Output = V>,
+        L: Copy + PartialOrd + Zero + Bounded,
+    {
+        Vbq.quantize(unquantized, self, distortion, bit_penalty)
+    }
 }
 
 impl<V, C> FromPoints<V, C> for EmpiricalDistribution<V, C>
@@ -883,6 +918,39 @@ impl<V, R> RatedGrid<V, R> {
     {
         self.entropy
     }
+
+    pub fn quantize(
+        &self,
+        unquantized: V,
+        mut distortion: impl FnMut(V, V) -> R,
+        bit_penalty: R,
+    ) -> V
+    where
+        V: Copy + Sub<Output = V>,
+        R: Copy + PartialOrd + Zero + Bounded + Mul<Output = R>,
+    {
+        let mut grid = self.grid.iter();
+        let (mut record_candidate, rate) = *grid.next().expect("grid isn't empty");
+        let first_distortion = distortion(unquantized, record_candidate);
+        let mut record_loss = first_distortion + bit_penalty * rate;
+
+        for &(candidate, rate) in grid {
+            let scaled_rate = bit_penalty * rate;
+            if scaled_rate >= record_loss {
+                // Rate is monotonically nondecreasing, and distortion is nonnegative. So once we're at
+                // this point, there won't be any better candidate than the best we've found so far.
+                break;
+            }
+            let candidate_distortion = distortion(unquantized, candidate);
+            let loss = candidate_distortion + scaled_rate;
+            if loss < record_loss {
+                record_loss = loss;
+                record_candidate = candidate
+            }
+        }
+
+        record_candidate
+    }
 }
 
 impl<V, R, C> FromPoints<V, C> for RatedGrid<V, R>
@@ -982,7 +1050,7 @@ impl Display for NotFoundError {
 #[cfg(feature = "std")]
 impl std::error::Error for NotFoundError {}
 
-/// Quantizes a single value using [Variational Bayesian Quantization (VBQ)].
+/// Quantizer that implements the [Variational Bayesian Quantization (VBQ)] method.
 ///
 /// VBQ is a quantization method that takes into account (i) the "prior" distribution of
 /// unquantized points (putting a higher density of grid points in regions of high prior density)
@@ -1017,21 +1085,25 @@ impl std::error::Error for NotFoundError {}
 ///
 /// # Arguments
 ///
+/// This type implements the trait [`QuantizationMethod`], where the arguments of its method
+/// [`quantize`](QuantizationMethod::quantize) are interpreted as follows:
+///
 /// - `unquantized`: the value that you want to quantize.
-/// - `prior`: a distribution that influences how VBQ distributes its grid points (see discussion
+/// - `grid`: a distribution that influences how VBQ distributes its grid points (see discussion
 ///   above). Typically an [`EmpiricalDistribution`] that estimates the distribution of final
 ///   quantized values, e.g., by taking the empirical distribution of either the unquantized points
 ///   or of quantized points from a previous run of VBQ on the same set of points.
-/// - `distortion`: a function that assigns a penalty to any given quantization error. A common
-///   choice is a quadratic distortion, i.e., `|x| x * x`. The distortion must satisfy the
-///   following:
-///   - `distortion(P::Value::zero()) == L::zero()`;
-///   - `distortion(x) > L::zero()` for all `x != P::Value::zero()`; and
-///   - `distortion` must be unimodal, i.e., it must be monotonically nonincreasing for negative
-///     arguments, and nondecreasing for positive arguments.
-/// - `bit_penalty`: conversion rate from bit rates to penalties, see above objective function.
-///   Higher values of `bit_penalty` lead to a more coarse quantization, i.e., higher distortion
-///   and lower bit entropy.
+/// - `distortion`: a function that assigns a penalty to any pair of unquantized and quantized
+///   value. A common choice is a quadratic distortion, i.e., `|x, y| (x - y) * (x - y)`. The
+///   distortion must satisfy the following:
+///   - `distortion(unquantized, unquantized) == L::zero()`;
+///   - `distortion(unquantized, quantized) > L::zero()` for all `x != unquantized`; and
+///   - `distortion(unquantized, quantized)` must be unimodal in its second argument, i.e., it must
+///     be monotonically nonincreasing in its second argument for `quantized <= unquantized`, and
+///     monotonically nondecreasing in its second argument for `quantized >= unquantized`.
+/// - `bit_penalty`: conversion rate from bit rates to penalties, see documentation of
+///   [`quantize`](QuantizationMethod::quantize). Higher values of `bit_penalty` lead to a more
+///   coarse quantization, i.e., higher distortion and lower bit entropy.
 ///
 /// # References
 ///
@@ -1044,118 +1116,112 @@ impl std::error::Error for NotFoundError {}
 /// [original paper]: http://proceedings.mlr.press/v119/yang20a/yang20a.pdf
 /// [Tan and Bamler, Deploy & Monitor ML Workshop @ NeurIPS 2022]:
 ///   https://raw.githubusercontent.com/dmml-workshop/dmml-neurips-2022/main/accepted-papers/paper_21.pdf
-pub fn vbq<P, L>(
-    unquantized: P::Value,
-    prior: &P,
-    mut distortion: impl FnMut(P::Value) -> L,
-    bit_penalty: L,
-) -> P::Value
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Vbq;
+
+impl<P, L> QuantizationMethod<&P, P::Value, L> for Vbq
 where
     P: UnnormalizedInverse,
     P::Count: PartialOrd + Bounded,
     P::Value: Sub<Output = P::Value>,
     L: Copy + PartialOrd + Zero + Bounded,
 {
-    let total = prior.total();
-    assert!(total != P::Count::zero());
-    let two = P::Count::one() + P::Count::one();
+    fn quantize(
+        &self,
+        unquantized: P::Value,
+        grid: &P,
+        distortion: impl Fn(P::Value, P::Value) -> L,
+        bit_penalty: L,
+    ) -> P::Value {
+        let total = grid.total();
+        assert!(total != P::Count::zero());
+        let two = P::Count::one() + P::Count::one();
 
-    let conversion = if P::Count::one() / two > P::Count::zero() {
-        // `P::Count` is a float type. No conversion necessary (will be compiled out).
-        P::Count::one()
-    } else {
-        // `P::Count` is an integer type. Use fixed point arithmetic.
-        ((P::Count::max_value() - P::Count::one()) / two + P::Count::one()) / total
-    };
-    assert!(conversion != P::Count::zero(), "prior must not contain more points than half the range of numbers representable by `P::Count`");
+        let conversion = if P::Count::one() / two > P::Count::zero() {
+            // `P::Count` is a float type. No conversion necessary (will be compiled out).
+            P::Count::one()
+        } else {
+            // `P::Count` is an integer type. Use fixed point arithmetic.
+            ((P::Count::max_value() - P::Count::one()) / two + P::Count::one()) / total
+        };
+        assert!(conversion != P::Count::zero(), "prior must not contain more points than half the range of numbers representable by `P::Count`");
 
-    let mut lower = P::Count::zero();
-    let mut upper = total * conversion;
-    let mut prev_mid_converted = total;
+        let mut lower = P::Count::zero();
+        let mut upper = total * conversion;
+        let mut prev_mid_converted = total;
 
-    let target = conversion * prior.cdf(unquantized);
+        let target = conversion * grid.cdf(unquantized);
 
-    let mut current_rate = L::zero();
-    let mut record_point = unquantized; // Will be overwritten at least once.
-    let mut record_objective = L::max_value();
+        let mut current_rate = L::zero();
+        let mut record_point = unquantized; // Will be overwritten at least once.
+        let mut record_objective = L::max_value();
 
-    loop {
-        let mid = (lower + upper) / two; // Rounds down (which is probably what we want).
-        if mid <= target {
-            lower = mid;
-        }
-        if mid >= target {
-            upper = mid;
-        }
-
-        let mid_converted = mid / conversion; // Rounds down (which is what we want).
-        if mid_converted == prev_mid_converted {
-            // Can't be reached in the first iteration of the loop because `mid_converted < total`.
-            break;
-        }
-        prev_mid_converted = mid_converted;
-
-        let candidate = prior
-            .ppf(mid_converted)
-            .expect("`mid_converted < prior.total()`");
-        let deviation = candidate - unquantized;
-        let current_objective = distortion(deviation) + current_rate;
-        if current_objective <= record_objective {
-            record_point = candidate;
-            record_objective = current_objective;
-        }
-
-        current_rate = current_rate + bit_penalty;
-
-        match current_rate.partial_cmp(&record_objective) {
-            Some(core::cmp::Ordering::Less) => {
-                // Continue with the next iteration since we might still be able to improve
-                // upon `record_objective`.
+        loop {
+            let mid = (lower + upper) / two; // Rounds down (which is probably what we want).
+            if mid <= target {
+                lower = mid;
             }
-            None | Some(_) => {
-                // We either won't be able to improve upon `record_objective` (because all
-                // subsequent candidate objectives will be lower bounded by `current_rate`), or
-                // we encountered NaN (which should never happen for a well defined prior, but
-                // if it does then it's probably best to break).
+            if mid >= target {
+                upper = mid;
+            }
+
+            let mid_converted = mid / conversion; // Rounds down (which is what we want).
+            if mid_converted == prev_mid_converted {
+                // Can't be reached in the first iteration of the loop because `mid_converted < total`.
                 break;
             }
-        }
-    }
+            prev_mid_converted = mid_converted;
 
-    record_point
+            let candidate = grid
+                .ppf(mid_converted)
+                .expect("`mid_converted < prior.total()`");
+            let current_objective = distortion(unquantized, candidate) + current_rate;
+            if current_objective <= record_objective {
+                record_point = candidate;
+                record_objective = current_objective;
+            }
+
+            current_rate = current_rate + bit_penalty;
+
+            match current_rate.partial_cmp(&record_objective) {
+                Some(core::cmp::Ordering::Less) => {
+                    // Continue with the next iteration since we might still be able to improve
+                    // upon `record_objective`.
+                }
+                None | Some(_) => {
+                    // We either won't be able to improve upon `record_objective` (because all
+                    // subsequent candidate objectives will be lower bounded by `current_rate`), or
+                    // we encountered NaN (which should never happen for a well defined prior, but
+                    // if it does then it's probably best to break).
+                    break;
+                }
+            }
+        }
+
+        record_point
+    }
 }
 
-pub fn rate_distortion_quantization<V, R>(
-    unquantized: V,
-    grid: &RatedGrid<V, R>,
-    mut distortion: impl FnMut(V) -> R,
-    bit_penalty: R,
-) -> V
+/// Explicit rate/distortion quantization.
+///
+/// See documentation of [`RatedGrid::quantize`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RateDistortionQuantization;
+
+impl<V, R> QuantizationMethod<&RatedGrid<V, R>, V, R> for RateDistortionQuantization
 where
     V: Copy + Sub<Output = V>,
     R: Copy + PartialOrd + Zero + Bounded + Mul<Output = R>,
 {
-    let mut grid = grid.grid.iter();
-    let (mut record_candidate, rate) = *grid.next().expect("grid isn't empty");
-    let first_distortion = distortion(record_candidate - unquantized);
-    let mut record_loss = first_distortion + bit_penalty * rate;
-
-    for &(candidate, rate) in grid {
-        let scaled_rate = bit_penalty * rate;
-        if scaled_rate >= record_loss {
-            // Rate is monotonically nondecreasing, and distortion is nonnegative. So once we're at
-            // this point, there won't be any better candidate than the best we've found so far.
-            break;
-        }
-        let candidate_distortion = distortion(candidate - unquantized);
-        let loss = candidate_distortion + scaled_rate;
-        if loss < record_loss {
-            record_loss = loss;
-            record_candidate = candidate
-        }
+    fn quantize(
+        &self,
+        unquantized: V,
+        grid: &RatedGrid<V, R>,
+        distortion: impl Fn(V, V) -> R,
+        bit_penalty: R,
+    ) -> V {
+        grid.quantize(unquantized, distortion, bit_penalty)
     }
-
-    record_candidate
 }
 
 #[cfg(test)]
@@ -1246,7 +1312,7 @@ mod tests {
 
             for i in 0..num_repeats {
                 for (point, shifted_point) in points.iter().zip(shifted_points.iter_mut()) {
-                    let quant = vbq(*point, &prior, |x| x * x, beta);
+                    let quant = prior.vbq(*point, |x, y| (x - y) * (x - y), beta);
                     prior.remove(*shifted_point, 1).unwrap();
                     prior.insert(quant, 1);
                     *shifted_point = quant;
@@ -1305,7 +1371,7 @@ mod tests {
         for beta in betas {
             let shifted_points = points
                 .iter()
-                .map(|&point| vbq(point, &prior, |x| x * x, beta));
+                .map(|&point| Vbq.quantize(point, &prior, |x, y| (x - y) * (x - y), beta));
             let empirical_distribution =
                 EmpiricalDistribution::<F64, u32>::try_from_points(shifted_points).unwrap();
             let entropy = empirical_distribution.entropy_base2::<f64>();
@@ -1355,7 +1421,7 @@ mod tests {
             // Run VBQ once to get an estimate of the grid.
             let mut quantized = points
                 .iter()
-                .map(|point| vbq(*point, &prior, |x| x * x, beta))
+                .map(|point| prior.vbq(*point, |x, y| (x - y) * (x - y), beta))
                 .collect::<Vec<_>>();
 
             for i in 0..num_repeats {
@@ -1368,12 +1434,7 @@ mod tests {
 
                 // TODO: maybe use `NonNanFloat` for `R`
                 for point in quantized.iter_mut() {
-                    *point = super::rate_distortion_quantization(
-                        *point,
-                        &grid,
-                        |x| (x * x).get(),
-                        beta.get(),
-                    )
+                    *point = grid.quantize(*point, |x, y| ((x - y) * (x - y)).get(), beta.get())
                 }
             }
 

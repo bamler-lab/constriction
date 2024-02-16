@@ -74,6 +74,21 @@
 		},
 		{
 			"type": "cargo",
+			"command": "test",
+			"args": [
+				"--doc"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "rust: cargo test --doc",
+			"presentation": {
+				"clear": true
+			},
+		},
+		{
+			"type": "cargo",
 			"command": "bench",
 			"problemMatcher": [
 				"$rustc"
