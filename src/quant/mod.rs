@@ -216,6 +216,123 @@ where
     }
 }
 
+pub trait FromPoints<V, C>
+where
+    Self: Sized,
+    V: Copy,
+    C: Copy,
+{
+    /// Creates a distribution based on a collection of points.
+    ///
+    /// If the distribution is over floating point values, then you might be better off with
+    /// [`try_from_points`](Self::try_from_points).
+    fn from_points<I>(points: I) -> Self
+    where
+        I: IntoIterator,
+        <I as IntoIterator>::Item: Borrow<V>,
+    {
+        Self::try_from_points(points.into_iter().map(|point| *point.borrow())).unwrap_infallible()
+    }
+
+    /// Fallible variant of [`from_points`](Self::from_points).
+    ///
+    /// This is mostly intended for `EmpiricalDistribution`s over floating point values, which have
+    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted. See example in
+    /// the documentation of [`EmpiricalDistribution`].
+    fn try_from_points<F>(
+        points: impl IntoIterator<Item = F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        V: TryFrom<F>;
+
+    /// Reconstructs a distribution from a compact representation
+    ///
+    /// This can, e.g., be used for serialization / deserialization of a type that also implements
+    /// [`ToPointsAndCounts`]. In this case, the argument `points_and_counts` can be an iterator
+    /// returned by [`ToPointsAndCounts::points_and_counts_iter`] (but it does not have to iterate
+    /// over points in the same order that that iterator would).
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use constriction::{F32, quant::{EmpiricalDistribution, FromPoints}};
+    ///
+    /// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
+    /// let original_distribution = EmpiricalDistribution::<F32, u32>::try_from_points(
+    ///     points.iter().copied()
+    /// ).unwrap();
+    ///
+    /// let original_entropy = original_distribution.entropy_base2::<f32>();
+    /// assert!((original_entropy - 1.842371).abs() < 1e-6);
+    ///
+    /// let (points, counts): (Vec<F32>, Vec<u32>) = original_distribution.iter().unzip();
+    ///
+    /// // ... save `points` and `counts` to a file and load them back later ...
+    ///
+    /// let reconstructed_distribution = EmpiricalDistribution::<F32, u32>::from_points_and_counts(
+    ///     points.iter().zip(&counts)
+    /// );
+    /// assert_eq!(reconstructed_distribution.entropy_base2::<f32>(), original_entropy);
+    /// ```
+    ///
+    /// ## See also
+    ///
+    /// - [`Self::try_from_points_and_counts`]
+    fn from_points_and_counts<I, VV, CC>(points_and_counts: I) -> Self
+    where
+        I: IntoIterator<Item = (VV, CC)>,
+        VV: Borrow<V>,
+        CC: Borrow<C>,
+    {
+        Self::try_from_points_and_counts(
+            points_and_counts
+                .into_iter()
+                .map(|(point, count)| (*point.borrow(), *count.borrow())),
+        )
+        .unwrap_infallible()
+    }
+
+    /// Fallible variant of [`from_points_and_counts`](Self::from_points_and_counts).
+    ///
+    /// This is mostly intended for `EmpiricalDistribution`s over floating point values, which have
+    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use constriction::{F32, quant::{EmpiricalDistribution, FromPoints}};
+    ///
+    /// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
+    /// let original_distribution = EmpiricalDistribution::<F32, u32>::try_from_points(
+    ///     points.iter().copied()
+    /// ).unwrap();
+    ///
+    /// let original_entropy = original_distribution.entropy_base2::<f32>();
+    /// assert!((original_entropy - 1.842371).abs() < 1e-6);
+    ///
+    /// let (points, counts): (Vec<f32>, Vec<u32>) = original_distribution
+    ///     .iter()
+    ///     .map(|(point, count)| (point.get(), count))
+    ///     .unzip();
+    ///
+    /// // ... save `points` and `counts` to a file and load them back later ...
+    ///
+    /// let reconstructed_distribution = EmpiricalDistribution::<F32, u32>::try_from_points_and_counts(
+    ///     points.iter().copied().zip(counts.iter().copied())
+    /// ).unwrap();
+    /// assert_eq!(reconstructed_distribution.entropy_base2::<f32>(), original_entropy);
+    /// ```
+    fn try_from_points_and_counts<F>(
+        points_and_counts: impl IntoIterator<Item = (F, C)>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        V: TryFrom<F>;
+}
+
+pub trait ToPointsAndCounts<V, C> {
+    fn points_and_counts_iter(&self) -> impl Iterator<Item = (V, C)> + '_;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CountWrapper<C>(C);
 
@@ -278,7 +395,7 @@ impl<C: Sub<Output = C>> Sub for CountWrapper<C> {
 /// we encounter `NaN`.
 ///
 /// ```
-/// use constriction::{F32, quant::EmpiricalDistribution};
+/// use constriction::{F32, quant::{EmpiricalDistribution, FromPoints}};
 ///
 /// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
 /// let distribution = EmpiricalDistribution::<F32, u32>::try_from_points(
@@ -302,7 +419,8 @@ impl<C: Sub<Output = C>> Sub for CountWrapper<C> {
 ///
 /// ```
 /// use constriction::{
-///     F32, quant::{EmpiricalDistribution, UnnormalizedDistribution, UnnormalizedInverse}
+///     F32,
+///     quant::{EmpiricalDistribution, FromPoints, UnnormalizedDistribution, UnnormalizedInverse}
 /// };
 ///
 /// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
@@ -455,133 +573,6 @@ where
         Self(AugmentedBTree::new())
     }
 
-    /// Creates an `EmpiricalDistribution` that counts occurrences in a provided collection.
-    ///
-    /// If the distribution is over floating point values, then you might be better off with
-    /// [`try_from_points`](Self::try_from_points).
-    pub fn from_points<I>(points: I) -> Self
-    where
-        Self: Sized + Default,
-        I: IntoIterator,
-        <I as IntoIterator>::Item: Borrow<V>,
-    {
-        Self::try_from_points(points.into_iter().map(|point| *point.borrow())).unwrap_infallible()
-    }
-
-    /// Reconstructs an `EmpiricalDistribution` from a compact representation
-    ///
-    /// This can, e.g., be used for serialization / deserialization. The argument
-    /// `points_and_counts` can be an iterator returned by [`Self::iter`] (but it does not have to
-    /// iterate over points in sorted order).
-    ///
-    /// If the points contain duplicates then their corresponding counts are added up.
-    ///
-    /// ## Example
-    ///
-    /// ```
-    /// use constriction::{F32, quant::EmpiricalDistribution};
-    ///
-    /// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
-    /// let original_distribution = EmpiricalDistribution::<F32, u32>::try_from_points(
-    ///     points.iter().copied()
-    /// ).unwrap();
-    ///
-    /// let original_entropy = original_distribution.entropy_base2::<f32>();
-    /// assert!((original_entropy - 1.842371).abs() < 1e-6);
-    ///
-    /// let (points, counts): (Vec<F32>, Vec<u32>) = original_distribution.iter().unzip();
-    ///
-    /// // ... save `points` and `counts` to a file and load them back later ...
-    ///
-    /// let reconstructed_distribution = EmpiricalDistribution::<F32, u32>::from_points_and_counts(
-    ///     points.iter().zip(&counts)
-    /// );
-    /// assert_eq!(reconstructed_distribution.entropy_base2::<f32>(), original_entropy);
-    /// ```
-    ///
-    /// ## See also
-    ///
-    /// - [`Self::try_from_points_and_counts`]
-    pub fn from_points_and_counts<I, VV, CC>(points_and_counts: I) -> Self
-    where
-        Self: Sized + Default,
-        I: IntoIterator<Item = (VV, CC)>,
-        VV: Borrow<V>,
-        CC: Borrow<C>,
-    {
-        Self::try_from_points_and_counts(
-            points_and_counts
-                .into_iter()
-                .map(|(point, count)| (*point.borrow(), *count.borrow())),
-        )
-        .unwrap_infallible()
-    }
-
-    /// Fallible variant of [`from_points`](Self::from_points).
-    ///
-    /// This is mostly intended for `EmpiricalDistribution`s over floating point values, which have
-    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted. See [example
-    /// in the struct-level documentation](Self#construction-and-iteration).
-    pub fn try_from_points<F>(
-        points: impl IntoIterator<Item = F>,
-    ) -> Result<Self, <V as TryFrom<F>>::Error>
-    where
-        Self: Sized + Default,
-        V: TryFrom<F>,
-    {
-        let mut this = Self::default();
-        for point in points {
-            this.0.insert(V::try_from(point)?, CountWrapper(C::one()))
-        }
-        Ok(this)
-    }
-
-    /// Fallible variant of [`from_points_and_counts`](Self::from_points_and_counts).
-    ///
-    /// This is mostly intended for `EmpiricalDistribution`s over floating point values, which have
-    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted. See [example
-    /// for the similar `from_points` method in the struct-level
-    /// documentation](Self#construction-and-iteration).
-    ///
-    /// ## Example
-    ///
-    /// ```
-    /// use constriction::{F32, quant::EmpiricalDistribution};
-    ///
-    /// let points = [0.1, -0.3, 1.5, -0.3, 4.2, 1.5, 1.5];
-    /// let original_distribution = EmpiricalDistribution::<F32, u32>::try_from_points(
-    ///     points.iter().copied()
-    /// ).unwrap();
-    ///
-    /// let original_entropy = original_distribution.entropy_base2::<f32>();
-    /// assert!((original_entropy - 1.842371).abs() < 1e-6);
-    ///
-    /// let (points, counts): (Vec<f32>, Vec<u32>) = original_distribution
-    ///     .iter()
-    ///     .map(|(point, count)| (point.get(), count))
-    ///     .unzip();
-    ///
-    /// // ... save `points` and `counts` to a file and load them back later ...
-    ///
-    /// let reconstructed_distribution = EmpiricalDistribution::<F32, u32>::try_from_points_and_counts(
-    ///     points.iter().copied().zip(counts.iter().copied())
-    /// ).unwrap();
-    /// assert_eq!(reconstructed_distribution.entropy_base2::<f32>(), original_entropy);
-    /// ```
-    pub fn try_from_points_and_counts<F>(
-        points_and_counts: impl IntoIterator<Item = (F, C)>,
-    ) -> Result<Self, <V as TryFrom<F>>::Error>
-    where
-        Self: Sized + Default,
-        V: TryFrom<F>,
-    {
-        let mut this = Self::default();
-        for (point, count) in points_and_counts {
-            this.0.insert(V::try_from(point)?, CountWrapper(count))
-        }
-        Ok(this)
-    }
-
     /// Inserts `count` points with the provided `value` into the distribution.
     ///
     /// If the distribution already has some point(s) with the same `value`, then no allocation
@@ -619,61 +610,6 @@ where
         self.0.remove_all(value).0
     }
 
-    // pub fn try_insert_points_hashable<F>(
-    //     &mut self,
-    //     points: impl IntoIterator<Item = F>,
-    // ) -> Result<(), <V as TryFrom<F>>::Error>
-    // where
-    //     V: TryFrom<F> + Hash,
-    // {
-    //     self.try_insert_points(points)
-    // }
-
-    // pub fn try_from_points_hashable<F>(
-    //     points: impl IntoIterator<Item = F>,
-    // ) -> Result<Self, <V as TryFrom<F>>::Error>
-    // where
-    //     Self: Sized + Default,
-    //     V: TryFrom<F> + Hash,
-    // {
-    //     let mut this = Self::default();
-    //     this.try_insert_points_hashable(points)?;
-    //     Ok(this)
-    // }
-
-    // pub fn from_points_hashable<I>(points: I) -> Self
-    // where
-    //     Self: Sized + Default,
-    //     V: Hash,
-    //     I: IntoIterator,
-    //     <I as IntoIterator>::Item: Borrow<V>,
-    // {
-    //     Self::try_from_points_hashable(points.into_iter().map(|x| *x.borrow())).unwrap_infallible()
-    // }
-
-    // pub fn try_from_points_hashable<'a, F>(
-    //     points: impl IntoIterator<Item = &'a F>,
-    // ) -> Result<Self, <V as TryFrom<F>>::Error>
-    // where
-    //     Self: Sized,
-    //     V: TryFrom<F> + Hash,
-    // {
-    //     let mut counts = HashMap::new();
-    //     for &point in points {
-    //         let point = V::try_from(point)?;
-    //         counts
-    //             .entry(point)
-    //             .and_modify(|count| *count = *count + CountWrapper(C::one()))
-    //             .or_insert(CountWrapper(C::one()));
-    //     }
-
-    //     let mut sorted = counts.into_iter().collect::<Vec<_>>();
-    //     sorted.sort_unstable_by_key(|(v, _)| *v);
-    //     let tree = unsafe { AugmentedBTree::from_sorted_unchecked(&sorted) };
-
-    //     Ok(Self(tree))
-    // }
-
     /// Iterate over unique values in sorted order.
     ///
     /// For each unique value in the distribution, the iteration yields a pair `(value, count)`,
@@ -707,7 +643,7 @@ where
     /// entropy of 1 bit:
     ///
     /// ```
-    /// use constriction::{F32, quant::EmpiricalDistribution};
+    /// use constriction::{F32, quant::{EmpiricalDistribution, FromPoints}};
     ///
     /// let points1 = [0.2, 3.5, 3.5, 0.2, 3.5, 0.2];
     /// let distribution1 = EmpiricalDistribution::<F32, u32>::try_from_points(
@@ -720,7 +656,7 @@ where
     /// distribution is only approximately uniform then its entropy is slightly lower:
     ///
     /// ```
-    /// # use constriction::{F32, quant::EmpiricalDistribution};
+    /// # use constriction::{F32, quant::{EmpiricalDistribution, FromPoints}};
     /// let points2 = [0.1, 0.2, 0.3, 0.4, 0.1, 0.3, 0.4]; // 4 distinct values, approximately uniform.
     /// let distribution2 = EmpiricalDistribution::<F32, u32>::try_from_points(
     ///     points2.iter().copied()
@@ -734,7 +670,7 @@ where
     /// values:
     ///
     /// ```
-    /// # use constriction::{F32, quant::EmpiricalDistribution};
+    /// # use constriction::{F32, quant::{EmpiricalDistribution, FromPoints}};
     /// let points3 = [0.2, 0.2, 0.2, 0.2, 10.5, 0.2, 0.2, 0.2, 0.2, -20.8, 0.2, 0.2];
     /// let distribution3 = EmpiricalDistribution::<F32, u32>::try_from_points(
     ///     points3.iter().copied()
@@ -762,6 +698,49 @@ where
         C: num_traits::AsPrimitive<R>,
     {
         self.into()
+    }
+}
+
+impl<V, C> FromPoints<V, C> for EmpiricalDistribution<V, C>
+where
+    Self: Default,
+    V: Copy + Ord,
+    C: Copy + Ord + num_traits::Num,
+{
+    fn try_from_points<F>(
+        points: impl IntoIterator<Item = F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        V: TryFrom<F>,
+    {
+        let mut this = Self::default();
+        for point in points {
+            this.0.insert(V::try_from(point)?, CountWrapper(C::one()))
+        }
+        Ok(this)
+    }
+
+    fn try_from_points_and_counts<F>(
+        points_and_counts: impl IntoIterator<Item = (F, C)>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        V: TryFrom<F>,
+    {
+        let mut this = Self::default();
+        for (point, count) in points_and_counts {
+            this.0.insert(V::try_from(point)?, CountWrapper(count))
+        }
+        Ok(this)
+    }
+}
+
+impl<V, C> ToPointsAndCounts<V, C> for EmpiricalDistribution<V, C>
+where
+    V: Copy + Ord,
+    C: Copy + Ord + num_traits::Num,
+{
+    fn points_and_counts_iter(&self) -> impl Iterator<Item = (V, C)> + '_ {
+        self.iter()
     }
 }
 
@@ -829,97 +808,6 @@ pub struct RatedGrid<V = F32, R = F32> {
 
 /// TODO: documentation with code examples
 impl<V, R> RatedGrid<V, R> {
-    /// Creates a `RatedGrid` whose rates are the information content based on the empirical frequencies.
-    ///
-    /// If the distribution is over floating point values, then you might be better off with
-    /// [`try_from_points`](Self::try_from_points).
-    pub fn from_points<C, I>(points: I) -> Self
-    where
-        R: num_traits::real::Real + 'static,
-        V: Copy + Ord,
-        C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
-        I: IntoIterator,
-        <I as IntoIterator>::Item: Borrow<V>,
-    {
-        Self::try_from_points::<C, _>(points.into_iter().map(|point| *point.borrow()))
-            .unwrap_infallible()
-    }
-
-    /// Fallible variant of [`from_points`](Self::from_points).
-    ///
-    /// This is mostly intended for `RatedGrid`s over floating point values, which have
-    /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted.
-    pub fn try_from_points<C, F>(
-        points: impl IntoIterator<Item = F>,
-    ) -> Result<Self, <V as TryFrom<F>>::Error>
-    where
-        R: num_traits::real::Real + 'static,
-        V: Copy + Ord + TryFrom<F>,
-        C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
-    {
-        let mut map = BTreeMap::new();
-        for point in points {
-            map.entry(V::try_from(point)?)
-                .and_modify(|count| *count = *count + C::one())
-                .or_insert(C::one());
-        }
-
-        Ok(Self::from_points_and_counts(map.into_iter().collect()))
-    }
-
-    pub fn from_points_and_counts<C>(mut points_and_counts: Vec<(V, C)>) -> Self
-    where
-        R: num_traits::real::Real + 'static,
-        V: Copy + Ord,
-        C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
-    {
-        assert!(!points_and_counts.is_empty(), "Empty grid");
-
-        // We sort by counts rather than by log-counts to avoid spurious ties due to rounding
-        // errors. It's also probably faster (but requires an additional conversion below).
-        points_and_counts.sort_unstable_by(|&(point1, count1), &(point2, count2)| {
-            (count2, point1).cmp(&(count1, point2))
-        });
-
-        let mut total = C::zero();
-        for &(_point, count) in &points_and_counts {
-            total = total + count
-        }
-        let total = total.as_();
-
-        // This conversion seems to directly reuse the existing allocation as long as `C` and `F`
-        // have the same memory layout (e.g., if `C=u32` and `F=f32`, or if `C=u64` and `F=f64`).
-        let mut entropy = R::zero();
-        let grid = points_and_counts
-            .into_iter()
-            .map(|(point, count)| {
-                let freq = count.as_() / total;
-                let rate = -freq.log2();
-                entropy = entropy + freq * rate;
-                (point, rate)
-            })
-            .collect::<Vec<_>>();
-
-        Self { grid, entropy }
-    }
-
-    pub fn try_from_points_and_counts<C, F>(
-        points_and_counts: Vec<(F, C)>,
-    ) -> Result<Self, <V as TryFrom<F>>::Error>
-    where
-        R: num_traits::real::Real + 'static,
-        V: Copy + Ord,
-        C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
-        V: TryFrom<F>,
-    {
-        // TODO: check if this allocates (if it does, we might as well accept an iterator instead)
-        let points_and_counts = points_and_counts
-            .into_iter()
-            .map(|(point, count)| Ok((V::try_from(point)?, count)))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self::from_points_and_counts(points_and_counts))
-    }
-
     // pub fn from_points_and_rates<C>(mut points_and_rates: Vec<(V, R)>) -> Self
     // where
     //     R: num_traits::real::Real + Ord + 'static,
@@ -951,6 +839,34 @@ impl<V, R> RatedGrid<V, R> {
     //     Ok(Self::from_points_and_rates::<C>(points_and_rates))
     // }
 
+    /// Shortcut for `<Self as FromPoints<V, C>>::from_points` that makes it easier to
+    /// resolve the type for `C`.
+    pub fn from_points<C, I>(points: I) -> Self
+    where
+        Self: Sized,
+        V: Copy + Ord,
+        C: Copy + Ord + AsPrimitive<R> + num_traits::Num,
+        R: num_traits::real::Real + 'static,
+        I: IntoIterator,
+        <I as IntoIterator>::Item: Borrow<V>,
+    {
+        <Self as FromPoints<V, C>>::from_points(points)
+    }
+
+    /// Shortcut for `<Self as FromPoints<V, C>>::try_from_points` that makes it easier
+    /// to resolve the type for `C`.
+    pub fn try_from_points<F, C>(
+        points: impl IntoIterator<Item = F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        Self: Sized,
+        V: Copy + Ord + TryFrom<F>,
+        C: Copy + Ord + AsPrimitive<R> + num_traits::Num,
+        R: num_traits::real::Real + 'static,
+    {
+        <Self as FromPoints<V, C>>::try_from_points(points)
+    }
+
     /// Returns the grid points and their associated bit rates, sorted decreasingly by rate.
     pub fn points_and_rates(&self) -> &[(V, R)] {
         &self.grid
@@ -969,6 +885,76 @@ impl<V, R> RatedGrid<V, R> {
     }
 }
 
+impl<V, R, C> FromPoints<V, C> for RatedGrid<V, R>
+where
+    Self: Sized,
+    V: Copy + Ord,
+    C: Copy + Ord + AsPrimitive<R> + num_traits::Num,
+    R: num_traits::real::Real + 'static,
+{
+    fn try_from_points<F>(
+        points: impl IntoIterator<Item = F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        V: TryFrom<F>,
+    {
+        let mut map = BTreeMap::new();
+        for point in points {
+            map.entry(V::try_from(point)?)
+                .and_modify(|count| *count = *count + C::one())
+                .or_insert(C::one());
+        }
+
+        Ok(Self::from_points_and_counts(map))
+    }
+
+    fn try_from_points_and_counts<F>(
+        points_and_counts: impl IntoIterator<Item = (F, C)>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        V: TryFrom<F>,
+    {
+        // This does not allocate if `points_and_counts> = Vec<(F, C)>` and
+        // <V as TryFrom<F>>::Error = Infallible.
+        let mut points_and_counts = points_and_counts
+            .into_iter()
+            .map(|(point, count)| Ok((V::try_from(point)?, count)))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        assert!(
+            !points_and_counts.is_empty(),
+            "Cannot construct an empty rated grid."
+        );
+
+        // We sort by counts rather than by log-counts to avoid spurious ties due to rounding
+        // errors. It's also probably faster (but requires an additional conversion below).
+        points_and_counts.sort_unstable_by(|&(point1, count1), &(point2, count2)| {
+            (count2, point1).cmp(&(count1, point2))
+        });
+
+        let mut total = C::zero();
+        for &(_point, count) in &points_and_counts {
+            total = total + count
+        }
+        let total = total.as_();
+
+        // This conversion seems to directly reuse the existing allocation as long as `C` and `F`
+        // have the same memory layout (e.g., if `C=u32` and `F=f32`, or if `C=u64` and `F=f64`).
+        let mut entropy = R::zero();
+        let grid = points_and_counts
+            .into_iter()
+            .map(|(point, count)| {
+                let freq = count.as_() / total;
+                let rate = -freq.log2();
+                entropy = entropy + freq * rate;
+                (point, rate)
+            })
+            .collect::<Vec<_>>();
+
+        Ok(Self { grid, entropy })
+    }
+}
+
 impl<'a, V, C, R> From<&'a EmpiricalDistribution<V, C>> for RatedGrid<V, R>
 where
     R: num_traits::real::Real + 'static,
@@ -976,7 +962,7 @@ where
     C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
 {
     fn from(distribution: &'a EmpiricalDistribution<V, C>) -> Self {
-        RatedGrid::from_points_and_counts(distribution.iter().collect())
+        RatedGrid::from_points_and_counts(distribution.iter())
     }
 }
 
