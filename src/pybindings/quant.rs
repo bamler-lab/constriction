@@ -10,13 +10,19 @@ use ndarray::{ArrayBase, Axis, Dimension, IxDyn};
 use numpy::{PyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
 use pyo3::prelude::*;
 
-use crate::quant::{FromPoints, NotFoundError, QuantizationMethod, UnnormalizedDistribution, Vbq};
+use crate::quant::{
+    FromPoints, NotFoundError, QuantizationMethod, RateDistortionQuantization,
+    UnnormalizedDistribution, Vbq,
+};
 use crate::F32;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<EmpiricalDistribution>()?;
+    module.add_class::<RatedGrid>()?;
     module.add_function(wrap_pyfunction!(vbq, module)?)?;
     module.add_function(wrap_pyfunction!(vbq_, module)?)?;
+    module.add_function(wrap_pyfunction!(rate_distortion_quantization, module)?)?;
+    module.add_function(wrap_pyfunction!(rate_distortion_quantization_, module)?)?;
     Ok(())
 }
 
@@ -125,15 +131,15 @@ enum MaybeMultiplexed<T> {
     Multiple { distributions: Vec<T>, axis: usize },
 }
 
-impl<T> MaybeMultiplexed<T>
-where
-    T: FromPoints<F32, u32> + Send,
-{
+impl<T> MaybeMultiplexed<T> {
     pub fn new(
         points: &PyAny,
         counts: Option<&PyAny>,
         specialize_along_axis: Option<usize>,
-    ) -> PyResult<Self> {
+    ) -> PyResult<Self>
+    where
+        T: FromPoints<F32, u32> + Send,
+    {
         let result = if let Some(counts) = counts {
             if let Some(axis) = specialize_along_axis {
                 let points = points.extract::<&PyList>()?;
@@ -202,6 +208,120 @@ where
         };
 
         Ok(result)
+    }
+
+    fn extract_data<'a, A, I>(
+        &'a self,
+        py: Python<'_>,
+        index: Option<usize>,
+        into_iter: impl Fn(&'a T) -> I + Sync,
+    ) -> PyResult<(PyObject, PyObject)>
+    where
+        T: Send + Sync,
+        A: numpy::Element,
+        I: Iterator<Item = (F32, A)> + 'a,
+    {
+        match (index, self) {
+            (Some(_), MaybeMultiplexed::Single { .. }) => {
+                Err(pyo3::exceptions::PyIndexError::new_err(
+                    "The `index` argument can only be used with an object that \
+                was created with argument `specialize_along_axis`.",
+                ))
+            }
+            (
+                Some(index),
+                MaybeMultiplexed::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
+                let distribution = distributions.get(index).ok_or_else(|| {
+                    pyo3::exceptions::PyIndexError::new_err("`index` out of bounds")
+                })?;
+                let (points, counts): (Vec<_>, Vec<_>) = into_iter(distribution)
+                    .map(|(value, count)| (value.get(), count))
+                    .unzip();
+                let points = PyArray::from_vec(py, points).to_object(py);
+                let counts = PyArray::from_vec(py, counts).to_object(py);
+                Ok((points, counts))
+            }
+            (None, MaybeMultiplexed::Single(distribution)) => {
+                let (points, counts): (Vec<_>, Vec<_>) = into_iter(distribution)
+                    .map(|(value, count)| (value.get(), count))
+                    .unzip();
+                let points = PyArray::from_vec(py, points).to_object(py);
+                let counts = PyArray::from_vec(py, counts).to_object(py);
+                Ok((points, counts))
+            }
+            (
+                None,
+                MaybeMultiplexed::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
+                let vecs = distributions
+                    .par_iter()
+                    .map(|distribution| {
+                        into_iter(distribution)
+                            .map(|(value, count)| (value.get(), count))
+                            .unzip()
+                    })
+                    .collect::<Vec<(Vec<_>, Vec<_>)>>();
+                let (points, counts): (Vec<_>, Vec<_>) = vecs
+                    .into_iter()
+                    .map(|(points, counts)| {
+                        let points = PyArray::from_vec(py, points).to_object(py);
+                        let counts = PyArray::from_vec(py, counts).to_object(py);
+                        (points, counts)
+                    })
+                    .unzip();
+                let points = PyList::new(py, points).to_object(py);
+                let counts = PyList::new(py, counts).to_object(py);
+                Ok((points, counts))
+            }
+        }
+    }
+
+    fn entropy_base2(
+        &self,
+        py: Python<'_>,
+        index: Option<usize>,
+        get_entropy: impl Fn(&T) -> f32,
+    ) -> PyResult<PyObject> {
+        match (index, self) {
+            (Some(_), MaybeMultiplexed::Single { .. }) => {
+                Err(pyo3::exceptions::PyIndexError::new_err(
+                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
+                    was created with argument `specialize_along_axis`.",
+                ))
+            }
+            (
+                Some(index),
+                MaybeMultiplexed::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
+                let distribution = distributions.get(index).ok_or_else(|| {
+                    pyo3::exceptions::PyIndexError::new_err("`index` out of bounds")
+                })?;
+                Ok(get_entropy(distribution).to_object(py))
+            }
+            (None, MaybeMultiplexed::Single(distribution)) => {
+                Ok(get_entropy(distribution).to_object(py))
+            }
+            (
+                None,
+                MaybeMultiplexed::Multiple {
+                    distributions,
+                    axis: _,
+                },
+            ) => {
+                let entropies = distributions.iter().map(get_entropy).collect::<Vec<_>>();
+                Ok(PyArray::from_vec(py, entropies).to_object(py))
+            }
+        }
     }
 }
 
@@ -964,42 +1084,8 @@ impl EmpiricalDistribution {
     /// specialized_distribution.entropy_base2(2) = 1.521928071975708
     /// ```
     pub fn entropy_base2(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
-        match (index, &self.0) {
-            (Some(_), MaybeMultiplexed::Single { .. }) => {
-                Err(pyo3::exceptions::PyIndexError::new_err(
-                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
-                    was created with argument `specialize_along_axis`.",
-                ))
-            }
-            (
-                Some(index),
-                MaybeMultiplexed::Multiple {
-                    distributions,
-                    axis: _,
-                },
-            ) => {
-                let distribution = distributions.get(index).ok_or_else(|| {
-                    pyo3::exceptions::PyIndexError::new_err("`index` out of bounds")
-                })?;
-                Ok(distribution.entropy_base2::<f32>().to_object(py))
-            }
-            (None, MaybeMultiplexed::Single(distribution)) => {
-                Ok(distribution.entropy_base2::<f32>().to_object(py))
-            }
-            (
-                None,
-                MaybeMultiplexed::Multiple {
-                    distributions,
-                    axis: _,
-                },
-            ) => {
-                let entropies = distributions
-                    .iter()
-                    .map(|d| d.entropy_base2::<f32>())
-                    .collect::<Vec<_>>();
-                Ok(PyArray::from_vec(py, entropies).to_object(py))
-            }
-        }
+        self.0
+            .entropy_base2(py, index, |distribution| distribution.entropy_base2())
     }
 
     /// Returns a tuple `(points, counts)`, which are both 1d numpy arrays of equal length, where
@@ -1087,69 +1173,37 @@ impl EmpiricalDistribution {
         py: Python<'_>,
         index: Option<usize>,
     ) -> PyResult<(PyObject, PyObject)> {
-        match (index, &self.0) {
-            (Some(_), MaybeMultiplexed::Single { .. }) => {
-                Err(pyo3::exceptions::PyIndexError::new_err(
-                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
-                    was created with argument `specialize_along_axis`.",
-                ))
+        self.0
+            .extract_data(py, index, move |distribution| distribution.iter())
+    }
+
+    /// Create a `RatedGrid` based on this `EmpiricalDistribution`.
+    ///
+    /// Returns a `RatedGrid` whose grid points are all points represented by this distribution, and
+    /// whose bit rates are the information contents of the empirical frequencies of the points.
+    ///
+    /// You'll usually only want to call this method on an `EmpiricalDistribution` over points that
+    /// were already quantized by some other method. Calling this method on an
+    /// `EmpiricalDistribution` over, `N` *distinct* points (as one would usually obtain for, e.g.,
+    /// unquantized weights of a trained neural network) will result in a `RatedGrid` over all `N`
+    /// grid points, each with bit rate `log_2(N)`, which is hardly useful.
+    pub fn rated_grid(&self) -> RatedGrid {
+        let rated_grid = match &self.0 {
+            MaybeMultiplexed::Single(distribution) => {
+                MaybeMultiplexed::Single(distribution.rated_grid())
             }
-            (
-                Some(index),
-                MaybeMultiplexed::Multiple {
-                    distributions,
-                    axis: _,
-                },
-            ) => {
-                let distribution = distributions.get(index).ok_or_else(|| {
-                    pyo3::exceptions::PyIndexError::new_err("`index` out of bounds")
-                })?;
-                let (points, counts): (Vec<_>, Vec<_>) = distribution
+            MaybeMultiplexed::Multiple {
+                distributions,
+                axis,
+            } => MaybeMultiplexed::Multiple {
+                distributions: distributions
                     .iter()
-                    .map(|(value, count)| (value.get(), count))
-                    .unzip();
-                let points = PyArray::from_vec(py, points).to_object(py);
-                let counts = PyArray::from_vec(py, counts).to_object(py);
-                Ok((points, counts))
-            }
-            (None, MaybeMultiplexed::Single(distribution)) => {
-                let (points, counts): (Vec<_>, Vec<_>) = distribution
-                    .iter()
-                    .map(|(value, count)| (value.get(), count))
-                    .unzip();
-                let points = PyArray::from_vec(py, points).to_object(py);
-                let counts = PyArray::from_vec(py, counts).to_object(py);
-                Ok((points, counts))
-            }
-            (
-                None,
-                MaybeMultiplexed::Multiple {
-                    distributions,
-                    axis: _,
-                },
-            ) => {
-                let vecs = distributions
-                    .par_iter()
-                    .map(|distribution| {
-                        distribution
-                            .iter()
-                            .map(|(value, count)| (value.get(), count))
-                            .unzip()
-                    })
-                    .collect::<Vec<(Vec<_>, Vec<_>)>>();
-                let (points, counts): (Vec<_>, Vec<_>) = vecs
-                    .into_iter()
-                    .map(|(points, counts)| {
-                        let points = PyArray::from_vec(py, points).to_object(py);
-                        let counts = PyArray::from_vec(py, counts).to_object(py);
-                        (points, counts)
-                    })
-                    .unzip();
-                let points = PyList::new(py, points).to_object(py);
-                let counts = PyList::new(py, counts).to_object(py);
-                Ok((points, counts))
-            }
-        }
+                    .map(|distribution| distribution.rated_grid())
+                    .collect(),
+                axis: *axis,
+            },
+        };
+        RatedGrid(rated_grid)
     }
 }
 
@@ -1170,6 +1224,23 @@ impl RatedGrid {
                 specialize_along_axis,
             )?),
         )
+    }
+
+    /// TODO: document
+    pub fn points_and_rates(
+        &self,
+        py: Python<'_>,
+        index: Option<usize>,
+    ) -> PyResult<(PyObject, PyObject)> {
+        self.0.extract_data(py, index, move |grid| {
+            grid.points_and_rates().iter().copied()
+        })
+    }
+
+    /// TODO: document
+    pub fn entropy_base2(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
+        self.0
+            .entropy_base2(py, index, |distribution| distribution.entropy_base2())
     }
 }
 
@@ -1419,12 +1490,11 @@ fn vbq<'p>(
     update_prior: Option<bool>,
     reference: Option<PyReadwriteArrayDyn<'p, f32>>,
 ) -> PyResult<&'p PyArrayDyn<f32>> {
-    let prior = &mut prior.borrow_mut(py).0;
     quantize_out_of_place(
         Vbq,
         py,
         unquantized,
-        prior,
+        &mut prior.borrow_mut(py).0,
         posterior_variance,
         coarseness,
         update_prior,
@@ -1434,6 +1504,91 @@ fn vbq<'p>(
             prior.insert(new, 1);
             Ok(())
         },
+    )
+}
+
+/// In-place variant of `vbq`
+///
+/// This function is equivalent to `vbq`, except that it quantizes in-place. Thus, instead of
+/// returning an array of quantized values, the entries of the argument `unquantized` get
+/// overwritten with their quantized values. This avoids allocating a new array in memory.
+///
+/// The use of a trailing underscore in the function name to indicate in-place operation follows the
+/// convention used by the pytorch machine-learning framework.
+#[pyfunction]
+fn vbq_(
+    py: Python<'_>,
+    unquantized: PyReadwriteArrayDyn<'_, f32>,
+    prior: Py<EmpiricalDistribution>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
+    coarseness: f32,
+    update_prior: Option<bool>,
+    reference: Option<PyReadwriteArrayDyn<'_, f32>>,
+) -> PyResult<()> {
+    quantize_in_place(
+        Vbq,
+        unquantized,
+        &mut prior.borrow_mut(py).0,
+        posterior_variance,
+        coarseness,
+        update_prior,
+        reference,
+        |prior, old, new| {
+            prior.remove(old, 1)?;
+            prior.insert(new, 1);
+            Ok(())
+        },
+    )
+}
+
+/// TODO: document
+#[pyfunction]
+fn rate_distortion_quantization<'p>(
+    py: Python<'p>,
+    unquantized: PyReadonlyArrayDyn<'p, f32>,
+    grid: Py<RatedGrid>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'p>,
+    rate_penalty: f32,
+) -> PyResult<&'p PyArrayDyn<f32>> {
+    quantize_out_of_place(
+        RateDistortionQuantization,
+        py,
+        unquantized,
+        &mut grid.borrow_mut(py).0,
+        posterior_variance,
+        rate_penalty,
+        None,
+        None,
+        |_grid, _old, _new| Ok(()),
+    )
+}
+
+/// In-place variant of `rate_distortion_quantization`
+///
+/// This function is equivalent to `rate_distortion_quantization`, except that it quantizes
+/// in-place. Thus, instead of returning an array of quantized values, the entries of the argument
+/// `unquantized` get overwritten with their quantized values. This avoids allocating a new array in
+/// memory.
+///
+/// The use of a trailing underscore in the function name to indicate in-place operation follows the
+/// convention used by the pytorch machine-learning framework.
+#[pyfunction]
+fn rate_distortion_quantization_(
+    py: Python<'_>,
+    unquantized: PyReadwriteArrayDyn<'_, f32>,
+    grid: Py<RatedGrid>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
+    rate_penalty: f32,
+) -> PyResult<()> {
+    quantize_in_place(
+        RateDistortionQuantization,
+        unquantized,
+        &mut grid.borrow_mut(py).0,
+        posterior_variance,
+        rate_penalty,
+        None,
+        None,
+        |_grid, _old, _new| Ok(()),
     )
 }
 
@@ -1579,7 +1734,7 @@ fn quantize_single<'p, Grid: Send + Sync>(
     Ok(PyArray::from_owned_array(py, quantized))
 }
 
-fn quantize_multiplexed<'p,  Grid: Send + Sync>(
+fn quantize_multiplexed<'p, Grid: Send + Sync>(
     qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
     py: Python<'p>,
     unquantized: PyReadonlyArrayDyn<'p, f32>,
@@ -1864,40 +2019,6 @@ where
     }
 
     Ok(())
-}
-
-/// In-place variant of `vbq`
-///
-/// This function is equivalent to `vbq`, except that it quantizes in-place. Thus, instead of
-/// returning an array of quantized values, the entries of the argument `unquantized` get
-/// overwritten with their quantized values. This avoids allocating a new array in memory.
-///
-/// The use of a trailing underscore in the function name to indicate in-place operation follows the
-/// convention used by the pytorch machine-learning framework.
-#[pyfunction]
-fn vbq_(
-    py: Python<'_>,
-    unquantized: PyReadwriteArrayDyn<'_, f32>,
-    prior: Py<EmpiricalDistribution>,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
-    coarseness: f32,
-    update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'_, f32>>,
-) -> PyResult<()> {
-    quantize_in_place(
-        Vbq,
-        unquantized,
-        &mut prior.borrow_mut(py).0,
-        posterior_variance,
-        coarseness,
-        update_prior,
-        reference,
-        |prior, old, new| {
-            prior.remove(old, 1)?;
-            prior.insert(new, 1);
-            Ok(())
-        },
-    )
 }
 
 fn quantize_in_place<Grid: Send + Sync>(
