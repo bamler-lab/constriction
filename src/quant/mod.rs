@@ -347,7 +347,7 @@ pub trait QuantizationMethod<Grid, V, L> {
     fn quantize(
         &self,
         unquantized: V,
-        grid: Grid,
+        grid: &Grid,
         distortion: impl Fn(V, V) -> L,
         bit_penalty: L,
     ) -> V;
@@ -835,7 +835,7 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RatedGrid<V = F32, R = F32> {
+pub struct RatedGrid<V = F32, R = f32> {
     /// Nonempty Vec of tuples `(grid_point, rate)`, sorted by increasing rate.
     grid: Vec<(V, R)>,
     entropy: R,
@@ -1119,7 +1119,7 @@ impl std::error::Error for NotFoundError {}
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Vbq;
 
-impl<P, L> QuantizationMethod<&P, P::Value, L> for Vbq
+impl<P, L> QuantizationMethod<P, P::Value, L> for Vbq
 where
     P: UnnormalizedInverse,
     P::Count: PartialOrd + Bounded,
@@ -1208,7 +1208,7 @@ where
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RateDistortionQuantization;
 
-impl<V, R> QuantizationMethod<&RatedGrid<V, R>, V, R> for RateDistortionQuantization
+impl<V, R> QuantizationMethod<RatedGrid<V, R>, V, R> for RateDistortionQuantization
 where
     V: Copy + Sub<Output = V>,
     R: Copy + PartialOrd + Zero + Bounded + Mul<Output = R>,

@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use alloc::format;
 use alloc::vec::Vec;
 use core::{borrow::Borrow, convert::Infallible};
@@ -8,7 +10,7 @@ use ndarray::{ArrayBase, Axis, Dimension, IxDyn};
 use numpy::{PyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
 use pyo3::prelude::*;
 
-use crate::quant::{FromPoints, UnnormalizedDistribution};
+use crate::quant::{FromPoints, NotFoundError, QuantizationMethod, UnnormalizedDistribution, Vbq};
 use crate::F32;
 
 pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
@@ -112,6 +114,10 @@ use PyReadonlyF32ArrayOrScalar::*;
 #[pyclass]
 #[derive(Debug)]
 pub struct EmpiricalDistribution(MaybeMultiplexed<crate::quant::EmpiricalDistribution>);
+
+#[pyclass]
+#[derive(Debug)]
+pub struct RatedGrid(MaybeMultiplexed<crate::quant::RatedGrid>);
 
 #[derive(Debug)]
 enum MaybeMultiplexed<T> {
@@ -1147,6 +1153,26 @@ impl EmpiricalDistribution {
     }
 }
 
+#[pymethods]
+impl RatedGrid {
+    #[new]
+    pub fn new(
+        py: Python<'_>,
+        points: &PyAny,
+        counts: Option<&PyAny>,
+        specialize_along_axis: Option<usize>,
+    ) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            Self(MaybeMultiplexed::new(
+                points,
+                counts,
+                specialize_along_axis,
+            )?),
+        )
+    }
+}
+
 /// Quantizes an array of values using [Variational Bayesian Quantization (VBQ)].
 ///
 /// Returns an array of quantized values with the same shape and dtype as the argument
@@ -1383,19 +1409,48 @@ impl EmpiricalDistribution {
 /// [original paper]: http://proceedings.mlr.press/v119/yang20a/yang20a.pdf
 /// [Tan and Bamler, Deploy & Monitor ML Workshop @ NeurIPS 2022]:
 ///   https://raw.githubusercontent.com/dmml-workshop/dmml-neurips-2022/main/accepted-papers/paper_21.pdf
-#[allow(clippy::too_many_arguments)]
 #[pyfunction]
-fn vbq<'a>(
-    py: Python<'a>,
-    unquantized: PyReadonlyArrayDyn<'a, f32>,
+fn vbq<'p>(
+    py: Python<'p>,
+    unquantized: PyReadonlyArrayDyn<'p, f32>,
     prior: Py<EmpiricalDistribution>,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'a>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'p>,
     coarseness: f32,
     update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'a, f32>>,
-) -> PyResult<&'a PyArrayDyn<f32>> {
-    match &mut prior.borrow_mut(py).0 {
-        MaybeMultiplexed::Single(distribution) => vbq_single(
+    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
+) -> PyResult<&'p PyArrayDyn<f32>> {
+    let prior = &mut prior.borrow_mut(py).0;
+    quantize_out_of_place(
+        Vbq,
+        py,
+        unquantized,
+        prior,
+        posterior_variance,
+        coarseness,
+        update_prior,
+        reference,
+        |prior, old, new| {
+            prior.remove(old, 1)?;
+            prior.insert(new, 1);
+            Ok(())
+        },
+    )
+}
+
+fn quantize_out_of_place<'p, Grid: Send + Sync>(
+    qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
+    py: Python<'p>,
+    unquantized: PyReadonlyArrayDyn<'p, f32>,
+    grid: &mut MaybeMultiplexed<Grid>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'p>,
+    coarseness: f32,
+    update_prior: Option<bool>,
+    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
+    grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
+) -> PyResult<&'p PyArrayDyn<f32>> {
+    match grid {
+        MaybeMultiplexed::Single(distribution) => quantize_single(
+            qm,
             py,
             unquantized,
             distribution,
@@ -1403,11 +1458,13 @@ fn vbq<'a>(
             coarseness,
             update_prior,
             reference,
+            grid_update,
         ),
         MaybeMultiplexed::Multiple {
             distributions,
             axis,
-        } => vbq_multiplexed(
+        } => quantize_multiplexed(
+            qm,
             py,
             unquantized,
             distributions,
@@ -1416,19 +1473,22 @@ fn vbq<'a>(
             coarseness,
             update_prior,
             reference,
+            grid_update,
         ),
     }
 }
 
-fn vbq_single<'a>(
-    py: Python<'a>,
-    unquantized: PyReadonlyArrayDyn<'a, f32>,
-    prior: &mut crate::quant::EmpiricalDistribution,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'a>,
+fn quantize_single<'p, Grid: Send + Sync>(
+    qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
+    py: Python<'p>,
+    unquantized: PyReadonlyArrayDyn<'p, f32>,
+    grid: &mut Grid,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
     coarseness: f32,
     update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'a, f32>>,
-) -> PyResult<&'a PyArrayDyn<f32>> {
+    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
+    grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
+) -> PyResult<&'p PyArrayDyn<f32>> {
     let len = unquantized.len();
     let mut quantized: Vec<f32> = Vec::with_capacity(len);
     let unquantized = unquantized.as_array();
@@ -1462,10 +1522,11 @@ fn vbq_single<'a>(
                         let src_dst_penalty = src_and_dst
                             .and(&posterior_variance)
                             .into_par_iter()
-                            .map(|(src, dst, var)| ((src, dst), F32::new(two_coarseness * *var)));
-                        vbq_parallel(
+                            .map(|(src, dst, var)| ((src, dst), two_coarseness * *var));
+                        quantize_parallel(
+                            qm,
                             src_dst_penalty,
-                            prior,
+                            grid,
                             |(src, _dst)| **src,
                             |(_src, dst), value| {
                                 dst.write(value);
@@ -1473,14 +1534,13 @@ fn vbq_single<'a>(
                         )
                     }
                     Scalar(posterior_variance) => {
-                        let bit_penalty = Result::<_, Infallible>::Ok(F32::new(
-                            2.0 * coarseness * posterior_variance,
-                        )?);
+                        let bit_penalty = 2.0 * coarseness * posterior_variance;
                         let src_dst_penalty =
                             src_and_dst.into_par_iter().map(|sd| (sd, bit_penalty));
-                        vbq_parallel(
+                        quantize_parallel(
+                            qm,
                             src_dst_penalty,
-                            prior,
+                            grid,
                             |(src, _dst)| **src,
                             |(_src, dst), value| {
                                 dst.write(value);
@@ -1493,16 +1553,18 @@ fn vbq_single<'a>(
                 // We mutate the prior after each update, and therefore the result depends on the
                 // order in which we iterate over items. Fall back to a sequential implementation
                 // since running VBQ in parallel would make it nondeterministic here.
-                vbq_sequential(
+                quantize_sequential(
+                    qm,
                     unquantized.iter().zip(quantized.iter_mut()),
                     dim,
-                    prior,
+                    grid,
                     posterior_variance,
                     coarseness,
                     reference,
                     |_src, dst, value| {
                         dst.write(value);
                     },
+                    grid_update,
                 )?
             }
         }
@@ -1517,27 +1579,28 @@ fn vbq_single<'a>(
     Ok(PyArray::from_owned_array(py, quantized))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn vbq_multiplexed<'a>(
-    py: Python<'a>,
-    unquantized: PyReadonlyArrayDyn<'a, f32>,
-    priors: &mut [crate::quant::EmpiricalDistribution],
+fn quantize_multiplexed<'p,  Grid: Send + Sync>(
+    qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
+    py: Python<'p>,
+    unquantized: PyReadonlyArrayDyn<'p, f32>,
+    grids: &mut [Grid],
     axis: usize,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'a>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'p>,
     coarseness: f32,
     update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'a, f32>>,
-) -> PyResult<&'a PyArrayDyn<f32>> {
+    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
+    grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
+) -> PyResult<&'p PyArrayDyn<f32>> {
     let len = unquantized.len();
 
     let shape = unquantized.shape();
     let unquantized = unquantized.as_array();
     let unquantized = unquantized.axis_iter(Axis(axis));
-    if unquantized.len() != priors.len() {
+    if unquantized.len() != grids.len() {
         return Err(pyo3::exceptions::PyIndexError::new_err(alloc::format!(
             "Axis {} has wrong dimension: expected {} but found {}.",
             axis,
-            priors.len(),
+            grids.len(),
             unquantized.len()
         )));
     }
@@ -1555,11 +1618,12 @@ fn vbq_multiplexed<'a>(
         let quantized = quantized.axis_iter_mut(Axis(axis));
         let quantized = quantized.into_par_iter();
 
-        vbq_multiplexed_generic(
+        quantize_multiplexed_generic(
+            qm,
             shape,
             unquantized,
             quantized,
-            priors,
+            grids,
             axis,
             posterior_variance,
             coarseness,
@@ -1568,6 +1632,7 @@ fn vbq_multiplexed<'a>(
             },
             update_prior,
             reference,
+            grid_update,
         )?;
     }
     unsafe {
@@ -1580,35 +1645,37 @@ fn vbq_multiplexed<'a>(
     Ok(PyArray::from_owned_array(py, quantized))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn vbq_multiplexed_inplace<'a>(
-    mut unquantized: PyReadwriteArrayDyn<'a, f32>,
-    priors: &mut [crate::quant::EmpiricalDistribution],
+fn quantize_multiplexed_inplace<Grid: Send + Sync>(
+    qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
+    mut unquantized: PyReadwriteArrayDyn<'_, f32>,
+    grids: &mut [Grid],
     axis: usize,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'a>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
     coarseness: f32,
     update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'a, f32>>,
+    reference: Option<PyReadwriteArrayDyn<'_, f32>>,
+    grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
 ) -> PyResult<()> {
     let shape = unquantized.shape().to_vec();
     let mut unquantized = unquantized.as_array_mut();
     let unquantized = unquantized.axis_iter_mut(Axis(axis));
-    if unquantized.len() != priors.len() {
+    if unquantized.len() != grids.len() {
         return Err(pyo3::exceptions::PyIndexError::new_err(alloc::format!(
             "Axis {} has wrong dimension: expected {} but found {}.",
             axis,
-            priors.len(),
+            grids.len(),
             unquantized.len()
         )));
     }
 
     let unquantized = unquantized.into_par_iter();
 
-    vbq_multiplexed_generic(
+    quantize_multiplexed_generic(
+        qm,
         &shape,
         unquantized,
-        rayon::iter::repeat(core::iter::repeat(())).take(priors.len()),
-        priors,
+        rayon::iter::repeat(core::iter::repeat(())).take(grids.len()),
+        grids,
         axis,
         posterior_variance,
         coarseness,
@@ -1617,23 +1684,25 @@ fn vbq_multiplexed_inplace<'a>(
         },
         update_prior,
         reference,
+        grid_update,
     )?;
 
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn vbq_multiplexed_generic<'a, I1, I2, U, Src, Dst>(
+fn quantize_multiplexed_generic<Grid: Send + Sync, I1, I2, U, Src, Dst>(
+    qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
     shape: &[usize],
     unquantized: I1,
     quantized: I2,
-    priors: &mut [crate::quant::EmpiricalDistribution],
+    grids: &mut [Grid],
     axis: usize,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'a>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
     coarseness: f32,
     update: U,
     update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'a, f32>>,
+    reference: Option<PyReadwriteArrayDyn<'_, f32>>,
+    grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
 ) -> PyResult<()>
 where
     I1: IndexedParallelIterator,
@@ -1643,16 +1712,17 @@ where
     Src: Borrow<f32>,
     U: Fn(Src, Dst, f32) + Send + Sync,
 {
-    fn inner<I1, I2, I3, R, E, U1, U2, Src, Dst>(
+    fn inner<Grid: Send + Sync, I1, I2, I3, R, E, U1, U2, Src, Dst>(
+        qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
         shape: &[usize],
         unquantized: I1,
         quantized: I2,
-        priors: &mut [crate::quant::EmpiricalDistribution],
+        grids: &mut [Grid],
         axis: usize,
         posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
         coarseness: f32,
         update: U1,
-        update_prior: U2,
+        grid_update: U2,
         reference: I3,
     ) -> PyResult<()>
     where
@@ -1664,9 +1734,7 @@ where
         <I3 as ParallelIterator>::Item: IntoIterator<Item = R>,
         Src: Borrow<f32>,
         U1: Fn(Src, Dst, f32) + Send + Sync,
-        U2: Fn(&mut crate::quant::EmpiricalDistribution, F32, F32, R) -> Result<(), E>
-            + Send
-            + Sync,
+        U2: Fn(&mut Grid, F32, F32, R) -> Result<(), E> + Send + Sync,
         E: Send + Sync,
         PyErr: From<E>,
     {
@@ -1683,36 +1751,42 @@ where
                 unquantized
                     .zip(quantized)
                     .zip(posterior_variance.axis_iter(Axis(axis)))
-                    .zip(priors)
+                    .zip(grids)
                     .zip(reference)
-                    .try_for_each(|((((src, dst), var), prior), reference)| {
+                    .try_for_each(|((((src, dst), var), grid), reference)| {
                         for (((src, dst), &var), reference) in
                             src.into_iter().zip(dst).zip(&var).zip(reference)
                         {
                             let old = F32::new(*src.borrow())?;
-                            let new = prior.vbq(
+                            let new = qm.quantize(
                                 old,
-                                |x, y| (x - y) * (x - y),
-                                F32::new(two_coarseness * var)?,
+                                grid,
+                                |x, y| ((x - y) * (x - y)).get(),
+                                two_coarseness * var,
                             );
                             update(src, dst, new.get());
-                            update_prior(prior, old, new, reference)?;
+                            grid_update(grid, old, new, reference)?;
                         }
                         Ok::<(), PyErr>(())
                     })?;
             }
             Scalar(posterior_variance) => {
-                let bit_penalty = F32::new(2.0 * coarseness * posterior_variance)?;
+                let bit_penalty = 2.0 * coarseness * posterior_variance;
                 unquantized
                     .zip(quantized)
-                    .zip(priors)
+                    .zip(grids)
                     .zip(reference)
-                    .try_for_each(|(((src, dst), prior), reference)| {
+                    .try_for_each(|(((src, dst), grid), reference)| {
                         for ((src, dst), reference) in src.into_iter().zip(dst).zip(reference) {
                             let old = F32::new(*src.borrow())?;
-                            let new = prior.vbq(old, |x, y| (x - y) * (x - y), bit_penalty);
+                            let new = qm.quantize(
+                                old,
+                                grid,
+                                |x, y| ((x - y) * (x - y)).get(),
+                                bit_penalty,
+                            );
                             update(src, dst, new.get());
-                            update_prior(prior, old, new, reference)?
+                            grid_update(grid, old, new, reference)?
                         }
                         Ok::<(), PyErr>(())
                     })?;
@@ -1731,35 +1805,33 @@ where
         (None | Some(false), None) => {
             // The caller set `update_prior=False` (either implicitly or explicitly).
             inner(
+                qm,
                 shape,
                 unquantized,
                 quantized,
-                priors,
+                grids,
                 axis,
                 posterior_variance,
                 coarseness,
                 update,
                 |_prior, _old, _new, _reference| Ok::<(), Infallible>(()),
-                rayon::iter::repeat(core::iter::repeat(())).take(priors.len()),
+                rayon::iter::repeat(core::iter::repeat(())).take(grids.len()),
             )?;
         }
         (Some(true), None) => {
-            // The caller set `update_prior=False` without providing a reference
+            // The caller set `update_prior=True` without providing a reference
             inner(
+                qm,
                 shape,
                 unquantized,
                 quantized,
-                priors,
+                grids,
                 axis,
                 posterior_variance,
                 coarseness,
                 update,
-                |prior, old, new, _reference| {
-                    prior.remove(old, 1)?;
-                    prior.insert(new, 1);
-                    Ok::<(), PyErr>(())
-                },
-                rayon::iter::repeat(core::iter::repeat(())).take(priors.len()),
+                move |grid, old, new, _reference| grid_update(grid, old, new),
+                rayon::iter::repeat(core::iter::repeat(())).take(grids.len()),
             )?;
         }
         (None | Some(true), Some(mut reference)) => {
@@ -1772,17 +1844,17 @@ where
             let mut reference = reference.as_array_mut();
 
             inner(
+                qm,
                 shape,
                 unquantized,
                 quantized,
-                priors,
+                grids,
                 axis,
                 posterior_variance,
                 coarseness,
                 update,
-                |prior, _old, new, reference| {
-                    prior.remove(F32::new(*reference)?, 1)?;
-                    prior.insert(new, 1);
+                |grid, _old, new, reference| {
+                    grid_update(grid, F32::new(*reference)?, new)?;
                     *reference = new.get();
                     Ok::<(), PyErr>(())
                 },
@@ -1802,7 +1874,6 @@ where
 ///
 /// The use of a trailing underscore in the function name to indicate in-place operation follows the
 /// convention used by the pytorch machine-learning framework.
-#[allow(clippy::too_many_arguments)]
 #[pyfunction]
 fn vbq_(
     py: Python<'_>,
@@ -1813,19 +1884,48 @@ fn vbq_(
     update_prior: Option<bool>,
     reference: Option<PyReadwriteArrayDyn<'_, f32>>,
 ) -> PyResult<()> {
-    match &mut prior.borrow_mut(py).0 {
-        MaybeMultiplexed::Single(distribution) => vbq_single_inplace(
+    quantize_in_place(
+        Vbq,
+        unquantized,
+        &mut prior.borrow_mut(py).0,
+        posterior_variance,
+        coarseness,
+        update_prior,
+        reference,
+        |prior, old, new| {
+            prior.remove(old, 1)?;
+            prior.insert(new, 1);
+            Ok(())
+        },
+    )
+}
+
+fn quantize_in_place<Grid: Send + Sync>(
+    qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
+    unquantized: PyReadwriteArrayDyn<'_, f32>,
+    grid: &mut MaybeMultiplexed<Grid>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
+    coarseness: f32,
+    update_prior: Option<bool>,
+    reference: Option<PyReadwriteArrayDyn<'_, f32>>,
+    grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
+) -> PyResult<()> {
+    match grid {
+        MaybeMultiplexed::Single(distribution) => quantize_single_inplace(
+            qm,
             unquantized,
             distribution,
             posterior_variance,
             coarseness,
             update_prior,
             reference,
+            grid_update,
         ),
         MaybeMultiplexed::Multiple {
             distributions,
             axis,
-        } => vbq_multiplexed_inplace(
+        } => quantize_multiplexed_inplace(
+            qm,
             unquantized,
             distributions,
             *axis,
@@ -1833,17 +1933,20 @@ fn vbq_(
             coarseness,
             update_prior,
             reference,
+            grid_update,
         ),
     }
 }
 
-fn vbq_single_inplace(
+fn quantize_single_inplace<Grid: Send + Sync>(
+    qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
     mut unquantized: PyReadwriteArrayDyn<'_, f32>,
-    prior: &mut crate::quant::EmpiricalDistribution,
+    grid: &mut Grid,
     posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
     coarseness: f32,
     update_prior: Option<bool>,
     reference: Option<PyReadwriteArrayDyn<'_, f32>>,
+    grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
 ) -> PyResult<()> {
     let mut unquantized = unquantized.as_array_mut();
     let dim: ndarray::prelude::Dim<ndarray::IxDynImpl> = unquantized.raw_dim();
@@ -1867,17 +1970,22 @@ fn vbq_single_inplace(
                     let src_dst_penalty = src_and_dst
                         .and(&posterior_variance)
                         .into_par_iter()
-                        .map(|(sd, var)| (sd, F32::new(two_coarseness * *var)));
-                    vbq_parallel(src_dst_penalty, prior, |sd| **sd, |sd, value| *sd = value)
+                        .map(|(sd, var)| (sd, two_coarseness * *var));
+                    quantize_parallel(
+                        qm,
+                        src_dst_penalty,
+                        grid,
+                        |sd| **sd,
+                        |sd, value| *sd = value,
+                    )
                 }
                 Scalar(posterior_variance) => {
-                    let bit_penalty = Result::<_, Infallible>::Ok(F32::new(
-                        2.0 * coarseness * posterior_variance,
-                    )?);
+                    let bit_penalty = 2.0 * coarseness * posterior_variance;
                     let src_dst_penalty = src_and_dst.into_par_iter().map(|sd| (sd, bit_penalty));
-                    vbq_parallel(
+                    quantize_parallel(
+                        qm,
                         src_dst_penalty,
-                        prior,
+                        grid,
                         |(sd,)| **sd,
                         |(sd,), value| *sd = value,
                     )
@@ -1888,28 +1996,31 @@ fn vbq_single_inplace(
             // We mutate the prior after each update, and therefore the result depends on the
             // order in which we iterate over items. Fall back to a sequential implementation
             // since running VBQ in parallel would make it nondeterministic here.
-            vbq_sequential(
+            quantize_sequential(
+                qm,
                 unquantized.iter_mut().map(|src| (src, ())),
                 dim,
-                prior,
+                grid,
                 posterior_variance,
                 coarseness,
                 reference,
                 |src, _dst, value| *src = value,
+                grid_update,
             )
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn vbq_sequential<Src, Dst>(
+fn quantize_sequential<Grid: Send + Sync, Src, Dst>(
+    qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
     src_and_dst: impl ExactSizeIterator<Item = (Src, Dst)>,
     dim: IxDyn,
-    prior: &mut crate::quant::EmpiricalDistribution,
+    grid: &mut Grid,
     posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
     coarseness: f32,
     reference: Option<PyReadwriteArrayDyn<'_, f32>>,
     update: impl FnMut(Src, Dst, f32),
+    grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
 ) -> PyResult<()>
 where
     Src: Borrow<f32>,
@@ -1923,32 +2034,42 @@ where
             }
             let two_coarseness = 2.0 * coarseness;
             let bit_penalty = posterior_variance.as_array();
-            let bit_penalty = bit_penalty.iter().map(|&x| F32::new(two_coarseness * x));
-            internal(src_and_dst.zip(bit_penalty), dim, prior, reference, update)
-        }
-        Scalar(posterior_variance) => {
-            let bit_penalty =
-                Result::<_, Infallible>::Ok(F32::new(2.0 * coarseness * posterior_variance)?);
+            let bit_penalty = bit_penalty.iter().map(|&x| two_coarseness * x);
             internal(
-                src_and_dst.map(|(src, dst)| ((src, dst), bit_penalty)),
+                qm,
+                src_and_dst.zip(bit_penalty),
                 dim,
-                prior,
+                grid,
                 reference,
                 update,
+                grid_update,
+            )
+        }
+        Scalar(posterior_variance) => {
+            let bit_penalty = 2.0 * coarseness * posterior_variance;
+            internal(
+                qm,
+                src_and_dst.map(|(src, dst)| ((src, dst), bit_penalty)),
+                dim,
+                grid,
+                reference,
+                update,
+                grid_update,
             )
         }
     };
 
-    fn internal<Src, Dst, E>(
-        src_dst_penalty: impl ExactSizeIterator<Item = ((Src, Dst), Result<F32, E>)>,
+    fn internal<Grid: Send + Sync, Src, Dst>(
+        qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
+        src_dst_penalty: impl ExactSizeIterator<Item = ((Src, Dst), f32)>,
         dim: IxDyn,
-        prior: &mut crate::quant::EmpiricalDistribution,
+        grid: &mut Grid,
         reference: Option<PyReadwriteArrayDyn<'_, f32>>,
         mut update: impl FnMut(Src, Dst, f32),
+        grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
     ) -> PyResult<()>
     where
         Src: Borrow<f32>,
-        PyErr: From<E>,
     {
         if let Some(mut reference) = reference {
             if reference.dims() != dim {
@@ -1962,19 +2083,27 @@ where
             for (((src, dst), bit_penalty), reference) in src_dst_penalty.zip(&mut reference) {
                 let unquantized = F32::new(*src.borrow())?;
                 let reference_val = F32::new(*reference)?;
-                let quantized = prior.vbq(unquantized, |x, y| (x - y) * (x - y), bit_penalty?);
-                prior.remove(reference_val, 1)?;
-                prior.insert(quantized, 1);
+                let quantized = qm.quantize(
+                    unquantized,
+                    grid,
+                    |x, y| ((x - y) * (x - y)).get(),
+                    bit_penalty,
+                );
+                grid_update(grid, reference_val, quantized)?;
                 update(src, dst, quantized.get());
                 *reference = quantized.get();
             }
         } else {
             for ((src, dst), bit_penalty) in src_dst_penalty {
                 let unquantized = F32::new(*src.borrow())?;
-                let quantized = prior.vbq(unquantized, |x, y| (x - y) * (x - y), bit_penalty?);
+                let quantized = qm.quantize(
+                    unquantized,
+                    grid,
+                    |x, y| ((x - y) * (x - y)).get(),
+                    bit_penalty,
+                );
+                grid_update(grid, unquantized, quantized)?;
                 update(src, dst, quantized.get());
-                prior.remove(unquantized, 1)?;
-                prior.insert(quantized, 1);
             }
         }
 
@@ -1982,19 +2111,24 @@ where
     }
 }
 
-fn vbq_parallel<SrcAndDst, E>(
-    src_dst_penalty: impl ParallelIterator<Item = (SrcAndDst, Result<F32, E>)>,
-    prior: &mut crate::quant::EmpiricalDistribution,
+fn quantize_parallel<SrcAndDst, Grid: Send + Sync>(
+    qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
+    src_dst_penalty: impl ParallelIterator<Item = (SrcAndDst, f32)>,
+    grid: &mut Grid,
     extract: impl Fn(&SrcAndDst) -> f32 + Sync + Send,
     update: impl Fn(SrcAndDst, f32) + Sync + Send,
 ) -> PyResult<()>
 where
     SrcAndDst: Send + Sync,
-    PyErr: From<E>,
 {
     src_dst_penalty.try_for_each(move |(sd, bit_penalty)| {
         let unquantized = F32::new(extract(&sd))?;
-        let quantized = prior.vbq(unquantized, |x, y| (x - y) * (x - y), bit_penalty?);
+        let quantized = qm.quantize(
+            unquantized,
+            grid,
+            |x, y| ((x - y) * (x - y)).get(),
+            bit_penalty,
+        );
         update(sd, quantized.get());
         PyResult::Ok(())
     })
