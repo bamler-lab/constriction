@@ -580,7 +580,7 @@ pub struct EmpiricalDistribution<V = F32, C = u32, const CAP: usize = 64>(
     AugmentedBTree<V, CountWrapper<C>, CAP>,
 );
 
-impl<V, C> EmpiricalDistribution<V, C>
+impl<V, C, const CAP: usize> EmpiricalDistribution<V, C, CAP>
 where
     V: Copy + Ord,
     C: Copy + Ord + num_traits::Num,
@@ -736,7 +736,7 @@ where
     }
 }
 
-impl<V, C> FromPoints<V, C> for EmpiricalDistribution<V, C>
+impl<V, C, const CAP: usize> FromPoints<V, C> for EmpiricalDistribution<V, C, CAP>
 where
     Self: Default,
     V: Copy + Ord,
@@ -769,7 +769,7 @@ where
     }
 }
 
-impl<V, C> ToPointsAndCounts<V, C> for EmpiricalDistribution<V, C>
+impl<V, C, const CAP: usize> ToPointsAndCounts<V, C> for EmpiricalDistribution<V, C, CAP>
 where
     V: Copy + Ord,
     C: Copy + Ord + num_traits::Num,
@@ -779,7 +779,7 @@ where
     }
 }
 
-impl<V, C> UnnormalizedDistribution for EmpiricalDistribution<V, C>
+impl<V, C, const CAP: usize> UnnormalizedDistribution for EmpiricalDistribution<V, C, CAP>
 where
     V: Copy + Ord,
     C: Copy + Ord + num_traits::Num + 'static,
@@ -798,7 +798,7 @@ where
     }
 }
 
-impl<V, C> UnnormalizedInverse for EmpiricalDistribution<V, C>
+impl<V, C, const CAP: usize> UnnormalizedInverse for EmpiricalDistribution<V, C, CAP>
 where
     V: Copy + Ord,
     C: Copy + Ord + num_traits::Num + 'static,
@@ -810,7 +810,7 @@ where
     }
 }
 
-impl<V: Display, C: Display + Debug> Debug for EmpiricalDistribution<V, C> {
+impl<V: Display, C: Display + Debug, const CAP: usize> Debug for EmpiricalDistribution<V, C, CAP> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("DynamicEmpiricalDistribution")
             .field(&self.0)
@@ -818,13 +818,13 @@ impl<V: Display, C: Display + Debug> Debug for EmpiricalDistribution<V, C> {
     }
 }
 
-impl<V: Copy, C: Copy> Clone for EmpiricalDistribution<V, C> {
+impl<V: Copy, C: Copy, const CAP: usize> Clone for EmpiricalDistribution<V, C, CAP> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
-impl<V: Copy, C: Copy> Default for EmpiricalDistribution<V, C>
+impl<V: Copy, C: Copy, const CAP: usize> Default for EmpiricalDistribution<V, C, CAP>
 where
     V: Copy + Ord,
     C: Ord + Copy + num_traits::Num,
@@ -1023,13 +1023,13 @@ where
     }
 }
 
-impl<'a, V, C, R> From<&'a EmpiricalDistribution<V, C>> for RatedGrid<V, R>
+impl<'a, V, C, R, const CAP: usize> From<&'a EmpiricalDistribution<V, C, CAP>> for RatedGrid<V, R>
 where
     R: num_traits::real::Real + 'static,
     V: Copy + Ord,
     C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
 {
-    fn from(distribution: &'a EmpiricalDistribution<V, C>) -> Self {
+    fn from(distribution: &'a EmpiricalDistribution<V, C, CAP>) -> Self {
         RatedGrid::from_points_and_counts(distribution.iter())
     }
 }
