@@ -1428,11 +1428,11 @@ impl RatedGrid {
 /// For each entry in the argument `unquantized`, VBQ returns a point `quantized` by minimizing the
 /// following objective function:
 ///
-/// `loss(quantized) = distortion(quantized - unquantized) + coarseness * rate_estimate(quantized)`
+/// `loss(quantized) = distortion(quantized, unquantized) + coarseness * rate_estimate(quantized)`
 ///
 /// where the Python API is currently restricted to a quadratic distortion,
 ///
-/// `distortion(quantized - unquantized) = (quantized - unquantized)**2 / (2 * posterior_variance)`.
+/// `distortion(quantized, unquantized) = (quantized - unquantized)**2 / (2 * posterior_variance)`.
 ///
 /// Future versions of `constriction` might provide support for more general distortion metrics
 /// (the Rust API of constriction [already does](
@@ -1719,13 +1719,13 @@ fn vbq_(
 ///
 /// For each point, the quantization method minimizes the following objective:
 ///
-/// `loss(quantized) = distortion(quantized - unquantized) + rate_penalty * rate(quantized)`
+/// `loss(quantized) = distortion(quantized, unquantized) + rate_penalty * rate(quantized)`
 ///
 /// where `rate(quantized)` is the rate that the `RatedGrid` associates with the grid point
 /// `quantized`, and the minimization runs over all grid points `quantized`. The Python API is
 /// currently restricted to a quadratic distortion,
 ///
-/// `distortion(quantized - unquantized) = (quantized - unquantized)**2 / (2 * posterior_variance)`.
+/// `distortion(quantized, unquantized) = (quantized - unquantized)**2 / (2 * posterior_variance)`.
 ///
 /// Future versions of `constriction` might provide support for more general distortion metrics
 /// (the Rust API of constriction [already does](
