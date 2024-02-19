@@ -33,9 +33,9 @@ pub enum PyReadonlyF32ArrayOrScalar<'py> {
 }
 use PyReadonlyF32ArrayOrScalar::*;
 
-/// Dynamic data structure for frequencies of values within one or numpy arrays.
+/// Dynamic data structure for frequencies of values within one or more numpy arrays.
 ///
-/// An `EmpiricalDistribution` counts how many times each value appears within within one or numpy
+/// An `EmpiricalDistribution` counts how many times each value appears within one or more numpy
 /// arrays. `EmpiricalDistribution` is a dynamic data structure, i.e., it provides methods to
 /// efficiently [`remove`](#constriction.quant.EmpiricalDistribution.remove) and
 /// [`update`](#constriction.quant.EmpiricalDistribution.update) existing points, and to
@@ -49,7 +49,7 @@ use PyReadonlyF32ArrayOrScalar::*;
 /// If `counts` is provided, then `points` and `counts` must be in exactly the format that is
 /// returned by the method
 /// [`points_and_counts`](#constriction.quant.EmpiricalDistribution.points_and_counts) (except that
-/// `points` don't need to be sorted). Thus, `points` must have `dtype=np.uint32`, and `points` and
+/// `points` don't need to be sorted). Thus, `counts` must have `dtype=np.uint32`, and `points` and
 /// `counts` must either be equally sized rank-1 numpy arrays (if `specialize_along_axis` is not
 /// set) or equal length lists of rank-1 numpy arrays where corresponding entries match (if
 /// `specialize_along_axis` is set). See example in the documentation of
@@ -95,8 +95,7 @@ use PyReadonlyF32ArrayOrScalar::*;
 /// distribution for each row (axis zero) of the matrix.
 ///
 /// ```python
-/// distribution = constriction.quant.EmpiricalDistribution(
-///     matrix, specialize_along_axis=0)
+/// distribution = constriction.quant.EmpiricalDistribution(matrix, specialize_along_axis=0)
 /// entropies = distribution.entropy_base2()
 /// points, counts = distribution.points_and_counts()
 /// for i, (entropy, points, counts) in enumerate(zip(entropies, points, counts)):
@@ -121,6 +120,88 @@ use PyReadonlyF32ArrayOrScalar::*;
 #[derive(Debug)]
 pub struct EmpiricalDistribution(MaybeMultiplexed<crate::quant::EmpiricalDistribution>);
 
+/// A finite grid of (not necessarily one-dimensional) points, each weighted with a "bit rate".
+///
+/// The "rate" for each grid point `x` is calculated from the information content `-log_2(f(x))`
+/// of the empirical frequency `f(x)` of point `x` in either some pre-quantized numpy array of
+/// points or in an `EmpiricalDistribution` (see
+/// [`EmpiricalDistribution.rated_grid`](#constriction.quant.EmpiricalDistribution.rated_grid)).
+///
+/// The constructor initializes the grid from the provided numpy array `points`. If
+/// `specialize_along_axis` is set to an integer, then the constructor creates a individual grid
+/// with individual weights for each slice of `points` along the specified axis by an individual distribution, see Example 2 below.
+///
+/// The optional argument `counts` can be used to provide a multiplicity for each inserted point.
+/// If `counts` is provided, then `points` and `counts` must be in exactly the format that is
+/// returned by the method
+/// [`EmpiricalDistribution.points_and_counts`](#constriction.quant.EmpiricalDistribution.points_and_counts)
+/// (except that `points` don't need to be sorted). Thus, `counts` must have `dtype=np.uint32`, and
+/// `points` and `counts` must either be equally sized rank-1 numpy arrays (if
+/// `specialize_along_axis` is not set) or equal length lists of rank-1 numpy arrays where
+/// corresponding entries match (if `specialize_along_axis` is set).
+///
+/// ## Example 1: Global Grid
+///
+/// Without setting `specialize_along_axis`, we obtain a weighted grid that contains all values that
+/// occur in the provided array:
+///
+/// ```python
+/// rng = np.random.default_rng(123)
+/// matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+/// print(f"matrix = {matrix}\n")
+///
+/// grid = constriction.quant.RatedGrid(matrix)
+/// points, rates = grid.points_and_rates()
+/// print(f"Grid points and their respective rates, sorted by increasing rate:")
+/// print("\n".join(f"({point}, {rate})" for point, rate in zip(points, rates)))
+/// print(f"Entropy per item: {grid.entropy_base2()} bit")
+/// ```
+///
+/// This prints:
+///
+/// ```text
+/// matrix = [[4. 1. 2. 2. 2.]
+///  [4. 5. 2. 4. 5.]
+///  [3. 2. 4. 2. 4.]
+///  [3. 5. 2. 4. 3.]]
+///
+/// Grid points and their respective rates, sorted by increasing rate:
+/// (2.0, 1.5145732164382935)
+/// (4.0, 1.736965537071228)
+/// (3.0, 2.7369654178619385)
+/// (5.0, 2.7369654178619385)
+/// (1.0, 4.321928024291992)
+/// Entropy per item: 2.088376522064209 bit
+/// ```
+///
+/// ## Example 2: Specialization Along an Axis
+///
+/// The example below uses the same matrix as Example 1 above, but constructs the
+/// `EmpiricalDistribution` with argument `specialize_along_axis=0`. This creates a separate
+/// distribution for each row (axis zero) of the matrix.
+///
+/// ```python
+/// grid = constriction.quant.RatedGrid(matrix, specialize_along_axis=0)
+/// points, rates = grid.points_and_rates()
+/// entropies = grid.entropy_base2()
+/// print(f"Grid points and their respective rates for each row, each sorted by increasing rate:")
+/// for i, (entropy, points, rates) in enumerate(zip(entropies, points, rates)):
+///     summary = ", ".join(f"({p}, {r:.3f})" for (p, r) in zip(points, rates))
+///     print(f"Row {i} (entropy {entropy:.3f}): {summary}.")
+/// ```
+///
+/// This prints:
+///
+/// ```text
+/// Grid points and their respective rates for each row, each sorted by increasing rate:
+/// Row 0 (entropy 1.371): (2.0, 0.737), (1.0, 2.322), (4.0, 2.322).
+/// Row 1 (entropy 1.522): (4.0, 1.322), (5.0, 1.322), (2.0, 2.322).
+/// Row 2 (entropy 1.522): (2.0, 1.322), (4.0, 1.322), (3.0, 2.322).
+/// Row 3 (entropy 1.922): (3.0, 1.322), (2.0, 2.322), (4.0, 2.322), (5.0, 2.322).
+/// ```
+///
+/// Note that the mean entropy per entry is lower (or equal) if we model each row individually. This
+/// is true in general.
 #[pyclass]
 #[derive(Debug)]
 pub struct RatedGrid(MaybeMultiplexed<crate::quant::RatedGrid>);
@@ -1063,8 +1144,7 @@ impl EmpiricalDistribution {
     /// print(f"matrix = {matrix}\n")
     ///
     /// marginal_distribution = constriction.quant.EmpiricalDistribution(matrix)
-    /// specialized_distribution = constriction.quant.EmpiricalDistribution(
-    ///     matrix, specialize_along_axis=0)
+    /// specialized_distribution = constriction.quant.EmpiricalDistribution(matrix, specialize_along_axis=0)
     ///
     /// print(f"marginal_distribution.entropy_base2() = {marginal_distribution.entropy_base2()}")
     /// print(f"specialized_distribution.entropy_base2() = {specialized_distribution.entropy_base2()}")
@@ -1154,7 +1234,7 @@ impl EmpiricalDistribution {
     ///
     /// reconstructed_distribution = constriction.quant.EmpiricalDistribution(
     ///     points, counts=counts, specialize_along_axis=0)
-    /// print(f"reconstructed_distribution = {reconstructed_distribution.entropy_base2()}")    /// ```
+    /// print(f"reconstructed_distribution = {reconstructed_distribution.entropy_base2()}")
     /// ```
     ///
     /// This prints:
@@ -1226,7 +1306,101 @@ impl RatedGrid {
         )
     }
 
-    /// TODO: document
+    /// Returns the Shannon entropy per entry, to base 2.
+    ///
+    /// If the `RatedGrid` was constructed with argument `specialize_along_axis` set,
+    /// then this method returns the entropy of the slice specified by `index` (if provided), or a
+    /// list of entropies for each slice (if no `index` is provided).
+    ///
+    /// ## Example
+    ///
+    /// ```python
+    /// rng = np.random.default_rng(123)
+    /// matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+    /// print(f"matrix = {matrix}\n")
+    ///
+    /// marginal_grid = constriction.quant.RatedGrid(matrix)
+    /// specialized_grid = constriction.quant.RatedGrid(matrix, specialize_along_axis=0)
+    ///
+    /// print(f"marginal_grid.entropy_base2() = {marginal_grid.entropy_base2()}")
+    /// print(f"specialized_grid.entropy_base2() = {specialized_grid.entropy_base2()}")
+    /// print(f"specialized_grid.entropy_base2(2) = {specialized_grid.entropy_base2(2)}")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// matrix = [[4. 1. 2. 2. 2.]
+    ///  [4. 5. 2. 4. 5.]
+    ///  [3. 2. 4. 2. 4.]
+    ///  [3. 5. 2. 4. 3.]]
+    ///
+    /// marginal_grid.entropy_base2() = 2.088376522064209
+    /// specialized_grid.entropy_base2() = [1.3709505 1.5219281 1.5219281 1.921928 ]
+    /// specialized_grid.entropy_base2(2) = 1.521928071975708
+    /// ```
+    pub fn entropy_base2(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
+        self.0.entropy_base2(py, index, |grid| grid.entropy_base2())
+    }
+
+    /// Returns a tuple `(points, rates)`, which are both 1d numpy arrays of equal length, where
+    /// `points` contains a sorted list of all grid points, and `rates` contains their respective
+    /// rates.
+    ///
+    /// If the `RatedGrid` was constructed with argument `specialize_along_axis` set, then
+    /// `points_and_rates` returns the points and rates for the slice specified by `index` (if
+    /// provided), or a list of tuples `(points, rates)`, with one tuple per slice.
+    ///
+    /// ## Example 1: Without `specialize_along_axis`
+    ///
+    /// ```python
+    /// rng = np.random.default_rng(123)
+    /// matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+    /// print(f"matrix = {matrix}\n")
+    ///
+    /// grid = constriction.quant.RatedGrid(matrix)
+    /// print(f"entropy = {grid.entropy_base2()}")
+    /// points, rates = grid.points_and_rates()
+    /// print(f"points = {points}")
+    /// print(f"rates = {rates}")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// matrix = [[4. 1. 2. 2. 2.]
+    ///  [4. 5. 2. 4. 5.]
+    ///  [3. 2. 4. 2. 4.]
+    ///  [3. 5. 2. 4. 3.]]
+    ///
+    /// entropy = 2.088376522064209
+    /// points = [2. 4. 3. 5. 1.]
+    /// rates = [1.5145732 1.7369655 2.7369654 2.7369654 4.321928 ]
+    /// ```
+    ///
+    /// ## Example 2: With `specialize_along_axis`
+    ///
+    /// The following example uses the same `matrix` as Example 1 above:
+    ///
+    /// ```python
+    /// grid = constriction.quant.RatedGrid(matrix, specialize_along_axis=0)
+    /// print(f"entropies = {grid.entropy_base2()}")
+    /// points, rates = grid.points_and_rates()
+    /// print(f"rates = [\n    {',\n    '.join(str(c) for c in rates)}\n]")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// entropies = [1.3709506 1.5219281 1.5219281 1.921928 ]
+    /// points = [[2. 1. 4.], [4. 5. 2.], [2. 4. 3.], [3. 2. 4. 5.]]
+    /// rates = [
+    ///     [0.73696554 2.321928   2.321928  ],
+    ///     [1.321928 1.321928 2.321928],
+    ///     [1.321928 1.321928 2.321928],
+    ///     [1.321928 2.321928 2.321928 2.321928]
+    /// ]
+    /// ```
     pub fn points_and_rates(
         &self,
         py: Python<'_>,
@@ -1236,19 +1410,13 @@ impl RatedGrid {
             grid.points_and_rates().iter().copied()
         })
     }
-
-    /// TODO: document
-    pub fn entropy_base2(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
-        self.0
-            .entropy_base2(py, index, |distribution| distribution.entropy_base2())
-    }
 }
 
 /// Quantizes an array of values using [Variational Bayesian Quantization (VBQ)].
 ///
 /// Returns an array of quantized values with the same shape and dtype as the argument
 /// `unquantized`. If you want to instead overwrite the original array with its quantized values
-/// then use `vbq_` (with trailing underscore) instead.
+/// then use `vbq_` (with a trailing underscore) instead.
 ///
 /// VBQ is a quantization method that takes into account (i) the "prior" distribution of
 /// unquantized points (putting a higher density of grid points in regions of high prior density)
@@ -1267,8 +1435,8 @@ impl RatedGrid {
 /// `distortion(quantized - unquantized) = (quantized - unquantized)**2 / (2 * posterior_variance)`.
 ///
 /// Future versions of `constriction` might provide support for more general distortion metrics
-/// (the Rust API of constriction
-/// [already does](https://docs.rs/constriction/latest/constriction/quant/fn.vbq.html)).
+/// (the Rust API of constriction [already does](
+/// https://docs.rs/constriction/latest/constriction/quant/struct.EmpiricalDistribution.html#method.vbq)).
 ///
 /// Here, the `rate_estimate` in the above objective function is calculated based on the provided
 /// `prior` distribution and on some theoretical considerations of how the VBQ algorithm works. You
@@ -1306,7 +1474,7 @@ impl RatedGrid {
 ///   points. However, if you already have a better idea of where grid points will likely end up
 ///   (e.g., because you already ran VBQ once with argument `update_prior=True`, then it can be
 ///   better to provide the distribution over estimated quantized points instead).
-/// - `posterior_variance`: typically a numpy array ith the same dimensions as `unquantized`
+/// - `posterior_variance`: typically a numpy array with the same dimensions as `unquantized`
 ///   (although it can also be a scalar to support edge cases). The `posterior_variance` controls
 ///   how important a faithful quantization of each entry of `unquantized` is, relative to the other
 ///   entries. See objective function stated above. Entries with higher `posterior_variance` will
@@ -1541,7 +1709,182 @@ fn vbq_(
     )
 }
 
-/// TODO: document
+/// Quantizes an array of values to grid points by optimizing a rate/distortion-tradeoff.
+///
+/// Returns an array of quantized values with the same shape as the argument `unquantized`. If you
+/// want to instead overwrite the original array with its quantized values then use
+/// `rate_distortion_quantization_` (with a trailing underscore) instead.
+///
+/// ## Rate/Distortion Quantization
+///
+/// For each point, the quantization method minimizes the following objective:
+///
+/// `loss(quantized) = distortion(quantized - unquantized) + rate_penalty * rate(quantized)`
+///
+/// where `rate(quantized)` is the rate that the `RatedGrid` associates with the grid point
+/// `quantized`, and the minimization runs over all grid points `quantized`. The Python API is
+/// currently restricted to a quadratic distortion,
+///
+/// `distortion(quantized - unquantized) = (quantized - unquantized)**2 / (2 * posterior_variance)`.
+///
+/// Future versions of `constriction` might provide support for more general distortion metrics
+/// (the Rust API of constriction [already does](
+/// https://docs.rs/constriction/latest/constriction/quant/struct.RatedGrid.html#method.quantize)).
+///
+/// ## Arguments
+///
+/// - `unquantized`: a numpy array of values that you want to quantize.
+/// - `grid`: a `RatedGrid` that to which the values should be quantized. The should usually be
+///   constructed from some existing (preliminary) quantized version of the points in `unquantized`
+///   so that the grid positions grid points at good positions and with good rate estimates for
+///   these `unquantized` points.
+/// - `posterior_variance`: typically a numpy array with the same dimensions as `unquantized`
+///   (although it can also be a scalar to support edge cases). The `posterior_variance` controls
+///   how important a faithful quantization of each entry of `unquantized` is, relative to the other
+///   entries. See objective function stated above. Entries with higher `posterior_variance` will
+///   generally be quantized to grid points that can be further away from their unquantized values
+///   than entries with lower `posterior_variance`.
+/// - `rate_penalty`: a nonnegative scalar that controls how much distortion is acceptable globally
+///   (higher values for `rate_penalty` lead to a lower entropy of the quantized values, while lower
+///   values for `rate_penalty` ensure that quantized values stay closer to their unquantized
+///   counterparts). The argument `rate_penalty` is a convenience. Setting `rate_penalty` to a value
+///   different from `1.0` has the same effect as multiplying all entries of `posterior_variance` by
+///   `rate_penalty`.
+///
+/// ## Example 1: quantization with a *global* grid (i.e. without `specialize_along_axis`)
+///
+/// ```python
+/// rng = np.random.default_rng(123)
+/// unquantized = rng.normal(scale=5.0, size=(4, 5)).astype(np.float32)
+/// print(f"Unquantized values:\n{unquantized}\n")
+///
+/// naively_quantized = unquantized.round()
+/// print(f"Naively quantized values (rounding to uniform grid):\n{naively_quantized}\n")
+///
+/// grid = constriction.quant.RatedGrid(naively_quantized)
+/// print(f"Entropy of naively quantized values: {grid.entropy_base2()}\n")
+///
+/// # Allow larger quantization errors in upper left corner of the matrix by using a high variance:
+/// posterior_variance = np.array([
+///     [10.0, 10.0, 1.0, 1.0, 1.0],
+///     [10.0, 10.0, 1.0, 1.0, 1.0],
+///     [1.0, 1.0, 1.0, 1.0, 1.0],
+///     [1.0, 1.0, 1.0, 1.0, 1.0],
+/// ], dtype=np.float32)
+///
+/// quantized_low_penalty = constriction.quant.rate_distortion_quantization(
+///     unquantized, grid, posterior_variance, 0.01)
+/// quantized_high_penalty = constriction.quant.rate_distortion_quantization(
+///     unquantized, grid, posterior_variance, 1.0)
+///
+/// print(f"Quantized with low rate_penalty:\n{quantized_low_penalty}\n")
+/// print(f"(same as naive quantization since the rate hardly matters here)\n")
+///
+/// print(f"Quantized with high rate_penalty:\n{quantized_high_penalty}\n")
+/// print(f"Differences to naive quantization:\n{quantized_high_penalty - naively_quantized}\n")
+/// ```
+///
+/// This prints:
+///
+/// ```text
+/// Unquantized values:
+/// [[-4.9456067  -1.8389332   6.439626    0.9698721   4.6011543 ]
+///  [ 2.885519   -3.1823182   2.7097611  -1.5829773  -1.6119456 ]
+///  [ 0.4858366  -7.629652    5.9608307  -3.3554485   5.001347  ]
+///  [ 0.68160564  7.6601653  -3.2998471  -1.5589743   1.6888456 ]]
+///
+/// Naively quantized values (rounding to uniform grid):
+/// [[-5. -2.  6.  1.  5.]
+///  [ 3. -3.  3. -2. -2.]
+///  [ 0. -8.  6. -3.  5.]
+///  [ 1.  8. -3. -2.  2.]]
+///
+/// Entropy of naively quantized values: 3.2841837406158447
+///
+/// Quantized with low rate_penalty:
+/// [[-5. -2.  6.  1.  5.]
+///  [ 3. -3.  3. -2. -2.]
+///  [ 0. -8.  6. -3.  5.]
+///  [ 1.  8. -3. -2.  2.]]
+///
+/// (same as naive quantization since the rate hardly matters here)
+///
+/// Quantized with high rate_penalty:
+/// [[-2. -2.  6.  1.  5.]
+///  [ 3. -2.  3. -2. -2.]
+///  [ 1. -8.  6. -3.  5.]
+///  [ 1.  8. -3. -2.  1.]]
+///
+/// Differences to naive quantization:
+/// [[ 3.  0.  0.  0.  0.]
+///  [ 0.  1.  0.  0.  0.]
+///  [ 1.  0.  0.  0.  0.]
+///  [ 0.  0.  0.  0. -1.]]
+/// ```
+///
+/// Note that, with high `rate_penalty`, we obtain the largest quantization error in the upper left
+/// 2x2 block of the matrix. This is because we set the `posterior_variance` high in this block,
+/// which tells the rate/distortion quantization to care less about distortion for the corresponding
+/// values.
+///
+/// ## Example 2: quantization with `specialize_along_axis`
+///
+/// We can quantize to a different grid for each row of the matrix by replacing the following line
+/// in Example 1 above:
+///
+/// ```python
+/// grid = constriction.quant.RatedGrid(naively_quantized)
+/// ```
+///
+/// with
+///
+/// ```python
+/// grid = constriction.quant.RatedGrid(naively_quantized, specialize_along_axis=0)
+/// ```
+///
+/// With this change, we obtain the following output:
+///
+/// ```text
+/// Unquantized values:
+/// [[-4.9456067  -1.8389332   6.439626    0.9698721   4.6011543 ]
+///  [ 2.885519   -3.1823182   2.7097611  -1.5829773  -1.6119456 ]
+///  [ 0.4858366  -7.629652    5.9608307  -3.3554485   5.001347  ]
+///  [ 0.68160564  7.6601653  -3.2998471  -1.5589743   1.6888456 ]]
+///
+/// Naively quantized values (rounding to uniform grid1):
+/// [[-5. -2.  6.  1.  5.]
+///  [ 3. -3.  3. -2. -2.]
+///  [ 0. -8.  6. -3.  5.]
+///  [ 1.  8. -3. -2.  2.]]
+///
+/// Entropy of naively quantized values: [2.321928  1.5219281 2.321928  2.321928 ]
+///
+/// Quantized with low rate_penalty:
+/// [[-5. -2.  6.  1.  5.]
+///  [ 3. -3.  3. -2. -2.]
+///  [ 0. -8.  6. -3.  5.]
+///  [ 1.  8. -3. -2.  2.]]
+///
+/// (same as naive quantization since the rate hardly matters here)
+///
+/// Quantized with high rate_penalty:
+/// [[-5. -2.  6.  1.  5.]
+///  [ 3. -2.  3. -2. -2.]
+///  [ 0. -8.  6. -3.  5.]
+///  [ 1.  8. -3. -2.  2.]]
+///
+/// Differences to naive quantization:
+/// [[0. 0. 0. 0. 0.]
+///  [0. 1. 0. 0. 0.]
+///  [0. 0. 0. 0. 0.]
+///  [0. 0. 0. 0. 0.]]
+/// ```
+///
+/// For this small toy example, we hardly see an effect of the rate term here because the
+/// quantization grids for each row are constructed based on so few (five) sample points that they
+/// are all almost degenerate (i.e., have the same weight for almost all grid points). Specializing
+/// along an axis only makes sense if the original data still contains lots of elements along the
+/// remaining axes
 #[pyfunction]
 fn rate_distortion_quantization<'p>(
     py: Python<'p>,

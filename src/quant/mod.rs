@@ -130,7 +130,7 @@ pub trait UnnormalizedDistribution {
     /// opposite conventions then `vbq` still terminates and quantizes to a grid point from the
     /// provided `prior`, but the quantization might be biased towards rounding up or down).
     ///
-    /// ## Example
+    /// # Example
     ///
     /// See [example for `EmpiricalDistribution`](EmpiricalDistribution#lookup).
     fn cdf(&self, x: Self::Value) -> Self::Count;
@@ -194,7 +194,7 @@ pub trait UnnormalizedInverse: UnnormalizedDistribution {
     ///   (assuming that the inner `.unwrap()` on the left-hand side succeeds—in which case the
     ///   outer `.unwrap()` is guaranteed to succeed).
     ///
-    /// ## Example
+    /// # Example
     ///
     /// See [example for `EmpiricalDistribution`](EmpiricalDistribution#lookup).
     fn ppf(&self, cum: Self::Count) -> Option<Self::Value>;
@@ -216,6 +216,7 @@ where
     }
 }
 
+/// A trait for distributions and grids that can be created from an empirical collection of points.
 pub trait FromPoints<V, C>
 where
     Self: Sized,
@@ -252,7 +253,7 @@ where
     /// returned by [`ToPointsAndCounts::points_and_counts_iter`] (but it does not have to iterate
     /// over points in the same order that that iterator would).
     ///
-    /// ## Example
+    /// # Example
     ///
     /// ```
     /// use constriction::{F32, quant::{EmpiricalDistribution, FromPoints}};
@@ -297,7 +298,7 @@ where
     /// This is mostly intended for `EmpiricalDistribution`s over floating point values, which have
     /// to be converted to [`NonNanFloat`](crate::NonNanFloat) before being inserted.
     ///
-    /// ## Example
+    /// # Example
     ///
     /// ```
     /// use constriction::{F32, quant::{EmpiricalDistribution, FromPoints}};
@@ -333,7 +334,12 @@ pub trait ToPointsAndCounts<V, C> {
     fn points_and_counts_iter(&self) -> impl Iterator<Item = (V, C)> + '_;
 }
 
-/// TODO: document
+/// A trait for quantization methods that quantize to a given `Grid` type.
+///
+/// The `Grid` type can be either an explicitly defined grid such as [`RatedGrid`], or it can be a
+/// type that provides the quantization method with the required information to implicitly define a
+/// quantization grid distribution (e.g., a distribution that implements [`UnnormalizedInverse`] so
+/// it can be used as a prior in [`Vbq`] to implicitly define the placement of grid points).
 pub trait QuantizationMethod<Grid, V, L> {
     /// Quantize a given `unquantized` point to the provided `grid`.
     ///
@@ -468,7 +474,7 @@ impl<C: Sub<Output = C>> Sub for CountWrapper<C> {
 ///
 /// # Runtime Complexity
 ///
-/// For an `EmpiricalDistribution<V, C, CAP>` over `n`` *distinct* entries, we have:
+/// For an `EmpiricalDistribution<V, C, CAP>` over `n` *distinct* entries, we have:
 ///
 /// - lookups for both the [cumulative distribution function (CDF)](UnnormalizedDistribution::cdf)
 ///   and the [inverse CDF](UnnormalizedInverse::ppf) take `O(log n)` time; and
@@ -614,8 +620,8 @@ where
     /// points with the provided `value` that were present *before* the removal (thus, once the
     /// method returns, there are only `original_count - 1` points with the provided `value` left).
     ///
-    /// Returns `Err(NotFoundError)` if removal fails because there is no point at `value` (in this
-    /// case, the `EmpiricalDistribution` remains unchanged).
+    /// Returns `Err(NotFoundError)` if removal fails because there aren't enough points with the
+    /// provided `value` (in this case, the `EmpiricalDistribution` remains unchanged).
     pub fn remove(&mut self, value: V, count: C) -> Result<C, NotFoundError> {
         self.0
             .remove(value, CountWrapper(count))
@@ -834,6 +840,52 @@ where
     }
 }
 
+/// A finite grid of (not necessarily one-dimensional) points, each weighted with a "bit rate".
+///
+/// This type implements the trait [`FromPoints`], which means that it can be constructed from a
+/// collection of (already quantized) points. Alternatively, a `RatedGrid` can be constructed from
+/// other grid types, e.g., from an [`EmpiricalDistribution`] that has been updated while
+/// performing quantization with it with [`Vbq`] so that it now tracks the distribution of quantized
+/// points. In either case, the "weight" of each grid point `x` the `RatedGrid` will be set to the
+/// bit rate `-log_2(f(x))` where `f(x)` is the empirical frequency of `x` in the collection of
+/// points or in the distribution. The weight is thus an accurate estimate of the (amortized) bit
+/// rate that each point `x` would contribute to the total bit rate if we were to compress the
+/// collection of points with a [stream code](crate::stream) and an optimal entropy model.
+///
+/// A `RatedGrid` can be used in a [`RateDistortionQuantization`] to re-quantize the original
+/// (unquantized) data to the same grid, but with potentially different mappings to grid points that
+/// takes into account an estimate of the resulting rate.
+///
+/// # Example
+///
+/// The following example constructs a `RatedGrid` over a set of floating point numbers. Since the
+/// value type `V` has to be totally ordered (so we can disambiguate ties in a deterministic way) we
+/// have to wrap floating point numbers in a [`NonNanFloat`](crate::NonNanFloat), which fails if we
+/// encounter `NaN`.
+///
+/// ```
+/// use constriction::{F32, quant::{RatedGrid, FromPoints}};
+///
+/// let points = [4.2, -0.3, 1.5, -0.3, 0.1, 1.5, 1.5];
+/// let grid = RatedGrid::<F32, f32>::try_from_points::<_, u32>(
+///     points.iter().copied()
+/// ).unwrap();
+///
+/// // Iterate over entries sorted by rate:
+/// let expected_rates = [1.222392, 1.807355, 2.807355, 2.807355]; // Sorted in ascending order.
+/// let expected_grid_points = [1.5, -0.3, 0.1, 4.2]; // Sorted where rates are tied (last two).
+/// for ((&(point, rate), &expected_point), &expected_rate) in grid.points_and_rates()
+///     .iter().zip(&expected_grid_points).zip(&expected_rates)
+/// {
+///     assert_eq!(point.get(), expected_point);
+///     assert!((rate - expected_rate).abs() < 1e-6);
+/// }
+///
+/// // The following fails because `points2` contains `NaN`:
+/// let points2 = [0.1, -0.3, 0.0 / 0.0 /* <-- NaN */, -0.3, 4.2, 1.5, 1.5];
+/// let grid2 = RatedGrid::<F32, f32>::try_from_points::<_, u32>(points2.iter().copied());
+/// assert_eq!(grid2.unwrap_err(), constriction::NanError);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RatedGrid<V = F32, R = f32> {
     /// Nonempty Vec of tuples `(grid_point, rate)`, sorted by increasing rate.
@@ -843,39 +895,14 @@ pub struct RatedGrid<V = F32, R = f32> {
 
 /// TODO: documentation with code examples
 impl<V, R> RatedGrid<V, R> {
-    // pub fn from_points_and_rates<C>(mut points_and_rates: Vec<(V, R)>) -> Self
-    // where
-    //     R: num_traits::real::Real + Ord + 'static,
-    //     V: Copy + Ord,
-    //     C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
-    // {
-    //     assert!(!points_and_rates.is_empty(), "Empty grid");
-
-    //     points_and_rates.sort_unstable_by_key(|&(point, rate)| (rate, point));
-    //     Self {
-    //         grid: points_and_rates,
-    //     }
-    // }
-
-    // pub fn try_from_points_and_rates<C, F>(
-    //     points_and_rates: Vec<(F, R)>,
-    // ) -> Result<Self, <V as TryFrom<F>>::Error>
-    // where
-    //     R: num_traits::real::Real + Ord + 'static,
-    //     V: Copy + Ord,
-    //     C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
-    //     V: TryFrom<F>,
-    // {
-    //     // TODO: check if this allocates (if it does, we might as well accept an iterator instead)
-    //     let points_and_rates = points_and_rates
-    //         .into_iter()
-    //         .map(|(point, rate)| Ok((V::try_from(point)?, rate)))
-    //         .collect::<Result<Vec<_>, _>>()?;
-    //     Ok(Self::from_points_and_rates::<C>(points_and_rates))
-    // }
-
     /// Shortcut for `<Self as FromPoints<V, C>>::from_points` that makes it easier to
     /// resolve the type for `C`.
+    ///
+    /// The type `C` is an integer type that is used temporarily to count the number of occurrences
+    /// of each distinct value that occurs in the iterator `points`. It should be able to represent
+    /// all counts that can occur without overflowing. Once all occurrences are counted, the counts
+    /// are used to calculate the empirical frequencies `f(x)` of each value `x`, and from that the
+    /// information contents `-log_2 (f(x))`, which is used as the "rate" for each grid point.
     pub fn from_points<C, I>(points: I) -> Self
     where
         Self: Sized,
@@ -890,6 +917,13 @@ impl<V, R> RatedGrid<V, R> {
 
     /// Shortcut for `<Self as FromPoints<V, C>>::try_from_points` that makes it easier
     /// to resolve the type for `C`.
+    ///
+    /// The integer type `C` is used temporarily to count the number of occurrences of each distinct
+    /// value in the iterator `points`, see documentation of [`Self::from_points`].
+    ///
+    /// # Example
+    ///
+    /// See [struct level documentation](Self).
     pub fn try_from_points<F, C>(
         points: impl IntoIterator<Item = F>,
     ) -> Result<Self, <V as TryFrom<F>>::Error>
@@ -902,16 +936,28 @@ impl<V, R> RatedGrid<V, R> {
         <Self as FromPoints<V, C>>::try_from_points(points)
     }
 
-    /// Returns the grid points and their associated bit rates, sorted decreasingly by rate.
+    /// Returns the grid points and their associated bit rates, sorted by increasing rate.
+    ///
+    /// Any ties are broken by sorting by increasing grid point value.
     pub fn points_and_rates(&self) -> &[(V, R)] {
         &self.grid
     }
 
-    /// Returns the grid points and their associated bit rates, sorted decreasingly by rate.
+    /// Analogous to [`points_and_rates`](Self::points_and_rates), but consumes the `RatedGrid` and
+    /// returns an owned representation.
     pub fn into_points_and_rates(self) -> Vec<(V, R)> {
         self.grid
     }
 
+    /// Returns the entropy corresponding to the bit rates.
+    ///
+    /// The entropy could technically be calculated as follows,
+    ///
+    /// `entropy = - sum_i( 2^{-rate} * rate )`.
+    ///
+    /// But the current implementation instead pre-calculates it when calculating the rates in the
+    /// various constructors as most of the operations to do this have to be performed there anyway.
+    /// So calling `RatedGrid::entropy_base2` is cheap.
     pub fn entropy_base2(&self) -> R
     where
         R: num_traits::real::Real + 'static,
@@ -919,6 +965,57 @@ impl<V, R> RatedGrid<V, R> {
         self.entropy
     }
 
+    /// Quantizes a given value to a grid point by optimizing a rate/distortion-tradeoff.
+    ///
+    /// The quantization method minimizes the following objective:
+    ///
+    /// `quantized = arg_min[ distortion(unquantized, quantized) - bit_penalty * rate(quantized) ]`
+    ///
+    /// where `distortion` and `bit_penalty` are provided by the caller, `rate(quantized)` is the
+    /// rate that the `RatedGrid` associates with the grid point `quantized`, and the minimization
+    /// runs over all grid points `quantized`.
+    ///
+    /// The `distortion` function must be nonnegative for all arguments, but it does not need to be
+    /// zero for `quantized == unquantized`, and it does not have to be unimodal.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::{F32, quant::{RatedGrid, FromPoints}};
+    ///
+    /// let points = [4.2, -0.3, 1.5, -0.3, 0.1, 1.5, 1.5];
+    /// let grid = RatedGrid::<F32, f32>::try_from_points::<_, u32>(
+    ///     points.iter().copied()
+    /// ).unwrap();
+    ///
+    /// let unquantized = F32::new(3.0).unwrap();
+    /// let quantized = grid.quantize(unquantized, |x, y| ((x - y) * (x - y)).get(), 1.0);
+    /// assert_eq!(quantized.get(), 1.5);
+    /// ```
+    ///
+    /// This method can also be called in generic code through [`QuantizationMethod::quantize`].
+    /// Thus, the above method call is equal to the following trait method call:
+    ///
+    /// ```
+    /// # use constriction::{F32, quant::{RatedGrid, FromPoints}};
+    /// #
+    /// # let points = [4.2, -0.3, 1.5, -0.3, 0.1, 1.5, 1.5];
+    /// # let grid = RatedGrid::<F32, f32>::try_from_points::<_, u32>(
+    /// #     points.iter().copied()
+    /// # ).unwrap();
+    /// #
+    /// # let unquantized = F32::new(3.0).unwrap();
+    /// #
+    /// // ... define `grid` and `unquantized` as above ...
+    ///
+    /// // Import the trait `QuantizationMethod` so that we can use its implementation for
+    /// // `RateDistortionQuantization`.
+    /// use constriction::quant::{QuantizationMethod, RateDistortionQuantization};
+    ///
+    /// let quantized = RateDistortionQuantization.quantize(
+    ///     unquantized, &grid, |x, y| ((x - y) * (x - y)).get(), 1.0);
+    /// assert_eq!(quantized.get(), 1.5);
+    /// ```
     pub fn quantize(
         &self,
         unquantized: V,
@@ -1034,6 +1131,7 @@ where
     }
 }
 
+/// Error type returned by [`EmpiricalDistribution::remove`] if removal fails.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct NotFoundError;
 
@@ -1094,8 +1192,8 @@ impl std::error::Error for NotFoundError {}
 ///   quantized values, e.g., by taking the empirical distribution of either the unquantized points
 ///   or of quantized points from a previous run of VBQ on the same set of points.
 /// - `distortion`: a function that assigns a penalty to any pair of unquantized and quantized
-///   value. A common choice is a quadratic distortion, i.e., `|x, y| (x - y) * (x - y)`. The
-///   distortion must satisfy the following:
+///   value. A common choice is a quadratic distortion, i.e., `|x, y| ((x - y) * (x - y)).get()`.
+///   The distortion must satisfy the following:
 ///   - `distortion(unquantized, unquantized) == L::zero()`;
 ///   - `distortion(unquantized, quantized) > L::zero()` for all `x != unquantized`; and
 ///   - `distortion(unquantized, quantized)` must be unimodal in its second argument, i.e., it must

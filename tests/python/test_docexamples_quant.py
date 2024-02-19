@@ -496,3 +496,287 @@ def test_shift_example3b():
         assert np.all(c == ce)
 
     assert np.all(distribution.entropy_base2() == entropies)
+
+
+def test_rated_grid_example1():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+
+    grid = constriction.quant.RatedGrid(matrix)
+    points, rates = grid.points_and_rates()
+
+    expected_points = [2.0, 4.0, 3.0, 5.0, 1.0]
+    expected_rates = [1.514573, 1.736965, 2.736965, 2.736965, 4.321928]
+
+    assert np.allclose(points, expected_points)
+    assert np.allclose(rates, expected_rates)
+    assert np.allclose(grid.entropy_base2(), 2.088376522064209)
+
+
+def test_rated_grid_example2():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+
+    grid = constriction.quant.RatedGrid(matrix, specialize_along_axis=0)
+    points, rates = grid.points_and_rates()
+    entropies = grid.entropy_base2()
+
+    expected_points = [
+        [2.0, 1.0, 4.0],
+        [4.0, 5.0, 2.0],
+        [2.0, 4.0, 3.0],
+        [3.0, 2.0, 4.0, 5.0],
+    ]
+    expected_rates = [
+        [0.737, 2.322, 2.322],
+        [1.322, 1.322, 2.322],
+        [1.322, 1.322, 2.322],
+        [1.322, 2.322, 2.322, 2.322],
+    ]
+    expected_entropies = [1.371, 1.522, 1.522, 1.922]
+
+    for (p, r, e, ep, er, ee) in zip(
+            points, rates, entropies,
+            expected_points, expected_rates, expected_entropies):
+        assert np.all(p == ep)
+        assert np.allclose(r, er, atol=1e-3)
+        assert np.allclose(e, ee, atol=1e-3)
+
+
+def test_rated_grid_entropy_example():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+
+    marginal_grid = constriction.quant.RatedGrid(matrix)
+    specialized_grid = constriction.quant.RatedGrid(
+        matrix, specialize_along_axis=0)
+
+    assert np.allclose(marginal_grid.entropy_base2(), 2.088376522064209)
+    assert np.allclose(
+        specialized_grid.entropy_base2(),
+        [1.3709505, 1.5219281, 1.5219281, 1.921928])
+    assert np.allclose(specialized_grid.entropy_base2(2), 1.521928071975708)
+
+
+def test_rated_grid_points_and_rates_example1():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+
+    grid = constriction.quant.RatedGrid(matrix)
+    points, rates = grid.points_and_rates()
+    assert np.allclose(grid.entropy_base2(), 2.088376522064209)
+    assert np.allclose(points, [2., 4., 3., 5., 1.,])
+    assert np.allclose(
+        rates, [1.5145732, 1.7369655, 2.7369654, 2.7369654, 4.321928])
+
+
+def test_rated_grid_points_and_rates_example2():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(4, 5)).astype(np.float32)
+
+    grid = constriction.quant.RatedGrid(matrix, specialize_along_axis=0)
+    points, rates = grid.points_and_rates()
+    entropies = grid.entropy_base2()
+
+    expected_entropies = [1.3709506, 1.5219281, 1.5219281, 1.921928]
+    expected_points = [
+        [2., 1., 4.], [4., 5., 2.], [2., 4., 3.], [3., 2., 4., 5.]]
+    expected_rates = [
+        [0.736966, 2.321928, 2.321928],
+        [1.321928, 1.321928, 2.321928],
+        [1.321928, 1.321928, 2.321928],
+        [1.321928, 2.321928, 2.321928, 2.321928],
+    ]
+
+    for (p, r, e, ep, er, ee) in zip(
+            points, rates, entropies,
+            expected_points, expected_rates, expected_entropies):
+        assert np.all(p == ep)
+        assert np.allclose(r, er)
+        assert np.allclose(e, ee)
+
+
+def test_rated_distortion_quantization_example1():
+    rng = np.random.default_rng(123)
+    unquantized = rng.normal(scale=5.0, size=(4, 5)).astype(np.float32)
+    naively_quantized = unquantized.round()
+    grid = constriction.quant.RatedGrid(naively_quantized)
+
+    # Allow larger quantization errors in upper left corner of the matrix by using a high variance:
+    posterior_variance = np.array([
+        [10.0, 10.0, 1.0, 1.0, 1.0],
+        [10.0, 10.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0],
+    ], dtype=np.float32)
+
+    quantized_low_penalty = constriction.quant.rate_distortion_quantization(
+        unquantized, grid, posterior_variance, 0.01)
+    quantized_high_penalty = constriction.quant.rate_distortion_quantization(
+        unquantized, grid, posterior_variance, 1.0)
+    high_diff = quantized_high_penalty - naively_quantized
+
+    expected_quantized_low_penalty = np.array([
+        [-5., -2.,  6.,  1.,  5.],
+        [3., -3.,  3., -2., -2.],
+        [0., -8.,  6., -3.,  5.],
+        [1.,  8., -3., -2.,  2.],
+    ], dtype=np.float32)
+    expected_quantized_high_penalty = np.array([
+        [-2., -2.,  6.,  1.,  5.],
+        [3., -2.,  3., -2., -2.],
+        [1., -8.,  6., -3.,  5.],
+        [1.,  8., -3., -2.,  1.],
+    ], dtype=np.float32)
+    expected_high_diff = np.array([
+        [3., 0., 0., 0., 0.],
+        [0., 1., 0., 0., 0.],
+        [1., 0., 0., 0., 0.],
+        [0., 0., 0., 0., -1.],
+    ], dtype=np.float32)
+
+    assert np.all(quantized_low_penalty == expected_quantized_low_penalty)
+    assert np.all(quantized_low_penalty == naively_quantized)
+    assert np.all(quantized_high_penalty == expected_quantized_high_penalty)
+    assert np.all(high_diff == expected_high_diff)
+
+
+def test_rated_distortion_quantization_example2():
+    rng = np.random.default_rng(123)
+    unquantized = rng.normal(scale=5.0, size=(4, 5)).astype(np.float32)
+    naively_quantized = unquantized.round()
+    grid = constriction.quant.RatedGrid(
+        naively_quantized, specialize_along_axis=0)
+
+    # Allow larger quantization errors in upper left corner of the matrix by using a high variance:
+    posterior_variance = np.array([
+        [10.0, 10.0, 1.0, 1.0, 1.0],
+        [10.0, 10.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0],
+    ], dtype=np.float32)
+
+    quantized_low_penalty = constriction.quant.rate_distortion_quantization(
+        unquantized, grid, posterior_variance, 0.01)
+    quantized_high_penalty = constriction.quant.rate_distortion_quantization(
+        unquantized, grid, posterior_variance, 1.0)
+    high_diff = quantized_high_penalty - naively_quantized
+
+    expected_quantized_low_penalty = np.array([
+        [-5., -2.,  6.,  1.,  5.],
+        [3., -3.,  3., -2., -2.],
+        [0., -8.,  6., -3.,  5.],
+        [1.,  8., -3., -2.,  2.],
+    ], dtype=np.float32)
+    expected_quantized_high_penalty = np.array([
+        [-5., -2.,  6.,  1.,  5.],
+        [3., -2.,  3., -2., -2.],
+        [0., -8.,  6., -3.,  5.],
+        [1.,  8., -3., -2.,  2.],
+    ], dtype=np.float32)
+    expected_high_diff = np.array([
+        [0.,  0.,  0.,  0.,  0.],
+        [0.,  1.,  0.,  0.,  0.],
+        [0.,  0.,  0.,  0.,  0.],
+        [0.,  0.,  0.,  0.,  0.],
+    ], dtype=np.float32)
+
+    assert np.all(quantized_low_penalty == expected_quantized_low_penalty)
+    assert np.all(quantized_low_penalty == naively_quantized)
+    assert np.all(quantized_high_penalty == expected_quantized_high_penalty)
+    assert np.all(high_diff == expected_high_diff)
+
+
+def test_rated_distortion_quantization_example1_inplace():
+    rng = np.random.default_rng(123)
+    unquantized = rng.normal(scale=5.0, size=(4, 5)).astype(np.float32)
+    naively_quantized = unquantized.round()
+    grid = constriction.quant.RatedGrid(naively_quantized)
+
+    # Allow larger quantization errors in upper left corner of the matrix by using a high variance:
+    posterior_variance = np.array([
+        [10.0, 10.0, 1.0, 1.0, 1.0],
+        [10.0, 10.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0],
+    ], dtype=np.float32)
+
+    quantized_low_penalty = unquantized.copy()
+    constriction.quant.rate_distortion_quantization_(
+        quantized_low_penalty, grid, posterior_variance, 0.01)
+    quantized_high_penalty = unquantized.copy()
+    constriction.quant.rate_distortion_quantization_(
+        quantized_high_penalty, grid, posterior_variance, 1.0)
+    high_diff = quantized_high_penalty - naively_quantized
+
+    expected_quantized_low_penalty = np.array([
+        [-5., -2.,  6.,  1.,  5.],
+        [3., -3.,  3., -2., -2.],
+        [0., -8.,  6., -3.,  5.],
+        [1.,  8., -3., -2.,  2.],
+    ], dtype=np.float32)
+    expected_quantized_high_penalty = np.array([
+        [-2., -2.,  6.,  1.,  5.],
+        [3., -2.,  3., -2., -2.],
+        [1., -8.,  6., -3.,  5.],
+        [1.,  8., -3., -2.,  1.],
+    ], dtype=np.float32)
+    expected_high_diff = np.array([
+        [3., 0., 0., 0., 0.],
+        [0., 1., 0., 0., 0.],
+        [1., 0., 0., 0., 0.],
+        [0., 0., 0., 0., -1.],
+    ], dtype=np.float32)
+
+    assert np.all(quantized_low_penalty == expected_quantized_low_penalty)
+    assert np.all(quantized_low_penalty == naively_quantized)
+    assert np.all(quantized_high_penalty == expected_quantized_high_penalty)
+    assert np.all(high_diff == expected_high_diff)
+
+
+def test_rated_distortion_quantization_example2_inplace():
+    rng = np.random.default_rng(123)
+    unquantized = rng.normal(scale=5.0, size=(4, 5)).astype(np.float32)
+    naively_quantized = unquantized.round()
+    grid = constriction.quant.RatedGrid(
+        naively_quantized, specialize_along_axis=0)
+
+    # Allow larger quantization errors in upper left corner of the matrix by using a high variance:
+    posterior_variance = np.array([
+        [10.0, 10.0, 1.0, 1.0, 1.0],
+        [10.0, 10.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0],
+    ], dtype=np.float32)
+
+    quantized_low_penalty = unquantized.copy()
+    constriction.quant.rate_distortion_quantization_(
+        quantized_low_penalty, grid, posterior_variance, 0.01)
+    quantized_high_penalty = unquantized.copy()
+    constriction.quant.rate_distortion_quantization_(
+        quantized_high_penalty, grid, posterior_variance, 1.0)
+    high_diff = quantized_high_penalty - naively_quantized
+
+    expected_quantized_low_penalty = np.array([
+        [-5., -2.,  6.,  1.,  5.],
+        [3., -3.,  3., -2., -2.],
+        [0., -8.,  6., -3.,  5.],
+        [1.,  8., -3., -2.,  2.],
+    ], dtype=np.float32)
+    expected_quantized_high_penalty = np.array([
+        [-5., -2.,  6.,  1.,  5.],
+        [3., -2.,  3., -2., -2.],
+        [0., -8.,  6., -3.,  5.],
+        [1.,  8., -3., -2.,  2.],
+    ], dtype=np.float32)
+    expected_high_diff = np.array([
+        [0.,  0.,  0.,  0.,  0.],
+        [0.,  1.,  0.,  0.,  0.],
+        [0.,  0.,  0.,  0.,  0.],
+        [0.,  0.,  0.,  0.,  0.],
+    ], dtype=np.float32)
+
+    assert np.all(quantized_low_penalty == expected_quantized_low_penalty)
+    assert np.all(quantized_low_penalty == naively_quantized)
+    assert np.all(quantized_high_penalty == expected_quantized_high_penalty)
+    assert np.all(high_diff == expected_high_diff)
