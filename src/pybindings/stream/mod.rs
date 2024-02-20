@@ -288,19 +288,102 @@ fn init_stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// or `RangeDecoder`, a change to the entropy model for one symbol can affect *all*
 /// subsequently decoded symbols too, see [Motivation](#motivation) below).
 ///
-/// This property of treating symbols independently upon decoding can be useful for advanced
-/// compression methods that combine inference, quantization, and bits-back coding.
+/// Treating symbols independently upon encoding and decoding can be useful for advanced
+/// compression methods that combine inference, quantization, and bits-back coding. In
+/// treating symbols independently, a `ChainCoder` bears some resemblance with symbol codes.
+/// However, in contrast to symbol codes, a `ChainCoder` still amortizes compressed bits
+/// over symbols and therefore has better compression effectiveness than a symbol code; in a
+/// sense, it just delays amortization to the very end of its life cycle (see "[How Does
+/// `ChainCoder` Work?](#how-does-chaincoder-work)" below).
+///
+/// ## Usage Example
+///
+/// A `ChainCoder` is meant to be used as a building block for advanced applications of the
+/// bits-back trick [1, 2]. One therefore typically starts on the encoder side by *decoding*
+/// some "side information" into a sequence of symbols. On the decoder side, one then
+/// recovers the side information by *(re-)encoding* these symbols. It is important to be
+/// aware that both the initialization of a `ChainCoder` and the way how we obtain its
+/// encapsulated data differ from the encoder and decoder side, as illustrated in the
+/// following example of a full round trip:
+///
+/// ```python
+/// # Parameters for a few example Gaussian entropy models:
+/// leaky_gaussian = constriction.stream.model.QuantizedGaussian(-100, 100)
+/// means = np.array([3.2, -14.3, 5.7])
+/// stds = np.array([6.4, 4.2, 3.9])
+///
+/// def run_encoder_part(side_information):
+///     # Construct a `ChainCoder` for *decoding*:
+///     coder = constriction.stream.chain.ChainCoder(
+///         side_information,    # Provided bit string.
+///         is_remainders=False, # Bit string is *not* remaining data after decoding.
+///         seal=True            # Bit string comes from an external source here.
+///     )
+///     # Decode side information into a sequence of symbols as usual in bits-back coding:
+///     symbols = coder.decode(leaky_gaussian, means, stds)
+///     # Obtain what's *remaining* on the coder after decoding the symbols:
+///     remaining1, remaining2 = coder.get_remainders()
+///     return symbols, np.concatenate([remaining1, remaining2])
+///
+/// def run_decoder_part(symbols, remaining):
+///     # Construct a `ChainCoder` for *encoding*:
+///     coder = constriction.stream.chain.ChainCoder(
+///         remaining,           # Provided bit string.
+///         is_remainders=True,  # Bit string *is* remaining data after decoding.
+///         seal=False           # Bit string comes from a `ChainCoder`, no need to seal it.
+///     )
+///     # Re-encode the symbols to recover the side information:
+///     coder.encode_reverse(symbols, leaky_gaussian, means, stds)
+///     # Obtain the reconstructed data
+///     data1, data2 = coder.get_data(unseal=True)
+///     return np.concatenate([data1, data2])
+///
+/// np.random.seed(123)
+/// sample_side_information = np.random.randint(2**32, size=10, dtype=np.uint32)
+/// symbols, remaining = run_encoder_part(sample_side_information)
+/// recovered = run_decoder_part(symbols, remaining)
+/// assert np.all(recovered == sample_side_information)
+/// ```
+///
+/// Notice that:
+///
+/// - we construct the `ChainCoder` with argument `is_remainders=False` on the encoder side
+///   (which *decodes* symbols from the side information), and with argument
+///   `is_remainders=True` on the decoder side (which *re-encodes* the symbols to recover the
+///   side information); and
+/// - we export the remaining bit string on the `ChainCoder` after decoding some symbols
+///   from it by calling `get_remainders`, and we export the recovered side information after
+///   re-encoding the symbols by calling `get_data`. Both methods return a pair of bit
+///   strings (more precisely, `uint32` arrays) where only the second item of the pair is
+///   strictly required to invert the process we just performed, but we may concatenate the
+///   two bit strings without loss of information.
+///
+/// To understand why this asymmetry between encoder and decoder side is necessary, see
+/// section "[How Does `ChainCoder` Work?](#how-does-chaincoder-work)" below.
+///
+/// [A side remark concerning the `seal` and `unseal` arguments: when constructing a
+/// `ChainCoder` from some bit string that we obtained from either
+/// `ChainCoder.get_remaining()` or from `AnsCoder.get_compressed()` then we may set
+/// `seal=False` in the constructor since these methods guarantee that the last word of the
+/// bit string is nonzero. By contrast, when we construct a `ChainCoder` from some bit
+/// string that is outside of our control (and that may therefore end in a zero word), then
+/// we have to set `seal=True` in the constructor (and we then have to set `unseal=True`
+/// when we want to get that bit string back via `get_data`).]
 ///
 /// ## Motivation
 ///
-/// The following two examples illustrate how decoding differs between an `AnsCoder` and a
-/// `ChainCoder`. In the first example, we decode from the same bitstring `data` twice with
-/// an `AnsCoder`: a first time with an initial sequence of toy entropy models, and then a
-/// second time with a slightly different sequence of entropy models. Importantly, we change
-/// only the entropy model for the first decoded symbol (and the change is small). The
-/// entropy models for all other symbols remain exactly unmodified. We observe, however,
-/// that changing the first entropy model affects not only the first decoded symbol. It also
-/// has a ripple effect on subsequently decoded symbols.
+/// The following two examples illustrate how the `ChainCoder` provided in this module
+/// differs from an `AnsCoder` from the sister module `constriction.stream.stack`.
+///
+/// ### The Problem With `AnsCoder`
+///
+/// We start with an `AnsCoder`, and we decode a fixed bitstring `data` two times, using
+/// slightly different sequences of entropy models each time. As expected, decoding the same
+/// data with different entropy models leads to different sequences of decoded symbols.
+/// Somewhat surprisingly, however, changes to entropy models can have a ripple effect: in
+/// the example below, the line marked with "<-- change first entropy model" changes *only*
+/// the entropy model for the first symbol. Nevertheless, this change of a single entropy
+/// model causes the coder to decode different symbols in more than just that one place.
 ///
 /// ```python
 /// # Some sample binary data and sample probabilities for our entropy models
@@ -322,19 +405,34 @@ fn init_stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// print(ansCoder.decode(model_family, probabilities)) # (prints: [1, 0, 3])
 /// ```
 ///
-/// It's no surprise that the first symbol changed since we changed its entropy model. But
-/// note that the third symbol changed too even though we hadn't changed its entropy model.
-/// Thus, in ANS (as in most codes), changes to entropy models have a  *global* effect.
+/// In the above example, it's no surprise that changing the first entropy model made the
+/// first decoded symbol change (from "0" to "1"). But notice that the third symbol also
+/// changes (from "1" to "3") even though we didn't change its entropy model. This ripple
+/// effect is a result of the fact that the internal state of `ansCoder` after decoding the
+/// first symbol depends on `model1`. This is usually what we'd want from a good entropy
+/// coder that packs as much information into as few bits as possible. However, it can
+/// become a problem in certain advanced compression methods that combine bits-back coding
+/// with quantization and inference. For those applications, a `ChainCoder`, illustrated in
+/// the next example, may be more suitable.
 ///
-/// Now let's try the same with a `ChainCoder`:
+/// ### The Solution With a `ChainCoder`
+///
+/// In the following example, we replace the `AnsCoder` with a `ChainCoder`. This means,
+/// firstly and somewhat trivially, that we will decode the same bit string `data` into a
+/// different sequence of symbols than in the last example because `ChainCoder` uses a
+/// different entropy coding algorithm than `AnsCoder`. The more profound difference to the
+/// example with the `AnsCoder` above is, however, that changes to a single entropy model no
+/// longer have a ripple effect: when we now change the entropy model for one of the
+/// symbols, this change affects only the corresponding symbol. All subsequently decoded
+/// symbols remain unchanged.
 ///
 /// ```python
 /// # Same compressed data and original entropy models as in our first example
 /// data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
 /// probabilities = np.array(
-///     [[0.1, 0.7, 0.1, 0.1],
-///      [0.2, 0.2, 0.1, 0.5],
-///      [0.2, 0.1, 0.4, 0.3]])
+///     [[0.1, 0.7, 0.1, 0.1],  # (<-- probabilities for first decoded symbol)
+///      [0.2, 0.2, 0.1, 0.5],  # (<-- probabilities for second decoded symbol)
+///      [0.2, 0.1, 0.4, 0.3]]) # (<-- probabilities for third decoded symbol)
 /// model_family = constriction.stream.model.Categorical()
 ///
 /// # Decode with the original entropy models, this time using a `ChainCoder`:
@@ -348,72 +446,75 @@ fn init_stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// print(chainCoder.decode(model_family, probabilities)) # (prints: [1, 3, 3])
 /// ```
 ///
-/// Notice that the only symbol that changed was the one whose entropy model we had changed.
+/// Notice that the only symbol that changes is the one whose entropy model we changed.
 /// Thus, in a `ChainCoder`, changes to entropy models (and also to compressed bits) only
 /// have a *local* effect on the decompressed symbols.
 ///
-/// ## How does this work?
+/// ## How Does `ChainCoder` Work?
 ///
-/// A `ChainCoder` is a variant on ANS. To understand how a `ChainCoder` works, one first
-/// has to understand how an `AnsCoder` works. When an `AnsCoder` decodes a symbol, it
-/// performs the following three steps:
+/// The class `ChainCoder` uses an experimental new entropy coding algorithm that is
+/// inspired by but different to Asymmetric Numeral Systems (ANS) [3] as used by the
+/// `AnsCoder` in the sister module `constriction.stream.stack`. This experimental new
+/// entropy coding algorithm was proposed in Ref. [4].
 ///
-/// 1. The `AnsCoder` consumes a fixed amount of bits (24 bits in `constriction`'s default
-///    configuration) from the end of its encapsulated compressed data; then
-/// 2. the `AnsCoder` interprets these 24 bits as a number `xi` between 0.0 and 1.0 in fixed
-///    point representation, and it maps `xi` to a symbol using the entropy model's quantile
-///    function (aka percent point function); finally
-/// 3. the `AnsCoder` uses the bits-back trick to write (24 - inf_content) bits worth of
-///    (amortized) bits back onto the encapsulated compressed data; these "returned" bits
-///    reflect the information contained in the precise position of the number `xi` within
-///    the whole range of numbers that the quantile function would map to the same symbol.
+/// **In ANS**, decoding a single symbol can conceptually be divided into three steps:
 ///
-/// A `ChainCoder` breaks these three steps apart. It encapsulates *two* rather than just
-/// one bitstring buffers, referred to in the following as "compressed" and "remainders".
-/// When you call the constructor of `ChainCoder` with argument `is_remainders=False` (which
-/// is the default) then the provided argument `data` is used to initialize the "compressed"
-/// buffer. When the `ChainCoder` decodes a symbol, it executes steps 1-3 from above, with
-/// the modification that step 1 reads from the "compressed" buffer while step 3 writes to
-/// the "remainders" buffer. Since step 1 is independent of the employed entropy model,
-/// changes to the entropy model have no effect on subsequently decoded symbols.
+/// 1. We chop off a *fixed integer* number of bits (the `AnsCoder` uses 24 bits by default)
+///    from the end of the compressed bit string.
+/// 2. We interpret the 24 bits obtained from Step 1 above as the fixed-point binary
+///    representation of a fractional number between zero and one and we map this number to
+///    a symbol via the quantile function of the entropy model (the quantile function is the
+///    inverse of the cumulative distribution function; it is sometimes also called the
+///    percent-point function).
+/// 3. We put back some (typically non-integer amount of) information content to the
+///    compressed bit string by using the bits-back trick [1, 2]. These "returned" bits
+///    account for the difference between the 24 bits that we consumed in Step 1 above and
+///    the true information content of the symbol that we decoded in Step 2 above.
 ///
-/// Once you're done decoding a sequence of symbols, you can concatenate the two buffers to
-/// a single one.
+/// The ripple effect from a single changed entropy model that we observed in the [ANS
+/// example above](#the-problem-with-anscoder) comes from Step 3 of the ANS algorithm since
+/// the information content that we put back (and therefore also the internal state of the
+/// coder after putting back the information) depends on the employed entropy model. By
+/// contrast, Step 1 is independent of the entropy model and Step 2 does not mutate the
+/// coder's internal state. To avoid a ripple effect when changing entropy models, a
+/// `ChainCoder` therefore effectively postpones Step 3 to a later point.
 ///
-/// ## Usage for Bits-Back Coding
+/// In detail, a `ChainCoder` keeps track of not just one but two bit strings, which we
+/// call `compressed` and `remaining`. When we use a `ChainCoder` to *decode* a symbol then
+/// we chop off 24 bits from `compressed` (analogous to Step 1 of the above ANS algorithm)
+/// and we identify the decoded symbol (Step 2); different to Step 3 of the ANS algorithm,
+/// however, we then put back the variable-length superfluous  information to the *separate*
+/// bit string `remaining`. Thus, if we were to change the entropy model, this change can
+/// only affect the decoded symbol and the contents of `remaining` after decoding the
+/// symbol, but it will not affect the contents of `compressed` after decoding the symbol.
+/// Thus, any subsequent symbols that we decode from the bit string `compressed` remain
+/// unaffected.
 ///
-/// A typical usage cycle of a `ChainCoder` goes along the following steps:
+/// If we want to use a `ChainCoder` to *encode* data then we have to initialize `remaining`
+/// with some sufficiently long bit string (by setting `is_remaining=True` in the
+/// constructor, see [usage example](#usage-example). The methods `get_remaining` and
+/// `get_data` return both bit strings `compressed` and `remaining` in the appropriate order
+/// and with an appropriate finishing that allows the caller to concatenate them without a
+/// delimiter (see again [usage example](#usage-example)).
 ///
-/// ### When compressing data using the bits-back trick
+/// ## Etymology
 ///
-/// 1. Start with some array of (typically already compressed) binary data, which you want
-///    to piggy-back into the choice of latent variables in a latent variable entropy model.
-/// 2. Create a `ChainCoder`, passing into the constructor the binary data and the arguments
-///    `is_remainders=False` and `seal=True` (you can set `seal=False` if you know that the
-///    data cannot end in a zero word, e.g., if it comes from
-///    `AnsCoder.get_compressed(unseal=False)`).
-/// 3. Decode the latent variables from the `ChainCoder` as usual in bits-back coding.
-/// 4. Export the remaining data on the `ChainCoder` by calling its method
-///    `.get_remainders()`. The method returns two numpy arrays, which you may concatenate in
-///    order.
-/// 5. You can now use this remaining binary data in an `AnsCoder` (it is guaranteed not to
-///    have a zero word at the end, so you can set `seal=False` in the constructor of
-///    `AnsCoder`), and you can encode a message on top of it using entropy models that are
-///    conditioned on the latent variables you just decoded.
+/// The name `ChainCoder` refers to the fact that the coder consumes and generates
+/// compressed bits in fixed-sized quanta (24 bits per symbol by default), reminiscent of
+/// how a chain (as opposed to, say, a rope) can only be shortened or extended by
+/// fixed-sized quanta (the chain links).
 ///
-/// ### When decompressing the data
+/// ## References
 ///
-/// 1. Recreate the binary data that you had after encoder step 4 above, and the latent
-///    variables that you decoded in encoder step 3 above, as usual in bits-back coding.
-/// 2. Pass it to the constructor of `ChainCoder`, with additional arguments
-///    `is_remainders=True` (`seal` always has to be `False` when `is_remainders=True`
-///    because remainders data is guaranteed not to end in a zero word).
-/// 3. Encode the latent variables back onto the new `ChainCoder` (in reverse order), using
-///    the same entropy models as during decoding.
-/// 4. Recover the original binary data from encoder step 1 above by calling
-///    `.get_data(unseal=True)` (if you set `seal=False` in encoder step 2 above, then set
-///    `unseal=False` now). The method returns two arrays, which you may concatenate in
-///    order.
+/// - [1] Townsend, James, Tom Bird, and David Barber. "Practical lossless compression with
+///   latent variables using bits back coding." arXiv preprint arXiv:1901.04866 (2019).
+/// - [2] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
+///   replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
+/// - [3] Wallace, Chris S. "Classification by minimum-message-length inference."
+///   International Conference on Computing and Information. Springer, Berlin, Heidelberg,
+///   1990.
+/// - [4] Bamler, Robert. "Understanding Entropy Coding With Asymmetric Numeral Systems
+///   (ANS): a Statistician's Perspective." arXiv preprint arXiv:2201.01741 (2022).
 #[pymodule]
 #[pyo3(name = "chain")]
 fn init_chain(py: Python<'_>, module: &PyModule) -> PyResult<()> {

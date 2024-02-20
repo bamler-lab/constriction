@@ -114,13 +114,52 @@ def test_module_example3():
 
 
 def test_chain1():
+   # Parameters for a few example Gaussian entropy models:
+    leaky_gaussian = constriction.stream.model.QuantizedGaussian(-100, 100)
+    means = np.array([3.2, -14.3, 5.7], dtype=np.float32)
+    stds = np.array([6.4, 4.2, 3.9], dtype=np.float32)
+
+    def run_encoder_part(side_information):
+        # Construct a `ChainCoder` for *decoding*:
+        coder = constriction.stream.chain.ChainCoder(
+            side_information,    # Provided bit string.
+            is_remainders=False, # Bit string is *not* remaining data after decoding.
+            seal=True            # Bit string comes from an external source here.
+        )
+        # Decode side information into a sequence of symbols as usual in bits-back coding:
+        symbols = coder.decode(leaky_gaussian, means, stds)
+        # Obtain what's *remaining* on the coder after decoding the symbols:
+        remaining1, remaining2 = coder.get_remainders()
+        return symbols, np.concatenate([remaining1, remaining2])
+
+    def run_decoder_part(symbols, remaining):
+        # Construct a `ChainCoder` for *encoding*:
+        coder = constriction.stream.chain.ChainCoder(
+            remaining,           # Provided bit string.
+            is_remainders=True,  # Bit string *is* remaining data after decoding.
+            seal=False           # Bit string comes from a `ChainCoder`, no need to seal it.
+        )
+        # Re-encode the symbols to recover the side information:
+        coder.encode_reverse(symbols, leaky_gaussian, means, stds)
+        # Obtain the reconstructed data
+        data1, data2 = coder.get_data(unseal=True)
+        return np.concatenate([data1, data2])
+
+    np.random.seed(123)
+    sample_side_information = np.random.randint(2**32, size=10, dtype=np.uint32)
+    symbols, remaining = run_encoder_part(sample_side_information)
+    recovered = run_decoder_part(symbols, remaining)
+    assert np.all(recovered == sample_side_information)
+
+
+def test_chain2():
     # Some sample binary data and sample probabilities for our entropy models
     data = np.array(
         [0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
     probabilities = np.array(
         [[0.1, 0.7, 0.1, 0.1],  # (<-- probabilities for first decoded symbol)
          [0.2, 0.2, 0.1, 0.5],  # (<-- probabilities for second decoded symbol)
-         [0.2, 0.1, 0.4, 0.3]])  # (<-- probabilities for third decoded symbol)
+         [0.2, 0.1, 0.4, 0.3]], dtype=np.float32)  # (<-- probabilities for third decoded symbol)
     model_family = constriction.stream.model.Categorical()
 
     # Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 1]`:
@@ -130,20 +169,20 @@ def test_chain1():
 
     # Even if we change only the first entropy model (slightly), *all* decoded
     # symbols can change:
-    probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
+    probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1], dtype=np.float32)
     ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
     assert np.all(ansCoder.decode(model_family, probabilities)
                   == np.array([1, 0, 3], dtype=np.int32))
 
 
-def test_chain2():
+def test_chain3():
     # Same compressed data and original entropy models as in our first example
     data = np.array(
         [0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
     probabilities = np.array(
         [[0.1, 0.7, 0.1, 0.1],
          [0.2, 0.2, 0.1, 0.5],
-         [0.2, 0.1, 0.4, 0.3]])
+         [0.2, 0.1, 0.4, 0.3]], dtype=np.float32)
     model_family = constriction.stream.model.Categorical()
 
     # Decode with the original entropy models, this time using a `ChainCoder`:
@@ -153,7 +192,7 @@ def test_chain2():
 
     # We obtain different symbols than for the `AnsCoder`, of course, but that's
     # not the point here. Now let's change the first model again:
-    probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
+    probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1], dtype=np.float32)
     chainCoder = constriction.stream.chain.ChainCoder(data, seal=True)
     assert np.all(chainCoder.decode(model_family, probabilities)
                   == np.array([1, 3, 3], dtype=np.int32))
