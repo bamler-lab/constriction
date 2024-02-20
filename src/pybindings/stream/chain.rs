@@ -19,7 +19,20 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-/// See [above usage instructions](#usage-for-bits-back-coding) for explanation of
+/// See module level documentation.
+///
+/// Constructor arguments:
+///
+/// - `data` is a one-dimensional numpy array of dtype `np.uint32`.
+/// - `is_remaining` should be `False` if you intend to *decode* symbols from `data` and
+///   `True` if you intend to *encode* symbols.
+/// - `seal` must be `False` (the default) if `is_remainders==True`, and it should be `True`
+///   if `is_remainders==False` unless you can guarantee that the last word of `data` is
+///   nonzero (e.g., if you obtained `data` from either
+///   `np.concatenate(ChainCoder.get_remaining())` or from `AnsCoder.get_compressed()` then
+///   the last word, if existent, is guaranteed to be nonzero and you may set `seal=False`).
+///
+/// See [above usage example](#usage-example) for a more elaborate explanation of the
 /// constructor arguments.
 #[pyclass]
 #[derive(Debug, Clone)]

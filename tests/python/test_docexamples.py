@@ -114,6 +114,45 @@ def test_module_example3():
 
 
 def test_chain1():
+   # Parameters for a few example Gaussian entropy models:
+    leaky_gaussian = constriction.stream.model.QuantizedGaussian(-100, 100)
+    means = np.array([3.2, -14.3, 5.7])
+    stds = np.array([6.4, 4.2, 3.9])
+
+    def run_encoder_part(side_information):
+        # Construct a `ChainCoder` for *decoding*:
+        coder = constriction.stream.chain.ChainCoder(
+            side_information,    # Provided bit string.
+            is_remainders=False, # Bit string is *not* remaining data after decoding.
+            seal=True            # Bit string comes from an external source here.
+        )
+        # Decode side information into a sequence of symbols as usual in bits-back coding:
+        symbols = coder.decode(leaky_gaussian, means, stds)
+        # Obtain what's *remaining* on the coder after decoding the symbols:
+        remaining1, remaining2 = coder.get_remainders()
+        return symbols, np.concatenate([remaining1, remaining2])
+
+    def run_decoder_part(symbols, remaining):
+        # Construct a `ChainCoder` for *encoding*:
+        coder = constriction.stream.chain.ChainCoder(
+            remaining,           # Provided bit string.
+            is_remainders=True,  # Bit string *is* remaining data after decoding.
+            seal=False           # Bit string comes from a `ChainCoder`, no need to seal it.
+        )
+        # Re-encode the symbols to recover the side information:
+        coder.encode_reverse(symbols, leaky_gaussian, means, stds)
+        # Obtain the reconstructed data
+        data1, data2 = coder.get_data(unseal=True)
+        return np.concatenate([data1, data2])
+
+    np.random.seed(123)
+    sample_side_information = np.random.randint(2**32, size=10, dtype=np.uint32)
+    symbols, remaining = run_encoder_part(sample_side_information)
+    recovered = run_decoder_part(symbols, remaining)
+    assert np.all(recovered == sample_side_information)
+
+
+def test_chain2():
     # Some sample binary data and sample probabilities for our entropy models
     data = np.array(
         [0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
@@ -136,7 +175,7 @@ def test_chain1():
                   == np.array([1, 0, 3], dtype=np.int32))
 
 
-def test_chain2():
+def test_chain3():
     # Same compressed data and original entropy models as in our first example
     data = np.array(
         [0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
