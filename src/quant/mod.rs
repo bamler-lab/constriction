@@ -718,7 +718,15 @@ where
         total.log2() - sum_count_log_count / total
     }
 
-    pub fn rated_grid<R>(&self) -> RatedGrid<V, R>
+    pub fn static_rated_grid<R>(&self) -> StaticRatedGrid<V, R>
+    where
+        R: num_traits::real::Real + 'static,
+        C: num_traits::AsPrimitive<R>,
+    {
+        self.into()
+    }
+
+    pub fn dynamic_rated_grid<R>(&self) -> DynamicRatedGrid<V, R, C>
     where
         R: num_traits::real::Real + 'static,
         C: num_traits::AsPrimitive<R>,
@@ -735,7 +743,6 @@ where
     pub fn vbq<L>(&self, unquantized: V, distortion: impl Fn(V, V) -> L, bit_penalty: L) -> V
     where
         C: PartialOrd + Bounded + 'static,
-        V: Sub<Output = V>,
         L: Copy + PartialOrd + Zero + Bounded,
     {
         Vbq.quantize(unquantized, self, distortion, bit_penalty)
@@ -840,6 +847,12 @@ where
     }
 }
 
+/// Generalization of [`StaticRatedGrid`] and [`DynamicRatedGrid`]
+pub trait RatedGrid<V, R> {
+    /// Must not return an empty iterator.
+    fn points_and_unnormalized_rates(&self) -> impl Iterator<Item = (V, R)>;
+}
+
 /// A finite grid of (not necessarily one-dimensional) points, each weighted with a "bit rate".
 ///
 /// This type implements the trait [`FromPoints`], which means that it can be constructed from a
@@ -856,6 +869,10 @@ where
 /// (unquantized) data to the same grid, but with potentially different mappings to grid points that
 /// takes into account an estimate of the resulting rate.
 ///
+/// # See Also
+///
+/// - [`DynamicRatedGrid`]
+///
 /// # Example
 ///
 /// The following example constructs a `RatedGrid` over a set of floating point numbers. Since the
@@ -864,10 +881,10 @@ where
 /// encounter `NaN`.
 ///
 /// ```
-/// use constriction::{F32, quant::{RatedGrid, FromPoints}};
+/// use constriction::{F32, quant::{StaticRatedGrid, FromPoints}};
 ///
 /// let points = [4.2, -0.3, 1.5, -0.3, 0.1, 1.5, 1.5];
-/// let grid = RatedGrid::<F32, f32>::try_from_points::<_, u32>(
+/// let grid = StaticRatedGrid::<F32, f32>::try_from_points::<_, u32>(
 ///     points.iter().copied()
 /// ).unwrap();
 ///
@@ -883,18 +900,18 @@ where
 ///
 /// // The following fails because `points2` contains `NaN`:
 /// let points2 = [0.1, -0.3, 0.0 / 0.0 /* <-- NaN */, -0.3, 4.2, 1.5, 1.5];
-/// let grid2 = RatedGrid::<F32, f32>::try_from_points::<_, u32>(points2.iter().copied());
+/// let grid2 = StaticRatedGrid::<F32, f32>::try_from_points::<_, u32>(points2.iter().copied());
 /// assert_eq!(grid2.unwrap_err(), constriction::NanError);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RatedGrid<V = F32, R = f32> {
+pub struct StaticRatedGrid<V = F32, R = f32> {
     /// Nonempty Vec of tuples `(grid_point, rate)`, sorted by increasing rate.
     grid: Vec<(V, R)>,
     entropy: R,
 }
 
 /// TODO: documentation with code examples
-impl<V, R> RatedGrid<V, R> {
+impl<V, R> StaticRatedGrid<V, R> {
     /// Shortcut for `<Self as FromPoints<V, C>>::from_points` that makes it easier to
     /// resolve the type for `C`.
     ///
@@ -981,10 +998,10 @@ impl<V, R> RatedGrid<V, R> {
     /// # Example
     ///
     /// ```
-    /// use constriction::{F32, quant::{RatedGrid, FromPoints}};
+    /// use constriction::{F32, quant::{StaticRatedGrid, FromPoints}};
     ///
     /// let points = [4.2, -0.3, 1.5, -0.3, 0.1, 1.5, 1.5];
-    /// let grid = RatedGrid::<F32, f32>::try_from_points::<_, u32>(
+    /// let grid = StaticRatedGrid::<F32, f32>::try_from_points::<_, u32>(
     ///     points.iter().copied()
     /// ).unwrap();
     ///
@@ -997,10 +1014,10 @@ impl<V, R> RatedGrid<V, R> {
     /// Thus, the above method call is equal to the following trait method call:
     ///
     /// ```
-    /// # use constriction::{F32, quant::{RatedGrid, FromPoints}};
+    /// # use constriction::{F32, quant::{StaticRatedGrid, FromPoints}};
     /// #
     /// # let points = [4.2, -0.3, 1.5, -0.3, 0.1, 1.5, 1.5];
-    /// # let grid = RatedGrid::<F32, f32>::try_from_points::<_, u32>(
+    /// # let grid = StaticRatedGrid::<F32, f32>::try_from_points::<_, u32>(
     /// #     points.iter().copied()
     /// # ).unwrap();
     /// #
@@ -1016,41 +1033,26 @@ impl<V, R> RatedGrid<V, R> {
     ///     unquantized, &grid, |x, y| ((x - y) * (x - y)).get(), 1.0);
     /// assert_eq!(quantized.get(), 1.5);
     /// ```
-    pub fn quantize(
-        &self,
-        unquantized: V,
-        mut distortion: impl FnMut(V, V) -> R,
-        bit_penalty: R,
-    ) -> V
+    pub fn quantize(&self, unquantized: V, distortion: impl Fn(V, V) -> R, bit_penalty: R) -> V
     where
-        V: Copy + Sub<Output = V>,
+        V: Copy,
         R: Copy + PartialOrd + Zero + Bounded + Mul<Output = R>,
     {
-        let mut grid = self.grid.iter();
-        let (mut record_candidate, rate) = *grid.next().expect("grid isn't empty");
-        let first_distortion = distortion(unquantized, record_candidate);
-        let mut record_loss = first_distortion + bit_penalty * rate;
-
-        for &(candidate, rate) in grid {
-            let scaled_rate = bit_penalty * rate;
-            if scaled_rate >= record_loss {
-                // Rate is monotonically nondecreasing, and distortion is nonnegative. So once we're at
-                // this point, there won't be any better candidate than the best we've found so far.
-                break;
-            }
-            let candidate_distortion = distortion(unquantized, candidate);
-            let loss = candidate_distortion + scaled_rate;
-            if loss < record_loss {
-                record_loss = loss;
-                record_candidate = candidate
-            }
-        }
-
-        record_candidate
+        RateDistortionQuantization.quantize(unquantized, self, distortion, bit_penalty)
     }
 }
 
-impl<V, R, C> FromPoints<V, C> for RatedGrid<V, R>
+impl<V, R> RatedGrid<V, R> for StaticRatedGrid<V, R>
+where
+    V: Copy,
+    R: Copy,
+{
+    fn points_and_unnormalized_rates(&self) -> impl Iterator<Item = (V, R)> {
+        self.points_and_rates().iter().copied()
+    }
+}
+
+impl<V, R, C> FromPoints<V, C> for StaticRatedGrid<V, R>
 where
     Self: Sized,
     V: Copy + Ord,
@@ -1120,14 +1122,324 @@ where
     }
 }
 
-impl<'a, V, C, R, const CAP: usize> From<&'a EmpiricalDistribution<V, C, CAP>> for RatedGrid<V, R>
+impl<'a, V, C, R, const CAP: usize> From<&'a EmpiricalDistribution<V, C, CAP>>
+    for StaticRatedGrid<V, R>
 where
     R: num_traits::real::Real + 'static,
     V: Copy + Ord,
     C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
 {
     fn from(distribution: &'a EmpiricalDistribution<V, C, CAP>) -> Self {
-        RatedGrid::from_points_and_counts(distribution.iter())
+        StaticRatedGrid::from_points_and_counts(distribution.iter())
+    }
+}
+
+/// A dynamic finite grid of (not necessarily one-dimensional) points, each weighted with a
+/// "bit rate".
+///
+/// A `DynamicRatedGrid` supports all operations that a [`StaticRatedGrid`] supports. In addition, a
+/// `DynamicRatedGrid` has methods [`insert`](Self::insert) and [`remove`](Self::remove) that allow
+/// users to adjust the bit rates of each grid point after instantiation. If these operations are
+/// not required, then a [`StaticRatedGrid`] should e used as it is more efficient in both memory
+/// and runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynamicRatedGrid<V = F32, R = f32, C = u32> {
+    /// Nonempty Vec of tuples `(grid_point, rate, count)`, sorted by decreasing count.
+    grid: Vec<(V, R, C)>,
+    total: C,
+}
+
+/// TODO: documentation with code examples
+impl<V, R, C> DynamicRatedGrid<V, R, C>
+where
+    V: Copy,
+    R: Copy + num_traits::real::Real + 'static,
+    C: Copy + num_traits::AsPrimitive<R>,
+{
+    /// Returns the grid points and their associated bit rates, sorted by increasing rate.
+    pub fn points_and_rates(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (V, R)> + DoubleEndedIterator + '_ {
+        let log_total = self.total.as_().log2();
+        self.grid
+            .iter()
+            .map(move |&(point, unnormalized_rate, _count)| (point, unnormalized_rate + log_total))
+    }
+
+    /// Returns the grid points and their associated counts, sorted by decreasing count.
+    pub fn points_and_counts(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (V, C)> + DoubleEndedIterator + '_ {
+        self.grid
+            .iter()
+            .map(|&(point, _unnormalized_rate, count)| (point, count))
+    }
+
+    /// Returns the entropy corresponding to the bit rates.
+    ///
+    /// The entropy could technically be calculated as follows,
+    ///
+    /// `entropy = - sum_i( 2^{-rate} * rate )`.
+    ///
+    /// But the current implementation instead pre-calculates it when calculating the rates in the
+    /// various constructors as most of the operations to do this have to be performed there anyway.
+    /// So calling `RatedGrid::entropy_base2` is cheap.
+    pub fn entropy_base2(&self) -> R {
+        let mut sum_count_unnormalized_rate = R::zero();
+        for &(_value, unnormalized_rate, count) in &self.grid {
+            let count = count.as_();
+            sum_count_unnormalized_rate = sum_count_unnormalized_rate + count * unnormalized_rate
+        }
+
+        let total = self.total.as_();
+        total.log2() + sum_count_unnormalized_rate / total
+    }
+
+    /// Quantizes a given value to a grid point by optimizing a rate/distortion-tradeoff.
+    ///
+    /// The quantization method minimizes the following objective:
+    ///
+    /// `quantized = arg_min[ distortion(unquantized, quantized) - bit_penalty * rate(quantized) ]`
+    ///
+    /// where `distortion` and `bit_penalty` are provided by the caller, `rate(quantized)` is the
+    /// rate that the `RatedGrid` associates with the grid point `quantized`, and the minimization
+    /// runs over all grid points `quantized`.
+    ///
+    /// The `distortion` function must be nonnegative for all arguments, but it does not need to be
+    /// zero for `quantized == unquantized`, and it does not have to be unimodal.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::{F32, quant::{StaticRatedGrid, FromPoints}};
+    ///
+    /// let points = [4.2, -0.3, 1.5, -0.3, 0.1, 1.5, 1.5];
+    /// let grid = StaticRatedGrid::<F32, f32>::try_from_points::<_, u32>(
+    ///     points.iter().copied()
+    /// ).unwrap();
+    ///
+    /// let unquantized = F32::new(3.0).unwrap();
+    /// let quantized = grid.quantize(unquantized, |x, y| ((x - y) * (x - y)).get(), 1.0);
+    /// assert_eq!(quantized.get(), 1.5);
+    /// ```
+    ///
+    /// This method can also be called in generic code through [`QuantizationMethod::quantize`].
+    /// Thus, the above method call is equal to the following trait method call:
+    ///
+    /// ```
+    /// # use constriction::{F32, quant::{StaticRatedGrid, FromPoints}};
+    /// #
+    /// # let points = [4.2, -0.3, 1.5, -0.3, 0.1, 1.5, 1.5];
+    /// # let grid = StaticRatedGrid::<F32, f32>::try_from_points::<_, u32>(
+    /// #     points.iter().copied()
+    /// # ).unwrap();
+    /// #
+    /// # let unquantized = F32::new(3.0).unwrap();
+    /// #
+    /// // ... define `grid` and `unquantized` as above ...
+    ///
+    /// // Import the trait `QuantizationMethod` so that we can use its implementation for
+    /// // `RateDistortionQuantization`.
+    /// use constriction::quant::{QuantizationMethod, RateDistortionQuantization};
+    ///
+    /// let quantized = RateDistortionQuantization.quantize(
+    ///     unquantized, &grid, |x, y| ((x - y) * (x - y)).get(), 1.0);
+    /// assert_eq!(quantized.get(), 1.5);
+    /// ```
+    pub fn quantize(&self, unquantized: V, distortion: impl Fn(V, V) -> R, bit_penalty: R) -> V
+    where
+        V: Copy,
+        R: Copy + PartialOrd + Zero + Bounded + Mul<Output = R>,
+    {
+        RateDistortionQuantization.quantize(unquantized, self, distortion, bit_penalty)
+    }
+
+    /// Removes `count` points from the grid point at `position` and adjusts its rate accordingly.
+    ///
+    /// `count` should be nonzero. If `count` is zero, then the grid remains unchanged but whether
+    /// the method returns `Ok(..)` or `Err(..)` is unspecified.
+    ///
+    /// On success, returns `Ok(original_count)`, where `original_count >= count` is the number of
+    /// points that were present at the grid point at `position` *before* the removal. Thus, once
+    /// the method returns, there are only `original_count - count` points left at that grid point.
+    /// If removal leads to zero resulting points at `position`, then this removes the grid point.
+    ///
+    /// Returns `Err(NotFoundError)` if removal fails because there aren't enough points with the
+    /// provided `value` (in this case, the `EmpiricalDistribution` remains unchanged).
+    pub fn remove(&mut self, position: V, count: C) -> Result<C, NotFoundError>
+    where
+        V: PartialEq + PartialOrd,
+        C: Ord + Sub<Output = C>,
+    {
+        let (index, old_unnormalized_rate, old_count) = self
+            .grid
+            .iter_mut()
+            .enumerate()
+            .find_map(|(i, (value, unnormalized_rate, count))| {
+                if *value == position {
+                    Some((i, unnormalized_rate, count))
+                } else {
+                    None
+                }
+            })
+            .ok_or(NotFoundError)?;
+
+        let original_count = *old_count;
+        match original_count.cmp(&count) {
+            core::cmp::Ordering::Less => return Err(NotFoundError),
+            core::cmp::Ordering::Equal => {
+                self.grid.remove(index);
+            }
+            core::cmp::Ordering::Greater => {
+                let new_count = *old_count - count;
+                *old_count = new_count;
+                *old_unnormalized_rate = -new_count.as_().log2();
+                let index_after_target = self
+                    .grid
+                    .iter()
+                    .enumerate()
+                    .skip(index + 1)
+                    .find(|(_i, &(value, _unnormalized_rate, count))| {
+                        (count, position) <= (new_count, value)
+                    })
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.grid.len());
+
+                self.grid[index..index_after_target].rotate_left(1);
+            }
+        }
+
+        self.total = self.total - count;
+        Ok(original_count)
+    }
+
+    /// Inserts `count` points into the existing grid point at `position` and adjusts its rate
+    /// accordingly.
+    ///
+    /// The grid point must already exist (with a nonzero number of points at that grid point).
+    ///
+    /// On success, returns `Ok(original_count)`, where `original_count > 0` is the number of
+    /// points that were present at the grid point at `position` *before* the removal (thus, once
+    /// the method returns, there are only `original_count - count` points left at that grid point).
+    ///
+    /// Returns `Err(NotFoundError)` if removal fails because there aren't enough points with the
+    /// provided `value` (in this case, the `EmpiricalDistribution` remains unchanged).
+    pub fn insert(&mut self, position: V, count: C) -> Result<C, NotFoundError>
+    where
+        V: PartialEq + PartialOrd,
+        C: Ord + Add<Output = C>,
+    {
+        let (index, old_unnormalized_rate, old_count) = self
+            .grid
+            .iter_mut()
+            .enumerate()
+            .find_map(|(i, (value, unnormalized_rate, count))| {
+                if *value == position {
+                    Some((i, unnormalized_rate, count))
+                } else {
+                    None
+                }
+            })
+            .ok_or(NotFoundError)?;
+
+        let original_count = *old_count;
+        let new_count = original_count + count;
+        *old_count = new_count;
+        *old_unnormalized_rate = -old_count.as_().log2();
+        self.total = self.total + count;
+
+        let target_index = self.grid[..index]
+            .iter()
+            .enumerate()
+            .rev()
+            .skip(1)
+            .find(|(_i, &(value, _unnormalized_rate, count))| {
+                (count, position) >= (new_count, value)
+            })
+            .map(|(i, _)| i + 1)
+            .unwrap_or(0);
+
+        self.grid[target_index..=index].rotate_right(1);
+
+        Ok(original_count)
+    }
+}
+
+impl<V, R, C> RatedGrid<V, R> for DynamicRatedGrid<V, R, C>
+where
+    V: Copy,
+    R: Copy,
+    C: Copy,
+{
+    fn points_and_unnormalized_rates(&self) -> impl Iterator<Item = (V, R)> {
+        self.grid
+            .iter()
+            .map(move |&(point, unnormalized_rate, _count)| (point, unnormalized_rate))
+    }
+}
+
+impl<V, R, C> FromPoints<V, C> for DynamicRatedGrid<V, R, C>
+where
+    Self: Sized,
+    V: Copy + Ord,
+    C: Copy + Ord + AsPrimitive<R> + num_traits::Num,
+    R: num_traits::real::Real + 'static,
+{
+    fn try_from_points<F>(
+        points: impl IntoIterator<Item = F>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        V: TryFrom<F>,
+    {
+        let mut map = BTreeMap::new();
+        for point in points {
+            map.entry(V::try_from(point)?)
+                .and_modify(|count| *count = *count + C::one())
+                .or_insert(C::one());
+        }
+
+        Ok(Self::from_points_and_counts(map))
+    }
+
+    fn try_from_points_and_counts<F>(
+        points_and_counts: impl IntoIterator<Item = (F, C)>,
+    ) -> Result<Self, <V as TryFrom<F>>::Error>
+    where
+        V: TryFrom<F>,
+    {
+        // This does not allocate if `points_and_counts> = Vec<(F, C)>` and
+        // <V as TryFrom<F>>::Error = Infallible.
+        let mut grid = points_and_counts
+            .into_iter()
+            .map(|(point, count)| Ok((V::try_from(point)?, -count.as_().log2(), count)))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        assert!(!grid.is_empty(), "Cannot construct an empty rated grid.");
+
+        // We sort by counts rather than by log-counts to avoid spurious ties due to rounding
+        // errors. It's also probably faster (but requires an additional conversion below).
+        grid.sort_unstable_by(|&(point1, _r1, count1), &(point2, _r2, count2)| {
+            (count2, point1).cmp(&(count1, point2))
+        });
+
+        let mut total = C::zero();
+        for &(_, _, count) in &grid {
+            total = total + count;
+        }
+
+        Ok(Self { grid, total })
+    }
+}
+
+impl<'a, V, C, R, const CAP: usize> From<&'a EmpiricalDistribution<V, C, CAP>>
+    for DynamicRatedGrid<V, R, C>
+where
+    R: num_traits::real::Real + 'static,
+    V: Copy + Ord,
+    C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
+{
+    fn from(distribution: &'a EmpiricalDistribution<V, C, CAP>) -> Self {
+        DynamicRatedGrid::from_points_and_counts(distribution.iter())
     }
 }
 
@@ -1221,7 +1533,6 @@ impl<P, L> QuantizationMethod<P, P::Value, L> for Vbq
 where
     P: UnnormalizedInverse,
     P::Count: PartialOrd + Bounded,
-    P::Value: Sub<Output = P::Value>,
     L: Copy + PartialOrd + Zero + Bounded,
 {
     fn quantize(
@@ -1302,23 +1613,44 @@ where
 
 /// Explicit rate/distortion quantization.
 ///
-/// See documentation of [`RatedGrid::quantize`].
+/// See documentation of [`StaticRatedGrid::quantize`] and [`DynamicRatedGrid::quantize`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RateDistortionQuantization;
 
-impl<V, R> QuantizationMethod<RatedGrid<V, R>, V, R> for RateDistortionQuantization
+impl<G, V, R> QuantizationMethod<G, V, R> for RateDistortionQuantization
 where
-    V: Copy + Sub<Output = V>,
+    G: RatedGrid<V, R>,
+    V: Copy,
     R: Copy + PartialOrd + Zero + Bounded + Mul<Output = R>,
 {
     fn quantize(
         &self,
         unquantized: V,
-        grid: &RatedGrid<V, R>,
+        grid: &G,
         distortion: impl Fn(V, V) -> R,
         bit_penalty: R,
     ) -> V {
-        grid.quantize(unquantized, distortion, bit_penalty)
+        let mut grid = grid.points_and_unnormalized_rates();
+        let (mut record_candidate, rate) = grid.next().expect("grid isn't empty");
+        let first_distortion = distortion(unquantized, record_candidate);
+        let mut record_loss = first_distortion + bit_penalty * rate;
+
+        for (candidate, rate) in grid {
+            let scaled_rate = bit_penalty * rate;
+            if scaled_rate >= record_loss {
+                // Rate is monotonically nondecreasing, and distortion is nonnegative. So once we're at
+                // this point, there won't be any better candidate than the best we've found so far.
+                break;
+            }
+            let candidate_distortion = distortion(unquantized, candidate);
+            let loss = candidate_distortion + scaled_rate;
+            if loss < record_loss {
+                record_loss = loss;
+                record_candidate = candidate
+            }
+        }
+
+        record_candidate
     }
 }
 
@@ -1523,7 +1855,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             for i in 0..num_repeats {
-                let grid = RatedGrid::<_, f32>::from_points::<u32, _>(&quantized);
+                let grid = StaticRatedGrid::<_, f32>::from_points::<u32, _>(&quantized);
                 let entropy = grid.entropy_base2();
                 if i < 2 {
                     assert!(entropy < previous_entropy);
@@ -1536,7 +1868,7 @@ mod tests {
                 }
             }
 
-            let grid = RatedGrid::<F32, f32>::from_points::<u32, _>(&quantized);
+            let grid = StaticRatedGrid::<F32, f32>::from_points::<u32, _>(&quantized);
             let entropy = grid.entropy_base2();
             assert!(entropy == previous_entropy);
             previous_entropy = entropy;

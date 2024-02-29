@@ -204,7 +204,7 @@ pub struct EmpiricalDistribution(MaybeMultiplexed<crate::quant::EmpiricalDistrib
 /// is true in general.
 #[pyclass]
 #[derive(Debug)]
-pub struct RatedGrid(MaybeMultiplexed<crate::quant::RatedGrid>);
+pub struct RatedGrid(MaybeMultiplexed<crate::quant::StaticRatedGrid>);
 
 #[derive(Debug)]
 enum MaybeMultiplexed<T> {
