@@ -204,7 +204,7 @@ pub struct EmpiricalDistribution(MaybeMultiplexed<crate::quant::EmpiricalDistrib
 /// is true in general.
 #[pyclass]
 #[derive(Debug)]
-pub struct RatedGrid(MaybeMultiplexed<crate::quant::StaticRatedGrid>);
+pub struct RatedGrid(MaybeMultiplexed<crate::quant::DynamicRatedGrid>);
 
 #[derive(Debug)]
 enum MaybeMultiplexed<T> {
@@ -1270,7 +1270,7 @@ impl EmpiricalDistribution {
     pub fn rated_grid(&self) -> RatedGrid {
         let rated_grid = match &self.0 {
             MaybeMultiplexed::Single(distribution) => {
-                MaybeMultiplexed::Single(distribution.rated_grid())
+                MaybeMultiplexed::Single(distribution.dynamic_rated_grid())
             }
             MaybeMultiplexed::Multiple {
                 distributions,
@@ -1278,7 +1278,7 @@ impl EmpiricalDistribution {
             } => MaybeMultiplexed::Multiple {
                 distributions: distributions
                     .iter()
-                    .map(|distribution| distribution.rated_grid())
+                    .map(|distribution| distribution.dynamic_rated_grid())
                     .collect(),
                 axis: *axis,
             },
@@ -1406,9 +1406,8 @@ impl RatedGrid {
         py: Python<'_>,
         index: Option<usize>,
     ) -> PyResult<(PyObject, PyObject)> {
-        self.0.extract_data(py, index, move |grid| {
-            grid.points_and_rates().iter().copied()
-        })
+        self.0
+            .extract_data(py, index, move |grid| grid.points_and_rates())
     }
 }
 
@@ -1668,8 +1667,10 @@ fn vbq<'p>(
         update_prior,
         reference,
         |prior, old, new| {
-            prior.remove(old, 1)?;
-            prior.insert(new, 1);
+            if old != new {
+                prior.remove(old, 1)?;
+                prior.insert(new, 1);
+            }
             Ok(())
         },
     )
@@ -1702,8 +1703,10 @@ fn vbq_(
         update_prior,
         reference,
         |prior, old, new| {
-            prior.remove(old, 1)?;
-            prior.insert(new, 1);
+            if old != new {
+                prior.remove(old, 1)?;
+                prior.insert(new, 1);
+            }
             Ok(())
         },
     )
@@ -1750,6 +1753,25 @@ fn vbq_(
 ///   counterparts). The argument `rate_penalty` is a convenience. Setting `rate_penalty` to a value
 ///   different from `1.0` has the same effect as multiplying all entries of `posterior_variance` by
 ///   `rate_penalty`.
+/// - `update_prior`: optional boolean that decides whether the provided `prior` will be updated
+///   after quantizing each entry of `unquantized`. Defaults to `false` if now `reference` is
+///   provided. Providing a `reverence` implies `update_prior=True.`
+///   Setting `update_prior=True` has two effects:
+///   (i) once `vbq` terminates, all `unquantized` (or `reference`) points are removed from `prior`
+///   and replaced by the (returned) quantized points; and
+///   (ii) since the updates occur by piecemeal immediately once each entry was quantized, entries
+///   towards the end of the array `unquantized` are quantized with a better estimate of the final
+///   distribution of quantized points. However, this also means that each entry of `unquantized`
+///   gets quantized with a different prior, and therefore potentially to a slightly different grid,
+///   which can result in spurious clusters of grid points that lie very close to each other. For
+///   this reason, setting `update_prior=True` is recommended only for intermediate runs of VBQ that
+///   are part of some convergence process. Any final run of VBQ should set `update_prior=False`.
+/// - `reference`: an optional array with same dimensions as `unquantized`. This array contains
+///   the result from a previous quantization. If provided, then, after quantizing each value
+///   `unquantized[indices]`, the `RatedGrid` will be updated by reducing the count of grid points
+///   at grid point `reference[indices]` by one and increasing the count of grid points at the new
+///   quantized value by one. These changes in counts lead to changes in the rates associated with
+///   the grid points.
 ///
 /// ## Example 1: quantization with a *global* grid (i.e. without `specialize_along_axis`)
 ///
@@ -1892,6 +1914,7 @@ fn rate_distortion_quantization<'p>(
     grid: Py<RatedGrid>,
     posterior_variance: PyReadonlyF32ArrayOrScalar<'p>,
     rate_penalty: f32,
+    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
 ) -> PyResult<&'p PyArrayDyn<f32>> {
     quantize_out_of_place(
         RateDistortionQuantization,
@@ -1901,8 +1924,14 @@ fn rate_distortion_quantization<'p>(
         posterior_variance,
         rate_penalty,
         None,
-        None,
-        |_grid, _old, _new| Ok(()),
+        reference,
+        |grid: &mut crate::quant::DynamicRatedGrid, old, new| {
+            if old != new {
+                grid.remove(old, 1)?;
+                grid.insert(new, 1).expect("new grid point exists");
+            }
+            Ok(())
+        },
     )
 }
 
@@ -1922,6 +1951,7 @@ fn rate_distortion_quantization_(
     grid: Py<RatedGrid>,
     posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
     rate_penalty: f32,
+    reference: Option<PyReadwriteArrayDyn<'_, f32>>,
 ) -> PyResult<()> {
     quantize_in_place(
         RateDistortionQuantization,
@@ -1930,8 +1960,14 @@ fn rate_distortion_quantization_(
         posterior_variance,
         rate_penalty,
         None,
-        None,
-        |_grid, _old, _new| Ok(()),
+        reference,
+        |grid: &mut crate::quant::DynamicRatedGrid, old, new| {
+            if old != new {
+                grid.remove(old, 1)?;
+                grid.insert(new, 1).expect("new grid point exists");
+            }
+            Ok(())
+        },
     )
 }
 
