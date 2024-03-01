@@ -2460,7 +2460,6 @@ mod tests {
         dbg,
     };
 
-    use alloc::vec::Vec;
     use rand::{distributions, seq::SliceRandom, Rng, RngCore, SeedableRng};
     use rand_xoshiro::Xoshiro256StarStar;
 

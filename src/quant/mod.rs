@@ -1705,7 +1705,6 @@ mod tests {
 
     use super::*;
 
-    use alloc::vec::Vec;
     use rand::{seq::SliceRandom, RngCore, SeedableRng};
     use rand_xoshiro::Xoshiro256StarStar;
 
