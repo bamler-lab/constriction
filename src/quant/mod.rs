@@ -334,6 +334,33 @@ pub trait ToPointsAndCounts<V, C> {
     fn points_and_counts_iter(&self) -> impl Iterator<Item = (V, C)> + '_;
 }
 
+pub trait DynamicDistribution<V, C> {
+    type InsertSuccess;
+    type InsertError;
+
+    /// Inserts `count` points with the provided `value` into the distribution.
+    fn insert(&mut self, value: V, count: C) -> Result<Self::InsertSuccess, Self::InsertError>;
+
+    /// Removes `count` points with the provided `value`.
+    ///
+    /// `count` should be nonzero. If `count` is zero, then the distribution remains unchanged but
+    /// whether the method returns `Ok(..)` or `Err(..)` is unspecified and may depend not only of
+    /// the contents but even of the history of the distribution.
+    ///
+    /// On success, returns `Ok(original_count)`, where `original_count >= 1` is the number of
+    /// points with the provided `value` that were present *before* the removal (thus, once the
+    /// method returns, there are only `original_count - 1` points with the provided `value` left).
+    ///
+    /// Returns `Err(NotFoundError)` if removal fails because there aren't enough points with the
+    /// provided `value` (in this case, the `distribution remains unchanged).
+    fn remove(&mut self, value: V, count: C) -> Result<C, NotFoundError>;
+
+    /// Removes *all* points with the provided `value`.
+    ///
+    /// Returns the number of removed points (which can be zero).
+    fn remove_all(&mut self, value: V) -> C;
+}
+
 /// A trait for quantization methods that quantize to a given `Grid` type.
 ///
 /// The `Grid` type can be either an explicitly defined grid such as [`RatedGrid`], or it can be a
@@ -518,10 +545,11 @@ impl<C: Sub<Output = C>> Sub for CountWrapper<C> {
 /// Examples of edge cases involving floating point zeros and subnormal numbers:
 ///
 /// ```
-/// # use constriction::{
-/// #     F32, quant::{EmpiricalDistribution, UnnormalizedDistribution, UnnormalizedInverse}
-/// # };
-/// #
+/// use constriction::{
+///     F32, quant::{DynamicDistribution, EmpiricalDistribution, UnnormalizedDistribution,
+///     UnnormalizedInverse}
+/// };
+///
 /// let positive_zero = 0.0_f32;
 /// let negative_zero = -0.0_f32;
 /// assert!(positive_zero.to_bits() != negative_zero.to_bits()); // They have different bit patterns
@@ -597,43 +625,6 @@ where
     /// [`Vec::new`](alloc::vec::Vec::new) operates).
     pub fn new() -> Self {
         Self(AugmentedBTree::new())
-    }
-
-    /// Inserts `count` points with the provided `value` into the distribution.
-    ///
-    /// If the distribution already has some point(s) with the same `value`, then no allocation
-    /// is required and only the count for `value` is increased. Otherwise, a new entry with the
-    /// provided `count` is inserted.
-    ///
-    /// If `count` is zero then this is a noop.
-    pub fn insert(&mut self, value: V, count: C) {
-        self.0.insert(value, CountWrapper(count))
-    }
-
-    /// Removes `count` points with the provided `value`.
-    ///
-    /// `count` should be nonzero. If `count` is zero, then the tree remains unchanged but whether
-    /// the method returns `Ok(..)` or `Err(..)` is unspecified and may depend not only of the
-    /// contents but even of the history of the `EmpiricalDistribution`.
-    ///
-    /// On success, returns `Ok(original_count)`, where `original_count >= 1` is the number of
-    /// points with the provided `value` that were present *before* the removal (thus, once the
-    /// method returns, there are only `original_count - 1` points with the provided `value` left).
-    ///
-    /// Returns `Err(NotFoundError)` if removal fails because there aren't enough points with the
-    /// provided `value` (in this case, the `EmpiricalDistribution` remains unchanged).
-    pub fn remove(&mut self, value: V, count: C) -> Result<C, NotFoundError> {
-        self.0
-            .remove(value, CountWrapper(count))
-            .map(|c| c.0)
-            .ok_or(NotFoundError)
-    }
-
-    /// Removes *all* points with the provided `value`.
-    ///
-    /// Returns the number of removed points (which can be zero).
-    pub fn remove_all(&mut self, value: V) -> C {
-        self.0.remove_all(value).0
     }
 
     /// Iterate over unique values in sorted order.
@@ -789,6 +780,36 @@ where
 {
     fn points_and_counts_iter(&self) -> impl Iterator<Item = (V, C)> + '_ {
         self.iter()
+    }
+}
+
+impl<V, C, const CAP: usize> DynamicDistribution<V, C> for EmpiricalDistribution<V, C, CAP>
+where
+    V: Copy + Ord,
+    C: Copy + Ord + num_traits::Num,
+{
+    type InsertSuccess = ();
+    type InsertError = core::convert::Infallible;
+
+    /// If the distribution already has some point(s) with the same `value`, then no allocation
+    /// is required and only the count for `value` is increased. Otherwise, a new entry with the
+    /// provided `count` is inserted.
+    ///
+    /// If `count` is zero then this is a noop.
+    fn insert(&mut self, value: V, count: C) -> Result<(), Self::InsertError> {
+        self.0.insert(value, CountWrapper(count));
+        Ok(())
+    }
+
+    fn remove(&mut self, value: V, count: C) -> Result<C, NotFoundError> {
+        self.0
+            .remove(value, CountWrapper(count))
+            .map(|c| c.0)
+            .ok_or(NotFoundError)
+    }
+
+    fn remove_all(&mut self, value: V) -> C {
+        self.0.remove_all(value).0
     }
 }
 
@@ -1253,116 +1274,6 @@ where
     {
         RateDistortionQuantization.quantize(unquantized, self, distortion, bit_penalty)
     }
-
-    /// Removes `count` points from the grid point at `position` and adjusts its rate accordingly.
-    ///
-    /// `count` should be nonzero. If `count` is zero, then the grid remains unchanged but whether
-    /// the method returns `Ok(..)` or `Err(..)` is unspecified.
-    ///
-    /// On success, returns `Ok(original_count)`, where `original_count >= count` is the number of
-    /// points that were present at the grid point at `position` *before* the removal. Thus, once
-    /// the method returns, there are only `original_count - count` points left at that grid point.
-    /// If removal leads to zero resulting points at `position`, then this removes the grid point.
-    ///
-    /// Returns `Err(NotFoundError)` if removal fails because there aren't enough points with the
-    /// provided `value` (in this case, the `EmpiricalDistribution` remains unchanged).
-    pub fn remove(&mut self, position: V, count: C) -> Result<C, NotFoundError>
-    where
-        V: PartialEq + PartialOrd,
-        C: Ord + Sub<Output = C>,
-    {
-        let (index, old_unnormalized_rate, old_count) = self
-            .grid
-            .iter_mut()
-            .enumerate()
-            .find_map(|(i, (value, unnormalized_rate, count))| {
-                if *value == position {
-                    Some((i, unnormalized_rate, count))
-                } else {
-                    None
-                }
-            })
-            .ok_or(NotFoundError)?;
-
-        let original_count = *old_count;
-        match original_count.cmp(&count) {
-            core::cmp::Ordering::Less => return Err(NotFoundError),
-            core::cmp::Ordering::Equal => {
-                self.grid.remove(index);
-            }
-            core::cmp::Ordering::Greater => {
-                let new_count = *old_count - count;
-                *old_count = new_count;
-                *old_unnormalized_rate = -new_count.as_().log2();
-                let index_after_target = self
-                    .grid
-                    .iter()
-                    .enumerate()
-                    .skip(index + 1)
-                    .find(|(_i, &(value, _unnormalized_rate, count))| {
-                        (count, position) <= (new_count, value)
-                    })
-                    .map(|(i, _)| i)
-                    .unwrap_or(self.grid.len());
-
-                self.grid[index..index_after_target].rotate_left(1);
-            }
-        }
-
-        self.total = self.total - count;
-        Ok(original_count)
-    }
-
-    /// Inserts `count` points into the existing grid point at `position` and adjusts its rate
-    /// accordingly.
-    ///
-    /// The grid point must already exist (with a nonzero number of points at that grid point).
-    ///
-    /// On success, returns `Ok(original_count)`, where `original_count > 0` is the number of
-    /// points that were present at the grid point at `position` *before* the removal (thus, once
-    /// the method returns, there are only `original_count - count` points left at that grid point).
-    ///
-    /// Returns `Err(NotFoundError)` if removal fails because there aren't enough points with the
-    /// provided `value` (in this case, the `EmpiricalDistribution` remains unchanged).
-    pub fn insert(&mut self, position: V, count: C) -> Result<C, NotFoundError>
-    where
-        V: PartialEq + PartialOrd,
-        C: Ord + Add<Output = C>,
-    {
-        let (index, old_unnormalized_rate, old_count) = self
-            .grid
-            .iter_mut()
-            .enumerate()
-            .find_map(|(i, (value, unnormalized_rate, count))| {
-                if *value == position {
-                    Some((i, unnormalized_rate, count))
-                } else {
-                    None
-                }
-            })
-            .ok_or(NotFoundError)?;
-
-        let original_count = *old_count;
-        let new_count = original_count + count;
-        *old_count = new_count;
-        *old_unnormalized_rate = -old_count.as_().log2();
-        self.total = self.total + count;
-
-        let target_index = self.grid[..index]
-            .iter()
-            .enumerate()
-            .rev()
-            .skip(1)
-            .find(|(_i, &(value, _unnormalized_rate, count))| {
-                (count, position) >= (new_count, value)
-            })
-            .map(|(i, _)| i + 1)
-            .unwrap_or(0);
-
-        self.grid[target_index..=index].rotate_right(1);
-
-        Ok(original_count)
-    }
 }
 
 impl<V, R, C> RatedGrid<V, R> for DynamicRatedGrid<V, R, C>
@@ -1436,10 +1347,142 @@ impl<'a, V, C, R, const CAP: usize> From<&'a EmpiricalDistribution<V, C, CAP>>
 where
     R: num_traits::real::Real + 'static,
     V: Copy + Ord,
-    C: Copy + Ord + num_traits::Num + AsPrimitive<R> + Ord,
+    C: Copy + Ord + num_traits::Num + AsPrimitive<R>,
 {
     fn from(distribution: &'a EmpiricalDistribution<V, C, CAP>) -> Self {
         DynamicRatedGrid::from_points_and_counts(distribution.iter())
+    }
+}
+
+impl<V, R, C> DynamicDistribution<V, C> for DynamicRatedGrid<V, R, C>
+where
+    V: Copy + Ord,
+    R: Copy + num_traits::real::Real + 'static,
+    C: Copy + Ord + num_traits::Num + AsPrimitive<R>,
+{
+    type InsertSuccess = C;
+    type InsertError = NotFoundError;
+
+    /// Inserts `count` points into the existing grid point at `position` and adjusts its rate
+    /// accordingly.
+    ///
+    /// The grid point must already exist (with a nonzero number of points at that grid point).
+    ///
+    /// On success, returns `Ok(original_count)`, where `original_count > 0` is the number of
+    /// points that were present at the grid point at `position` *before* the removal (thus, once
+    /// the method returns, there are only `original_count - count` points left at that grid point).
+    ///
+    /// Returns `Err(NotFoundError)` if removal fails because there aren't enough points with the
+    /// provided `value` (in this case, the `EmpiricalDistribution` remains unchanged).
+    fn insert(&mut self, position: V, count: C) -> Result<C, NotFoundError>
+    where
+        V: PartialEq + PartialOrd,
+        C: Ord + Add<Output = C>,
+    {
+        let (index, old_unnormalized_rate, old_count) = self
+            .grid
+            .iter_mut()
+            .enumerate()
+            .find_map(|(i, (value, unnormalized_rate, count))| {
+                if *value == position {
+                    Some((i, unnormalized_rate, count))
+                } else {
+                    None
+                }
+            })
+            .ok_or(NotFoundError)?;
+
+        let original_count = *old_count;
+        let new_count = original_count + count;
+        *old_count = new_count;
+        *old_unnormalized_rate = -old_count.as_().log2();
+        self.total = self.total + count;
+
+        let target_index = self.grid[..index]
+            .iter()
+            .enumerate()
+            .rev()
+            .skip(1)
+            .find(|(_i, &(value, _unnormalized_rate, count))| {
+                (count, position) >= (new_count, value)
+            })
+            .map(|(i, _)| i + 1)
+            .unwrap_or(0);
+
+        self.grid[target_index..=index].rotate_right(1);
+
+        Ok(original_count)
+    }
+
+    /// Removes `count` points from the grid point at `position` and adjusts its rate accordingly.
+    ///
+    /// `count` should be nonzero. If `count` is zero, then the grid remains unchanged but whether
+    /// the method returns `Ok(..)` or `Err(..)` is unspecified.
+    ///
+    /// On success, returns `Ok(original_count)`, where `original_count >= count` is the number of
+    /// points that were present at the grid point at `position` *before* the removal. Thus, once
+    /// the method returns, there are only `original_count - count` points left at that grid point.
+    /// If removal leads to zero resulting points at `position`, then this removes the grid point.
+    ///
+    /// Returns `Err(NotFoundError)` if removal fails because there aren't enough points with the
+    /// provided `value` (in this case, the `EmpiricalDistribution` remains unchanged).
+    fn remove(&mut self, position: V, count: C) -> Result<C, NotFoundError>
+    where
+        V: PartialEq + PartialOrd,
+        C: Ord + Sub<Output = C>,
+    {
+        let (index, old_unnormalized_rate, old_count) = self
+            .grid
+            .iter_mut()
+            .enumerate()
+            .find_map(|(i, (value, unnormalized_rate, count))| {
+                if *value == position {
+                    Some((i, unnormalized_rate, count))
+                } else {
+                    None
+                }
+            })
+            .ok_or(NotFoundError)?;
+
+        let original_count = *old_count;
+        match original_count.cmp(&count) {
+            core::cmp::Ordering::Less => return Err(NotFoundError),
+            core::cmp::Ordering::Equal => {
+                self.grid.remove(index);
+            }
+            core::cmp::Ordering::Greater => {
+                let new_count = *old_count - count;
+                *old_count = new_count;
+                *old_unnormalized_rate = -new_count.as_().log2();
+                let index_after_target = self
+                    .grid
+                    .iter()
+                    .enumerate()
+                    .skip(index + 1)
+                    .find(|(_i, &(value, _unnormalized_rate, count))| {
+                        (count, position) <= (new_count, value)
+                    })
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.grid.len());
+
+                self.grid[index..index_after_target].rotate_left(1);
+            }
+        }
+
+        self.total = self.total - count;
+        Ok(original_count)
+    }
+
+    fn remove_all(&mut self, position: V) -> C {
+        let index = self
+            .grid
+            .iter()
+            .position(|(value, _unnormalized_rate, _count)| *value == position);
+
+        match index {
+            Some(index) => self.grid.remove(index).2,
+            None => C::zero(),
+        }
     }
 }
 
@@ -1656,6 +1699,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use crate::F64;
 
     use super::*;
@@ -1744,7 +1789,7 @@ mod tests {
                 for (point, shifted_point) in points.iter().zip(shifted_points.iter_mut()) {
                     let quant = prior.vbq(*point, |x, y| (x - y) * (x - y), beta);
                     prior.remove(*shifted_point, 1).unwrap();
-                    prior.insert(quant, 1);
+                    prior.insert(quant, 1).unwrap();
                     *shifted_point = quant;
                 }
                 let entropy = prior.entropy_base2::<f32>();
@@ -1876,5 +1921,161 @@ mod tests {
             assert!(previous_entropy < entropy_previous_coarseness);
             entropy_previous_coarseness = previous_entropy;
         }
+    }
+
+    #[test]
+    fn static_rated_grid() {
+        let (points, grid, counts, _rng) = create_random_rated_grid::<StaticRatedGrid>();
+
+        let points_and_rates = grid.points_and_rates();
+        assert_eq!(points_and_rates.len(), counts.len());
+        let (mut previous_point, mut previous_rate) = (F32::new(0.0).unwrap(), 0.0);
+        let neg_log_normalizer = (points.len() as f32).log2();
+
+        for &(point, rate) in points_and_rates {
+            let count = counts[&point.get().to_bits()];
+            let expected_rate = neg_log_normalizer - (count as f32).log2();
+            assert!((rate - expected_rate).abs() < 1e-6);
+            assert!(rate > previous_rate || (rate == previous_rate || point > previous_point));
+            previous_point = point;
+            previous_rate = rate;
+        }
+    }
+
+    #[test]
+    fn dynamic_rated_grid() {
+        let (points, mut grid, mut counts, mut rng) =
+            create_random_rated_grid::<DynamicRatedGrid>();
+
+        let points_and_rates = grid.points_and_rates();
+        let points_and_unnormalized_rates = grid.points_and_unnormalized_rates();
+        assert_eq!(points_and_rates.len(), counts.len());
+        let (mut previous_point, mut previous_rate) = (F32::new(0.0).unwrap(), 0.0);
+        let neg_log_normalizer = (points.len() as f32).log2();
+
+        let mut num_grid_points = 0;
+        for ((point, rate), (point2, unnormalized_rate)) in
+            points_and_rates.zip(points_and_unnormalized_rates)
+        {
+            let count = counts[&point.get().to_bits()];
+            let expected_unnormalized_rate = -(count as f32).log2();
+            let expected_rate = neg_log_normalizer + expected_unnormalized_rate;
+            assert_eq!(point, point2);
+            assert!((unnormalized_rate - expected_unnormalized_rate).abs() < 1e-6);
+            assert!((rate - expected_rate).abs() < 1e-6);
+            assert!(rate > previous_rate || (rate == previous_rate || point > previous_point));
+            previous_point = point;
+            previous_rate = rate;
+            num_grid_points += 1;
+        }
+
+        assert_eq!(num_grid_points, counts.len());
+
+        #[cfg(not(miri))]
+        let num_moves = 100;
+
+        #[cfg(miri)]
+        let num_moves = 10;
+
+        let mut total_moves = 0;
+
+        for _ in 0..num_moves {
+            let (from_index, from_point, from_count) = loop {
+                let from_index = rng.next_u32() as usize % points.len();
+                let from_point = points[from_index];
+                if let Some(from_count) = counts.get_mut(&from_point.to_bits()) {
+                    break (from_index, from_point, from_count);
+                }
+            };
+
+            let move_count = rng.next_u32() % *from_count + 1;
+            total_moves += move_count;
+            assert_eq!(
+                grid.remove(F32::new(from_point).unwrap(), move_count)
+                    .unwrap(),
+                *from_count
+            );
+            *from_count -= move_count;
+            if *from_count == 0 {
+                counts.remove(&from_point.to_bits()).unwrap();
+            }
+
+            let (to_point, to_count) = loop {
+                let to_index = rng.next_u32() as usize % points.len();
+                if to_index == from_index {
+                    continue;
+                }
+                let to_point = points[to_index];
+                if let Some(to_count) = counts.get_mut(&to_point.to_bits()) {
+                    break (to_point, to_count);
+                }
+            };
+
+            assert_eq!(
+                grid.insert(F32::new(to_point).unwrap(), 2 * move_count)
+                    .unwrap(),
+                *to_count
+            );
+            *to_count += 2 * move_count;
+        }
+
+        let points_and_rates = grid.points_and_rates();
+        let points_and_unnormalized_rates = grid.points_and_unnormalized_rates();
+        assert_eq!(points_and_rates.len(), counts.len());
+        let (mut previous_point, mut previous_rate) = (F32::new(0.0).unwrap(), 0.0);
+        let neg_log_normalizer = ((points.len() + total_moves as usize) as f32).log2();
+
+        let mut num_grid_points = 0;
+        for ((point, rate), (point2, unnormalized_rate)) in
+            points_and_rates.zip(points_and_unnormalized_rates)
+        {
+            let count = counts[&point.get().to_bits()];
+            let expected_unnormalized_rate = -(count as f32).log2();
+            let expected_rate = neg_log_normalizer + expected_unnormalized_rate;
+            assert_eq!(point, point2);
+            assert!((unnormalized_rate - expected_unnormalized_rate).abs() < 1e-6);
+            assert!((rate - expected_rate).abs() < 1e-6);
+            assert!(rate > previous_rate || (rate == previous_rate || point > previous_point));
+            previous_point = point;
+            previous_rate = rate;
+            num_grid_points += 1;
+        }
+
+        assert_eq!(num_grid_points, counts.len());
+    }
+
+    fn create_random_rated_grid<G: FromPoints<F32, u32>>(
+    ) -> (Vec<f32>, G, HashMap<u32, u32>, Xoshiro256StarStar) {
+        #[cfg(not(miri))]
+        let amt = 1000;
+
+        #[cfg(miri)]
+        let amt = 100;
+
+        let mut rng = Xoshiro256StarStar::seed_from_u64(202402291);
+        let mut points = (0..amt)
+            .flat_map(|_| {
+                let num_repeats = 1 + rng.next_u32() % 4;
+                let value = rng.next_u32() as f32 / u32::MAX as f32;
+                core::iter::repeat(value).take(num_repeats as usize)
+            })
+            .collect::<Vec<_>>();
+        points.shuffle(&mut rng);
+        assert!(points.len() > amt);
+        assert!(points.len() < 5 * amt);
+
+        let grid = G::try_from_points(points.iter().copied()).unwrap();
+
+        let mut counts = HashMap::new();
+        for &point in &points {
+            // Using `.to_bits()` is a dirty hack to make `pos` hashable. It works
+            // here because we don't have NaNs, and all zeros have the same sign.
+            counts
+                .entry(point.to_bits())
+                .and_modify(|count| *count += 1u32)
+                .or_insert(1);
+        }
+
+        (points, grid, counts, rng)
     }
 }

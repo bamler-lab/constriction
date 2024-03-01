@@ -780,3 +780,62 @@ def test_rated_distortion_quantization_example2_inplace():
     assert np.all(quantized_low_penalty == naively_quantized)
     assert np.all(quantized_high_penalty == expected_quantized_high_penalty)
     assert np.all(high_diff == expected_high_diff)
+
+
+def test_rated_grid_insert_example1():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(3, 5)).astype(np.float32)
+
+    grid = constriction.quant.RatedGrid(matrix)
+    points, rates = grid.points_and_rates()
+    points_expected = [2.0, 4.0, 5.0, 1.0, 3.0]
+    rates_expected = [1.321928, 1.584963, 2.906891, 3.906891, 3.906891]
+    assert np.all(points == points_expected)
+    assert np.allclose(rates, rates_expected, atol=1e-6)
+
+    grid.insert(matrix[1, :])
+    points, rates = grid.points_and_rates()
+    points_expected = [4.0, 5.0, 2.0, 1.0, 3.0]
+    rates_expected = [1.514573, 2.321928, 1.514573, 4.321928, 4.321928]
+    assert np.all(points == points_expected)
+    assert np.allclose(rates, rates_expected, atol=1e-6)
+
+
+def test_rated_grid_insert_example2():
+    rng = np.random.default_rng(123)
+    matrix = rng.binomial(10, 0.3, size=(3, 5)).astype(np.float32)
+    print(f"matrix = {matrix}\n")
+
+    grid = constriction.quant.RatedGrid(matrix, specialize_along_axis=0)
+    points, rates = grid.points_and_rates()
+    points_expected = [
+        [2.0, 1.0, 4.0],
+        [4.0, 5.0, 2.0],
+        [2.0, 4.0, 3.0],
+    ]
+    rates_expected = [
+        [0.736966, 2.321928, 2.321928],
+        [1.321928, 1.321928, 2.321928],
+        [1.321928, 1.321928, 2.321928],
+    ]
+    for p, pe in zip(points, points_expected):
+        assert np.all(p == pe)
+    for r, re in zip(rates, rates_expected):
+        assert np.allclose(r, re, atol=1e-6)
+
+    grid.insert(matrix[:, :2])
+    points, rates = grid.points_and_rates()
+    points_expected = [
+        [2.0, 1.0, 4.0],
+        [5.0, 4.0, 2.0],
+        [2.0, 3.0, 4.0],
+    ]
+    rates_expected = [
+        [1.222392, 1.807355, 1.807355],
+        [1.222392, 1.222392, 2.807355],
+        [1.222392, 1.807355, 1.807355],
+    ]
+    for p, pe in zip(points, points_expected):
+        assert np.all(p == pe)
+    for r, re in zip(rates, rates_expected):
+        assert np.allclose(r, re, atol=1e-6)

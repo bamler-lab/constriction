@@ -11,7 +11,7 @@ use numpy::{PyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwri
 use pyo3::prelude::*;
 
 use crate::quant::{
-    FromPoints, NotFoundError, QuantizationMethod, RateDistortionQuantization,
+    DynamicDistribution, FromPoints, NotFoundError, QuantizationMethod, RateDistortionQuantization,
     UnnormalizedDistribution, Vbq,
 };
 use crate::F32;
@@ -526,79 +526,7 @@ impl EmpiricalDistribution {
         new: PyReadonlyF32ArrayOrScalar<'_>,
         index: Option<usize>,
     ) -> PyResult<()> {
-        if let Some(index) = index {
-            let MaybeMultiplexed::Multiple { distributions, .. } = &mut self.0 else {
-                return Err(pyo3::exceptions::PyIndexError::new_err(
-                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
-                    was created with argument `specialize_along_axis`.",
-                ));
-            };
-
-            let distribution = distributions
-                .get_mut(index)
-                .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
-
-            match new {
-                Scalar(new) => distribution.insert(F32::new(new)?, 1),
-                Array(new) => {
-                    for &new in new.as_array() {
-                        distribution.insert(F32::new(new)?, 1);
-                    }
-                }
-            }
-        } else {
-            match new {
-                Scalar(new) => match &mut self.0 {
-                    MaybeMultiplexed::Single(distribution) => {
-                        distribution.insert(F32::new(new)?, 1);
-                    }
-                    MaybeMultiplexed::Multiple { .. } => {
-                        return Err(pyo3::exceptions::PyAssertionError::new_err(
-                            "Scalar updates with an `EmpiricalDistribution` that was created with \
-                            argument `specialize_along_axis` require argument `index`.",
-                        ));
-                    }
-                },
-                Array(new) => {
-                    let new = new.as_array();
-
-                    match &mut self.0 {
-                        MaybeMultiplexed::Single(distribution) => {
-                            for &new in &new {
-                                distribution.insert(F32::new(new)?, 1);
-                            }
-                        }
-                        MaybeMultiplexed::Multiple {
-                            distributions,
-                            axis,
-                        } => {
-                            let new = new.axis_iter(Axis(*axis));
-                            if new.len() != distributions.len() {
-                                return Err(pyo3::exceptions::PyIndexError::new_err(
-                                    alloc::format!(
-                                        "Axis {} has wrong dimension: expected {} but found {}.",
-                                        axis,
-                                        distributions.len(),
-                                        new.len()
-                                    ),
-                                ));
-                            }
-
-                            new.into_par_iter().zip(distributions).try_for_each(
-                                |(new, distribution)| {
-                                    for &new in &new {
-                                        distribution.insert(F32::new(new)?, 1);
-                                    }
-                                    Ok::<(), PyErr>(())
-                                },
-                            )?;
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        insert(&mut self.0, new, index)
     }
 
     /// Remove one or more values from the distribution.
@@ -611,7 +539,9 @@ impl EmpiricalDistribution {
     /// logically split into slices along axis `i`, and the points from each slice are removed from
     /// the corresponding distribution).
     ///
-    /// Returns an
+    /// Raises an exception if you try to remove more points from some position than there exist in
+    /// the distribution. In this case, the `EmpiricalDistribution` remains in an unspecified state
+    /// that may be nondeterministic due to parallelization.
     ///
     /// For code examples, see documentation of the method
     /// [`insert`](#constriction.quant.EmpiricalDistribution.insert), which has an analogous API.
@@ -620,81 +550,7 @@ impl EmpiricalDistribution {
         old: PyReadonlyF32ArrayOrScalar<'_>,
         index: Option<usize>,
     ) -> PyResult<()> {
-        if let Some(index) = index {
-            let MaybeMultiplexed::Multiple { distributions, .. } = &mut self.0 else {
-                return Err(pyo3::exceptions::PyIndexError::new_err(
-                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
-                    was created with argument `specialize_along_axis`.",
-                ));
-            };
-
-            let distribution = distributions
-                .get_mut(index)
-                .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
-
-            match old {
-                Scalar(old) => {
-                    distribution.remove(F32::new(old)?, 1)?;
-                }
-                Array(old) => {
-                    for &old in old.as_array() {
-                        distribution.remove(F32::new(old)?, 1)?;
-                    }
-                }
-            }
-        } else {
-            match old {
-                Scalar(old) => match &mut self.0 {
-                    MaybeMultiplexed::Single(distribution) => {
-                        distribution.remove(F32::new(old)?, 1)?;
-                    }
-                    MaybeMultiplexed::Multiple { .. } => {
-                        return Err(pyo3::exceptions::PyAssertionError::new_err(
-                            "Scalar updates with an `EmpiricalDistribution` that was created with \
-                        argument `specialize_along_axis` require argument `index`.",
-                        ));
-                    }
-                },
-                Array(old) => {
-                    let old = old.as_array();
-
-                    match &mut self.0 {
-                        MaybeMultiplexed::Single(distribution) => {
-                            for &old in &old {
-                                distribution.remove(F32::new(old)?, 1)?;
-                            }
-                        }
-                        MaybeMultiplexed::Multiple {
-                            distributions,
-                            axis,
-                        } => {
-                            let old = old.axis_iter(Axis(*axis));
-                            if old.len() != distributions.len() {
-                                return Err(pyo3::exceptions::PyIndexError::new_err(
-                                    alloc::format!(
-                                        "Axis {} has wrong dimension: expected {} but found {}.",
-                                        axis,
-                                        distributions.len(),
-                                        old.len()
-                                    ),
-                                ));
-                            }
-
-                            old.into_par_iter().zip(distributions).try_for_each(
-                                |(old, distribution)| {
-                                    for &old in &old {
-                                        distribution.remove(F32::new(old)?, 1)?;
-                                    }
-                                    Ok::<(), PyErr>(())
-                                },
-                            )?;
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        remove(&mut self.0, old, index)
     }
 
     /// Update the positions of one or more values in the distribution.
@@ -722,98 +578,7 @@ impl EmpiricalDistribution {
         new: PyReadonlyF32ArrayOrScalar<'_>,
         index: Option<usize>,
     ) -> PyResult<()> {
-        if let Some(index) = index {
-            let MaybeMultiplexed::Multiple { distributions, .. } = &mut self.0 else {
-                return Err(pyo3::exceptions::PyIndexError::new_err(
-                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
-                    was created with argument `specialize_along_axis`.",
-                ));
-            };
-
-            let distribution = distributions
-                .get_mut(index)
-                .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
-
-            match (old, new) {
-                (Scalar(old), Scalar(new)) => {
-                    distribution.remove(F32::new(old)?, 1)?;
-                    distribution.insert(F32::new(new)?, 1);
-                }
-                (Array(old), Array(new)) if old.dims() == new.dims() => {
-                    for (&old, &new) in old.as_array().iter().zip(&new.as_array()) {
-                        distribution.remove(F32::new(old)?, 1)?;
-                        distribution.insert(F32::new(new)?, 1);
-                    }
-                }
-                _ => {
-                    return Err(pyo3::exceptions::PyAssertionError::new_err(
-                        "`old` and `new` must have the same shape.",
-                    ))
-                }
-            }
-        } else {
-            match (old, new) {
-                (Scalar(old), Scalar(new)) => match &mut self.0 {
-                    MaybeMultiplexed::Single(distribution) => {
-                        distribution.remove(F32::new(old)?, 1)?;
-                        distribution.insert(F32::new(new)?, 1);
-                    }
-                    MaybeMultiplexed::Multiple { .. } => {
-                        return Err(pyo3::exceptions::PyAssertionError::new_err(
-                            "Scalar updates with an `EmpiricalDistribution` that was created with \
-                            argument `specialize_along_axis` require argument `index`.",
-                        ));
-                    }
-                },
-                (Array(old), Array(new)) if old.dims() == new.dims() => {
-                    let old = old.as_array();
-                    let new = new.as_array();
-
-                    match &mut self.0 {
-                        MaybeMultiplexed::Single(distribution) => {
-                            for (&old, &new) in old.iter().zip(&new) {
-                                distribution.remove(F32::new(old)?, 1)?;
-                                distribution.insert(F32::new(new)?, 1);
-                            }
-                        }
-                        MaybeMultiplexed::Multiple {
-                            distributions,
-                            axis,
-                        } => {
-                            let old = old.axis_iter(Axis(*axis));
-                            if old.len() != distributions.len() {
-                                return Err(pyo3::exceptions::PyIndexError::new_err(
-                                    alloc::format!(
-                                        "Axis {} has wrong dimension: expected {} but found {}.",
-                                        axis,
-                                        distributions.len(),
-                                        old.len()
-                                    ),
-                                ));
-                            }
-
-                            old.into_par_iter()
-                                .zip(new.axis_iter(Axis(*axis)))
-                                .zip(distributions)
-                                .try_for_each(|((old, new), distribution)| {
-                                    for (&old, &new) in old.iter().zip(&new) {
-                                        distribution.remove(F32::new(old)?, 1)?;
-                                        distribution.insert(F32::new(new)?, 1);
-                                    }
-                                    Ok::<(), PyErr>(())
-                                })?;
-                        }
-                    }
-                }
-                _ => {
-                    return Err(pyo3::exceptions::PyAssertionError::new_err(
-                        "`old` and `new` must have the same shape.",
-                    ))
-                }
-            }
-        }
-
-        Ok(())
+        update(&mut self.0, old, new, index)
     }
 
     /// Move all entries with a given `old` value to a new `value`.
@@ -953,104 +718,7 @@ impl EmpiricalDistribution {
     /// counts after shifting: [[1 3 1], [1 2 2], [1 2 2], [1 1 1 2]]
     /// ```
     pub fn shift(&mut self, old: &PyAny, new: &PyAny, index: Option<usize>) -> PyResult<()> {
-        if let Some(index) = index {
-            let MaybeMultiplexed::Multiple { distributions, .. } = &mut self.0 else {
-                return Err(pyo3::exceptions::PyIndexError::new_err(
-                    "The `index` argument can only be used with an `EmpiricalDistribution` that \
-                    was created with argument `specialize_along_axis`.",
-                ));
-            };
-
-            let distribution = distributions
-                .get_mut(index)
-                .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
-
-            return shift_single(old, new, &mut Vec::new(), distribution, || {
-                pyo3::exceptions::PyAssertionError::new_err(
-                    "If `index` is set then `old` and `new` must both be scalars or rank-1 \
-                        arrays (with the same shape).",
-                )
-            });
-        } else {
-            // No `index` argument provided.
-            match &mut self.0 {
-                MaybeMultiplexed::Single(distribution) => {
-                    return shift_single(old, new, &mut Vec::new(), distribution, || {
-                        pyo3::exceptions::PyAssertionError::new_err(
-                            "`old` and `new` must both be scalars or rank-1 tensors (with same shape).",
-                        )
-                    });
-                }
-                MaybeMultiplexed::Multiple { distributions, .. } => {
-                    if let Ok(old) = old.extract::<&PyList>() {
-                        if let Ok(new) = new.extract::<&PyList>() {
-                            if old.len() != distributions.len() || new.len() != distributions.len()
-                            {
-                                return Err(pyo3::exceptions::PyAssertionError::new_err(format!(
-                                    "Lists `old` and `new` must both have length {} but they have \
-                                    lengths {} and {}, respectively.",
-                                    distributions.len(),
-                                    old.len(),
-                                    new.len(),
-                                )));
-                            }
-
-                            // This currently can't easily be parallelized due to a limitation of `pyo3`.
-                            let mut buf = Vec::new();
-                            return old.iter().zip(new).zip(distributions).try_for_each(
-                                |((old, new), distribution)| {
-                                    shift_single(old, new, &mut buf, distribution, || {
-                                        pyo3::exceptions::PyAssertionError::new_err(
-                                            "Each element of the lists `old` and `new` must be a \
-                                            scalar or a rank-1 array, and dimensions of \
-                                            corresponding entries must match.",
-                                        )
-                                    })
-                                },
-                            );
-                        }
-                    }
-
-                    return Err(pyo3::exceptions::PyAssertionError::new_err(
-                        "If no `index` argument is provided then `old` and `new` must both be lits."
-                    ));
-                }
-            }
-        }
-
-        fn shift_single(
-            old: &PyAny,
-            new: &PyAny,
-            buf: &mut Vec<u32>,
-            distribution: &mut crate::quant::EmpiricalDistribution,
-            mk_err: impl Fn() -> PyErr,
-        ) -> Result<(), PyErr> {
-            if let Ok(old) = old.extract::<PyReadonlyArrayDyn<'_, f32>>() {
-                if let Ok(new) = new.extract::<PyReadonlyArrayDyn<'_, f32>>() {
-                    if old.dims() == new.dims() && old.dims().ndim() == 1 {
-                        let old = old.as_array();
-                        let new = new.as_array();
-                        buf.clear();
-                        buf.reserve(old.len());
-
-                        for &old in old.iter() {
-                            buf.push(distribution.remove_all(F32::new(old)?));
-                        }
-                        for (&new, &count) in new.iter().zip(&*buf) {
-                            distribution.insert(F32::new(new)?, count);
-                        }
-                        return Ok(());
-                    }
-                }
-            } else if let Ok(old) = old.extract::<f32>() {
-                if let Ok(new) = new.extract::<f32>() {
-                    let count = distribution.remove_all(F32::new(old)?);
-                    distribution.insert(F32::new(new)?, count);
-                    return Ok(());
-                }
-            }
-            Err(mk_err())
-        }
+        shift(&mut self.0, old, new, index)
     }
 
     /// Returns the total number of points that are represented by the distribution.
@@ -1306,6 +974,184 @@ impl RatedGrid {
         )
     }
 
+    /// Add one or more values to existing grid points, thus changing the rates.
+    ///
+    /// The argument `new` can be a scalar or a python array. If the `RatedGrid` was constructed
+    /// with `specialize_along_axis=i` for some `i` then `insert` must either be called with
+    /// argument `index=j` (in which case, the point(s) in `new` will be inserted in the `j`th
+    /// grid), or `new` must be an array whose dimension along axis `i` equals the dimension
+    /// of axis `i` of the array provided to the constructor (in this case, the array `new` is
+    /// logically split into slices along axis `i`, and each slice is inserted into the
+    /// corresponding `RatedGrid`).
+    ///
+    /// ## Example 1: Adding Points to a Global Grid
+    ///
+    /// ```python
+    /// rng = np.random.default_rng(123)
+    /// matrix = rng.binomial(10, 0.3, size=(3, 5)).astype(np.float32)
+    /// print(f"matrix = {matrix}\n")
+    ///
+    /// grid = constriction.quant.RatedGrid(matrix)
+    /// points, rates = grid.points_and_rates()
+    /// for point, rate in zip(points, rates):
+    ///     print(f"Grid point {point} is weighted with bit rate {rate:.3f}.")
+    /// print()
+    ///
+    /// print("Adding second row again ...")
+    ///
+    /// grid.insert(matrix[1, :])
+    /// points, rates = grid.points_and_rates()
+    /// for point, rate in zip(points, rates):
+    ///     print(f"Grid point {point} is now weighted with bit rate {rate:.3f}.")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// matrix = [[4. 1. 2. 2. 2.]
+    /// [4. 5. 2. 4. 5.]
+    /// [3. 2. 4. 2. 4.]]
+    ///
+    /// Grid point 2.0 is weighted with bit rate 1.322.
+    /// Grid point 4.0 is weighted with bit rate 1.585.
+    /// Grid point 5.0 is weighted with bit rate 2.907.
+    /// Grid point 1.0 is weighted with bit rate 3.907.
+    /// Grid point 3.0 is weighted with bit rate 3.907.
+    ///
+    /// Adding second row again ...
+    /// Grid point 4.0 is now weighted with bit rate 1.515.
+    /// Grid point 5.0 is now weighted with bit rate 2.322.
+    /// Grid point 2.0 is now weighted with bit rate 1.515.
+    /// Grid point 1.0 is now weighted with bit rate 4.322.
+    /// Grid point 3.0 is now weighted with bit rate 4.322.
+    /// ```
+    ///
+    /// Note that:
+    /// - We only added points for which a grid point already existed. Adding points at non-existing
+    ///   grid points is currently not supported.
+    /// - Adding these points lead to a *decrease* in bit rate for the grid points at `4.0` and
+    ///   `5.0` because the added points (second row of the matrix) contains a higher ratio of
+    ///   `4.0`s and `5.0`s, so their overall frequencies increased and thus their information
+    ///   content decreased.
+    /// - The bit rate for all other grid points *increased* as they got "diluted" by the added
+    ///   points, and so their frequency decreased and their information content increased. Not that
+    ///   this affected even the bit rates of the grid points `1.0` and `3.0`, which did not appeared
+    ///   among the added points at all.
+    /// - Even though the set of grid points did not change, the order in which
+    ///   `grid.points_and_rates()` returned them changed. This is due to the implementation of
+    ///   `RatedGrid`, which currently keeps grid points sorted by bit rate to enable an
+    ///   optimization in `rate_distortion_quantization`. However, this order is not guaranteed, and
+    ///   it might change in future versions of `constriction`.
+    ///
+    /// ## Example 2: Specialization Along an Axis
+    ///
+    /// The example below uses the same matrix as Example 1 above, but it constructs the
+    /// `RatedGrid` with argument `specialize_along_axis=0`. This creates a separate
+    /// grid for each row (axis zero) of the matrix. Calling `insert` inserts the contents
+    /// of each row of the provided matrix to its corresponding distribution.
+    ///
+    /// ```python
+    /// rng = np.random.default_rng(123)
+    /// matrix = rng.binomial(10, 0.3, size=(3, 5)).astype(np.float32)
+    /// print(f"matrix = {matrix}\n")
+    ///
+    /// grid = constriction.quant.RatedGrid(matrix, specialize_along_axis=0)
+    /// points, rates = grid.points_and_rates()
+    /// for i, (points, rates) in enumerate(zip(points, rates)):
+    ///     summary = ", ".join(f"{p} (rate {r:.3f})" for (p, r) in zip(points, rates))
+    ///     print(f"Row {i} contains: {summary}.")
+    /// print()
+    ///
+    /// print("Adding first two columns again ...")
+    ///
+    /// grid.insert(matrix[:, :2])
+    /// points, rates = grid.points_and_rates()
+    /// for i, (points, rates) in enumerate(zip(points, rates)):
+    ///     summary = ", ".join(f"{p} (rate {r:.3f})" for (p, r) in zip(points, rates))
+    ///     print(f"Row {i} contains: {summary}.")
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// matrix = [[4. 1. 2. 2. 2.]
+    /// [4. 5. 2. 4. 5.]
+    /// [3. 2. 4. 2. 4.]]
+    ///
+    /// Row 0 contains: 2.0 (rate 0.737), 1.0 (rate 2.322), 4.0 (rate 2.322).
+    /// Row 1 contains: 4.0 (rate 1.322), 5.0 (rate 1.322), 2.0 (rate 2.322).
+    /// Row 2 contains: 2.0 (rate 1.322), 4.0 (rate 1.322), 3.0 (rate 2.322).
+    ///
+    /// Adding first two columns again ...
+    /// Row 0 contains: 2.0 (rate 1.222), 1.0 (rate 1.807), 4.0 (rate 1.807).
+    /// Row 1 contains: 5.0 (rate 1.222), 4.0 (rate 1.222), 2.0 (rate 2.807).
+    /// Row 2 contains: 2.0 (rate 1.222), 3.0 (rate 1.807), 4.0 (rate 1.807).
+    /// ```
+    pub fn insert(
+        &mut self,
+        new: PyReadonlyF32ArrayOrScalar<'_>,
+        index: Option<usize>,
+    ) -> PyResult<()> {
+        insert(&mut self.0, new, index)
+    }
+
+    /// Remove one or more values from the grid, adjusting the bit rates of the corresponding grid
+    /// points accordingly.
+    ///
+    /// The argument `old` can be a scalar or a python array. If the `RatedGrid` was constructed
+    /// with `specialize_along_axis=i` for some `i` then `insert` must either be called with
+    /// argument `index=j` (in which case, the point(s) in `old` will be removed from the `j`th
+    /// grid), or `old` must be an array whose dimension along axis `i` equals the dimension
+    /// of axis `i` of the array provided to the constructor (in this case, the array `old` is
+    /// logically split into slices along axis `i`, and the points from each slice are removed from
+    /// the corresponding distribution).
+    ///
+    /// Note that removing all points from any grid point removes the grid point entirely, which
+    /// means that you can no longer [`insert`](#constriction.quant.RatedGrid.insert) any points at
+    /// that grid point.
+    ///
+    /// Raises an exception if you try to remove more points from some position than there exist in
+    /// the grid. In this case, the `RatedGrid` remains in an unspecified state
+    /// that may be nondeterministic due to parallelization.
+    ///
+    /// For code examples, see documentation of the method
+    /// [`insert`](#constriction.quant.RatedGrid.insert), which has an analogous API.
+    pub fn remove(
+        &mut self,
+        old: PyReadonlyF32ArrayOrScalar<'_>,
+        index: Option<usize>,
+    ) -> PyResult<()> {
+        remove(&mut self.0, old, index)
+    }
+
+    /// Update the positions of one or more values in the distribution.
+    ///
+    /// Calling `rated_grid.update(old, new)` is equivalent to:
+    ///
+    /// ```python
+    /// rated_grid.insert(new)
+    /// rated_grid.remove(old)
+    /// ```
+    ///
+    /// However, `update` checks that `old` and `new` have matching dimensions. Also, calling
+    /// `update` should be faster if lots of entries do not change since it short-circuits any
+    /// updates for entries that do not change between `old` and `new`.
+    ///
+    /// The optional argument `index` has the same meaning as in the methods
+    /// [`insert`](#constriction.quant.RatedGrid.insert) and
+    /// [`remove`](#constriction.quant.RatedGrid.remove).
+    ///
+    /// For code examples, see documentation of the method
+    /// [`insert`](#constriction.quant.RatedGrid.insert), which has an analogous API.
+    pub fn update(
+        &mut self,
+        old: PyReadonlyF32ArrayOrScalar<'_>,
+        new: PyReadonlyF32ArrayOrScalar<'_>,
+        index: Option<usize>,
+    ) -> PyResult<()> {
+        update(&mut self.0, old, new, index)
+    }
+
     /// Returns the Shannon entropy per entry, to base 2.
     ///
     /// If the `RatedGrid` was constructed with argument `specialize_along_axis` set,
@@ -1408,6 +1254,399 @@ impl RatedGrid {
     ) -> PyResult<(PyObject, PyObject)> {
         self.0
             .extract_data(py, index, move |grid| grid.points_and_rates())
+    }
+}
+
+fn insert<D>(
+    distribution: &mut MaybeMultiplexed<D>,
+    new: PyReadonlyF32ArrayOrScalar<'_>,
+    index: Option<usize>,
+) -> PyResult<()>
+where
+    D: DynamicDistribution<F32, u32> + Send,
+    PyErr: From<D::InsertError>,
+{
+    if let Some(index) = index {
+        let MaybeMultiplexed::Multiple { distributions, .. } = distribution else {
+            return Err(pyo3::exceptions::PyIndexError::new_err(
+                "The `index` argument can only be used with a grid or distribution that \
+                was created with argument `specialize_along_axis`.",
+            ));
+        };
+
+        let distribution = distributions
+            .get_mut(index)
+            .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
+
+        match new {
+            Scalar(new) => {
+                distribution.insert(F32::new(new)?, 1)?;
+            }
+            Array(new) => {
+                for &new in new.as_array() {
+                    distribution.insert(F32::new(new)?, 1)?;
+                }
+            }
+        }
+    } else {
+        match new {
+            Scalar(new) => match distribution {
+                MaybeMultiplexed::Single(distribution) => {
+                    distribution.insert(F32::new(new)?, 1)?;
+                }
+                MaybeMultiplexed::Multiple { .. } => {
+                    return Err(pyo3::exceptions::PyAssertionError::new_err(
+                        "Scalar updates with a grid or distribution that was created with \
+                        argument `specialize_along_axis` require argument `index`.",
+                    ));
+                }
+            },
+            Array(new) => {
+                let new = new.as_array();
+
+                match distribution {
+                    MaybeMultiplexed::Single(distribution) => {
+                        for &new in &new {
+                            distribution.insert(F32::new(new)?, 1)?;
+                        }
+                    }
+                    MaybeMultiplexed::Multiple {
+                        distributions,
+                        axis,
+                    } => {
+                        let new = new.axis_iter(Axis(*axis));
+                        if new.len() != distributions.len() {
+                            return Err(pyo3::exceptions::PyIndexError::new_err(alloc::format!(
+                                "Axis {} has wrong dimension: expected {} but found {}.",
+                                axis,
+                                distributions.len(),
+                                new.len()
+                            )));
+                        }
+
+                        new.into_par_iter().zip(distributions).try_for_each(
+                            |(new, distribution)| {
+                                for &new in &new {
+                                    distribution.insert(F32::new(new)?, 1)?;
+                                }
+                                Ok::<(), PyErr>(())
+                            },
+                        )?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn remove<D>(
+    distribution: &mut MaybeMultiplexed<D>,
+    old: PyReadonlyF32ArrayOrScalar<'_>,
+    index: Option<usize>,
+) -> PyResult<()>
+where
+    D: DynamicDistribution<F32, u32> + Send,
+    PyErr: From<D::InsertError>,
+{
+    if let Some(index) = index {
+        let MaybeMultiplexed::Multiple { distributions, .. } = distribution else {
+            return Err(pyo3::exceptions::PyIndexError::new_err(
+                "The `index` argument can only be used with a grid or distribution that \
+                was created with argument `specialize_along_axis`.",
+            ));
+        };
+
+        let distribution = distributions
+            .get_mut(index)
+            .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
+
+        match old {
+            Scalar(old) => {
+                distribution.remove(F32::new(old)?, 1)?;
+            }
+            Array(old) => {
+                for &old in old.as_array() {
+                    distribution.remove(F32::new(old)?, 1)?;
+                }
+            }
+        }
+    } else {
+        match old {
+            Scalar(old) => match distribution {
+                MaybeMultiplexed::Single(distribution) => {
+                    distribution.remove(F32::new(old)?, 1)?;
+                }
+                MaybeMultiplexed::Multiple { .. } => {
+                    return Err(pyo3::exceptions::PyAssertionError::new_err(
+                        "Scalar updates with a grid or distribution that was created with \
+                    argument `specialize_along_axis` require argument `index`.",
+                    ));
+                }
+            },
+            Array(old) => {
+                let old = old.as_array();
+
+                match distribution {
+                    MaybeMultiplexed::Single(distribution) => {
+                        for &old in &old {
+                            distribution.remove(F32::new(old)?, 1)?;
+                        }
+                    }
+                    MaybeMultiplexed::Multiple {
+                        distributions,
+                        axis,
+                    } => {
+                        let old = old.axis_iter(Axis(*axis));
+                        if old.len() != distributions.len() {
+                            return Err(pyo3::exceptions::PyIndexError::new_err(alloc::format!(
+                                "Axis {} has wrong dimension: expected {} but found {}.",
+                                axis,
+                                distributions.len(),
+                                old.len()
+                            )));
+                        }
+
+                        old.into_par_iter().zip(distributions).try_for_each(
+                            |(old, distribution)| {
+                                for &old in &old {
+                                    distribution.remove(F32::new(old)?, 1)?;
+                                }
+                                Ok::<(), PyErr>(())
+                            },
+                        )?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn update<D>(
+    distribution: &mut MaybeMultiplexed<D>,
+    old: PyReadonlyF32ArrayOrScalar<'_>,
+    new: PyReadonlyF32ArrayOrScalar<'_>,
+    index: Option<usize>,
+) -> PyResult<()>
+where
+    D: DynamicDistribution<F32, u32> + Send,
+    PyErr: From<D::InsertError>,
+{
+    if let Some(index) = index {
+        let MaybeMultiplexed::Multiple { distributions, .. } = distribution else {
+            return Err(pyo3::exceptions::PyIndexError::new_err(
+                "The `index` argument can only be used with a grid or distribution that \
+                was created with argument `specialize_along_axis`.",
+            ));
+        };
+
+        let distribution = distributions
+            .get_mut(index)
+            .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
+
+        match (old, new) {
+            (Scalar(old), Scalar(new)) => {
+                if old != new {
+                    distribution.remove(F32::new(old)?, 1)?;
+                    distribution.insert(F32::new(new)?, 1)?;
+                }
+            }
+            (Array(old), Array(new)) if old.dims() == new.dims() => {
+                for (&old, &new) in old.as_array().iter().zip(&new.as_array()) {
+                    if old != new {
+                        distribution.remove(F32::new(old)?, 1)?;
+                        distribution.insert(F32::new(new)?, 1)?;
+                    }
+                }
+            }
+            _ => {
+                return Err(pyo3::exceptions::PyAssertionError::new_err(
+                    "`old` and `new` must have the same shape.",
+                ))
+            }
+        }
+    } else {
+        match (old, new) {
+            (Scalar(old), Scalar(new)) => match distribution {
+                MaybeMultiplexed::Single(distribution) => {
+                    if old != new {
+                        distribution.remove(F32::new(old)?, 1)?;
+                        distribution.insert(F32::new(new)?, 1)?;
+                    }
+                }
+                MaybeMultiplexed::Multiple { .. } => {
+                    return Err(pyo3::exceptions::PyAssertionError::new_err(
+                        "Scalar updates with a grid or distribution that was created with \
+                        argument `specialize_along_axis` require argument `index`.",
+                    ));
+                }
+            },
+            (Array(old), Array(new)) if old.dims() == new.dims() => {
+                let old = old.as_array();
+                let new = new.as_array();
+
+                match distribution {
+                    MaybeMultiplexed::Single(distribution) => {
+                        for (&old, &new) in old.iter().zip(&new) {
+                            if old != new {
+                                distribution.remove(F32::new(old)?, 1)?;
+                                distribution.insert(F32::new(new)?, 1)?;
+                            }
+                        }
+                    }
+                    MaybeMultiplexed::Multiple {
+                        distributions,
+                        axis,
+                    } => {
+                        let old = old.axis_iter(Axis(*axis));
+                        if old.len() != distributions.len() {
+                            return Err(pyo3::exceptions::PyIndexError::new_err(alloc::format!(
+                                "Axis {} has wrong dimension: expected {} but found {}.",
+                                axis,
+                                distributions.len(),
+                                old.len()
+                            )));
+                        }
+
+                        old.into_par_iter()
+                            .zip(new.axis_iter(Axis(*axis)))
+                            .zip(distributions)
+                            .try_for_each(|((old, new), distribution)| {
+                                for (&old, &new) in old.iter().zip(&new) {
+                                    if old != new {
+                                        distribution.remove(F32::new(old)?, 1)?;
+                                        distribution.insert(F32::new(new)?, 1)?;
+                                    }
+                                }
+                                Ok::<(), PyErr>(())
+                            })?;
+                    }
+                }
+            }
+            _ => {
+                return Err(pyo3::exceptions::PyAssertionError::new_err(
+                    "`old` and `new` must have the same shape.",
+                ))
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn shift<D>(
+    distribution: &mut MaybeMultiplexed<D>,
+    old: &PyAny,
+    new: &PyAny,
+    index: Option<usize>,
+) -> PyResult<()>
+where
+    D: DynamicDistribution<F32, u32>,
+    PyErr: From<D::InsertError>,
+{
+    if let Some(index) = index {
+        let MaybeMultiplexed::Multiple { distributions, .. } = distribution else {
+            return Err(pyo3::exceptions::PyIndexError::new_err(
+                "The `index` argument can only be used with an `EmpiricalDistribution` that \
+                was created with argument `specialize_along_axis`.",
+            ));
+        };
+
+        let distribution = distributions
+            .get_mut(index)
+            .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("`index` out of bounds"))?;
+
+        return shift_single(old, new, &mut Vec::new(), distribution, || {
+            pyo3::exceptions::PyAssertionError::new_err(
+                "If `index` is set then `old` and `new` must both be scalars or rank-1 \
+                    arrays (with the same shape).",
+            )
+        });
+    } else {
+        // No `index` argument provided.
+        match distribution {
+            MaybeMultiplexed::Single(distribution) => {
+                return shift_single(old, new, &mut Vec::new(), distribution, || {
+                    pyo3::exceptions::PyAssertionError::new_err(
+                        "`old` and `new` must both be scalars or rank-1 tensors (with same shape).",
+                    )
+                });
+            }
+            MaybeMultiplexed::Multiple { distributions, .. } => {
+                if let Ok(old) = old.extract::<&PyList>() {
+                    if let Ok(new) = new.extract::<&PyList>() {
+                        if old.len() != distributions.len() || new.len() != distributions.len() {
+                            return Err(pyo3::exceptions::PyAssertionError::new_err(format!(
+                                "Lists `old` and `new` must both have length {} but they have \
+                                lengths {} and {}, respectively.",
+                                distributions.len(),
+                                old.len(),
+                                new.len(),
+                            )));
+                        }
+
+                        // This currently can't easily be parallelized due to a limitation of `pyo3`.
+                        let mut buf = Vec::new();
+                        return old.iter().zip(new).zip(distributions).try_for_each(
+                            |((old, new), distribution)| {
+                                shift_single(old, new, &mut buf, distribution, || {
+                                    pyo3::exceptions::PyAssertionError::new_err(
+                                        "Each element of the lists `old` and `new` must be a \
+                                        scalar or a rank-1 array, and dimensions of \
+                                        corresponding entries must match.",
+                                    )
+                                })
+                            },
+                        );
+                    }
+                }
+
+                return Err(pyo3::exceptions::PyAssertionError::new_err(
+                    "If no `index` argument is provided then `old` and `new` must both be lits.",
+                ));
+            }
+        }
+    }
+
+    fn shift_single<D>(
+        old: &PyAny,
+        new: &PyAny,
+        buf: &mut Vec<u32>,
+        distribution: &mut D,
+        mk_err: impl Fn() -> PyErr,
+    ) -> Result<(), PyErr>
+    where
+        D: DynamicDistribution<F32, u32>,
+        PyErr: From<D::InsertError>,
+    {
+        if let Ok(old) = old.extract::<PyReadonlyArrayDyn<'_, f32>>() {
+            if let Ok(new) = new.extract::<PyReadonlyArrayDyn<'_, f32>>() {
+                if old.dims() == new.dims() && old.dims().ndim() == 1 {
+                    let old = old.as_array();
+                    let new = new.as_array();
+                    buf.clear();
+                    buf.reserve(old.len());
+
+                    for &old in old.iter() {
+                        buf.push(distribution.remove_all(F32::new(old)?));
+                    }
+                    for (&new, &count) in new.iter().zip(&*buf) {
+                        distribution.insert(F32::new(new)?, count)?;
+                    }
+                    return Ok(());
+                }
+            }
+        } else if let Ok(old) = old.extract::<f32>() {
+            if let Ok(new) = new.extract::<f32>() {
+                let count = distribution.remove_all(F32::new(old)?);
+                distribution.insert(F32::new(new)?, count)?;
+                return Ok(());
+            }
+        }
+        Err(mk_err())
     }
 }
 
@@ -1669,7 +1908,7 @@ fn vbq<'p>(
         |prior, old, new| {
             if old != new {
                 prior.remove(old, 1)?;
-                prior.insert(new, 1);
+                prior.insert(new, 1).expect("new grid point exists");
             }
             Ok(())
         },
@@ -1705,7 +1944,7 @@ fn vbq_(
         |prior, old, new| {
             if old != new {
                 prior.remove(old, 1)?;
-                prior.insert(new, 1);
+                prior.insert(new, 1).expect("new grid point exists");
             }
             Ok(())
         },
@@ -2637,8 +2876,8 @@ where
 impl From<crate::quant::NotFoundError> for PyErr {
     fn from(_err: crate::quant::NotFoundError) -> Self {
         pyo3::exceptions::PyKeyError::new_err(
-            "Attempted to remove a value from an `EmpiricalDistribution` that does not exist in \
-            the distribution.",
+            "Attempted to remove a nonexisting value from an `EmpiricalDistribution` or \
+            `RatedGrid`, or to insert a value into a `RatedGrid` where no grid point exists.",
         )
     }
 }
