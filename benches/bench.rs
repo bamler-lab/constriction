@@ -1,4 +1,7 @@
+#[cfg(not(miri))]
 mod augmented_btree;
+
+#[cfg(not(miri))]
 mod lookup;
 
 #[cfg(not(miri))]
