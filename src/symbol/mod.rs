@@ -803,8 +803,6 @@ mod tests {
         *,
     };
 
-    use crate::UnwrapInfallible;
-
     use rand_xoshiro::{
         rand_core::{RngCore, SeedableRng},
         Xoshiro256StarStar,
