@@ -269,17 +269,20 @@ extern crate std;
 mod pybindings;
 
 pub mod backends;
+pub mod quant;
 pub mod stream;
 pub mod symbol;
 
 use core::{
-    convert::Infallible,
+    convert::{Infallible, TryFrom},
     fmt::{Binary, Debug, Display, LowerHex, UpperHex},
     hash::Hash,
     num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize},
 };
 
-use num_traits::{AsPrimitive, PrimInt, Unsigned, WrappingAdd, WrappingMul, WrappingSub};
+use num_traits::{
+    float::FloatCore, AsPrimitive, PrimInt, Unsigned, WrappingAdd, WrappingMul, WrappingSub,
+};
 
 // READ WRITE SEMANTICS =======================================================
 
@@ -640,15 +643,6 @@ pub unsafe trait BitArray:
     }
 }
 
-#[inline(always)]
-fn wrapping_pow2<T: BitArray>(exponent: usize) -> T {
-    if exponent >= T::BITS {
-        T::zero()
-    } else {
-        T::one() << exponent
-    }
-}
-
 /// A trait for bit strings like [`BitArray`] but with guaranteed nonzero values
 ///
 /// # Safety
@@ -666,21 +660,6 @@ pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq + Hash + 'static {
     unsafe fn new_unchecked(n: Self::Base) -> Self;
 
     fn get(self) -> Self::Base;
-}
-
-/// Iterates from most significant to least significant bits in chunks but skips any
-/// initial zero chunks.
-fn bit_array_to_chunks_truncated<Data, Chunk>(
-    data: Data,
-) -> impl ExactSizeIterator<Item = Chunk> + DoubleEndedIterator
-where
-    Data: BitArray + AsPrimitive<Chunk>,
-    Chunk: BitArray,
-{
-    (0..(Data::BITS - data.leading_zeros() as usize))
-        .step_by(Chunk::BITS)
-        .rev()
-        .map(move |shift| (data >> shift).as_())
 }
 
 macro_rules! unsafe_impl_bit_array {
@@ -737,6 +716,30 @@ unsafe_impl_bit_array!(
 #[cfg(feature = "std")]
 unsafe_impl_bit_array!((u128, core::num::NonZeroU128),);
 
+/// Iterates from most significant to least significant bits in chunks but skips any
+/// initial zero chunks.
+fn bit_array_to_chunks_truncated<Data, Chunk>(
+    data: Data,
+) -> impl ExactSizeIterator<Item = Chunk> + DoubleEndedIterator
+where
+    Data: BitArray + AsPrimitive<Chunk>,
+    Chunk: BitArray,
+{
+    (0..(Data::BITS - data.leading_zeros() as usize))
+        .step_by(Chunk::BITS)
+        .rev()
+        .map(move |shift| (data >> shift).as_())
+}
+
+#[inline(always)]
+fn wrapping_pow2<T: BitArray>(exponent: usize) -> T {
+    if exponent >= T::BITS {
+        T::zero()
+    } else {
+        T::one() << exponent
+    }
+}
+
 pub trait UnwrapInfallible<T> {
     fn unwrap_infallible(self) -> T;
 }
@@ -762,3 +765,262 @@ impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
         }
     }
 }
+
+/// Wrapper for float types that implements [`Ord`] and [`Eq`].
+///
+/// `NonNanFloat<F>` is a transparent wrapper around a floating point type `F` that ensures (in its
+/// [constructor](Self::new)) that it never wraps a `NaN` (not a number) value. This is useful in
+/// cases where total ordering of floating point numbers is needed (e.g., as value type for an
+/// [`EmpiricalDistribution`](crate::quant::EmpiricalDistribution)).
+///
+/// There are two shortcut type aliases, [`F32`] and [`F64`] for `NonNanFloat<f32>` and
+/// `NonNanFloat<f64>`, respectively.
+///
+/// # Examples
+///
+/// `NonNanFloat` implements `Ord` and `Eq` (which `f32` and `f64` don't):
+///
+/// ```
+/// let pi = constriction::F32::new(3.14159265359).unwrap();
+/// let e = constriction::F32::new(2.71828182846).unwrap();
+/// assert_eq!(pi.cmp(&e), core::cmp::Ordering::Greater);
+/// assure_implements_eq(&pi); // Only compiles if the type of `pi` implements `Eq`.
+///
+/// fn assure_implements_eq<T: Eq>(_t: &T) { }
+/// ```
+///
+/// Wrapping any `NaN` value in a `NonNanFloat` returns `Err(NanError)`:
+///
+/// ```
+/// let evil = 0.0f32 / 0.0;
+/// assert!(evil.is_nan());
+/// assert_eq!(constriction::F32::new(evil), Err(constriction::NanError));
+/// ```
+///
+/// Some arithmetic operations that cannot produce `NaN` are implemented for `NonNanFloat`:
+///
+/// ```
+/// # use constriction::F32;
+/// # let pi = F32::new(3.14159265359).unwrap();
+/// # let e = F32::new(2.71828182846).unwrap();
+/// let sum = pi + e;
+/// assert_eq!(sum.get(), pi.get() + e.get());
+/// ```
+///
+/// But, e.g., division is not implemented for `NonNanFloat` because division by zero can result in
+/// a `NaN` value:
+///
+/// ```compile_fail
+/// # use constriction::F32;
+/// # let pi = F32::new(3.14159265359).unwrap();
+/// # let e = F32::new(2.71828182846).unwrap();
+/// let ratio = pi / e; // error[E0369]: cannot divide `NonNanFloat<f32>` by `NonNanFloat<f32>`
+/// ```
+///
+/// # Edge Cases
+///
+/// `NonNanFloat` only disallows `NaN` numbers. It does not implement any special treatment for any
+/// other floating point edge cases such as infinity or subnormal numbers. Also, the implementation
+/// of `Ord::cmp` for `NonNanFloat` only unwraps the result obtained from applying
+/// `PartialOrd::partial_cmp` to the wrapped type (using that the wrapped type can't be `NaN`), but
+/// it does not implement any special treatment for positive and negative zero. This means that
+/// `Ord::cmp` returns `Ordering::Equal` when comparing positive and negative zero. This is the
+/// correct behavior (consistent with how `PartialEq` behaves, both for `NonNanFloat` and for `f32`
+/// and `f64`), but it may still be surprising.
+///
+/// ```
+/// let positive_zero = 0.0_f32;
+/// let negative_zero = -0.0_f32;
+/// assert!(positive_zero.to_bits() != negative_zero.to_bits()); // Bit patterns differ ...
+/// assert!(positive_zero == negative_zero);                     // ... but they compare as equal.
+/// assert!(positive_zero.partial_cmp(&negative_zero) == Some(core::cmp::Ordering::Equal));
+///
+/// // This behavior is conserved when we wrap the values in a `NonNanFloat` ...
+/// let positive_zero = constriction::F32::new(positive_zero).unwrap();
+/// let negative_zero = constriction::F32::new(negative_zero).unwrap();
+/// assert!(positive_zero == negative_zero);
+/// assert!(positive_zero.partial_cmp(&negative_zero) == Some(core::cmp::Ordering::Equal));
+///
+/// // ... and it carries over to `Ord::cmp` (which is only implemented for `NonNanFloat`):
+/// assert!(positive_zero.cmp(&negative_zero) == core::cmp::Ordering::Equal);
+/// ```
+#[derive(PartialOrd, Clone, Copy, Debug, PartialEq)]
+#[repr(transparent)]
+pub struct NonNanFloat<F: FloatCore>(F);
+pub type F32 = NonNanFloat<f32>;
+pub type F64 = NonNanFloat<f64>;
+
+impl<F: FloatCore> num_traits::Zero for NonNanFloat<F> {
+    fn zero() -> Self {
+        Self::new(F::zero()).expect("zero is a number")
+    }
+
+    fn is_zero(&self) -> bool {
+        self.get().is_zero()
+    }
+}
+
+impl<F: FloatCore> num_traits::One for NonNanFloat<F> {
+    fn one() -> Self {
+        Self::new(F::one()).expect("one is a number")
+    }
+
+    fn is_one(&self) -> bool
+    where
+        Self: PartialEq,
+    {
+        self.get().is_one()
+    }
+}
+
+impl<F: FloatCore + 'static> num_traits::AsPrimitive<F> for NonNanFloat<F> {
+    fn as_(self) -> F {
+        self.get()
+    }
+}
+
+impl TryFrom<f32> for F32 {
+    type Error = NanError;
+
+    fn try_from(value: f32) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl num_traits::Bounded for F32 {
+    fn min_value() -> Self {
+        F32::new(<f32 as num_traits::Bounded>::min_value()).unwrap()
+    }
+
+    fn max_value() -> Self {
+        F32::new(<f32 as num_traits::Bounded>::max_value()).unwrap()
+    }
+}
+
+impl TryFrom<f64> for F64 {
+    type Error = NanError;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl num_traits::Bounded for F64 {
+    fn min_value() -> Self {
+        F64::new(<f64 as num_traits::Bounded>::min_value()).unwrap()
+    }
+
+    fn max_value() -> Self {
+        F64::new(<f64 as num_traits::Bounded>::max_value()).unwrap()
+    }
+}
+
+impl<F: FloatCore + Display> Display for NonNanFloat<F> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct NanError;
+
+impl<F: FloatCore> NonNanFloat<F> {
+    /// Wraps a floating point value.
+    ///
+    /// Returns `Err(NanErr)` if `x` is a `NaN` value.
+    pub fn new(x: F) -> Result<Self, NanError> {
+        if x.is_nan() {
+            Err(NanError)
+        } else {
+            Ok(Self(x))
+        }
+    }
+
+    /// Returns the wrapped value (which is not a `NaN` value).
+    #[inline(always)]
+    pub fn get(&self) -> F {
+        self.0
+    }
+}
+
+impl<F: FloatCore> Eq for NonNanFloat<F> {}
+
+#[allow(clippy::derive_ord_xor_partial_ord)]
+impl<F: FloatCore> Ord for NonNanFloat<F> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        match self.0.partial_cmp(&other.0) {
+            Some(ordering) => ordering,
+            None => {
+                // We can't call the unsafe function `core::hint::unreachable_unchecked` here
+                // because downstream crates could technically implement `FloatCore` for their own
+                // types, with a weird implementation of `PartialOrd`.
+                unreachable!()
+            }
+        }
+    }
+}
+
+impl<F: FloatCore> Default for NonNanFloat<F> {
+    fn default() -> Self {
+        Self(F::zero())
+    }
+}
+
+impl<F: FloatCore> core::ops::Add for NonNanFloat<F> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl<F: FloatCore> core::ops::Sub for NonNanFloat<F> {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl<F: FloatCore> core::ops::Mul for NonNanFloat<F> {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self(self.0 * rhs.0)
+    }
+}
+
+impl Display for NanError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "NaN encountered.")
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for NanError {}
+
+/// Helper macro to express assertions that are tested at compile time
+/// despite using properties of generic parameters of an outer function.
+///
+/// See discussion at <https://morestina.net/blog/1940>.
+macro_rules! generic_static_asserts {
+    (($($l:lifetime,)* $($($t:ident$(: $bound:path)?),+)? $(; $(const $c:ident:$ct:ty),+)?); $($label:ident: $test:expr);+$(;)?) => {
+        #[allow(path_statements, clippy::no_effect)]
+        {
+            struct Check<$($l,)* $($($t,)+)? $($(const $c:$ct,)+)?>($($($t,)+)?);
+            impl<$($l,)* $($($t$(:$bound)?,)+)? $($(const $c:$ct,)+)?> Check<$($l,)* $($($t,)+)? $($($c,)+)?> {
+                $(
+                    const $label: () = assert!($test);
+                )+
+            }
+            generic_static_asserts!{@nested Check::<$($l,)* $($($t,)+)? $($($c,)+)?>, $($label: $test;)+}
+        }
+    };
+    (@nested $t:ty, $($label:ident: $test:expr;)+) => {
+        $(
+            <$t>::$label;
+        )+
+    }
+}
+
+pub(crate) use generic_static_asserts;

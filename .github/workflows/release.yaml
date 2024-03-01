@@ -96,7 +96,7 @@ jobs:
         env:
           RUSTFLAGS: "-Zrandomize-layout"
           MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-disable-isolation"
-        run: cargo +${{ steps.rust-version.outputs.rustc }} miri test --no-fail-fast --all-targets
+        run: cargo +${{ steps.rust-version.outputs.rustc }} miri test --no-fail-fast --all-targets --features benchmark-internals
 
   python-test:
     runs-on: ${{ matrix.os }}
