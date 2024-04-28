@@ -105,7 +105,9 @@ jobs:
       matrix:
         python-version: ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12"]
         os: [ubuntu-latest, macos-latest, windows-latest]
-
+        exclude:
+          - os: macos-latest
+            python-version: "3.7"
     steps:
       - name: Checkout
         uses: actions/checkout@v1
@@ -241,6 +243,7 @@ jobs:
       - name: Set up Python 3.7
         id: setup-python-3-7
         uses: actions/setup-python@v5
+        if: matrix.os != 'macos-latest'
         with:
           python-version: 3.7
 
@@ -284,13 +287,20 @@ jobs:
           ls -l LICENSE*
           wc -l LICENSE*
 
-      - name: Build wheels (unix)
-        if: matrix.os != 'windows-latest'
+      - name: Build wheels (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
           manylinux: 2014
           args: --release --strip --features pybindings -i python3.7 python3.8 python3.9 python3.10 python3.11 python3.12
+
+      - name: Build wheels (macos)
+        if: matrix.os == 'macos-latest'
+        uses: messense/maturin-action@v1
+        with:
+          command: build
+          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12
 
       - name: Build wheels (windows)
         if: matrix.os == 'windows-latest'
@@ -305,14 +315,14 @@ jobs:
         with:
           target: aarch64-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.7 python3.8 python3.9 python3.10 python3.11 python3.12
+          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12
 
       - name: Build universal2 wheels
         if: matrix.os == 'macos-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --strip --features pybindings --universal2 -i python3.7 python3.8 python3.9 python3.10 python3.11 python3.12
+          args: --release --strip --features pybindings --universal2 -i  python3.8 python3.9 python3.10 python3.11 python3.12
 
       - name: List wheels
         shell: bash
