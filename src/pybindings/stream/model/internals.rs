@@ -152,7 +152,6 @@ where
 trait ParameterExtract<'source, Target: numpy::Element + 'source> {
     type Extracted: pyo3::FromPyObject<'source> + 'source;
     fn cast(param: &Self::Extracted) -> PyResult<Cow<'_, PyReadonlyArray1<'_, Target>>>;
-    fn len(param: &'source PyAny) -> PyResult<usize>;
 }
 
 struct ParameterExtractor<Target>(PhantomData<Target>);
@@ -163,10 +162,6 @@ impl<'source> ParameterExtract<'source, i32> for ParameterExtractor<i32> {
     fn cast(param: &Self::Extracted) -> PyResult<Cow<'_, PyReadonlyArray1<'_, i32>>> {
         Ok(Cow::Borrowed(param))
     }
-
-    fn len(param: &'source PyAny) -> PyResult<usize> {
-        Ok(param.extract::<Self::Extracted>()?.len())
-    }
 }
 
 impl<'source> ParameterExtract<'source, f64> for ParameterExtractor<f64> {
@@ -174,10 +169,6 @@ impl<'source> ParameterExtract<'source, f64> for ParameterExtractor<f64> {
 
     fn cast(param: &Self::Extracted) -> PyResult<Cow<'_, PyReadonlyArray1<'_, f64>>> {
         param.cast_f64()
-    }
-
-    fn len(param: &'source PyAny) -> PyResult<usize> {
-        Ok(param.extract::<Self::Extracted>()?.len())
     }
 }
 
