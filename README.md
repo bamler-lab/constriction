@@ -106,7 +106,7 @@ Add this line to your `Cargo.toml`:
 ```toml
 [dependencies]
 constriction = "0.3.5"
-probability = "0.17" # Not strictly required but used in many code examples.
+probability = "0.20" # Not strictly required but used in many code examples.
 ```
 
 If you compile in `no_std` mode then you have to deactivate `constriction`'s default

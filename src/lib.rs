@@ -92,7 +92,7 @@
 //! to your `Cargo.toml`:
 //!
 //! ```toml
-//! probability = "0.17"
+//! probability = "0.20"
 //! ```
 //!
 //! Now, let's encode (i.e., compress) some symbols. We'll use an Asymmetric Numeral Systems
