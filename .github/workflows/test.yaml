@@ -148,7 +148,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install poetry
-          poetry install
+          poetry install --no-root
 
       - name: Install latest stable Rust
         uses: dtolnay/rust-toolchain@stable
