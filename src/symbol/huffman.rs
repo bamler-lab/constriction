@@ -75,7 +75,7 @@ impl EncoderHuffmanTree {
             .collect::<Result<Vec<_>, E>>()?;
         let mut heap = BinaryHeap::from(heap);
 
-        if heap.is_empty() || heap.len() > usize::max_value() / 4 {
+        if heap.is_empty() || heap.len() > usize::MAX / 4 {
             panic!();
         }
 
@@ -213,7 +213,7 @@ impl DecoderHuffmanTree {
             .collect::<Result<Vec<_>, E>>()?;
         let mut heap = BinaryHeap::from(heap);
 
-        if heap.is_empty() || heap.len() > usize::max_value() / 2 {
+        if heap.is_empty() || heap.len() > usize::MAX / 2 {
             panic!();
         }
 

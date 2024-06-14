@@ -839,7 +839,7 @@ where
     pub fn into_binary(mut self) -> Result<Backend, Option<Backend::WriteError>> {
         let valid_bits = (State::BITS - 1).wrapping_sub(self.state.leading_zeros() as usize);
 
-        if valid_bits % Word::BITS != 0 || valid_bits == usize::max_value() {
+        if valid_bits % Word::BITS != 0 || valid_bits == usize::MAX {
             Err(None)
         } else {
             let truncated_state = self.state ^ (State::one() << valid_bits);
