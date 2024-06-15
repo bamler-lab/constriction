@@ -18,7 +18,10 @@ def pdocify(mod, prefix=''):
     # Remove documentation of deprecated methods.
     for child_name in pdoc_mod.doc:
         child = pdoc_mod.doc[child_name]
-        grandchild_names = list(child.doc.keys()) # so we can modify the dictionary while iterating over it.
+        try:
+            grandchild_names = list(child.doc.keys()) # so we can modify the dictionary while iterating over it.
+        except:
+            continue
         for grandchild_name in grandchild_names:
             grandchild = child.doc[grandchild_name]
             grandchild_doc = grandchild.docstring
