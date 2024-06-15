@@ -244,14 +244,13 @@ pub trait EntropyModel<const PRECISION: usize> {
     ///
     /// # Enforcing the Constraints
     ///
-    /// The constraint that `1 <= PRECISION <= Probability::BITS` currently isn't enforced
-    /// statically since Rust does not yet allow const expressions in type bounds.
-    /// Therefore, if your implementation of `EntropyModel` relies on this constraint at any
-    /// point, it should state it as an assertion: `assert!(1 <= PRECISOIN && PRECISION <=
-    /// Probability::BITS)`. This assertion has zero runtime cost because it can be
+    /// Implementations of `EntropyModel` are encouraged to enforce the constraint
+    /// `1 <= PRECISION <= Probability::BITS`. The simplest way to do so is by stating it as an
+    /// assertion `assert!(1 <= PRECISION && PRECISION <= Probability::BITS)` at the beginning of
+    /// relevant methods. This assertion has zero runtime cost because it can be
     /// trivially evaluated at compile time and therefore will be optimized out if it holds.
-    /// The implementations provided by `constriction` strive to include this and related
-    /// assertions wherever necessary.
+    /// As of `constriction` 0.4, implementations provided by `constriction` include a similar
+    /// assertion that is checked at compile time using const evaluation tricks.
     ///
     /// # (Internal) Representation of Probability One
     ///
