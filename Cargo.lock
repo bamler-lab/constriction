@@ -151,6 +151,7 @@ dependencies = [
  "rand",
  "rand_pcg",
  "rand_xoshiro",
+ "rayon",
  "smallvec",
 ]
 
@@ -391,6 +392,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "rawpointer",
+ "rayon",
 ]
 
 [[package]]

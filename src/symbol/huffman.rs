@@ -8,16 +8,12 @@
 use num_traits::float::FloatCore;
 
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
-use core::{
-    borrow::Borrow,
-    cmp::Reverse,
-    convert::Infallible,
-    fmt::{Debug, Display},
-    ops::Add,
-};
+use core::{borrow::Borrow, cmp::Reverse, convert::Infallible, fmt::Debug, ops::Add};
 
 use super::{Codebook, DecoderCodebook, EncoderCodebook, SymbolCodeError};
-use crate::{CoderError, DefaultEncoderError, DefaultEncoderFrontendError, UnwrapInfallible};
+use crate::{
+    CoderError, DefaultEncoderError, DefaultEncoderFrontendError, NonNanFloat, UnwrapInfallible,
+};
 
 #[derive(Debug, Clone)]
 pub struct EncoderHuffmanTree {
@@ -57,7 +53,7 @@ impl EncoderHuffmanTree {
         Self::try_from_probabilities(
             probabilities
                 .into_iter()
-                .map(|p| NonNanFloatCore::new(*p.borrow())),
+                .map(|p| NonNanFloat::new(*p.borrow())),
         )
     }
 
@@ -195,7 +191,7 @@ impl DecoderHuffmanTree {
         Self::try_from_probabilities(
             probabilities
                 .into_iter()
-                .map(|p| NonNanFloatCore::new(*p.borrow())),
+                .map(|p| NonNanFloat::new(*p.borrow())),
         )
     }
 
@@ -275,63 +271,8 @@ impl DecoderCodebook for DecoderHuffmanTree {
     }
 }
 
-#[derive(PartialOrd, Clone, Copy)]
-struct NonNanFloatCore<F: FloatCore> {
-    inner: F,
-}
-
-impl<F: FloatCore> NonNanFloatCore<F> {
-    fn new(x: F) -> Result<Self, NanError> {
-        if x.is_nan() {
-            Err(NanError::NaN)
-        } else {
-            Ok(Self { inner: x })
-        }
-    }
-}
-
-impl<F: FloatCore> PartialEq for NonNanFloatCore<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner.eq(&other.inner)
-    }
-}
-
-impl<F: FloatCore> Eq for NonNanFloatCore<F> {}
-
-#[allow(clippy::derive_ord_xor_partial_ord)]
-impl<F: FloatCore> Ord for NonNanFloatCore<F> {
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.inner
-            .partial_cmp(&other.inner)
-            .expect("NonNanFloatCore::inner is not NaN.")
-    }
-}
-
-impl<F: FloatCore> Add for NonNanFloatCore<F> {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        NonNanFloatCore {
-            inner: self.inner + rhs.inner,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum NanError {
-    NaN,
-}
-
-impl Display for NanError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::NaN => write!(f, "NaN Encountered."),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for NanError {}
+#[deprecated(since = "0.3.3", note = "Please use `constriction::NanError` instead.")]
+pub use crate::NanError;
 
 #[cfg(test)]
 mod tests {
