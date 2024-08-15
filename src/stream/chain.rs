@@ -101,7 +101,8 @@ use super::{
 };
 use crate::{
     backends::{ReadWords, WriteWords},
-    BitArray, CoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack,
+    generic_asserts, BitArray, CoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos,
+    PosSeek, Seek, Stack,
 };
 
 /// Experimental entropy coder for advanced variants of bitsback coding.
@@ -273,9 +274,12 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
     where
         Word: Into<State>,
     {
-        assert!(State::BITS >= Word::BITS + PRECISION);
-        assert!(PRECISION > 0);
-        assert!(PRECISION <= Word::BITS);
+        generic_asserts!(
+            (State: BitArray, Word: BitArray; const PRECISION: usize);
+            PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
+            NON_ZERO_PRECISION: PRECISION > 0;
+            PRECISION_SUPPORTS_NUM_SYMBOLS: PRECISION <= Word::BITS;
+        );
 
         let threshold = State::one() << (State::BITS - Word::BITS - PRECISION);
         let mut remainders_head = if push_one {
@@ -596,6 +600,33 @@ where
 
     #[allow(clippy::type_complexity)]
     pub fn increase_precision<const NEW_PRECISION: usize>(
+        self,
+    ) -> Result<
+        ChainCoder<Word, State, CompressedBackend, RemaindersBackend, NEW_PRECISION>,
+        CoderError<Infallible, BackendError<Infallible, RemaindersBackend::WriteError>>,
+    >
+    where
+        RemaindersBackend: WriteWords<Word>,
+    {
+        generic_asserts!(
+            (State: BitArray, Word: BitArray; const PRECISION: usize, const NEW_PRECISION: usize);
+            PRECISION_MUST_NOT_DECREASE: NEW_PRECISION >= PRECISION;
+            WORD_MUST_SUPPORT_NEW_PRECISION: NEW_PRECISION <= Word::BITS;
+            STATE_MUST_SUPPORT_NEW_PRECISION: State::BITS >= Word::BITS + NEW_PRECISION;
+        );
+
+        // SAFETY: we check all requirements above.
+        unsafe { self.increase_precision_unchecked() }
+    }
+
+    /// # SAFETY:
+    /// requires:
+    /// - `NEW_PRECISION >= PRECISION``
+    /// - `NEW_PRECISION <= Word::BITS``
+    /// - `State::BITS >= Word::BITS + NEW_PRECISION``
+    #[allow(clippy::type_complexity)]
+    #[inline(always)]
+    unsafe fn increase_precision_unchecked<const NEW_PRECISION: usize>(
         mut self,
     ) -> Result<
         ChainCoder<Word, State, CompressedBackend, RemaindersBackend, NEW_PRECISION>,
@@ -604,10 +635,6 @@ where
     where
         RemaindersBackend: WriteWords<Word>,
     {
-        assert!(NEW_PRECISION >= PRECISION);
-        assert!(NEW_PRECISION <= Word::BITS);
-        assert!(State::BITS >= Word::BITS + NEW_PRECISION);
-
         if self.heads.remainders >= State::one() << (State::BITS - NEW_PRECISION) {
             self.flush_remainders_head()?;
         }
@@ -624,6 +651,31 @@ where
 
     #[allow(clippy::type_complexity)]
     pub fn decrease_precision<const NEW_PRECISION: usize>(
+        self,
+    ) -> Result<
+        ChainCoder<Word, State, CompressedBackend, RemaindersBackend, NEW_PRECISION>,
+        CoderError<EncoderFrontendError, BackendError<Infallible, RemaindersBackend::ReadError>>,
+    >
+    where
+        RemaindersBackend: ReadWords<Word, Stack>,
+    {
+        generic_asserts!(
+            (State: BitArray, Word: BitArray; const PRECISION: usize, const NEW_PRECISION: usize);
+            PRECISION_MUST_NOT_INCREASE: NEW_PRECISION <= PRECISION;
+            NEW_PRECISION_MUST_BE_NONZERO: NEW_PRECISION > 0;
+        );
+
+        // SAFETY: we check all requirements above.
+        unsafe { self.decrease_precision_unchecked() }
+    }
+
+    /// # SAFETY:
+    /// requires
+    /// - `NEW_PRECISION <= PRECISION`
+    /// - `NEW_PRECISION > 0`
+    #[allow(clippy::type_complexity)]
+    #[inline(always)]
+    unsafe fn decrease_precision_unchecked<const NEW_PRECISION: usize>(
         mut self,
     ) -> Result<
         ChainCoder<Word, State, CompressedBackend, RemaindersBackend, NEW_PRECISION>,
@@ -632,9 +684,6 @@ where
     where
         RemaindersBackend: ReadWords<Word, Stack>,
     {
-        assert!(NEW_PRECISION <= PRECISION);
-        assert!(NEW_PRECISION > 0);
-
         if self.heads.remainders < State::one() << (State::BITS - NEW_PRECISION - Word::BITS) {
             // Won't truncate since, from the above check it follows that we satisfy the contract
             // `self.heads.remainders < 1 << (State::BITS - Word::BITS)`.
@@ -650,7 +699,6 @@ where
             },
         })
     }
-
     /// Converts the `stable::Decoder` into a new `stable::Decoder` that accepts entropy
     /// models with a different fixed-point precision.
     ///
@@ -709,12 +757,25 @@ where
     where
         RemaindersBackend: WriteWords<Word> + ReadWords<Word, Stack>,
     {
+        generic_asserts!(
+            (State: BitArray, Word: BitArray; const PRECISION: usize, const NEW_PRECISION: usize);
+            NEW_PRECISION_MUST_BE_NONZERO: NEW_PRECISION > 0;
+            WORD_MUST_SUPPORT_NEW_PRECISION: NEW_PRECISION <= Word::BITS;
+            STATE_MUST_SUPPORT_NEW_PRECISION: State::BITS >= Word::BITS + NEW_PRECISION;
+        );
+
         if NEW_PRECISION > PRECISION {
-            self.increase_precision()
-                .map_err(ChangePrecisionError::Increase)
+            // SAFETY: we check all requirements above.
+            unsafe {
+                self.increase_precision_unchecked()
+                    .map_err(ChangePrecisionError::Increase)
+            }
         } else {
-            self.decrease_precision()
-                .map_err(ChangePrecisionError::Decrease)
+            // SAFETY: we check all requirements above.
+            unsafe {
+                self.decrease_precision_unchecked()
+                    .map_err(ChangePrecisionError::Decrease)
+            }
         }
     }
 
@@ -989,9 +1050,12 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        assert!(PRECISION <= Word::BITS);
-        assert!(PRECISION != 0);
-        assert!(State::BITS >= Word::BITS + PRECISION);
+        generic_asserts!(
+            (State: BitArray, Word: BitArray; const PRECISION: usize);
+            WORD_MUST_SUPPORT_PRECISION: PRECISION <= Word::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+            STATE_MUST_SUPPORT_PRECISION: State::BITS >= Word::BITS + PRECISION;
+        );
 
         let word = if PRECISION == Word::BITS
             || self.heads.compressed.get() < Word::one() << PRECISION
@@ -1009,7 +1073,7 @@ where
                     // - `0 < PRECISION < Word::BITS` as per our assertion and the above check,
                     //   therefore `Word::BITS - PRECISION > 0` and both the left-shift and
                     //   the right-shift are valid;
-                    // - `heads.compressed.get() != 0` sinze `heads.compressed` is a `NonZero`.
+                    // - `heads.compressed.get() != 0` since `heads.compressed` is a `NonZero`.
                     // - `heads.compressed.get() < 1 << PRECISION`, so all its "one" bits are
                     //   in the `PRECISION` lowest significant bits; since it we have
                     //   `Word::BITS` bits available, shifting left by `Word::BITS - PRECISION`
@@ -1083,9 +1147,12 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        // assert!(State::BITS >= Word::BITS + PRECISION);
-        assert!(PRECISION <= Word::BITS);
-        assert!(PRECISION > 0);
+        generic_asserts!(
+            (State: BitArray, Word: BitArray; const PRECISION: usize);
+            WORD_MUST_SUPPORT_PRECISION: PRECISION <= Word::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+            STATE_MUST_SUPPORT_PRECISION: State::BITS >= Word::BITS + PRECISION;
+        );
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
