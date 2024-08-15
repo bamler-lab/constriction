@@ -38,8 +38,9 @@ use crate::{
         self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, FallibleIteratorReadWords,
         IntoReadWords, IntoSeekReadWords, ReadWords, Reverse, WriteWords,
     },
-    bit_array_to_chunks_truncated, generic_asserts, BitArray, CoderError, DefaultEncoderError,
-    DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack, UnwrapInfallible,
+    bit_array_to_chunks_truncated, generic_static_asserts, BitArray, CoderError,
+    DefaultEncoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack,
+    UnwrapInfallible,
 };
 
 /// Entropy coder for both encoding and decoding on a stack.
@@ -256,7 +257,7 @@ where
     Backend: Default,
 {
     fn default() -> Self {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
         );
@@ -310,7 +311,7 @@ where
     where
         Backend: ReadWords<Word, Stack>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
         );
@@ -943,7 +944,7 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray; const PRECISION: usize);
             PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
             NON_ZERO_PRECISION: PRECISION > 0;
@@ -1012,7 +1013,7 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray; const PRECISION: usize);
             PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
             NON_ZERO_PRECISION: PRECISION > 0;

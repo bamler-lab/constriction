@@ -717,7 +717,7 @@ unsafe_impl_bit_array!((u128, core::num::NonZeroU128),);
 /// initial zero chunks.
 fn bit_array_to_chunks_truncated<Data, Chunk>(
     data: Data,
-) -> impl Iterator<Item = Chunk> + ExactSizeIterator + DoubleEndedIterator
+) -> impl ExactSizeIterator<Item = Chunk> + DoubleEndedIterator
 where
     Data: BitArray + AsPrimitive<Chunk>,
     Chunk: BitArray,
@@ -767,7 +767,7 @@ impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
 /// despite using properties of generic parameters of an outer function.
 ///
 /// See discussion at <https://morestina.net/blog/1940>.
-macro_rules! generic_asserts {
+macro_rules! generic_static_asserts {
     (($($l:lifetime,)* $($($t:ident$(: $bound:path)?),+)? $(; $(const $c:ident:$ct:ty),+)?); $($label:ident: $test:expr);+$(;)?) => {
         #[allow(path_statements, clippy::no_effect)]
         {
@@ -777,7 +777,7 @@ macro_rules! generic_asserts {
                     const $label: () = assert!($test);
                 )+
             }
-            generic_asserts!{@nested Check::<$($l,)* $($($t,)+)? $($($c,)+)?>, $($label: $test;)+}
+            generic_static_asserts!{@nested Check::<$($l,)* $($($t,)+)? $($($c,)+)?>, $($label: $test;)+}
         }
     };
     (@nested $t:ty, $($label:ident: $test:expr;)+) => {
@@ -787,4 +787,4 @@ macro_rules! generic_asserts {
     }
 }
 
-pub(crate) use generic_asserts;
+pub(crate) use generic_static_asserts;

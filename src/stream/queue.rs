@@ -48,7 +48,7 @@ use super::{
 };
 use crate::{
     backends::{AsReadWords, BoundedReadWords, Cursor, IntoReadWords, ReadWords, WriteWords},
-    generic_asserts, BitArray, CoderError, DefaultEncoderError, DefaultEncoderFrontendError,
+    generic_static_asserts, BitArray, CoderError, DefaultEncoderError, DefaultEncoderFrontendError,
     NonZeroBitArray, Pos, PosSeek, Queue, Seek, UnwrapInfallible,
 };
 
@@ -219,7 +219,7 @@ where
 {
     /// Creates an empty encoder for range coding.
     pub fn new() -> Self {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
@@ -266,7 +266,7 @@ where
     ///
     /// [`AnsCoder`]: super::stack::AnsCoder
     pub fn with_backend(backend: Backend) -> Self {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
@@ -434,7 +434,7 @@ where
         state: RangeCoderState<Word, State>,
         situation: EncoderSituation<Word>,
     ) -> Self {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
@@ -551,7 +551,7 @@ where
         D::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<D::Probability>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray; const PRECISION: usize);
             PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
             NON_ZERO_PRECISION: PRECISION > 0;
@@ -688,7 +688,7 @@ where
     where
         Buf: IntoReadWords<Word, Queue, IntoReadWords = Backend>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
@@ -705,7 +705,7 @@ where
     }
 
     pub fn with_backend(backend: Backend) -> Result<Self, Backend::ReadError> {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
@@ -725,7 +725,7 @@ where
     where
         Buf: AsReadWords<'a, Word, Queue, AsReadWords = Backend>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
@@ -754,7 +754,7 @@ where
         state: RangeCoderState<Word, State>,
         point: State,
     ) -> Result<Self, Backend> {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
@@ -922,7 +922,7 @@ where
         D::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<D::Probability>,
     {
-        generic_asserts!(
+        generic_static_asserts!(
             (Word: BitArray, State:BitArray; const PRECISION: usize);
             PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
             NON_ZERO_PRECISION: PRECISION > 0;
