@@ -3328,6 +3328,192 @@ where
     Ok(slots)
 }
 
+// LAZY CATEGORICAL ENTROPY MODELS ================================================================
+
+#[derive(Debug, Clone, Copy)]
+pub struct LazyContiguousCategoricalEntropyModel<Probability, F, Table, const PRECISION: usize> {
+    /// Invariants:
+    /// - `pmf.len() >= 2`
+    pmf: Table,
+    scale: F,
+    phantom: PhantomData<Probability>,
+}
+
+/// Type alias for a typical [`LazyContiguousCategoricalEntropyModel`].
+///
+/// See:
+/// - [`LazyContiguousCategoricalEntropyModel`]
+/// - [discussion of presets](super#presets)
+pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<u32>> =
+    LazyContiguousCategoricalEntropyModel<u32, F, Table, 24>;
+
+/// Type alias for a [`LazyContiguousCategoricalEntropyModel`] optimized for compatibility with
+/// lookup decoder models.
+///
+/// See:
+/// - [`LazyContiguousCategoricalEntropyModel`]
+/// - [discussion of presets](super#presets)
+pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<u16>> =
+    LazyContiguousCategoricalEntropyModel<u16, F, Table, 12>;
+
+impl<Probability: BitArray, F, Table, const PRECISION: usize>
+    LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
+where
+    F: FloatCore + core::iter::Sum<F>,
+    Table: AsRef<[F]>,
+{
+    #[allow(clippy::result_unit_err)]
+    pub fn from_floating_point_probabilities(probabilities: Table, normalization: Option<F>) -> Self
+    where
+        F: AsPrimitive<Probability>,
+        Probability: AsPrimitive<usize>,
+        usize: AsPrimitive<F>,
+    {
+        generic_static_asserts!(
+            (Probability: BitArray; const PRECISION: usize);
+            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+        );
+
+        let len = probabilities.as_ref().len();
+        assert!(len >= 2);
+
+        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
+        let free_weight = max_probability
+            .as_()
+            .checked_sub(len - 1)
+            .expect("The support is too large to assign a nonzero probability to each element.");
+        let normalization =
+            normalization.unwrap_or_else(|| probabilities.as_ref().iter().copied().sum::<F>());
+
+        let scale = free_weight.as_() / normalization;
+
+        Self {
+            pmf: probabilities,
+            scale,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<Probability: BitArray, F, Table, const PRECISION: usize> EntropyModel<PRECISION>
+    for LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
+{
+    type Symbol = usize;
+    type Probability = Probability;
+}
+
+impl<Probability: BitArray, F, Table, const PRECISION: usize> EncoderModel<PRECISION>
+    for LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
+where
+    F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
+    usize: AsPrimitive<Probability>,
+    Table: AsRef<[F]>,
+{
+    fn left_cumulative_and_probability(
+        &self,
+        symbol: impl Borrow<Self::Symbol>,
+    ) -> Option<(Self::Probability, <Self::Probability as BitArray>::NonZero)> {
+        let symbol = *symbol.borrow();
+        let pmf = self.pmf.as_ref();
+        let probability_float = *pmf.get(symbol)?;
+
+        // SAFETY: when we initialized `probability_float`, we checked if `symbol` is out of bounds.
+        let left_side = unsafe { pmf.get_unchecked(..symbol) };
+        let left_cumulative_float = left_side.iter().copied().sum::<F>();
+        let left_cumulative = (left_cumulative_float * self.scale).as_() + symbol.as_();
+
+        // It may seem easier to calculate `probability` directly from `probability_float` but
+        // this could pick up different rounding errors, breaking guarantees of `EncoderModel`.
+        let right_cumulative_float = left_cumulative_float + probability_float;
+        let right_cumulative: Probability = if symbol == pmf.len() - 1 {
+            // We have to treat the last symbol as a special case since standard treatment could
+            // lead to an inaccessible last quantile due to rounding errors.
+            wrapping_pow2(PRECISION)
+        } else {
+            (right_cumulative_float * self.scale).as_() + symbol.as_() + Probability::one()
+        };
+        let probability = right_cumulative
+            .wrapping_sub(&left_cumulative)
+            .into_nonzero()
+            .expect("leakiness should guarantee nonzero probabilities.");
+
+        Some((left_cumulative, probability))
+    }
+}
+
+impl<Probability: BitArray, F, Table, const PRECISION: usize> DecoderModel<PRECISION>
+    for LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
+where
+    F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
+    usize: AsPrimitive<Probability>,
+    Probability: AsPrimitive<F>,
+    Table: AsRef<[F]>,
+{
+    fn quantile_function(
+        &self,
+        quantile: Self::Probability,
+    ) -> (
+        Self::Symbol,
+        Self::Probability,
+        <Self::Probability as BitArray>::NonZero,
+    ) {
+        // We avoid division completely and float-to-int conversion as much as possible here
+        // because they are slow.
+
+        let mut left_cumulative_float = F::zero();
+        let mut right_cumulative_float = F::zero();
+
+        // First, skip any symbols where we can conclude even without any expensive float-to-int
+        // conversions that are too early. We slightly over-estimate `self.scale` so that any
+        // mismatch in rounding errors can only make our bound more conservative.
+        let enlarged_scale = (F::one() + F::epsilon() + F::epsilon()) * self.scale;
+        let lower_bound =
+            quantile.saturating_sub(self.pmf.as_ref().len().as_()).as_() / enlarged_scale;
+
+        let mut iter = self.pmf.as_ref().iter();
+        let mut next_symbol = 0usize;
+        for &next_probability in &mut iter {
+            next_symbol = next_symbol.wrapping_add(1);
+            left_cumulative_float = right_cumulative_float;
+            right_cumulative_float = right_cumulative_float + next_probability;
+            if right_cumulative_float >= lower_bound {
+                break;
+            }
+        }
+
+        // Then search for the correct `symbol` using the same float-to-int conversions as in
+        // `EncoderModel::left_cumulative_and_probability`.
+        let mut left_cumulative =
+            (left_cumulative_float * self.scale).as_() + next_symbol.wrapping_sub(1).as_();
+
+        for &next_probability in &mut iter {
+            let right_cumulative = (right_cumulative_float * self.scale).as_() + next_symbol.as_();
+            if right_cumulative > quantile {
+                let probability = right_cumulative
+                    .wrapping_sub(&left_cumulative)
+                    .into_nonzero()
+                    .expect("leakiness should guarantee nonzero probabilities.");
+                return (next_symbol.wrapping_sub(1), left_cumulative, probability);
+            }
+
+            left_cumulative = right_cumulative;
+
+            right_cumulative_float = right_cumulative_float + next_probability;
+            next_symbol = next_symbol.wrapping_add(1);
+        }
+
+        // We have to treat the last symbol as a special case since standard treatment could
+        // lead to an inaccessible last quantile due to rounding errors.
+        let right_cumulative = wrapping_pow2::<Probability>(PRECISION);
+        let probability = right_cumulative
+            .wrapping_sub(&left_cumulative)
+            .into_nonzero()
+            .expect("leakiness should guarantee nonzero probabilities.");
+        return (next_symbol.wrapping_sub(1), left_cumulative, probability);
+    }
+}
+
 // LOOKUP TABLE ENTROPY MODELS (FOR FAST DECODING) ================================================
 
 /// A tabularized [`DecoderModel`] that is optimized for fast decoding of i.i.d. symbols
@@ -4223,6 +4409,43 @@ mod tests {
             )
             .unwrap();
         test_iterable_entropy_model(&model, symbols.iter().cloned());
+    }
+
+    #[test]
+    fn lazy_contiguous_categorical() {
+        let unnormalized_probs: [f32; 30] = [
+            4.22713972, 1e-20, 0.22221771, 0.00927659, 1.58383270, 0.95804675, 0.78104103,
+            0.81518454, 0.75206966, 0.58559047, 0.00024284, 1.81382388, 3.22535052, 0.77940434,
+            0.24507986, 0.07767093, 0.0, 0.11429778, 0.00179474, 0.30613952, 0.72192056,
+            0.00778274, 0.18957551, 10.2402638, 3.36959484, 0.02624742, 1.85103708, 0.25614601,
+            0.09754817, 0.27998250,
+        ];
+        let normalization = 33.53830221;
+
+        const PRECISION: usize = 32;
+        let model =
+            LazyContiguousCategoricalEntropyModel::<u32, _,_, PRECISION>::from_floating_point_probabilities(
+                &unnormalized_probs,
+                None,
+            );
+
+        let mut sum: u64 = 0;
+        for (symbol, &unnormalized_prob) in unnormalized_probs.iter().enumerate() {
+            let (left_cumulative, prob) = model.left_cumulative_and_probability(symbol).unwrap();
+            assert_eq!(left_cumulative as u64, sum);
+            let float_prob = prob.get() as f32 / (1u64 << PRECISION) as f32;
+            assert!((float_prob - unnormalized_prob / normalization).abs() < 1e-6);
+            sum += prob.get() as u64;
+
+            let expected = (symbol, left_cumulative, prob);
+            assert_eq!(model.quantile_function(left_cumulative), expected);
+            assert_eq!(model.quantile_function((sum - 1).as_()), expected);
+            assert_eq!(
+                model.quantile_function((left_cumulative as u64 + prob.get() as u64 / 2) as u32),
+                expected
+            );
+        }
+        assert_eq!(sum, 1 << PRECISION);
     }
 
     fn test_entropy_model<'m, D, const PRECISION: usize>(
