@@ -3344,7 +3344,7 @@ pub struct LazyContiguousCategoricalEntropyModel<Probability, F, Table, const PR
 /// See:
 /// - [`LazyContiguousCategoricalEntropyModel`]
 /// - [discussion of presets](super#presets)
-pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<u32>> =
+pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<f32>> =
     LazyContiguousCategoricalEntropyModel<u32, F, Table, 24>;
 
 /// Type alias for a [`LazyContiguousCategoricalEntropyModel`] optimized for compatibility with

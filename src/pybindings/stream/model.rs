@@ -8,7 +8,8 @@ use pyo3::prelude::*;
 use crate::{
     pybindings::PyReadonlyFloatArray1,
     stream::model::{
-        DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer, UniformModel,
+        DefaultContiguousCategoricalEntropyModel, DefaultLazyContiguousCategoricalEntropyModel,
+        DefaultLeakyQuantizer, UniformModel,
     },
 };
 
@@ -19,6 +20,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
     module.add_class::<CustomModel>()?;
     module.add_class::<ScipyModel>()?;
     module.add_class::<Categorical>()?;
+    module.add_class::<LazyCategorical>()?;
     module.add_class::<Uniform>()?;
     module.add_class::<QuantizedGaussian>()?;
     module.add_class::<QuantizedLaplace>()?;
@@ -353,6 +355,35 @@ impl Categorical {
                             might be empty, contain negative values or NaNs, or sum to infinity).",
                         )
                     })?;
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+        };
+
+        Ok((Self, Model(model)))
+    }
+}
+
+#[pyclass(extends=Model)]
+#[derive(Debug)]
+struct LazyCategorical;
+
+#[pymethods]
+impl LazyCategorical {
+    #[new]
+    #[pyo3(text_signature = "(self, probabilities=None, normalization=None)")]
+    pub fn new(
+        probabilities: Option<PyReadonlyFloatArray1<'_>>,
+        normalization: Option<f32>,
+    ) -> PyResult<(Self, Model)> {
+        let model = match probabilities {
+            None => Arc::new(internals::UnparameterizedLazyCategoricalDistribution)
+                as Arc<dyn internals::Model>,
+            Some(probabilities) => {
+                let model =
+                    DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                        probabilities.cast_f32()?.to_vec()?,
+                        normalization,
+                    );
                 Arc::new(model) as Arc<dyn internals::Model>
             }
         };
