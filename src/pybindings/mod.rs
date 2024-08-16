@@ -346,6 +346,13 @@ impl<'py, D: ndarray::Dimension> PyReadonlyFloatArray<'py, D> {
         }
     }
 
+    fn cast_f32(&'py self) -> PyResult<Cow<'py, PyReadonlyArray<'py, f32, D>>> {
+        match self {
+            PyReadonlyFloatArray::F32(x) => Ok(Cow::Borrowed(x)),
+            PyReadonlyFloatArray::F64(x) => Ok(Cow::Owned(x.cast::<f32>(false)?.readonly())),
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
             PyReadonlyFloatArray::F32(x) => x.len(),
