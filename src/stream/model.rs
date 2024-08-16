@@ -3510,7 +3510,8 @@ where
             .wrapping_sub(&left_cumulative)
             .into_nonzero()
             .expect("leakiness should guarantee nonzero probabilities.");
-        return (next_symbol.wrapping_sub(1), left_cumulative, probability);
+
+        (next_symbol.wrapping_sub(1), left_cumulative, probability)
     }
 }
 
@@ -4413,6 +4414,7 @@ mod tests {
 
     #[test]
     fn lazy_contiguous_categorical() {
+        #[allow(clippy::excessive_precision)]
         let unnormalized_probs: [f32; 30] = [
             4.22713972, 1e-20, 0.22221771, 0.00927659, 1.58383270, 0.95804675, 0.78104103,
             0.81518454, 0.75206966, 0.58559047, 0.00024284, 1.81382388, 3.22535052, 0.77940434,
@@ -4420,7 +4422,7 @@ mod tests {
             0.00778274, 0.18957551, 10.2402638, 3.36959484, 0.02624742, 1.85103708, 0.25614601,
             0.09754817, 0.27998250,
         ];
-        let normalization = 33.53830221;
+        let normalization = 33.538302;
 
         const PRECISION: usize = 32;
         let model =
