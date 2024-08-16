@@ -28,8 +28,9 @@ pub struct EncoderHuffmanTree {
     /// - root node if `x == 0`;
     /// - otherwise, the lowest significant bit distinguishes left vs right children,
     ///   and the parent node is at index `x >> 1`.
-    /// (This works the node with index 0, if it exists, is always a leaf node, i.e., it
-    /// cannot be any other node's parent node.)
+    ///
+    /// (This means that the node with index 0, if it exists, is always a leaf node,
+    /// i.e., it cannot be any other node's parent node.)
     ///
     /// It is guaranteed that `num_symbols != 0` i.e., `nodes` is not empty.
     nodes: Vec<usize>,
