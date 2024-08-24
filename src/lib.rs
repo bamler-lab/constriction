@@ -459,7 +459,7 @@ pub trait Pos: PosSeek {
 /// let mut ans = DefaultAnsCoder::new();
 /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
 /// let entropy_model = DefaultContiguousCategoricalEntropyModel
-///     ::from_floating_point_probabilities(&probabilities).unwrap();
+///     ::from_floating_point_probabilities_fast(&probabilities, None).unwrap();
 ///
 /// // Encode some symbols in two chunks and take a snapshot after each chunk.
 /// let symbols1 = vec![8, 2, 0, 7];

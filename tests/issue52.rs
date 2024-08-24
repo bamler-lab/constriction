@@ -90,9 +90,10 @@ fn round_trip() {
         'H', 'e', 'l', 'o', ',', ' ', 'W', 'r', 'd', '!', 'G', 'b', 'y', '.',
     ];
     let counts = [1., 2., 3., 4., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 2.]; // The last entry is for the EOF token.
-    let probs =
-        DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&counts)
-            .unwrap();
+    let probs = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+        &counts, None,
+    )
+    .unwrap();
 
     let compressed = uncompressed.compress(probs, alphabet);
     let reconstructed = compressed.decompress();

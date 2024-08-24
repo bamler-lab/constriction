@@ -1229,8 +1229,8 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities(
-                &categorical_probabilities,
+            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities_fast::<f64>(
+                &categorical_probabilities,None
             )
             .unwrap();
         let mut symbols_categorical = Vec::with_capacity(AMT);
