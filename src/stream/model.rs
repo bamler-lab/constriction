@@ -107,8 +107,7 @@
 //! While constraints (1) and (4) above are strictly enforced (for types defined in this
 //! module), constraints (2) and (3) hold in practice but must not be relied on for memory
 //! safety as they can technically be violated without the use of `unsafe` (by using a
-//! [`LeakyQuantizer`] with an invalid
-//! [`Distribution`](probability::distribution::Distribution), i.e., one whose cumulative
+//! [`LeakyQuantizer`] with an invalid [`Distribution`], i.e., one whose cumulative
 //! distribution function either isn't monotonic or has an image that exceeds the interval
 //! `[0, 1]`).
 //!
@@ -297,17 +296,6 @@ pub trait EntropyModel<const PRECISION: usize> {
 /// [`to_generic_decoder_model`]: Self::to_generic_decoder_model
 /// [`to_generic_lookup_decoder_model`]: Self::to_generic_lookup_decoder_model
 pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISION> {
-    /// The type of the iterator returned by [`symbol_table`](Self::symbol_table).
-    ///
-    /// Each item is a tuple `(symbol, left_sided_cumulative, probability)`.
-    type Iter: Iterator<
-        Item = (
-            Self::Symbol,
-            Self::Probability,
-            <Self::Probability as BitArray>::NonZero,
-        ),
-    >;
-
     /// Iterates over all symbols in the unique order that is consistent with the cumulative
     /// distribution.
     ///
@@ -344,7 +332,15 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// # See also
     ///
     /// - [`floating_point_symbol_table`](Self::floating_point_symbol_table)
-    fn symbol_table(&'m self) -> Self::Iter;
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    >;
 
     /// Similar to [`symbol_table`], but yields both cumulatives and probabilities in
     /// floating point representation.
@@ -353,13 +349,11 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// From<Self::Probability>`.
     ///
     /// [`symbol_table`]: Self::symbol_table
-    fn floating_point_symbol_table<F>(
-        &'m self,
-    ) -> FloatingPointSymbolTable<F, Self::Iter, PRECISION>
+    fn floating_point_symbol_table<F>(&'m self) -> impl Iterator<Item = (Self::Symbol, F, F)>
     where
-        F: From<Self::Probability>,
+        F: FloatCore + From<Self::Probability>,
     {
-        FloatingPointSymbolTable {
+        FloatingPointSymbolTable::<_, _, PRECISION> {
             inner: self.symbol_table(),
             phantom: PhantomData,
         }
@@ -468,7 +462,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
 
 /// The iterator returned by [`IterableEntropyModel::floating_point_symbol_table`].
 #[derive(Debug)]
-pub struct FloatingPointSymbolTable<F, I, const PRECISION: usize> {
+struct FloatingPointSymbolTable<F, I, const PRECISION: usize> {
     inner: I,
     phantom: PhantomData<F>,
 }
@@ -713,9 +707,15 @@ impl<'m, M, const PRECISION: usize> IterableEntropyModel<'m, PRECISION> for &'m 
 where
     M: IterableEntropyModel<'m, PRECISION>,
 {
-    type Iter = M::Iter;
-
-    fn symbol_table(&'m self) -> Self::Iter {
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    > {
         (*self).symbol_table()
     }
 
@@ -829,9 +829,15 @@ impl<'m, Probability: BitArray, const PRECISION: usize> IterableEntropyModel<'m,
 where
     Probability: AsPrimitive<usize>,
 {
-    type Iter = UniformModelIter<'m, Probability, PRECISION>;
-
-    fn symbol_table(&'m self) -> Self::Iter {
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    > {
         UniformModelIter {
             model: self,
             symbol: Probability::zero(),
@@ -841,7 +847,7 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct UniformModelIter<'m, Probability: BitArray, const PRECISION: usize> {
+struct UniformModelIter<'m, Probability: BitArray, const PRECISION: usize> {
     model: &'m UniformModel<Probability, PRECISION>,
     symbol: Probability,
     terminated: bool,
@@ -1697,7 +1703,7 @@ where
     }
 }
 
-impl<'m, 'q: 'm, Symbol, Probability, D, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
+impl<'m, Symbol, Probability, D, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
     for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
 where
     f64: AsPrimitive<Probability>,
@@ -1706,9 +1712,15 @@ where
     D: Distribution + 'm,
     D::Value: AsPrimitive<Symbol>,
 {
-    type Iter = LeakilyQuantizedDistributionIter<Symbol, Probability, &'m Self, PRECISION>;
-
-    fn symbol_table(&'m self) -> Self::Iter {
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    > {
         LeakilyQuantizedDistributionIter {
             model: self,
             symbol: Some(self.quantizer.min_symbol_inclusive),
@@ -1719,12 +1731,9 @@ where
 
 /// Iterator over the [`symbol_table`] of a [`LeakilyQuantizedDistribution`].
 ///
-/// This type will become private once anonymous return types are allowed in trait methods.
-/// Do not use it outside of the `constriction` library.
-///
 /// [`symbol_table`]: IterableEntropyModel::symbol_table
 #[derive(Debug)]
-pub struct LeakilyQuantizedDistributionIter<Symbol, Probability, M, const PRECISION: usize> {
+struct LeakilyQuantizedDistributionIter<Symbol, Probability, M, const PRECISION: usize> {
     model: M,
     symbol: Option<Symbol>,
     left_sided_cumulative: Probability,
@@ -2963,10 +2972,16 @@ where
     Probability: BitArray,
     Table: AsRef<[Probability]>,
 {
-    type Iter = SymbolTableIter<usize, Probability, ContiguousSymbolTable<&'m [Probability]>>;
-
     #[inline(always)]
-    fn symbol_table(&'m self) -> Self::Iter {
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    > {
         SymbolTableIter::new(self.as_view().cdf)
     }
 }
@@ -2978,11 +2993,16 @@ where
     Probability: BitArray,
     Table: AsRef<[(Probability, Symbol)]>,
 {
-    type Iter =
-        SymbolTableIter<Symbol, Probability, NonContiguousSymbolTable<&'m [(Probability, Symbol)]>>;
-
     #[inline(always)]
-    fn symbol_table(&'m self) -> Self::Iter {
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    > {
         SymbolTableIter::new(self.as_view().cdf)
     }
 }
@@ -4556,10 +4576,16 @@ where
     Table: AsRef<[Probability]>,
     LookupTable: AsRef<[Probability]>,
 {
-    type Iter = SymbolTableIter<Probability, Probability, ContiguousSymbolTable<&'m [Probability]>>;
-
     #[inline(always)]
-    fn symbol_table(&'m self) -> Self::Iter {
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    > {
         SymbolTableIter::new(self.as_view().cdf)
     }
 }
@@ -4580,11 +4606,16 @@ where
     Table: AsRef<[(Probability, Symbol)]>,
     LookupTable: AsRef<[Probability]>,
 {
-    type Iter =
-        SymbolTableIter<Symbol, Probability, NonContiguousSymbolTable<&'m [(Probability, Symbol)]>>;
-
     #[inline(always)]
-    fn symbol_table(&'m self) -> Self::Iter {
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    > {
         SymbolTableIter::new(self.as_view().cdf)
     }
 }
