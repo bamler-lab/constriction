@@ -328,7 +328,11 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// let symbols = vec!['a', 'b', 'x', 'y'];
     /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
     /// let model = SmallNonContiguousCategoricalDecoderModel
-    ///     ::from_symbols_and_floating_point_probabilities(&symbols, &probabilities).unwrap();
+    ///     ::from_symbols_and_floating_point_probabilities_fast(
+    ///         symbols.iter().cloned(),
+    ///         &probabilities,
+    ///         None
+    ///     ).unwrap();
     ///
     /// // Print a table representation of this entropy model (e.g., for debugging).
     /// dbg!(model.symbol_table().collect::<Vec<_>>());
@@ -2013,8 +2017,8 @@ where
 ///
 /// // Create a `ContiguousCategoricalEntropyModel` that approximates floating point probabilities.
 /// let probabilities = [0.3, 0.0, 0.4, 0.1, 0.2]; // Note that `probabilities[1] == 0.0`.
-/// let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-///     &probabilities
+/// let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+///     &probabilities, None
 /// ).unwrap();
 /// assert_eq!(model.support_size(), 5); // `model` supports the symbols `0..5usize`.
 ///
@@ -2223,24 +2227,113 @@ impl<Probability: BitArray, const PRECISION: usize>
 {
     /// Constructs a leaky distribution whose PMF approximates given probabilities.
     ///
-    /// The returned distribution will be defined for symbols of type `usize` from
-    /// the range `0..probabilities.len()`.
+    /// The returned distribution will be defined for symbols of type `usize` from the range
+    /// `0..probabilities.len()`. Every symbol will have a strictly nonzero probability,
+    /// even if its corresponding entry in the provided argument `probabilities` is smaller
+    /// than the smallest nonzero probability that can be represented with `PRECISION` bits
+    /// (including if the provided probability is exactly zero). This guarantee ensures that
+    /// every symbol in the range `0..probabilities.len()` can be encoded with the resulting
+    /// model.
     ///
-    /// The argument `probabilities` is a slice of floating point values (`F` is
-    /// typically `f64` or `f32`). All entries must be nonnegative and at least one
-    /// entry has to be nonzero. The entries do not necessarily need to add up to
-    /// one (the resulting distribution will automatically get normalized and an
-    /// overall scaling of all entries of `probabilities` does not affect the
-    /// result, up to effects due to rounding errors).
+    /// # Arguments
     ///
-    /// The probability mass function of the returned distribution will approximate
-    /// the provided probabilities as well as possible, subject to the following
-    /// constraints:
-    /// - probabilities are represented in fixed point arithmetic, where the const
-    ///   generic parameter `PRECISION` controls the number of bits of precision.
-    ///   This typically introduces rounding errors;
-    /// - despite the possibility of rounding errors, the returned probability
-    ///   distribution will be exactly normalized; and
+    /// - `probabilities`: a slice of floating point values (`F` is typically `f64` or
+    ///   `f32`). All entries must be nonnegative and at least one entry has to be nonzero.
+    ///   The entries do not necessarily need to add up to one (see argument
+    ///   `normalization`).
+    /// - `normalization`: optional sum of `probabilities`, which will be used to normalize
+    ///   the probability distribution. Will be calculated internally if not provided. Only
+    ///   provide this argument if you know its value *exactly*; it must be obtained by
+    ///   summing up the elements of `probability` left to right (otherwise, you'll get
+    ///   different rounding errors, which may lead to overflowing probabilities in edge
+    ///   cases, e.g., if the last element has a very small probability). If in doubt, do
+    ///   not provide.
+    ///
+    /// # Runtime Complexity
+    ///
+    /// O(`probabilities.len()`). This is in contrast to
+    /// [`from_floating_point_probabilities_perfect`], which may be considerably slower.
+    ///
+    /// # Error Handling
+    ///
+    /// Returns an error if the normalization (regardless of whether it is provided or
+    /// calculated) is not a finite positive value. Also returns an error if `probability`
+    /// is of length zero or one (degenerate probability distributions are not supported by
+    /// `constriction`) or if `probabilities` contains more than `2^PRECISION` elements (in
+    /// which case we could not assign a nonzero fixed-point probability to every symbol).
+    ///
+    /// # See also
+    ///
+    /// - [`from_floating_point_probabilities_perfect`]
+    ///
+    /// [`from_floating_point_probabilities_perfect`]:
+    ///     Self::from_floating_point_probabilities_perfect
+    #[allow(clippy::result_unit_err)]
+    pub fn from_floating_point_probabilities_fast<F>(
+        probabilities: &[F],
+        normalization: Option<F>,
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
+        Probability: BitArray + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability> + AsPrimitive<F>,
+    {
+        let cdf = fast_quantized_cdf::<_, _, PRECISION>(probabilities, normalization)?;
+        Self::from_fixed_point_cdf(cdf)
+    }
+
+    /// Slower variant of [`from_floating_point_probabilities_fast`].
+    ///
+    /// Constructs a leaky distribution whose PMF approximates given probabilities as well
+    /// as possible within a `PRECISION`-bit fixed-point representation. The returned
+    /// distribution will be defined for symbols of type `usize` from the range
+    /// `0..probabilities.len()`.
+    ///
+    /// # Comparison to `from_floating_point_probabilities_fast`
+    ///
+    /// This method explicitly minimizes the Kullback-Leibler divergence from the resulting
+    /// fixed-point precision probabilities to the floating-point argument `probabilities`.
+    /// This method may find a slightly better quantization than
+    /// [`from_floating_point_probabilities_fast`], thus leading to a very slightly lower
+    /// expected bit rate. However, this method can have a *significantly* longer runtime
+    /// than `from_floating_point_probabilities_fast`.
+    ///
+    /// For most applications, [`from_floating_point_probabilities_fast`] is the better
+    /// choice because the marginal reduction in bit rate due to
+    /// `from_floating_point_probabilities_perfect` is rarely worth its significantly longer
+    /// runtime. This advice applies in particular to autoregressive compression techniques,
+    /// i.e., methods that use a different probability distribution for every single encoded
+    /// symbol.
+    ///
+    /// However, the following edge cases may justify using
+    /// `from_floating_point_probabilities_perfect` despite its poor runtime behavior:
+    ///
+    /// - you're constructing an entropy model that will be used to encode a very large
+    ///   number of symbols; or
+    /// - you're constructing an entropy model on the encoder side whose fixed-point
+    ///   representation will be stored as a part of the compressed data (which will then be
+    ///   read in every time the data gets decoded); or
+    /// - you need backward compatibility with constriction <= version 0.3.5.
+    ///
+    /// # Details
+    ///
+    ///
+    ///
+    /// The argument `probabilities` is a slice of floating point values (`F` is typically
+    /// `f64` or `f32`). All entries must be nonnegative, and at least one entry has to be
+    /// nonzero. The entries do not necessarily need to add up to one (the resulting
+    /// distribution will automatically get normalized, and an overall scaling of all
+    /// entries of `probabilities` does not affect the result, up to effects due to rounding
+    /// errors).
+    ///
+    /// The probability mass function of the returned distribution will approximate the
+    /// provided probabilities as well as possible, subject to the following constraints:
+    /// - probabilities are represented in fixed point arithmetic, where the const generic
+    ///   parameter `PRECISION` controls the number of bits of precision. This typically
+    ///   introduces rounding errors;
+    /// - despite the possibility of rounding errors, the returned probability distribution
+    ///   will be exactly normalized; and
     /// - each symbol in the support `0..probabilities.len()` gets assigned a strictly
     ///   nonzero probability, even if the provided probability for the symbol is zero or
     ///   below the threshold that can be resolved in fixed point arithmetic with
@@ -2248,24 +2341,89 @@ impl<Probability: BitArray, const PRECISION: usize>
     ///   "leaky". The leakiness guarantees that all symbols within the support can be
     ///   encoded when this distribution is used as an entropy model.
     ///
-    /// More precisely, the resulting probability distribution minimizes the cross
-    /// entropy from the provided (floating point) to the resulting (fixed point)
-    /// probabilities subject to the above three constraints.
+    /// More precisely, the resulting probability distribution minimizes the cross entropy
+    /// from the provided (floating point) to the resulting (fixed point) probabilities
+    /// subject to the above three constraints.
     ///
     /// # Error Handling
     ///
-    /// Returns an error if the provided probability distribution cannot be
-    /// normalized, either because `probabilities` is of length zero, or because one
-    /// of its entries is negative with a nonzero magnitude, or because the sum of
-    /// its elements is zero, infinite, or NaN.
+    /// Returns an error if the provided probability distribution cannot be normalized,
+    /// either because `probabilities` is of length zero, or because one of its entries is
+    /// negative with a nonzero magnitude, or because the sum of its elements is zero,
+    /// infinite, or NaN.
     ///
-    /// Also returns an error if the probability distribution is degenerate, i.e.,
-    /// if `probabilities` has only a single element, because degenerate probability
+    /// Also returns an error if the probability distribution is degenerate, i.e., if
+    /// `probabilities` has only a single element, because degenerate probability
     /// distributions currently cannot be represented.
     ///
-    /// TODO: should also return an error if support is too large to support leaky
-    /// distribution
+    /// Also returns an error if `probabilities` contains more than `2^PRECISION` elements
+    /// (in which case we could not assign a nonzero fixed-point probability to every
+    /// symbol).
+    ///
+    /// # See also
+    ///
+    /// - [`from_floating_point_probabilities_fast`]
+    ///
+    /// [`from_floating_point_probabilities_fast`]:
+    ///     Self::from_floating_point_probabilities_fast
     #[allow(clippy::result_unit_err)]
+    pub fn from_floating_point_probabilities_perfect<F>(probabilities: &[F]) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        let slots = perfectly_quantized_probabilities::<_, _, PRECISION>(probabilities)?;
+        Self::from_nonzero_fixed_point_probabilities(
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
+    /// Deprecated constructor.
+    ///
+    /// This constructor has been deprecated in constriction version 0.4.0, and it will be
+    /// removed in constriction version 0.5.0.
+    ///
+    /// # Upgrade Instructions
+    ///
+    /// Most *new* use cases should call [`from_floating_point_probabilities_fast`] instead.
+    /// Using the `..._fast` constructor may lead to very slightly larger bit rates, but it
+    /// runs considerably faster.
+    ///
+    /// However, note that [`from_floating_point_probabilities_fast`] breaks binary
+    /// compatibility with `constriction` version <= 0.3.5. If you need to be able to
+    /// exchange binary compressed data with a program that uses a categorical entropy model
+    /// from `constriction` version <= 0.3.5, then call
+    /// [`from_floating_point_probabilities_perfect`] instead. Another reason for using the
+    /// `..._perfect` constructor could be if compression performance is much more important
+    /// to you than runtime performance.
+    ///
+    /// # Compatibility Table
+    ///
+    /// This deprecated constructor currently delegates to
+    /// [`from_floating_point_probabilities_perfect`] (referred to as `..._perfect` in the
+    /// table below).
+    ///
+    /// | Constructor used for compression → <br> ↓ Constructor used for decompression ↓ | This one |  `..._perfect` | `..._fast` |
+    /// | ----------------: | ------------ | ------------ | ------------ |
+    /// | **This one**      | compatible   | compatible   | incompatible |
+    /// | **`..._perfect`** | compatible   | compatible   | incompatible |
+    /// | **`..._fast`**    | incompatible | incompatible | compatible   |
+    ///
+    /// [`from_floating_point_probabilities_perfect`]:
+    ///     Self::from_floating_point_probabilities_perfect
+    /// [`from_floating_point_probabilities_fast`]:
+    ///     Self::from_floating_point_probabilities_fast
+    #[deprecated(
+        since = "0.4.0",
+        note = "Please use `from_floating_point_probabilities_fast` or \
+        `from_floating_point_probabilities_perfect` instead. See documentation for detailed \
+        upgrade instructions."
+    )]
+    #[allow(clippy::result_unit_err)]
+    #[inline(always)]
     pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
     where
         F: FloatCore + core::iter::Sum<F> + Into<f64>,
@@ -2273,11 +2431,7 @@ impl<Probability: BitArray, const PRECISION: usize>
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
     {
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_nonzero_fixed_point_probabilities(
-            slots.into_iter().map(|slot| slot.weight),
-            false,
-        )
+        Self::from_floating_point_probabilities_perfect(probabilities)
     }
 
     /// Constructs a distribution with a PMF given in fixed point arithmetic.
@@ -2409,6 +2563,20 @@ impl<Probability: BitArray, const PRECISION: usize>
             phantom: PhantomData,
         })
     }
+
+    fn from_fixed_point_cdf<I>(cdf: I) -> Result<Self, ()>
+    where
+        I: ExactSizeIterator<Item = Probability>,
+    {
+        let extended_cdf = cdf
+            .chain(core::iter::once(wrapping_pow2(PRECISION)))
+            .collect();
+
+        Ok(Self {
+            cdf: ContiguousSymbolTable(extended_cdf),
+            phantom: PhantomData,
+        })
+    }
 }
 
 impl<Symbol, Probability: BitArray, const PRECISION: usize>
@@ -2461,6 +2629,53 @@ where
     /// TODO: should also return an error if support is too large to support leaky
     /// distribution
     #[allow(clippy::result_unit_err)]
+    pub fn from_symbols_and_floating_point_probabilities_fast<F>(
+        symbols: impl IntoIterator<Item = Symbol>,
+        probabilities: &[F],
+        normalization: Option<F>,
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
+        Probability: AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability> + AsPrimitive<F>,
+    {
+        let cdf = fast_quantized_cdf::<Probability, F, PRECISION>(probabilities, normalization)?;
+
+        let mut extended_cdf = Vec::with_capacity(probabilities.len() + 1);
+        extended_cdf.extend(cdf.zip(symbols));
+        let last_symbol = extended_cdf.last().expect("`len` >= 2").1.clone();
+        extended_cdf.push((wrapping_pow2(PRECISION), last_symbol));
+
+        Ok(Self::from_extended_cdf(extended_cdf))
+    }
+
+    #[allow(clippy::result_unit_err)]
+    pub fn from_symbols_and_floating_point_probabilities_perfect<F>(
+        symbols: impl IntoIterator<Item = Symbol>,
+        probabilities: &[F],
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        let slots = perfectly_quantized_probabilities::<_, _, PRECISION>(probabilities)?;
+        Self::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols,
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
+    #[deprecated(
+        since = "0.4.0",
+        note = "Please use `from_symbols_and_floating_point_probabilities_fast` or \
+        `from_symbols_and_floating_point_probabilities_perfect` instead. See documentation for \
+        detailed upgrade instructions."
+    )]
+    #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
         probabilities: &[F],
@@ -2471,15 +2686,9 @@ where
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
     {
-        if symbols.len() != probabilities.len() {
-            return Err(());
-        };
-
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_symbols_and_nonzero_fixed_point_probabilities(
+        Self::from_symbols_and_floating_point_probabilities_perfect(
             symbols.iter().cloned(),
-            slots.into_iter().map(|slot| slot.weight),
-            false,
+            probabilities,
         )
     }
 
@@ -2570,10 +2779,15 @@ where
         if symbols.next().is_some() {
             Err(())
         } else {
-            Ok(Self {
-                cdf: NonContiguousSymbolTable(cdf),
-                phantom: PhantomData,
-            })
+            Ok(Self::from_extended_cdf(cdf))
+        }
+    }
+
+    #[inline(always)]
+    fn from_extended_cdf(cdf: Vec<(Probability, Symbol)>) -> Self {
+        Self {
+            cdf: NonContiguousSymbolTable(cdf),
+            phantom: PhantomData,
         }
     }
 
@@ -2804,9 +3018,6 @@ where
     }
 }
 
-/// `EncoderModel` is only implemented for *contiguous* generic categorical models. To
-/// decode encode symbols from a non-contiguous support, use an
-/// `NonContiguousCategoricalEncoderModel`.
 impl<Probability, Table, const PRECISION: usize> EncoderModel<PRECISION>
     for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
 where
@@ -2889,7 +3100,11 @@ where
 /// let alphabet = ['M', 'i', 's', 'p', '!'];
 /// let probabilities = [0.09, 0.36, 0.36, 0.18, 0.0];
 /// let encoder_model = DefaultNonContiguousCategoricalEncoderModel
-///     ::from_symbols_and_floating_point_probabilities(alphabet.iter().cloned(), &probabilities)
+///     ::from_symbols_and_floating_point_probabilities_fast(
+///         alphabet.iter().cloned(),
+///         &probabilities,
+///         None
+///     )
 ///     .unwrap();
 /// assert_eq!(encoder_model.support_size(), 5); // `encoder_model` supports 4 symbols.
 ///
@@ -2904,7 +3119,9 @@ where
 ///
 /// // Create a matching `decoder_model`, decode the encoded message, and verify correctness.
 /// let decoder_model = DefaultNonContiguousCategoricalDecoderModel
-///     ::from_symbols_and_floating_point_probabilities(&alphabet, &probabilities)
+///     ::from_symbols_and_floating_point_probabilities_fast(
+///         &alphabet, &probabilities, None
+///     )
 ///     .unwrap();
 ///
 /// // We could pass `decoder_model` by reference (like we did for `encoder_model` above) but
@@ -2998,6 +3215,47 @@ where
     /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities`]
     /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
     #[allow(clippy::result_unit_err)]
+    pub fn from_symbols_and_floating_point_probabilities_fast<F>(
+        symbols: impl IntoIterator<Item = Symbol>,
+        probabilities: &[F],
+        normalization: Option<F>,
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
+        Probability: AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability> + AsPrimitive<F>,
+    {
+        let cdf = fast_quantized_cdf::<Probability, F, PRECISION>(probabilities, normalization)?;
+        Self::from_symbols_and_cdf(symbols, cdf)
+    }
+
+    #[allow(clippy::result_unit_err)]
+    pub fn from_symbols_and_floating_point_probabilities_perfect<F>(
+        symbols: impl IntoIterator<Item = Symbol>,
+        probabilities: &[F],
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        let slots = perfectly_quantized_probabilities::<_, _, PRECISION>(probabilities)?;
+        Self::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols,
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
+    #[deprecated(
+        since = "0.4.0",
+        note = "Please use `from_symbols_and_floating_point_probabilities_fast` or \
+        `from_symbols_and_floating_point_probabilities_perfect` instead. See documentation for \
+        detailed upgrade instructions."
+    )]
+    #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: impl IntoIterator<Item = Symbol>,
         probabilities: &[F],
@@ -3008,12 +3266,7 @@ where
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
     {
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_symbols_and_nonzero_fixed_point_probabilities(
-            symbols,
-            slots.into_iter().map(|slot| slot.weight),
-            false,
-        )
+        Self::from_symbols_and_floating_point_probabilities_perfect(symbols, probabilities)
     }
 
     /// Constructs a distribution with a PMF given in fixed point arithmetic.
@@ -3033,7 +3286,8 @@ where
         P::Item: Borrow<Probability>,
     {
         let symbols = symbols.into_iter();
-        let mut table = HashMap::with_capacity(symbols.size_hint().0 + 1);
+        let mut table =
+            HashMap::with_capacity(symbols.size_hint().0 + infer_last_probability as usize);
         let mut symbols = accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
             symbols,
             probabilities.into_iter(),
@@ -3047,6 +3301,51 @@ where
             },
             infer_last_probability,
         )?;
+
+        if symbols.next().is_some() {
+            Err(())
+        } else {
+            Ok(Self { table })
+        }
+    }
+
+    #[allow(clippy::result_unit_err)]
+    fn from_symbols_and_cdf<S, P>(symbols: S, cdf: P) -> Result<Self, ()>
+    where
+        S: IntoIterator<Item = Symbol>,
+        P: IntoIterator<Item = Probability>,
+    {
+        let mut symbols = symbols.into_iter();
+        let mut cdf = cdf.into_iter();
+        let mut table = HashMap::with_capacity(symbols.size_hint().0);
+
+        let mut left_cumulative = cdf.next().ok_or(())?;
+        for right_cumulative in cdf {
+            let symbol = symbols.next().ok_or(())?;
+            match table.entry(symbol) {
+                Occupied(_) => return Err(()),
+                Vacant(slot) => {
+                    let probability = (right_cumulative - left_cumulative)
+                        .into_nonzero()
+                        .ok_or(())?;
+                    slot.insert((left_cumulative, probability));
+                }
+            }
+            left_cumulative = right_cumulative;
+        }
+
+        let last_symbol = symbols.next().ok_or(())?;
+        let right_cumulative = wrapping_pow2::<Probability>(PRECISION);
+        match table.entry(last_symbol) {
+            Occupied(_) => return Err(()),
+            Vacant(slot) => {
+                let probability = right_cumulative
+                    .wrapping_sub(&left_cumulative)
+                    .into_nonzero()
+                    .ok_or(())?;
+                slot.insert((left_cumulative, probability));
+            }
+        }
 
         if symbols.next().is_some() {
             Err(())
@@ -3206,7 +3505,48 @@ where
     Ok(symbols)
 }
 
-fn optimize_leaky_categorical<Probability, F, const PRECISION: usize>(
+fn fast_quantized_cdf<Probability, F, const PRECISION: usize>(
+    probabilities: &[F],
+    normalization: Option<F>,
+) -> Result<impl ExactSizeIterator<Item = Probability> + '_, ()>
+where
+    F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
+    Probability: BitArray + AsPrimitive<usize>,
+    f64: AsPrimitive<Probability>,
+    usize: AsPrimitive<Probability> + AsPrimitive<F>,
+{
+    generic_static_asserts!(
+        (Probability: BitArray; const PRECISION: usize);
+        PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+        PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+    );
+
+    if probabilities.len() < 2
+        || probabilities.len() >= wrapping_pow2::<usize>(PRECISION).wrapping_sub(1)
+    {
+        return Err(());
+    }
+
+    let free_weight =
+        wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&probabilities.len().as_());
+    let normalization = normalization.unwrap_or_else(|| probabilities.iter().copied().sum::<F>());
+    if !normalization.is_normal() || !normalization.is_sign_positive() {
+        return Err(());
+    }
+    let scale = AsPrimitive::<F>::as_(free_weight.as_()) / normalization;
+
+    let mut cumulative_float = F::zero();
+    let mut accumulated_slack = Probability::zero();
+
+    Ok(probabilities.iter().map(move |probability_float| {
+        let left_cumulative = (cumulative_float * scale).as_() + accumulated_slack;
+        cumulative_float = cumulative_float + *probability_float;
+        accumulated_slack = accumulated_slack.wrapping_add(&Probability::one());
+        left_cumulative
+    }))
+}
+
+fn perfectly_quantized_probabilities<Probability, F, const PRECISION: usize>(
     probabilities: &[F],
 ) -> Result<Vec<Slot<Probability>>, ()>
 where
@@ -3344,30 +3684,39 @@ pub struct LazyContiguousCategoricalEntropyModel<Probability, F, Table, const PR
 /// See:
 /// - [`LazyContiguousCategoricalEntropyModel`]
 /// - [discussion of presets](super#presets)
-pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<f32>> =
+pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<F>> =
     LazyContiguousCategoricalEntropyModel<u32, F, Table, 24>;
 
-/// Type alias for a [`LazyContiguousCategoricalEntropyModel`] optimized for compatibility with
-/// lookup decoder models.
+/// Type alias for a [`LazyContiguousCategoricalEntropyModel`] that can be used with coders that use
+/// `u16` for their word size.
+///
+/// Note that, unlike the other type aliases with the `Small...` prefix, creating a lookup table for
+/// a *lazy* categorical model is rarely useful. Lazy models are optimized for applications where a
+/// model gets used only very few times (e.g., as a part of an autoregressive model) whereas lookup
+/// tables are useful if you use the same model lots of times.
 ///
 /// See:
 /// - [`LazyContiguousCategoricalEntropyModel`]
 /// - [discussion of presets](super#presets)
-pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<u16>> =
+pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<F>> =
     LazyContiguousCategoricalEntropyModel<u16, F, Table, 12>;
 
-impl<Probability: BitArray, F, Table, const PRECISION: usize>
+impl<Probability, F, Table, const PRECISION: usize>
     LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
 where
+    Probability: BitArray,
     F: FloatCore + core::iter::Sum<F>,
     Table: AsRef<[F]>,
 {
     #[allow(clippy::result_unit_err)]
-    pub fn from_floating_point_probabilities(probabilities: Table, normalization: Option<F>) -> Self
+    pub fn from_floating_point_probabilities(
+        probabilities: Table,
+        normalization: Option<F>,
+    ) -> Result<Self, ()>
     where
         F: AsPrimitive<Probability>,
         Probability: AsPrimitive<usize>,
-        usize: AsPrimitive<F>,
+        usize: AsPrimitive<Probability> + AsPrimitive<F>,
     {
         generic_static_asserts!(
             (Probability: BitArray; const PRECISION: usize);
@@ -3375,37 +3724,83 @@ where
             PRECISION_MUST_BE_NONZERO: PRECISION > 0;
         );
 
-        let len = probabilities.as_ref().len();
-        assert!(len >= 2);
+        let probs = probabilities.as_ref();
 
-        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-        let free_weight = max_probability
-            .as_()
-            .checked_sub(len - 1)
-            .expect("The support is too large to assign a nonzero probability to each element.");
+        if probs.len() < 2 || probs.len() >= wrapping_pow2::<usize>(PRECISION).wrapping_sub(1) {
+            return Err(());
+        }
+
+        let remaining_free_weight =
+            wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&probs.len().as_());
         let normalization =
             normalization.unwrap_or_else(|| probabilities.as_ref().iter().copied().sum::<F>());
+        if !normalization.is_normal() || !normalization.is_sign_positive() {
+            return Err(());
+        }
 
-        let scale = free_weight.as_() / normalization;
+        let scale = AsPrimitive::<F>::as_(remaining_free_weight.as_()) / normalization;
 
-        Self {
+        Ok(Self {
             pmf: probabilities,
             scale,
+            phantom: PhantomData,
+        })
+    }
+
+    /// Returns the number of symbols supported by the model.
+    ///
+    /// The distribution is defined on the contiguous range of symbols from zero
+    /// (inclusively) to `support_size()` (exclusively). All symbols within this range are
+    /// guaranteed to have a nonzero probability, while all symbols outside of this range
+    /// have a zero probability.
+    #[inline(always)]
+    pub fn support_size(&self) -> usize {
+        self.pmf.as_ref().len()
+    }
+
+    /// Makes a very cheap shallow copy of the model that can be used much like a shared
+    /// reference.
+    ///
+    /// The returned `LazyContiguousCategoricalEntropyModel` implements `Copy`, which is a
+    /// requirement for some methods, such as [`Encode::encode_iid_symbols`] or
+    /// [`Decode::decode_iid_symbols`]. These methods could also accept a shared reference
+    /// to a `LazyContiguousCategoricalEntropyModel` (since all references to entropy models are
+    /// also entropy models, and all shared references implement `Copy`), but passing a
+    /// *view* instead may be slightly more efficient because it avoids one level of
+    /// dereferencing.
+    ///
+    /// Note that `LazyContiguousCategoricalEntropyModel` is optimized for models that are used
+    /// only rarely (often just a single time). Thus, if you find yourself handing out lots of
+    /// views to the same `LazyContiguousCategoricalEntropyModel` then you'd likely be better off
+    /// using a [`ContiguousCategoricalEntropyModel`] instead.
+    ///
+    /// [`Encode::encode_iid_symbols`]: super::Encode::encode_iid_symbols
+    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
+    #[inline]
+    pub fn as_view(
+        &self,
+    ) -> LazyContiguousCategoricalEntropyModel<Probability, F, &[F], PRECISION> {
+        LazyContiguousCategoricalEntropyModel {
+            pmf: self.pmf.as_ref(),
+            scale: self.scale,
             phantom: PhantomData,
         }
     }
 }
 
-impl<Probability: BitArray, F, Table, const PRECISION: usize> EntropyModel<PRECISION>
+impl<Probability, F, Table, const PRECISION: usize> EntropyModel<PRECISION>
     for LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
+where
+    Probability: BitArray,
 {
     type Symbol = usize;
     type Probability = Probability;
 }
 
-impl<Probability: BitArray, F, Table, const PRECISION: usize> EncoderModel<PRECISION>
+impl<Probability, F, Table, const PRECISION: usize> EncoderModel<PRECISION>
     for LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
 where
+    Probability: BitArray,
     F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
     usize: AsPrimitive<Probability>,
     Table: AsRef<[F]>,
@@ -3442,12 +3837,12 @@ where
     }
 }
 
-impl<Probability: BitArray, F, Table, const PRECISION: usize> DecoderModel<PRECISION>
+impl<Probability, F, Table, const PRECISION: usize> DecoderModel<PRECISION>
     for LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
 where
     F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
     usize: AsPrimitive<Probability>,
-    Probability: AsPrimitive<F>,
+    Probability: BitArray + AsPrimitive<F>,
     Table: AsRef<[F]>,
 {
     fn quantile_function(
@@ -3632,9 +4027,67 @@ where
     usize: AsPrimitive<Probability>,
     Symbol: Copy + Default,
 {
+    #[allow(clippy::result_unit_err)]
+    pub fn from_symbols_and_floating_point_probabilities_fast<F>(
+        symbols: impl IntoIterator<Item = Symbol>,
+        probabilities: &[F],
+        normalization: Option<F>,
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
+        Probability: AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability> + AsPrimitive<F>,
+    {
+        let mut cdf =
+            fast_quantized_cdf::<Probability, F, PRECISION>(probabilities, normalization)?;
+        let mut left_cumulative = cdf.next().expect("cdf is not empty");
+        let cdf = cdf.chain(core::iter::once(wrapping_pow2(PRECISION)));
+
+        let symbol_table = symbols
+            .into_iter()
+            .zip(cdf)
+            .map(|(symbol, right_cumulative)| {
+                let probability = right_cumulative
+                    .wrapping_sub(&left_cumulative)
+                    .into_nonzero()
+                    .expect("quantization is leaky");
+                let old_left_cumulative = left_cumulative;
+                left_cumulative = right_cumulative;
+                (symbol, old_left_cumulative, probability)
+            });
+
+        Ok(Self::from_symbol_table(symbol_table))
+    }
+
+    #[allow(clippy::result_unit_err)]
+    pub fn from_symbols_and_floating_point_probabilities_perfect<F>(
+        symbols: impl IntoIterator<Item = Symbol>,
+        probabilities: &[F],
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        let slots = perfectly_quantized_probabilities::<_, _, PRECISION>(probabilities)?;
+        Self::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols,
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
     /// Create a `LookupDecoderModel` over arbitrary symbols.
     ///
     /// TODO: example
+    #[deprecated(
+        since = "0.4.0",
+        note = "Please use `from_symbols_and_floating_point_probabilities_fast` or \
+        `from_symbols_and_floating_point_probabilities_perfect` instead. See documentation for \
+        detailed upgrade instructions."
+    )]
     #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities<F>(
         symbols: &[Symbol],
@@ -3646,15 +4099,9 @@ where
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
     {
-        if symbols.len() != probabilities.len() {
-            return Err(());
-        };
-
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_symbols_and_nonzero_fixed_point_probabilities(
+        Self::from_symbols_and_floating_point_probabilities_perfect(
             symbols.iter().cloned(),
-            slots.into_iter().map(|slot| slot.weight),
-            false,
+            probabilities,
         )
     }
 
@@ -3708,11 +4155,16 @@ where
         }
     }
 
-    /// TODO: test
     pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
     where
         M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
     {
+        Self::from_symbol_table(model.symbol_table())
+    }
+
+    fn from_symbol_table(
+        symbol_table: impl Iterator<Item = (Symbol, Probability, Probability::NonZero)>,
+    ) -> Self {
         generic_static_asserts!(
             (Probability: BitArray; const PRECISION: usize);
             PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
@@ -3721,7 +4173,6 @@ where
         );
 
         let mut lookup_table = Vec::with_capacity(1 << PRECISION);
-        let symbol_table = model.symbol_table();
         let mut cdf = Vec::with_capacity(symbol_table.size_hint().0 + 1);
         for (symbol, left_sided_cumulative, probability) in symbol_table {
             let index = cdf.len().as_();
@@ -3752,9 +4203,72 @@ where
     usize: AsPrimitive<Probability>,
     Symbol: Copy + Default,
 {
+    #[allow(clippy::result_unit_err)]
+    pub fn from_floating_point_probabilities_contiguous_fast<F>(
+        probabilities: &[F],
+        normalization: Option<F>,
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
+        Probability: AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability> + AsPrimitive<F>,
+    {
+        generic_static_asserts!(
+            (Probability: BitArray; const PRECISION: usize);
+            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+            USIZE_MUST_STRICTLY_SUPPORT_PRECISION: PRECISION < <usize as BitArray>::BITS;
+        );
+
+        let mut cdf =
+            fast_quantized_cdf::<Probability, F, PRECISION>(probabilities, normalization)?;
+
+        let mut extended_cdf = Vec::with_capacity(probabilities.len() + 1);
+        extended_cdf.push(cdf.next().expect("cdf is not empty"));
+        let mut lookup_table = Vec::with_capacity(1 << PRECISION);
+
+        for (index, right_cumulative) in cdf.enumerate() {
+            extended_cdf.push(right_cumulative);
+            lookup_table.resize(right_cumulative.as_(), index.as_());
+        }
+
+        extended_cdf.push(wrapping_pow2(PRECISION));
+        lookup_table.resize(1 << PRECISION, (probabilities.len() - 1).as_());
+
+        Ok(Self {
+            lookup_table: lookup_table.into_boxed_slice(),
+            cdf: ContiguousSymbolTable(extended_cdf),
+            phantom: PhantomData,
+        })
+    }
+
+    #[allow(clippy::result_unit_err)]
+    pub fn from_floating_point_probabilities_contiguous_perfect<F>(
+        probabilities: &[F],
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        let slots = perfectly_quantized_probabilities::<_, _, PRECISION>(probabilities)?;
+        Self::from_nonzero_fixed_point_probabilities_contiguous(
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
     /// Create a `LookupDecoderModel` over a contiguous range of symbols.
     ///
     /// TODO: example
+    #[deprecated(
+        since = "0.4.0",
+        note = "Please use `from_symbols_and_floating_point_probabilities_fast` or \
+        `from_symbols_and_floating_point_probabilities_perfect` instead. See documentation for \
+        detailed upgrade instructions."
+    )]
     #[allow(clippy::result_unit_err)]
     pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
     where
@@ -3763,11 +4277,7 @@ where
         f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability>,
     {
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_nonzero_fixed_point_probabilities_contiguous(
-            slots.into_iter().map(|slot| slot.weight),
-            false,
-        )
+        Self::from_floating_point_probabilities_contiguous_perfect(probabilities)
     }
 
     /// Create a `LookupDecoderModel` over a contiguous range of symbols using fixed point arighmetic.
@@ -4283,7 +4793,7 @@ mod tests {
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities(
+            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_perfect(
                 &probabilities,
             )
             .unwrap();
@@ -4306,7 +4816,7 @@ mod tests {
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities(
+            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_perfect(
                 &probabilities,
             )
             .unwrap();
@@ -4362,15 +4872,19 @@ mod tests {
         ];
 
         let categorical =
-            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&example1)
-                .unwrap();
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                &example1,
+            )
+            .unwrap();
         let prob0 = categorical.left_cumulative_and_probability(0).unwrap().1;
         let prob2 = categorical.left_cumulative_and_probability(2).unwrap().1;
         assert!((-1..=1).contains(&(prob0.get() as i64 - prob2.get() as i64)));
 
         let _ =
-            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&example2)
-                .unwrap();
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                &example2,
+            )
+            .unwrap();
         // Nothing to test here. As long as the above line didn't cause an infinite loop we're good.
     }
 
@@ -4384,7 +4898,7 @@ mod tests {
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
         let model =
-            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities(
+            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_perfect(
                 &probabilities,
             )
             .unwrap();
@@ -4404,8 +4918,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         let model =
-            NonContiguousCategoricalDecoderModel::<_,u32, _, 32>::from_symbols_and_floating_point_probabilities(
-                &symbols,
+            NonContiguousCategoricalDecoderModel::<_,u32, _, 32>::from_symbols_and_floating_point_probabilities_perfect(
+                symbols.iter().cloned(),
                 &probabilities,
             )
             .unwrap();
@@ -4429,7 +4943,7 @@ mod tests {
             LazyContiguousCategoricalEntropyModel::<u32, _,_, PRECISION>::from_floating_point_probabilities(
                 &unnormalized_probs,
                 None,
-            );
+            ).unwrap();
 
         let mut sum: u64 = 0;
         for (symbol, &unnormalized_prob) in unnormalized_probs.iter().enumerate() {

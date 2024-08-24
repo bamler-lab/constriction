@@ -40,13 +40,13 @@
 //!         .iter()
 //!         .map(
 //!             |probs| DefaultContiguousCategoricalEntropyModel
-//!                 ::from_floating_point_probabilities(probs).unwrap()
+//!                 ::from_floating_point_probabilities_fast(probs, None).unwrap()
 //!         );
 //!     decoder.decode_symbols(entropy_models).collect::<Result<Vec<_>, _>>().unwrap()
 //! }
 //!
 //! // Let's define some sample binary data and some probabilities for our entropy models
-//! let data = vec![0x80d1_4131, 0xdda9_7c6c, 0x5017_a640, 0x0117_0a3d];
+//! let data = vec![0x80d1_4131, 0xdda9_7c6c, 0x5017_a640, 0x0117_0a3e];
 //! let mut probabilities = [
 //!     [0.1, 0.7, 0.1, 0.1], // Probabilities for the entropy model of the first decoded symbol.
 //!     [0.2, 0.2, 0.1, 0.5], // Probabilities for the entropy model of the second decoded symbol.
@@ -56,13 +56,13 @@
 //! // Decoding the binary data with an `AnsCoder` results in the symbols `[0, 0, 1]`.
 //! let mut ans_coder = DefaultAnsCoder::from_binary(data.clone()).unwrap();
 //! let symbols = decode_categoricals(&mut ans_coder, &probabilities);
-//! assert_eq!(symbols, [0, 0, 1]);
+//! assert_eq!(symbols, [0, 0, 2]);
 //!
 //! // Even if we change only the first entropy model (slightly), *all* decoded symbols can change:
 //! probabilities[0] = [0.09, 0.71, 0.1, 0.1]; // was: `[0.1, 0.7, 0.1, 0.1]`
 //! let mut ans_coder = DefaultAnsCoder::from_binary(data.clone()).unwrap();
 //! let symbols = decode_categoricals(&mut ans_coder, &probabilities);
-//! assert_eq!(symbols, [1, 0, 3]); // (instead of `[0, 0, 1]` from above)
+//! assert_eq!(symbols, [1, 0, 0]); // (instead of `[0, 0, 2]` from above)
 //! // It's no surprise that the first symbol changed since we changed its entropy model. But
 //! // note that the third symbol changed too even though we hadn't changed its entropy model.
 //! // --> Changes to entropy models (and also to compressed bits) have a *global* effect.
