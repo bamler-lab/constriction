@@ -444,23 +444,25 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     #[inline(always)]
     fn to_generic_lookup_decoder_model(
         &'m self,
-    ) -> LookupDecoderModel<
+    ) -> NonContiguousLookupDecoderModel<
         Self::Symbol,
         Self::Probability,
-        NonContiguousSymbolTable<Vec<(Self::Probability, Self::Symbol)>>,
+        Vec<(Self::Probability, Self::Symbol)>,
         Box<[Self::Probability]>,
         PRECISION,
     >
     where
         Self::Probability: Into<usize>,
         usize: AsPrimitive<Self::Probability>,
-        Self::Symbol: Copy + Default,
+        Self::Symbol: Clone + Default,
     {
         self.into()
     }
 }
 
 /// The iterator returned by [`IterableEntropyModel::floating_point_symbol_table`].
+///
+/// TODO: replace with a simple `.map`
 #[derive(Debug)]
 struct FloatingPointSymbolTable<F, I, const PRECISION: usize> {
     inner: I,
@@ -1794,217 +1796,6 @@ where
     }
 }
 
-/// A trait for internal representations of various forms of categorical entropy models.
-///
-/// This trait will become private once anonymous return types are allowed in trait methods.
-/// Do not use it outside of the `constriction` library.
-pub trait SymbolTable<Symbol, Probability: BitArray> {
-    fn left_cumulative(&self, index: usize) -> Option<Probability>;
-
-    fn support_size(&self) -> usize;
-
-    /// # Safety
-    ///
-    /// Argument `index` must be strictly smaller than `1 << PRECISION` (for `PRECISION !=
-    /// Probability::BITS`).
-    unsafe fn left_cumulative_unchecked(&self, index: usize) -> Probability;
-
-    /// # Safety
-    ///
-    /// Argument `symbol` must be in the support of the model.
-    unsafe fn symbol_unchecked(&self, index: usize) -> Symbol;
-
-    /// Bisects the symbol table to find the bin that contains `quantile`.
-    fn quantile_function<const PRECISION: usize>(
-        &self,
-        quantile: Probability,
-    ) -> (Symbol, Probability, Probability::NonZero) {
-        generic_static_asserts!(
-            (Probability: BitArray; const PRECISION: usize);
-            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
-            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
-        );
-
-        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-        assert!(quantile <= max_probability);
-
-        let mut left = 0; // Smallest possible index.
-        let mut right = self.support_size(); // One above largest possible index.
-
-        // Bisect the symbol table to find the last entry whose left-sided cumulative is
-        // `<= quantile`, exploiting the following facts:
-        // - `self.as_ref.len() >= 2` (therefore, `left < right` initially)
-        // - `cdf[0] == 0` (where `cdf[n] = self.left_cumulative_unchecked(n).0`)
-        // - `quantile <= max_probability` (if this is violated then the method is still
-        //   memory safe but will return the last bin; thus, memory safety doesn't hinge on
-        //   `PRECISION` being correct).
-        // - `cdf[self.as_ref().len() - 1] == max_probability.wrapping_add(1)`
-        // - `cdf` is monotonically increasing except that it may wrap around only at the
-        //   last entry (this happens iff `PRECISION == Probability::BITS`).
-        //
-        // The loop maintains the following two invariants:
-        // (1) `0 <= left <= mid < right < self.as_ref().len()`
-        // (2) `cdf[left] <= cdf[mid]`
-        // (3) `cdf[mid] <= cdf[right]` unless `right == cdf.len() - 1`
-        while left + 1 != right {
-            let mid = (left + right) / 2;
-
-            // SAFETY: safe by invariant (1)
-            let pivot = unsafe { self.left_cumulative_unchecked(mid) };
-            if pivot <= quantile {
-                // Since `mid < right` and wrapping can occur only at the last entry,
-                // `pivot` has not yet wrapped around
-                left = mid;
-            } else {
-                right = mid;
-            }
-        }
-
-        // SAFETY: invariant `0 <= left < right < self.as_ref().len()` still holds.
-        let cdf = unsafe { self.left_cumulative_unchecked(left) };
-        let symbol = unsafe { self.symbol_unchecked(left) };
-        let next_cdf = unsafe { self.left_cumulative_unchecked(right) };
-
-        let probability = unsafe {
-            // SAFETY: The constructor ensures that all probabilities within bounds are
-            // nonzero. (TODO)
-            next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
-        };
-
-        (symbol, cdf, probability)
-    }
-}
-
-/// Internal representation of [`ContiguousCategoricalEntropyModel`].
-///
-/// This type will become private once anonymous return types are allowed in trait methods.
-/// Do not use it outside of the `constriction` library.
-#[derive(Debug, Clone, Copy)]
-pub struct ContiguousSymbolTable<Table>(Table);
-
-/// Internal representation of [`NonContiguousCategoricalEncoderModel`] and
-/// [`NonContiguousCategoricalDecoderModel`].
-///
-/// This type will become private once anonymous return types are allowed in trait methods.
-/// Do not use it outside of the `constriction` library.
-#[derive(Debug, Clone, Copy)]
-pub struct NonContiguousSymbolTable<Table>(Table);
-
-impl<Symbol, Probability, Table> SymbolTable<Symbol, Probability> for ContiguousSymbolTable<Table>
-where
-    Probability: BitArray,
-    Table: AsRef<[Probability]>,
-    Symbol: BitArray + Into<usize>,
-    usize: AsPrimitive<Symbol>,
-{
-    #[inline(always)]
-    fn left_cumulative(&self, index: usize) -> Option<Probability> {
-        self.0.as_ref().get(index).copied()
-    }
-
-    #[inline(always)]
-    unsafe fn left_cumulative_unchecked(&self, index: usize) -> Probability {
-        *self.0.as_ref().get_unchecked(index)
-    }
-
-    #[inline(always)]
-    unsafe fn symbol_unchecked(&self, index: usize) -> Symbol {
-        index.as_()
-    }
-
-    #[inline(always)]
-    fn support_size(&self) -> usize {
-        self.0.as_ref().len() - 1
-    }
-}
-
-impl<Symbol, Probability, Table> SymbolTable<Symbol, Probability>
-    for NonContiguousSymbolTable<Table>
-where
-    Probability: BitArray,
-    Symbol: Clone,
-    Table: AsRef<[(Probability, Symbol)]>,
-{
-    #[inline(always)]
-    fn left_cumulative(&self, index: usize) -> Option<Probability> {
-        self.0
-            .as_ref()
-            .get(index)
-            .map(|(probability, _)| *probability)
-    }
-
-    #[inline(always)]
-    unsafe fn left_cumulative_unchecked(&self, index: usize) -> Probability {
-        self.0.as_ref().get_unchecked(index).0
-    }
-
-    #[inline(always)]
-    unsafe fn symbol_unchecked(&self, index: usize) -> Symbol {
-        self.0.as_ref().get_unchecked(index).1.clone()
-    }
-
-    #[inline(always)]
-    fn support_size(&self) -> usize {
-        self.0.as_ref().len() - 1
-    }
-}
-
-/// Iterator over the [`symbol_table`] of various categorical distributions.
-///
-/// This type will become private once anonymous return types are allowed in trait methods.
-///
-/// [`symbol_table`]: IterableEntropyModel::symbol_table
-#[derive(Debug)]
-pub struct SymbolTableIter<Symbol, Probability, Table> {
-    table: Table,
-    index: usize,
-    phantom: PhantomData<(Symbol, Probability)>,
-}
-
-impl<Symbol, Probability, Table> SymbolTableIter<Symbol, Probability, Table> {
-    fn new(table: Table) -> Self {
-        Self {
-            table,
-            index: 0,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<Symbol, Probability, Table> Iterator for SymbolTableIter<Symbol, Probability, Table>
-where
-    Probability: BitArray,
-    Table: SymbolTable<Symbol, Probability>,
-{
-    type Item = (Symbol, Probability, Probability::NonZero);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let old_index = self.index;
-        if old_index == self.table.support_size() {
-            None
-        } else {
-            let new_index = old_index + 1;
-            self.index = new_index;
-            unsafe {
-                // SAFETY: TODO
-                let left_cumulative = self.table.left_cumulative_unchecked(old_index);
-                let symbol = self.table.symbol_unchecked(old_index);
-                let right_cumulative = self.table.left_cumulative_unchecked(new_index);
-                let probability = right_cumulative
-                    .wrapping_sub(&left_cumulative)
-                    .into_nonzero_unchecked();
-                Some((symbol, left_cumulative, probability))
-            }
-        }
-    }
-
-    #[inline(always)]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.table.support_size() - self.index;
-        (len, Some(len))
-    }
-}
-
 /// An entropy model for a categorical probability distribution over a contiguous range of
 /// integers starting at zero.
 ///
@@ -2105,7 +1896,7 @@ where
 /// [`Decode`]: crate::Decode
 /// [`HashMap`]: std::hash::HashMap
 #[derive(Debug, Clone, Copy)]
-pub struct ContiguousCategoricalEntropyModel<Probability, Table, const PRECISION: usize> {
+pub struct ContiguousCategoricalEntropyModel<Probability, Cdf, const PRECISION: usize> {
     /// Invariants:
     /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
     ///   this may be relaxed in the future)
@@ -2113,7 +1904,7 @@ pub struct ContiguousCategoricalEntropyModel<Probability, Table, const PRECISION
     /// - `cdf` is monotonically increasing except that it may wrap around only at
     ///   the very last entry (this happens iff `PRECISION == Probability::BITS`).
     ///   Thus, all probabilities within range are guaranteed to be nonzero.
-    cdf: ContiguousSymbolTable<Table>,
+    cdf: Cdf,
 
     phantom: PhantomData<Probability>,
 }
@@ -2183,8 +1974,7 @@ pub struct ContiguousCategoricalEntropyModel<Probability, Table, const PRECISION
 /// [`Decode`]: crate::Decode
 /// [`HashMap`]: std::hash::HashMap
 #[derive(Debug, Clone, Copy)]
-pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, const PRECISION: usize>
-{
+pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Cdf, const PRECISION: usize> {
     /// Invariants:
     /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
     ///   this may be relaxed in the future)
@@ -2192,7 +1982,7 @@ pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, cons
     /// - `cdf` is monotonically increasing except that it may wrap around only at
     ///   the very last entry (this happens iff `PRECISION == Probability::BITS`).
     ///   Thus, all probabilities within range are guaranteed to be nonzero.
-    cdf: NonContiguousSymbolTable<Table>,
+    cdf: Cdf,
 
     phantom: PhantomData<(Symbol, Probability)>,
 }
@@ -2202,8 +1992,8 @@ pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, cons
 /// See:
 /// - [`ContiguousCategoricalEntropyModel`]
 /// - [discussion of presets](super#presets)
-pub type DefaultContiguousCategoricalEntropyModel<Table = Vec<u32>> =
-    ContiguousCategoricalEntropyModel<u32, Table, 24>;
+pub type DefaultContiguousCategoricalEntropyModel<Cdf = Vec<u32>> =
+    ContiguousCategoricalEntropyModel<u32, Cdf, 24>;
 
 /// Type alias for a [`ContiguousCategoricalEntropyModel`] optimized for compatibility with
 /// lookup decoder models.
@@ -2211,16 +2001,16 @@ pub type DefaultContiguousCategoricalEntropyModel<Table = Vec<u32>> =
 /// See:
 /// - [`ContiguousCategoricalEntropyModel`]
 /// - [discussion of presets](super#presets)
-pub type SmallContiguousCategoricalEntropyModel<Table = Vec<u16>> =
-    ContiguousCategoricalEntropyModel<u16, Table, 12>;
+pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
+    ContiguousCategoricalEntropyModel<u16, Cdf, 12>;
 
 /// Type alias for a typical [`NonContiguousCategoricalDecoderModel`].
 ///
 /// See:
 /// - [`NonContiguousCategoricalDecoderModel`]
 /// - [discussion of presets](super#presets)
-pub type DefaultNonContiguousCategoricalDecoderModel<Symbol, Table = Vec<(u32, Symbol)>> =
-    NonContiguousCategoricalDecoderModel<Symbol, u32, Table, 24>;
+pub type DefaultNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u32, Symbol)>> =
+    NonContiguousCategoricalDecoderModel<Symbol, u32, Cdf, 24>;
 
 /// Type alias for a [`NonContiguousCategoricalDecoderModel`] optimized for compatibility
 /// with lookup decoder models.
@@ -2228,8 +2018,8 @@ pub type DefaultNonContiguousCategoricalDecoderModel<Symbol, Table = Vec<(u32, S
 /// See:
 /// - [`NonContiguousCategoricalDecoderModel`]
 /// - [discussion of presets](super#presets)
-pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Table = Vec<(u16, Symbol)>> =
-    NonContiguousCategoricalDecoderModel<Symbol, u16, Table, 12>;
+pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbol)>> =
+    NonContiguousCategoricalDecoderModel<Symbol, u16, Cdf, 12>;
 
 impl<Probability: BitArray, const PRECISION: usize>
     ContiguousCategoricalEntropyModel<Probability, Vec<Probability>, PRECISION>
@@ -2568,7 +2358,7 @@ impl<Probability: BitArray, const PRECISION: usize>
         cdf.push(wrapping_pow2(PRECISION));
 
         Ok(Self {
-            cdf: ContiguousSymbolTable(cdf),
+            cdf,
             phantom: PhantomData,
         })
     }
@@ -2582,7 +2372,7 @@ impl<Probability: BitArray, const PRECISION: usize>
             .collect();
 
         Ok(Self {
-            cdf: ContiguousSymbolTable(extended_cdf),
+            cdf: extended_cdf,
             phantom: PhantomData,
         })
     }
@@ -2795,7 +2585,7 @@ where
     #[inline(always)]
     fn from_extended_cdf(cdf: Vec<(Probability, Symbol)>) -> Self {
         Self {
-            cdf: NonContiguousSymbolTable(cdf),
+            cdf,
             phantom: PhantomData,
         }
     }
@@ -2823,17 +2613,17 @@ where
         ));
 
         Self {
-            cdf: NonContiguousSymbolTable(cdf),
+            cdf,
             phantom: PhantomData,
         }
     }
 }
 
-impl<Probability, Table, const PRECISION: usize>
-    ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
+impl<Probability, Cdf, const PRECISION: usize>
+    ContiguousCategoricalEntropyModel<Probability, Cdf, PRECISION>
 where
     Probability: BitArray,
-    Table: AsRef<[Probability]>,
+    Cdf: AsRef<[Probability]>,
 {
     /// Returns the number of symbols supported by the model.
     ///
@@ -2843,7 +2633,7 @@ where
     /// have a zero probability.
     #[inline(always)]
     pub fn support_size(&self) -> usize {
-        SymbolTable::<usize, Probability>::support_size(&self.cdf)
+        self.cdf.as_ref().len() - 1
     }
 
     /// Makes a very cheap shallow copy of the model that can be used much like a shared
@@ -2864,7 +2654,7 @@ where
         &self,
     ) -> ContiguousCategoricalEntropyModel<Probability, &[Probability], PRECISION> {
         ContiguousCategoricalEntropyModel {
-            cdf: ContiguousSymbolTable(self.cdf.0.as_ref()),
+            cdf: self.cdf.as_ref(),
             phantom: PhantomData,
         }
     }
@@ -2892,13 +2682,7 @@ where
     #[inline(always)]
     pub fn to_lookup_decoder_model(
         &self,
-    ) -> LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<Vec<Probability>>,
-        Box<[Probability]>,
-        PRECISION,
-    >
+    ) -> ContiguousLookupDecoderModel<Probability, Vec<Probability>, Box<[Probability]>, PRECISION>
     where
         Probability: Into<usize>,
         usize: AsPrimitive<Probability>,
@@ -2907,18 +2691,18 @@ where
     }
 }
 
-impl<Symbol, Probability, Table, const PRECISION: usize>
-    NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, PRECISION>
+impl<Symbol, Probability, Cdf, const PRECISION: usize>
+    NonContiguousCategoricalDecoderModel<Symbol, Probability, Cdf, PRECISION>
 where
     Symbol: Clone,
     Probability: BitArray,
-    Table: AsRef<[(Probability, Symbol)]>,
+    Cdf: AsRef<[(Probability, Symbol)]>,
 {
     /// Returns the number of symbols supported by the model, i.e., the number of symbols to
     /// which the model assigns a nonzero probability.
     #[inline(always)]
     pub fn support_size(&self) -> usize {
-        self.cdf.support_size()
+        self.cdf.as_ref().len() - 1
     }
 
     /// Makes a very cheap shallow copy of the model that can be used much like a shared
@@ -2942,14 +2726,51 @@ where
         PRECISION,
     > {
         NonContiguousCategoricalDecoderModel {
-            cdf: NonContiguousSymbolTable(self.cdf.0.as_ref()),
+            cdf: self.cdf.as_ref(),
             phantom: PhantomData,
         }
     }
+
+    /// Creates a [`LookupDecoderModel`] for efficient decoding of i.i.d. data
+    ///
+    /// While a `NonContiguousCategoricalEntropyModel` can already be used for decoding (since
+    /// it implements [`DecoderModel`]), you may prefer converting it to a
+    /// `LookupDecoderModel` first for improved efficiency. Logically, the two will be
+    /// equivalent.
+    ///
+    /// # Warning
+    ///
+    /// You should only call this method if both of the following conditions are satisfied:
+    ///
+    /// - `PRECISION` is relatively small (typically `PRECISION == 12`, as in the "Small"
+    ///   [preset]) because the memory footprint of a `LookupDecoderModel` grows
+    ///   exponentially in `PRECISION`; and
+    /// - you're about to decode a relatively large number of symbols with the resulting
+    ///   model; the conversion to a `LookupDecoderModel` bears a significant runtime and
+    ///   memory overhead, so if you're going to use the resulting model only for a single
+    ///   or a handful of symbols then you'll end up paying more than you gain.
+    ///
+    /// [preset]: super#presets
+    #[inline(always)]
+    pub fn to_lookup_decoder_model(
+        &self,
+    ) -> NonContiguousLookupDecoderModel<
+        Symbol,
+        Probability,
+        Vec<(Probability, Symbol)>,
+        Box<[Probability]>,
+        PRECISION,
+    >
+    where
+        Probability: Into<usize>,
+        usize: AsPrimitive<Probability>,
+    {
+        self.into()
+    }
 }
 
-impl<Probability, Table, const PRECISION: usize> EntropyModel<PRECISION>
-    for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
+impl<Probability, Cdf, const PRECISION: usize> EntropyModel<PRECISION>
+    for ContiguousCategoricalEntropyModel<Probability, Cdf, PRECISION>
 where
     Probability: BitArray,
 {
@@ -2957,8 +2778,8 @@ where
     type Probability = Probability;
 }
 
-impl<Symbol, Probability, Table, const PRECISION: usize> EntropyModel<PRECISION>
-    for NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, PRECISION>
+impl<Symbol, Probability, Cdf, const PRECISION: usize> EntropyModel<PRECISION>
+    for NonContiguousCategoricalDecoderModel<Symbol, Probability, Cdf, PRECISION>
 where
     Probability: BitArray,
 {
@@ -2966,13 +2787,12 @@ where
     type Probability = Probability;
 }
 
-impl<'m, Probability, Table, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
-    for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
+impl<'m, Probability, Cdf, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
+    for ContiguousCategoricalEntropyModel<Probability, Cdf, PRECISION>
 where
     Probability: BitArray,
-    Table: AsRef<[Probability]>,
+    Cdf: AsRef<[Probability]>,
 {
-    #[inline(always)]
     fn symbol_table(
         &'m self,
     ) -> impl Iterator<
@@ -2982,16 +2802,22 @@ where
             <Self::Probability as BitArray>::NonZero,
         ),
     > {
-        SymbolTableIter::new(self.as_view().cdf)
+        iter_extended_cdf(
+            self.cdf
+                .as_ref()
+                .iter()
+                .enumerate()
+                .map(|(symbol, &cumulative)| (cumulative, symbol)),
+        )
     }
 }
 
-impl<'m, Symbol, Probability, Table, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
-    for NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, PRECISION>
+impl<'m, Symbol, Probability, Cdf, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
+    for NonContiguousCategoricalDecoderModel<Symbol, Probability, Cdf, PRECISION>
 where
     Symbol: Clone + 'm,
     Probability: BitArray,
-    Table: AsRef<[(Probability, Symbol)]>,
+    Cdf: AsRef<[(Probability, Symbol)]>,
 {
     #[inline(always)]
     fn symbol_table(
@@ -3003,75 +2829,159 @@ where
             <Self::Probability as BitArray>::NonZero,
         ),
     > {
-        SymbolTableIter::new(self.as_view().cdf)
+        iter_extended_cdf(self.cdf.as_ref().iter().cloned())
     }
 }
 
-impl<Probability, Table, const PRECISION: usize> DecoderModel<PRECISION>
-    for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
+fn iter_extended_cdf<I, Symbol, Probability>(
+    mut cdf: I,
+) -> impl Iterator<Item = (Symbol, Probability, Probability::NonZero)>
+where
+    I: Iterator<Item = (Probability, Symbol)>,
+    Symbol: Clone,
+    Probability: BitArray,
+{
+    let (mut left_cumulative, mut symbol) = cdf.next().expect("cdf is not empty").clone();
+
+    cdf.map(move |(right_cumulative, next_symbol)| {
+        let old_left_cumulative = left_cumulative;
+        let old_symbol = core::mem::replace(&mut symbol, next_symbol.clone());
+        left_cumulative = right_cumulative;
+        let probability = right_cumulative
+            .wrapping_sub(&old_left_cumulative)
+            .into_nonzero()
+            .expect("quantization is leaky");
+        (old_symbol, old_left_cumulative, probability)
+    })
+}
+
+impl<Probability, Cdf, const PRECISION: usize> DecoderModel<PRECISION>
+    for ContiguousCategoricalEntropyModel<Probability, Cdf, PRECISION>
 where
     Probability: BitArray,
-    Table: AsRef<[Probability]>,
+    Cdf: AsRef<[Probability]>,
 {
     #[inline(always)]
     fn quantile_function(
         &self,
         quantile: Self::Probability,
     ) -> (usize, Probability, Probability::NonZero) {
-        self.cdf.quantile_function::<PRECISION>(quantile)
+        let cdf = self.cdf.as_ref();
+        // SAFETY: `cdf` is not empty.
+        let monotonic_part_of_cdf = unsafe { cdf.get_unchecked(..cdf.len() - 1) };
+        let Err(next_symbol) = monotonic_part_of_cdf.binary_search_by(|&x| {
+            if x <= quantile {
+                core::cmp::Ordering::Less
+            } else {
+                core::cmp::Ordering::Greater
+            }
+        }) else {
+            // SAFETY: our search criterion never returns `Equal`, so the search cannot succeed.
+            unsafe { core::hint::unreachable_unchecked() }
+        };
+
+        let symbol = next_symbol - 1;
+
+        // SAFETY:
+        // - `next_symbol < cdf.len()` because we searched only within `monotonic_part_of_cdf`, which
+        //   is one element shorter than `cdf`. Thus `cdf.get_unchecked(next_symbol)` is sound.
+        // - `next_symbol > 0` because `cdf[0] == 0` and our search goes right on equality; thus,
+        //   `next_symbol - 1` does not wrap around, and so `next_symbol - 1` is also within bounds.
+        let (right_cumulative, left_cumulative) =
+            unsafe { (*cdf.get_unchecked(next_symbol), *cdf.get_unchecked(symbol)) };
+
+        // SAFETY: our constructors don't allow zero probabilities.
+        let probability = unsafe {
+            right_cumulative
+                .wrapping_sub(&left_cumulative)
+                .into_nonzero_unchecked()
+        };
+
+        (symbol, left_cumulative, probability)
     }
 }
 
-impl<Symbol, Probability, Table, const PRECISION: usize> DecoderModel<PRECISION>
-    for NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, PRECISION>
+impl<Symbol, Probability, Cdf, const PRECISION: usize> DecoderModel<PRECISION>
+    for NonContiguousCategoricalDecoderModel<Symbol, Probability, Cdf, PRECISION>
 where
     Symbol: Clone,
     Probability: BitArray,
-    Table: AsRef<[(Probability, Symbol)]>,
+    Cdf: AsRef<[(Probability, Symbol)]>,
 {
     #[inline(always)]
     fn quantile_function(
         &self,
         quantile: Self::Probability,
     ) -> (Symbol, Probability, Probability::NonZero) {
-        self.cdf.quantile_function::<PRECISION>(quantile)
+        let cdf = self.cdf.as_ref();
+        // SAFETY: `cdf` is not empty.
+        let monotonic_part_of_cdf = unsafe { cdf.get_unchecked(..cdf.len() - 1) };
+        let Err(next_index) = monotonic_part_of_cdf.binary_search_by(|(cumulative, _symbol)| {
+            if *cumulative <= quantile {
+                core::cmp::Ordering::Less
+            } else {
+                core::cmp::Ordering::Greater
+            }
+        }) else {
+            // SAFETY: our search criterion never returns `Equal`, so the search cannot succeed.
+            unsafe { core::hint::unreachable_unchecked() }
+        };
+
+        // SAFETY:
+        // - `next_index < cdf.len()` because we searched only within `monotonic_part_of_cdf`, which
+        //   is one element shorter than `cdf`. Thus `cdf.get_unchecked(next_index)` is sound.
+        // - `next_index > 0` because `cdf[0] == 0` and our search goes right on equality; thus,
+        //   `next_index - 1` does not wrap around, and so `next_index - 1` is also within bounds.
+        let (right_cumulative, (left_cumulative, symbol)) = unsafe {
+            (
+                cdf.get_unchecked(next_index).0,
+                cdf.get_unchecked(next_index - 1).clone(),
+            )
+        };
+
+        // SAFETY: our constructors don't allow zero probabilities.
+        let probability = unsafe {
+            right_cumulative
+                .wrapping_sub(&left_cumulative)
+                .into_nonzero_unchecked()
+        };
+
+        (symbol, left_cumulative, probability)
     }
 }
 
-impl<Probability, Table, const PRECISION: usize> EncoderModel<PRECISION>
-    for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
+impl<Probability, Cdf, const PRECISION: usize> EncoderModel<PRECISION>
+    for ContiguousCategoricalEntropyModel<Probability, Cdf, PRECISION>
 where
     Probability: BitArray,
-    Table: AsRef<[Probability]>,
+    Cdf: AsRef<[Probability]>,
 {
     fn left_cumulative_and_probability(
         &self,
         symbol: impl Borrow<usize>,
     ) -> Option<(Probability, Probability::NonZero)> {
         let index = *symbol.borrow();
+        if index >= self.support_size() {
+            return None;
+        }
+        let cdf = self.cdf.as_ref();
 
-        let (cdf, next_cdf) = unsafe {
-            // SAFETY: we perform a single check if index is within bounds (we compare
-            // `index >= len - 1` here and not `index + 1 >= len` because the latter could
-            // overflow/wrap but `len` is guaranteed to be nonzero; once the check passes,
-            // we know that `index + 1` doesn't wrap because `cdf.len()` can't be
-            // `usize::max_value()` since that would mean that there's no space left even
-            // for the call stack).
-            if index >= self.support_size() {
-                return None;
-            }
-            (
-                SymbolTable::<usize, Probability>::left_cumulative_unchecked(&self.cdf, index),
-                SymbolTable::<usize, Probability>::left_cumulative_unchecked(&self.cdf, index + 1),
-            )
-        };
+        // SAFETY: we verified that  index is within bounds (we compare `index >= len - 1`
+        // here and not `index + 1 >= len` because the latter could overflow/wrap but `len`
+        // is guaranteed to be nonzero; once the check passes, we know that `index + 1`
+        // doesn't wrap because `cdf.len()` can't be `usize::max_value()` since that would
+        // mean that there's no space left even for the call stack).
+        let (left_cumulative, right_cumulative) =
+            unsafe { (*cdf.get_unchecked(index), *cdf.get_unchecked(index + 1)) };
 
+        // SAFETY: The constructors ensure that all probabilities within bounds are nonzero.
         let probability = unsafe {
-            // SAFETY: The constructors ensure that all probabilities within bounds are nonzero.
-            next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
+            right_cumulative
+                .wrapping_sub(&left_cumulative)
+                .into_nonzero_unchecked()
         };
 
-        Some((cdf, probability))
+        Some((left_cumulative, probability))
     }
 }
 
@@ -3691,10 +3601,10 @@ where
 // LAZY CATEGORICAL ENTROPY MODELS ================================================================
 
 #[derive(Debug, Clone, Copy)]
-pub struct LazyContiguousCategoricalEntropyModel<Probability, F, Table, const PRECISION: usize> {
+pub struct LazyContiguousCategoricalEntropyModel<Probability, F, Pmf, const PRECISION: usize> {
     /// Invariants:
     /// - `pmf.len() >= 2`
-    pmf: Table,
+    pmf: Pmf,
     scale: F,
     phantom: PhantomData<Probability>,
 }
@@ -3704,8 +3614,8 @@ pub struct LazyContiguousCategoricalEntropyModel<Probability, F, Table, const PR
 /// See:
 /// - [`LazyContiguousCategoricalEntropyModel`]
 /// - [discussion of presets](super#presets)
-pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<F>> =
-    LazyContiguousCategoricalEntropyModel<u32, F, Table, 24>;
+pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
+    LazyContiguousCategoricalEntropyModel<u32, F, Pmf, 24>;
 
 /// Type alias for a [`LazyContiguousCategoricalEntropyModel`] that can be used with coders that use
 /// `u16` for their word size.
@@ -3718,19 +3628,19 @@ pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<F>> =
 /// See:
 /// - [`LazyContiguousCategoricalEntropyModel`]
 /// - [discussion of presets](super#presets)
-pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Table = Vec<F>> =
-    LazyContiguousCategoricalEntropyModel<u16, F, Table, 12>;
+pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
+    LazyContiguousCategoricalEntropyModel<u16, F, Pmf, 12>;
 
-impl<Probability, F, Table, const PRECISION: usize>
-    LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
+impl<Probability, F, Pmf, const PRECISION: usize>
+    LazyContiguousCategoricalEntropyModel<Probability, F, Pmf, PRECISION>
 where
     Probability: BitArray,
     F: FloatCore + core::iter::Sum<F>,
-    Table: AsRef<[F]>,
+    Pmf: AsRef<[F]>,
 {
     #[allow(clippy::result_unit_err)]
     pub fn from_floating_point_probabilities(
-        probabilities: Table,
+        probabilities: Pmf,
         normalization: Option<F>,
     ) -> Result<Self, ()>
     where
@@ -3808,8 +3718,8 @@ where
     }
 }
 
-impl<Probability, F, Table, const PRECISION: usize> EntropyModel<PRECISION>
-    for LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
+impl<Probability, F, Pmf, const PRECISION: usize> EntropyModel<PRECISION>
+    for LazyContiguousCategoricalEntropyModel<Probability, F, Pmf, PRECISION>
 where
     Probability: BitArray,
 {
@@ -3817,13 +3727,13 @@ where
     type Probability = Probability;
 }
 
-impl<Probability, F, Table, const PRECISION: usize> EncoderModel<PRECISION>
-    for LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
+impl<Probability, F, Pmf, const PRECISION: usize> EncoderModel<PRECISION>
+    for LazyContiguousCategoricalEntropyModel<Probability, F, Pmf, PRECISION>
 where
     Probability: BitArray,
     F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
     usize: AsPrimitive<Probability>,
-    Table: AsRef<[F]>,
+    Pmf: AsRef<[F]>,
 {
     fn left_cumulative_and_probability(
         &self,
@@ -3857,13 +3767,13 @@ where
     }
 }
 
-impl<Probability, F, Table, const PRECISION: usize> DecoderModel<PRECISION>
-    for LazyContiguousCategoricalEntropyModel<Probability, F, Table, PRECISION>
+impl<Probability, F, Pmf, const PRECISION: usize> DecoderModel<PRECISION>
+    for LazyContiguousCategoricalEntropyModel<Probability, F, Pmf, PRECISION>
 where
     F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
     usize: AsPrimitive<Probability>,
     Probability: BitArray + AsPrimitive<F>,
-    Table: AsRef<[F]>,
+    Pmf: AsRef<[F]>,
 {
     fn quantile_function(
         &self,
@@ -3934,12 +3844,14 @@ where
 
 /// A tabularized [`DecoderModel`] that is optimized for fast decoding of i.i.d. symbols
 ///
-/// You will usually want to use this type through one of the type aliases
-/// [`SmallContiguousLookupDecoderModel`] or [`SmallNonContiguousLookupDecoderModel`]. See
-/// these types for extended documentation and examples.
+/// TODO: documentation
 #[derive(Debug, Clone, Copy)]
-pub struct LookupDecoderModel<Symbol, Probability, SymbolTable, LookupTable, const PRECISION: usize>
-where
+pub struct ContiguousLookupDecoderModel<
+    Probability = u16,
+    Cdf = Vec<Probability>,
+    LookupTable = Box<[Probability]>,
+    const PRECISION: usize = 12,
+> where
     Probability: BitArray,
 {
     /// Satisfies invariant:
@@ -3949,103 +3861,128 @@ where
     /// Satisfies invariant:
     /// `left_sided_cumulative_and_symbol.as_ref().len()
     /// == *lookup_table.as_ref().iter().max() as usize + 2`
-    cdf: SymbolTable,
+    cdf: Cdf,
+
+    phantom: PhantomData<Probability>,
+}
+
+/// A tabularized [`DecoderModel`] that is optimized for fast decoding of i.i.d. symbols
+///
+/// TODO: documentation
+#[derive(Debug, Clone, Copy)]
+pub struct NonContiguousLookupDecoderModel<
+    Symbol,
+    Probability = u16,
+    Cdf = Vec<(Probability, Symbol)>,
+    LookupTable = Box<[Probability]>,
+    const PRECISION: usize = 12,
+> where
+    Probability: BitArray,
+{
+    /// Satisfies invariant:
+    /// `lookup_table.as_ref().len() == 1 << PRECISION`
+    lookup_table: LookupTable,
+
+    /// Satisfies invariant:
+    /// `left_sided_cumulative_and_symbol.as_ref().len()
+    /// == *lookup_table.as_ref().iter().max() as usize + 2`
+    cdf: Cdf,
 
     phantom: PhantomData<(Probability, Symbol)>,
 }
 
-/// Type alias for a [`LookupDecoderModel`] over arbitrary symbols.
-///
-/// # Examples
-///
-/// TODO
-///
-/// # See also
-///
-/// - [`SmallNonContiguousLookupDecoderModel`]
-pub type SmallNonContiguousLookupDecoderModel<
-    Symbol,
-    SymbolTable = Vec<(u16, Symbol)>,
-    LookupTable = Box<[u16]>,
-> = LookupDecoderModel<Symbol, u16, NonContiguousSymbolTable<SymbolTable>, LookupTable, 12>;
+// /// Type alias for a [`LookupDecoderModel`] over arbitrary symbols.
+// ///
+// /// # Examples
+// ///
+// /// TODO
+// ///
+// /// # See also
+// ///
+// /// - [`SmallNonContiguousLookupDecoderModel`]
+// pub type SmallNonContiguousLookupDecoderModel<
+//     Symbol,
+//     SymbolTable = Vec<(u16, Symbol)>,
+//     LookupTable = Box<[u16]>,
+// > = LookupDecoderModel<Symbol, u16, SymbolTable, LookupTable, 12>;
 
-/// Type alias for a [`LookupDecoderModel`] over symbols `{0, 1, ..., n-1}` with sane settings.
-///
-/// This array lookup table can be used with a [`SmallAnsCoder`] or a [`SmallRangeDecoder`]
-/// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeDecoder`], since you can
-/// always use a "bigger" coder on a "smaller" model).
-///
-/// # Example
-///
-/// Decoding a sequence of symbols with a [`SmallAnsCoder`], a [`DefaultAnsCoder`], a
-/// [`SmallRangeDecoder`], and a [`DefaultRangeDecoder`], all using the same
-/// `SmallContiguousLookupDecoderModel`.
-///
-/// ```
-/// use constriction::stream::{
-///     model::SmallContiguousLookupDecoderModel,
-///     stack::{SmallAnsCoder, DefaultAnsCoder},
-///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
-///     Decode, Code,
-/// };
-///
-/// // Create a `SmallContiguousLookupDecoderModel` from a probability distribution that's already
-/// // available in fixed point representation (e.g., because it was deserialized from a file).
-/// // Alternatively, we could use `from_floating_point_probabilities_contiguous`.
-/// let probabilities = [1489, 745, 1489, 373];
-/// let decoder_model = SmallContiguousLookupDecoderModel
-///     ::from_nonzero_fixed_point_probabilities_contiguous(&probabilities, false).unwrap();
-///
-/// let expected = [2, 1, 3, 0, 0, 2, 0, 2, 1, 0, 2];
-///
-/// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![0xDA86, 0x2949]).unwrap();
-/// let reconstructed = small_ans_coder
-///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
-/// assert!(small_ans_coder.is_empty());
-/// assert_eq!(reconstructed, expected);
-///
-/// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![0x2949DA86]).unwrap();
-/// let reconstructed = default_ans_decoder
-///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
-/// assert!(default_ans_decoder.is_empty());
-/// assert_eq!(reconstructed, expected);
-///
-/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0xBCF8, 0x3ECA]).unwrap();
-/// let reconstructed = small_range_decoder
-///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
-/// assert!(small_range_decoder.maybe_exhausted());
-/// assert_eq!(reconstructed, expected);
-///
-/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0xBCF8733B]).unwrap();
-/// let reconstructed = default_range_decoder
-///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
-/// assert!(default_range_decoder.maybe_exhausted());
-/// assert_eq!(reconstructed, expected);
-/// ```
-///
-/// # See also
-///
-/// - [`SmallNonContiguousLookupDecoderModel`]
-///
-/// [`SmallAnsCoder`]: super::stack::SmallAnsCoder
-/// [`SmallRangeDecoder`]: super::queue::SmallRangeDecoder
-/// [`DefaultAnsCoder`]: super::stack::DefaultAnsCoder
-/// [`DefaultRangeDecoder`]: super::queue::DefaultRangeDecoder
-pub type SmallContiguousLookupDecoderModel<SymbolTable = Vec<u16>, LookupTable = Box<[u16]>> =
-    LookupDecoderModel<usize, u16, ContiguousSymbolTable<SymbolTable>, LookupTable, 12>;
+// /// Type alias for a [`LookupDecoderModel`] over symbols `{0, 1, ..., n-1}` with sane settings.
+// ///
+// /// This array lookup table can be used with a [`SmallAnsCoder`] or a [`SmallRangeDecoder`]
+// /// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeDecoder`], since you can
+// /// always use a "bigger" coder on a "smaller" model).
+// ///
+// /// # Example
+// ///
+// /// Decoding a sequence of symbols with a [`SmallAnsCoder`], a [`DefaultAnsCoder`], a
+// /// [`SmallRangeDecoder`], and a [`DefaultRangeDecoder`], all using the same
+// /// `SmallContiguousLookupDecoderModel`.
+// ///
+// /// ```
+// /// use constriction::stream::{
+// ///     model::SmallContiguousLookupDecoderModel,
+// ///     stack::{SmallAnsCoder, DefaultAnsCoder},
+// ///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
+// ///     Decode, Code,
+// /// };
+// ///
+// /// // Create a `SmallContiguousLookupDecoderModel` from a probability distribution that's already
+// /// // available in fixed point representation (e.g., because it was deserialized from a file).
+// /// // Alternatively, we could use `from_floating_point_probabilities_contiguous`.
+// /// let probabilities = [1489, 745, 1489, 373];
+// /// let decoder_model = SmallContiguousLookupDecoderModel
+// ///     ::from_nonzero_fixed_point_probabilities_contiguous(&probabilities, false).unwrap();
+// ///
+// /// let expected = [2, 1, 3, 0, 0, 2, 0, 2, 1, 0, 2];
+// ///
+// /// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![0xDA86, 0x2949]).unwrap();
+// /// let reconstructed = small_ans_coder
+// ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+// /// assert!(small_ans_coder.is_empty());
+// /// assert_eq!(reconstructed, expected);
+// ///
+// /// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![0x2949DA86]).unwrap();
+// /// let reconstructed = default_ans_decoder
+// ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+// /// assert!(default_ans_decoder.is_empty());
+// /// assert_eq!(reconstructed, expected);
+// ///
+// /// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0xBCF8, 0x3ECA]).unwrap();
+// /// let reconstructed = small_range_decoder
+// ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+// /// assert!(small_range_decoder.maybe_exhausted());
+// /// assert_eq!(reconstructed, expected);
+// ///
+// /// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0xBCF8733B]).unwrap();
+// /// let reconstructed = default_range_decoder
+// ///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+// /// assert!(default_range_decoder.maybe_exhausted());
+// /// assert_eq!(reconstructed, expected);
+// /// ```
+// ///
+// /// # See also
+// ///
+// /// - [`SmallNonContiguousLookupDecoderModel`]
+// ///
+// /// [`SmallAnsCoder`]: super::stack::SmallAnsCoder
+// /// [`SmallRangeDecoder`]: super::queue::SmallRangeDecoder
+// /// [`DefaultAnsCoder`]: super::stack::DefaultAnsCoder
+// /// [`DefaultRangeDecoder`]: super::queue::DefaultRangeDecoder
+// pub type SmallContiguousLookupDecoderModel<SymbolTable = Vec<u16>, LookupTable = Box<[u16]>> =
+//     LookupDecoderModel<usize, u16, SymbolTable, LookupTable, 12>;
 
 impl<Symbol, Probability, const PRECISION: usize>
-    LookupDecoderModel<
+    NonContiguousLookupDecoderModel<
         Symbol,
         Probability,
-        NonContiguousSymbolTable<Vec<(Probability, Symbol)>>,
+        Vec<(Probability, Symbol)>,
         Box<[Probability]>,
         PRECISION,
     >
 where
     Probability: BitArray + Into<usize>,
+    Symbol: Clone,
     usize: AsPrimitive<Probability>,
-    Symbol: Copy + Default,
 {
     #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities_fast<F>(
@@ -4162,14 +4099,15 @@ where
             infer_last_probability,
         )?;
 
-        cdf.push((wrapping_pow2(PRECISION), Symbol::default()));
+        let last_symbol = cdf.last().expect("cdf is not empty").1.clone();
+        cdf.push((wrapping_pow2(PRECISION), last_symbol));
 
         if symbols.next().is_some() {
             Err(())
         } else {
             Ok(Self {
                 lookup_table: lookup_table.into_boxed_slice(),
-                cdf: NonContiguousSymbolTable(cdf),
+                cdf,
                 phantom: PhantomData,
             })
         }
@@ -4200,28 +4138,22 @@ where
             cdf.push((lookup_table.len().as_(), symbol));
             lookup_table.resize(lookup_table.len() + probability.get().into(), index);
         }
-        cdf.push((wrapping_pow2(PRECISION), Symbol::default()));
+        let last_symbol = cdf.last().expect("cdf is not empty").1.clone();
+        cdf.push((wrapping_pow2(PRECISION), last_symbol));
 
         Self {
             lookup_table: lookup_table.into_boxed_slice(),
-            cdf: NonContiguousSymbolTable(cdf),
+            cdf,
             phantom: PhantomData,
         }
     }
 }
 
-impl<Symbol, Probability, const PRECISION: usize>
-    LookupDecoderModel<
-        Symbol,
-        Probability,
-        ContiguousSymbolTable<Vec<Probability>>,
-        Box<[Probability]>,
-        PRECISION,
-    >
+impl<Probability, const PRECISION: usize>
+    ContiguousLookupDecoderModel<Probability, Vec<Probability>, Box<[Probability]>, PRECISION>
 where
     Probability: BitArray + Into<usize>,
     usize: AsPrimitive<Probability>,
-    Symbol: Copy + Default,
 {
     #[allow(clippy::result_unit_err)]
     pub fn from_floating_point_probabilities_contiguous_fast<F>(
@@ -4258,7 +4190,7 @@ where
 
         Ok(Self {
             lookup_table: lookup_table.into_boxed_slice(),
-            cdf: ContiguousSymbolTable(extended_cdf),
+            cdf: extended_cdf,
             phantom: PhantomData,
         })
     }
@@ -4340,24 +4272,18 @@ where
 
         Ok(Self {
             lookup_table: lookup_table.into_boxed_slice(),
-            cdf: ContiguousSymbolTable(cdf),
+            cdf,
             phantom: PhantomData,
         })
     }
 }
 
-impl<Probability, Table, LookupTable, const PRECISION: usize>
-    LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<Table>,
-        LookupTable,
-        PRECISION,
-    >
+impl<Probability, Cdf, LookupTable, const PRECISION: usize>
+    ContiguousLookupDecoderModel<Probability, Cdf, LookupTable, PRECISION>
 where
     Probability: BitArray + Into<usize>,
     usize: AsPrimitive<Probability>,
-    Table: AsRef<[Probability]>,
+    Cdf: AsRef<[Probability]>,
     LookupTable: AsRef<[Probability]>,
 {
     /// Makes a very cheap shallow copy of the model that can be used much like a shared
@@ -4373,34 +4299,39 @@ where
     /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
     pub fn as_view(
         &self,
-    ) -> LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<&[Probability]>,
-        &[Probability],
-        PRECISION,
-    > {
-        LookupDecoderModel {
+    ) -> ContiguousLookupDecoderModel<Probability, &[Probability], &[Probability], PRECISION> {
+        ContiguousLookupDecoderModel {
             lookup_table: self.lookup_table.as_ref(),
-            cdf: ContiguousSymbolTable(self.cdf.0.as_ref()),
+            cdf: self.cdf.as_ref(),
             phantom: PhantomData,
         }
     }
 
-    /// TODO: documentation
+    /// Temporarily converts a lookup model into a non-lookup model (rarely useful).
+    ///
+    /// # See also
+    ///
+    /// - [`into_contiguous_categorical`](Self::into_contiguous_categorical)
     pub fn as_contiguous_categorical(
         &self,
     ) -> ContiguousCategoricalEntropyModel<Probability, &[Probability], PRECISION> {
         ContiguousCategoricalEntropyModel {
-            cdf: ContiguousSymbolTable(self.cdf.0.as_ref()),
+            cdf: self.cdf.as_ref(),
             phantom: PhantomData,
         }
     }
 
-    /// TODO: documentation
+    /// Converts a lookup model into a non-lookup model.
+    ///
+    /// This drops the lookup table, so its only conceivable use case is to
+    /// free memory while still holding on to the model.
+    ///
+    /// # See also
+    ///
+    /// - [`as_contiguous_categorical`](Self::as_contiguous_categorical)
     pub fn into_contiguous_categorical(
         self,
-    ) -> ContiguousCategoricalEntropyModel<Probability, Table, PRECISION> {
+    ) -> ContiguousCategoricalEntropyModel<Probability, Cdf, PRECISION> {
         ContiguousCategoricalEntropyModel {
             cdf: self.cdf,
             phantom: PhantomData,
@@ -4408,12 +4339,12 @@ where
     }
 }
 
-impl<Symbol, Probability, Table, LookupTable, const PRECISION: usize>
-    LookupDecoderModel<Symbol, Probability, NonContiguousSymbolTable<Table>, LookupTable, PRECISION>
+impl<Symbol, Probability, Cdf, LookupTable, const PRECISION: usize>
+    NonContiguousLookupDecoderModel<Symbol, Probability, Cdf, LookupTable, PRECISION>
 where
     Probability: BitArray + Into<usize>,
     usize: AsPrimitive<Probability>,
-    Table: AsRef<[(Probability, Symbol)]>,
+    Cdf: AsRef<[(Probability, Symbol)]>,
     LookupTable: AsRef<[Probability]>,
 {
     /// Makes a very cheap shallow copy of the model that can be used much like a shared
@@ -4429,23 +4360,68 @@ where
     /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
     pub fn as_view(
         &self,
-    ) -> LookupDecoderModel<
+    ) -> NonContiguousLookupDecoderModel<
         Symbol,
         Probability,
-        NonContiguousSymbolTable<&[(Probability, Symbol)]>,
+        &[(Probability, Symbol)],
         &[Probability],
         PRECISION,
     > {
-        LookupDecoderModel {
+        NonContiguousLookupDecoderModel {
             lookup_table: self.lookup_table.as_ref(),
-            cdf: NonContiguousSymbolTable(self.cdf.0.as_ref()),
+            cdf: self.cdf.as_ref(),
+            phantom: PhantomData,
+        }
+    }
+
+    /// Temporarily converts a lookup model into a non-lookup model (rarely useful).
+    ///
+    /// # See also
+    ///
+    /// - [`into_contiguous_categorical`](Self::into_contiguous_categorical)
+    pub fn as_non_contiguous_categorical(
+        &self,
+    ) -> NonContiguousCategoricalDecoderModel<
+        Symbol,
+        Probability,
+        &[(Probability, Symbol)],
+        PRECISION,
+    > {
+        NonContiguousCategoricalDecoderModel {
+            cdf: self.cdf.as_ref(),
+            phantom: PhantomData,
+        }
+    }
+
+    /// Converts a lookup model into a non-lookup model.
+    ///
+    /// This drops the lookup table, so its only conceivable use case is to
+    /// free memory while still holding on to the model.
+    ///
+    /// # See also
+    ///
+    /// - [`as_contiguous_categorical`](Self::as_contiguous_categorical)
+    pub fn into_non_contiguous_categorical(
+        self,
+    ) -> NonContiguousCategoricalDecoderModel<Symbol, Probability, Cdf, PRECISION> {
+        NonContiguousCategoricalDecoderModel {
+            cdf: self.cdf,
             phantom: PhantomData,
         }
     }
 }
 
-impl<Symbol, Probability, Table, LookupTable, const PRECISION: usize> EntropyModel<PRECISION>
-    for LookupDecoderModel<Symbol, Probability, Table, LookupTable, PRECISION>
+impl<Probability, Cdf, LookupTable, const PRECISION: usize> EntropyModel<PRECISION>
+    for ContiguousLookupDecoderModel<Probability, Cdf, LookupTable, PRECISION>
+where
+    Probability: BitArray + Into<usize>,
+{
+    type Symbol = usize;
+    type Probability = Probability;
+}
+
+impl<Symbol, Probability, Cdf, LookupTable, const PRECISION: usize> EntropyModel<PRECISION>
+    for NonContiguousLookupDecoderModel<Symbol, Probability, Cdf, LookupTable, PRECISION>
 where
     Probability: BitArray + Into<usize>,
 {
@@ -4453,11 +4429,65 @@ where
     type Probability = Probability;
 }
 
-impl<Symbol, Probability, Table, LookupTable, const PRECISION: usize> DecoderModel<PRECISION>
-    for LookupDecoderModel<Symbol, Probability, Table, LookupTable, PRECISION>
+impl<Probability, Cdf, LookupTable, const PRECISION: usize> DecoderModel<PRECISION>
+    for ContiguousLookupDecoderModel<Probability, Cdf, LookupTable, PRECISION>
 where
     Probability: BitArray + Into<usize>,
-    Table: SymbolTable<Symbol, Probability>,
+    Cdf: AsRef<[Probability]>,
+    LookupTable: AsRef<[Probability]>,
+{
+    #[inline(always)]
+    fn quantile_function(
+        &self,
+        quantile: Probability,
+    ) -> (Self::Symbol, Probability, Probability::NonZero) {
+        generic_static_asserts!(
+            (Probability: BitArray; const PRECISION: usize);
+            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
+            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
+        );
+
+        if Probability::BITS != PRECISION {
+            // It would be nice if we could avoid this but we currently don't statically enforce
+            // `quantile` to fit into `PRECISION` bits.
+            assert!(quantile < Probability::one() << PRECISION);
+        }
+
+        // SAFETY:
+        // - `quantile_to_index` has length `1 << PRECISION` and we verified that
+        //   `quantile` fits into `PRECISION` bits above.
+        // - `left_sided_cumulative_and_symbol` has length
+        //   `*quantile_to_index.as_ref().iter().max() as usize + 2`, so we can always
+        //   access it at `index + 1` for `index` coming from `quantile_to_index`.
+        let (left_sided_cumulative, symbol, next_cumulative) = unsafe {
+            let index = *self.lookup_table.as_ref().get_unchecked(quantile.into());
+            let index = index.into();
+            let cdf = self.cdf.as_ref();
+            (
+                *cdf.get_unchecked(index),
+                index,
+                *cdf.get_unchecked(index + 1),
+            )
+        };
+
+        let probability = unsafe {
+            // SAFETY: The constructors ensure that `cdf` is strictly increasing (in
+            // wrapping arithmetic) except at indices that can't be reached from
+            // `quantile_to_index`).
+            next_cumulative
+                .wrapping_sub(&left_sided_cumulative)
+                .into_nonzero_unchecked()
+        };
+
+        (symbol, left_sided_cumulative, probability)
+    }
+}
+
+impl<Symbol, Probability, Cdf, LookupTable, const PRECISION: usize> DecoderModel<PRECISION>
+    for NonContiguousLookupDecoderModel<Symbol, Probability, Cdf, LookupTable, PRECISION>
+where
+    Probability: BitArray + Into<usize>,
+    Cdf: AsRef<[(Probability, Symbol)]>,
     LookupTable: AsRef<[Probability]>,
     Symbol: Clone,
 {
@@ -4478,20 +4508,19 @@ where
             assert!(quantile < Probability::one() << PRECISION);
         }
 
-        let (left_sided_cumulative, symbol, next_cumulative) = unsafe {
-            // SAFETY:
-            // - `quantile_to_index` has length `1 << PRECISION` and we verified that
-            //   `quantile` fits into `PRECISION` bits above.
-            // - `left_sided_cumulative_and_symbol` has length
-            //   `*quantile_to_index.as_ref().iter().max() as usize + 2`, so we can always
-            //   access it at `index + 1` for `index` coming from `quantile_to_index`.
+        // SAFETY:
+        // - `quantile_to_index` has length `1 << PRECISION` and we verified that
+        //   `quantile` fits into `PRECISION` bits above.
+        // - `left_sided_cumulative_and_symbol` has length
+        //   `*quantile_to_index.as_ref().iter().max() as usize + 2`, so we can always
+        //   access it at `index + 1` for `index` coming from `quantile_to_index`.
+        let ((left_sided_cumulative, symbol), next_cumulative) = unsafe {
             let index = *self.lookup_table.as_ref().get_unchecked(quantile.into());
             let index = index.into();
-
+            let cdf = self.cdf.as_ref();
             (
-                self.cdf.left_cumulative_unchecked(index),
-                self.cdf.symbol_unchecked(index),
-                self.cdf.left_cumulative_unchecked(index + 1),
+                cdf.get_unchecked(index).clone(),
+                cdf.get_unchecked(index + 1).0,
             )
         };
 
@@ -4509,16 +4538,16 @@ where
 }
 
 impl<'m, Symbol, Probability, M, const PRECISION: usize> From<&'m M>
-    for LookupDecoderModel<
+    for NonContiguousLookupDecoderModel<
         Symbol,
         Probability,
-        NonContiguousSymbolTable<Vec<(Probability, Symbol)>>,
+        Vec<(Probability, Symbol)>,
         Box<[Probability]>,
         PRECISION,
     >
 where
     Probability: BitArray + Into<usize>,
-    Symbol: Copy + Default,
+    Symbol: Clone,
     usize: AsPrimitive<Probability>,
     M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
 {
@@ -4528,52 +4557,39 @@ where
     }
 }
 
-impl<'m, Probability, Table, const PRECISION: usize>
-    From<&'m ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>>
-    for LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<Vec<Probability>>,
-        Box<[Probability]>,
-        PRECISION,
-    >
+impl<'m, Probability, Cdf, const PRECISION: usize>
+    From<&'m ContiguousCategoricalEntropyModel<Probability, Cdf, PRECISION>>
+    for ContiguousLookupDecoderModel<Probability, Vec<Probability>, Box<[Probability]>, PRECISION>
 where
     Probability: BitArray + Into<usize>,
     usize: AsPrimitive<Probability>,
-    Table: AsRef<[Probability]>,
+    Cdf: AsRef<[Probability]>,
 {
-    fn from(model: &'m ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>) -> Self {
-        let cdf = model.cdf.0.as_ref().to_vec();
+    fn from(model: &'m ContiguousCategoricalEntropyModel<Probability, Cdf, PRECISION>) -> Self {
+        let cdf = model.cdf.as_ref().to_vec();
         let mut lookup_table = Vec::with_capacity(1 << PRECISION);
-        for (symbol, &cumulative) in model.cdf.0.as_ref()[1..model.cdf.0.as_ref().len() - 1]
+        for (symbol, &cumulative) in model.cdf.as_ref()[1..model.cdf.as_ref().len() - 1]
             .iter()
             .enumerate()
         {
             lookup_table.resize(cumulative.into(), symbol.as_());
         }
-        lookup_table.resize(1 << PRECISION, (model.cdf.0.as_ref().len() - 2).as_());
+        lookup_table.resize(1 << PRECISION, (model.cdf.as_ref().len() - 2).as_());
 
         Self {
             lookup_table: lookup_table.into_boxed_slice(),
-            cdf: ContiguousSymbolTable(cdf),
+            cdf,
             phantom: PhantomData,
         }
     }
 }
 
-impl<'m, Probability, Table, LookupTable, const PRECISION: usize>
-    IterableEntropyModel<'m, PRECISION>
-    for LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<Table>,
-        LookupTable,
-        PRECISION,
-    >
+impl<'m, Probability, Cdf, LookupTable, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
+    for ContiguousLookupDecoderModel<Probability, Cdf, LookupTable, PRECISION>
 where
     Probability: BitArray + Into<usize>,
     usize: AsPrimitive<Probability>,
-    Table: AsRef<[Probability]>,
+    Cdf: AsRef<[Probability]>,
     LookupTable: AsRef<[Probability]>,
 {
     #[inline(always)]
@@ -4586,24 +4602,24 @@ where
             <Self::Probability as BitArray>::NonZero,
         ),
     > {
-        SymbolTableIter::new(self.as_view().cdf)
+        iter_extended_cdf(
+            self.cdf
+                .as_ref()
+                .iter()
+                .enumerate()
+                .map(|(symbol, &cumulative)| (cumulative, symbol)),
+        )
     }
 }
 
-impl<'m, Symbol, Probability, Table, LookupTable, const PRECISION: usize>
+impl<'m, Symbol, Probability, Cdf, LookupTable, const PRECISION: usize>
     IterableEntropyModel<'m, PRECISION>
-    for LookupDecoderModel<
-        Symbol,
-        Probability,
-        NonContiguousSymbolTable<Table>,
-        LookupTable,
-        PRECISION,
-    >
+    for NonContiguousLookupDecoderModel<Symbol, Probability, Cdf, LookupTable, PRECISION>
 where
     Symbol: Clone + 'm,
     Probability: BitArray + Into<usize>,
     usize: AsPrimitive<Probability>,
-    Table: AsRef<[(Probability, Symbol)]>,
+    Cdf: AsRef<[(Probability, Symbol)]>,
     LookupTable: AsRef<[Probability]>,
 {
     #[inline(always)]
@@ -4616,7 +4632,7 @@ where
             <Self::Probability as BitArray>::NonZero,
         ),
     > {
-        SymbolTableIter::new(self.as_view().cdf)
+        iter_extended_cdf(self.cdf.as_ref().iter().cloned())
     }
 }
 
@@ -5058,7 +5074,7 @@ mod tests {
                 false,
             )
             .unwrap();
-        let lookup_decoder_model = LookupDecoderModel::from_iterable_entropy_model(&model);
+        let lookup_decoder_model = model.to_lookup_decoder_model();
 
         // Verify that `decode(encode(x)) == x` and that `lookup_decode(encode(x)) == x`.
         for symbol in 0..4 {
@@ -5123,7 +5139,8 @@ mod tests {
             symbols.chars(),probabilities.iter(),false
         )
         .unwrap();
-        let lookup_decoder_model = LookupDecoderModel::from_iterable_entropy_model(&decoder_model);
+        let lookup_decoder_model =
+            NonContiguousLookupDecoderModel::from_iterable_entropy_model(&decoder_model);
 
         // Verify that `decode(encode(x)) == x` and that `lookup_decode(encode(x)) == x`.
         for symbol in symbols.chars() {
