@@ -503,7 +503,7 @@ impl Model for UnparameterizedLazyCategoricalDistribution {
                     DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
                         probabilities,
                         None,
-                    );
+                    ).unwrap();
                 callback(&model)?;
             }
         } else {
@@ -512,7 +512,7 @@ impl Model for UnparameterizedLazyCategoricalDistribution {
                     DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
                         probabilities,
                         None,
-                    );
+                    ).unwrap();
                 callback(&model)?;
             }
         }
@@ -545,7 +545,7 @@ where
 impl DefaultEntropyModel for UniformModel<u32, 24> {
     #[inline]
     fn left_cumulative_and_probability(&self, symbol: i32) -> Option<(u32, NonZeroU32)> {
-        EncoderModel::left_cumulative_and_probability(self, symbol as u32)
+        EncoderModel::left_cumulative_and_probability(self, symbol as usize)
     }
 
     #[inline]

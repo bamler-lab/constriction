@@ -383,7 +383,7 @@ impl LazyCategorical {
                     DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
                         probabilities.cast_f32()?.to_vec()?,
                         normalization,
-                    );
+                    ).unwrap();
                 Arc::new(model) as Arc<dyn internals::Model>
             }
         };
@@ -421,11 +421,11 @@ impl Uniform {
         let model = match size {
             None => {
                 let model = internals::ParameterizableModel::new(|(size,): (i32,)| {
-                    UniformModel::new(size as u32)
+                    UniformModel::new(size as usize)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
-            Some(size) => Arc::new(UniformModel::new(size as u32)) as Arc<dyn internals::Model>,
+            Some(size) => Arc::new(UniformModel::new(size as usize)) as Arc<dyn internals::Model>,
         };
 
         Ok((Self, Model(model)))
