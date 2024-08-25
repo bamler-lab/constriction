@@ -346,7 +346,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::{ vec};
+    use alloc::vec;
 
     use crate::stream::{model::EncoderModel, stack::DefaultAnsCoder, Decode};
 

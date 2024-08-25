@@ -987,14 +987,14 @@ mod tests {
         test_iterable_entropy_model(model, support);
     }
 
-    pub(super) fn test_iterable_entropy_model<'m, D, const PRECISION: usize>(
-        model: &'m D,
-        support: impl Clone + Iterator<Item = D::Symbol>,
+    pub(super) fn test_iterable_entropy_model<'m, M, const PRECISION: usize>(
+        model: &'m M,
+        support: impl Clone + Iterator<Item = M::Symbol>,
     ) where
-        D: IterableEntropyModel<'m, PRECISION> + 'm,
-        D::Symbol: Copy + core::fmt::Debug + PartialEq,
-        D::Probability: Into<u64>,
-        u64: AsPrimitive<D::Probability>,
+        M: IterableEntropyModel<'m, PRECISION> + 'm,
+        M::Symbol: Copy + core::fmt::Debug + PartialEq,
+        M::Probability: Into<u64>,
+        u64: AsPrimitive<M::Probability>,
     {
         let mut expected_cumulative = 0u64;
         let mut count = 0;
@@ -1008,5 +1008,60 @@ mod tests {
         }
         assert_eq!(count, support.size_hint().0);
         assert_eq!(expected_cumulative, 1 << PRECISION);
+    }
+
+    /// Verifies that the model is close to a provided probability mass function (in
+    /// KL-divergence).
+    pub(super) fn verify_iterable_entropy_model<'m, M, P, const PRECISION: usize>(
+        model: &'m M,
+        hist: &[P],
+        tol: f64,
+    ) -> f64
+    where
+        M: IterableEntropyModel<'m, PRECISION> + 'm,
+        M::Probability: BitArray + Into<u64> + Into<f64>,
+        P: num_traits::Zero + Into<f64> + Copy + PartialOrd,
+    {
+        let weights: Vec<_> = model
+            .symbol_table()
+            .map(|(_, _, probability)| probability.get())
+            .collect();
+
+        assert_eq!(weights.len(), hist.len());
+        assert_eq!(
+            weights.iter().map(|&x| Into::<u64>::into(x)).sum::<u64>(),
+            1 << PRECISION
+        );
+        for &w in &weights {
+            assert!(w > M::Probability::zero());
+        }
+
+        let mut weights_and_hist = weights
+            .iter()
+            .cloned()
+            .zip(hist.iter().cloned())
+            .collect::<Vec<_>>();
+
+        // Check that sorting by weight is compatible with sorting by hist.
+        weights_and_hist.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        // TODO: replace the following with
+        // `assert!(weights_and_hist.iter().map(|&(_, x)| x).is_sorted())`
+        // when `is_sorted` becomes stable.
+        let mut previous = P::zero();
+        for (_, hist) in weights_and_hist {
+            assert!(hist >= previous);
+            previous = hist;
+        }
+
+        let normalization = hist.iter().map(|&x| x.into()).sum::<f64>();
+        let normalized_hist = hist
+            .iter()
+            .map(|&x| Into::<f64>::into(x) / normalization)
+            .collect::<Vec<_>>();
+
+        let kl = model.kl_divergence_base2::<f64>(normalized_hist);
+        assert!(kl < tol);
+
+        kl
     }
 }

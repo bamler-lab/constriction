@@ -255,8 +255,3 @@ where
 
     Ok(symbols)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

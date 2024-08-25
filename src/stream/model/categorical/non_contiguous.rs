@@ -987,6 +987,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::tests::{test_iterable_entropy_model, verify_iterable_entropy_model};
+
     use super::*;
 
     #[test]
@@ -1001,12 +1003,25 @@ mod tests {
             .chars()
             .collect::<Vec<_>>();
 
-        let model =
+        let fast =
+            NonContiguousCategoricalDecoderModel::<_,u32, _, 32>::from_symbols_and_floating_point_probabilities_fast(
+                symbols.iter().cloned(),
+                &probabilities,
+                None
+            )
+            .unwrap();
+        test_iterable_entropy_model(&fast, symbols.iter().cloned());
+        let kl_fast = verify_iterable_entropy_model(&fast, &hist, 1e-8);
+
+        let perfect =
             NonContiguousCategoricalDecoderModel::<_,u32, _, 32>::from_symbols_and_floating_point_probabilities_perfect(
                 symbols.iter().cloned(),
                 &probabilities,
             )
             .unwrap();
-        super::super::super::tests::test_iterable_entropy_model(&model, symbols.iter().cloned());
+        test_iterable_entropy_model(&perfect, symbols.iter().cloned());
+        let kl_perfect = verify_iterable_entropy_model(&perfect, &hist, 1e-8);
+
+        assert!(kl_perfect < kl_fast);
     }
 }

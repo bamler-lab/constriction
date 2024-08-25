@@ -689,6 +689,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::NonZeroBitArray;
+
+    use super::super::super::tests::{test_entropy_model, verify_iterable_entropy_model};
     use super::*;
 
     /// Test that `optimal_weights` reproduces the same distribution when fed with an
@@ -728,43 +731,28 @@ mod tests {
         assert_ne!(hist.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let categorical =
+
+        let fast =
+            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_fast(
+                &probabilities,
+                None
+            )
+            .unwrap();
+        let kl_fast = verify_iterable_entropy_model(&fast, &hist, 1e-6);
+
+        let perfect =
             ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_perfect(
                 &probabilities,
             )
             .unwrap();
-        let weights: Vec<_> = categorical
-            .symbol_table()
-            .map(|(_, _, probability)| probability.get())
-            .collect();
+        let kl_perfect = verify_iterable_entropy_model(&perfect, &hist, 1e-6);
 
-        assert_eq!(weights.len(), hist.len());
-        assert_eq!(weights.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
-        for &w in &weights {
-            assert!(w > 0);
-        }
-
-        let mut weights_and_hist = weights
-            .iter()
-            .cloned()
-            .zip(hist.iter().cloned())
-            .collect::<Vec<_>>();
-
-        // Check that sorting by weight is compatible with sorting by hist.
-        weights_and_hist.sort_unstable();
-        // TODO: replace the following with
-        // `assert!(weights_and_hist.iter().map(|&(_, x)| x).is_sorted())`
-        // when `is_sorted` becomes stable.
-        let mut previous = 0;
-        for (_, hist) in weights_and_hist {
-            assert!(hist >= previous);
-            previous = hist;
-        }
+        assert!(kl_perfect < kl_fast);
     }
 
     /// Regression test for convergence of `optimize_leaky_categorical`.
     #[test]
-    fn categorical_converges() {
+    fn perfect_converges() {
         // Two example probability distributions that lead to an infinite loop in constriction 0.2.6
         // (see <https://github.com/bamler-lab/constriction/issues/20>).
         let example1 = [0.15, 0.69, 0.15];
@@ -784,21 +772,22 @@ mod tests {
             1.34715927e-04,
         ];
 
-        let categorical =
+        let categorical1 =
             DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
                 &example1,
             )
             .unwrap();
-        let prob0 = categorical.left_cumulative_and_probability(0).unwrap().1;
-        let prob2 = categorical.left_cumulative_and_probability(2).unwrap().1;
+        let prob0 = categorical1.left_cumulative_and_probability(0).unwrap().1;
+        let prob2 = categorical1.left_cumulative_and_probability(2).unwrap().1;
         assert!((-1..=1).contains(&(prob0.get() as i64 - prob2.get() as i64)));
+        verify_iterable_entropy_model(&categorical1, &example1, 1e-10);
 
-        let _ =
+        let categorical2 =
             DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
                 &example2,
             )
             .unwrap();
-        // Nothing to test here. As long as the above line didn't cause an infinite loop we're good.
+        verify_iterable_entropy_model(&categorical2, &example2, 1e-10);
     }
 
     #[test]
@@ -810,11 +799,23 @@ mod tests {
         ];
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
-        let model =
+        let fast =
+            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_fast(
+                &probabilities,
+                None
+            )
+            .unwrap();
+        test_entropy_model(&fast, 0..probabilities.len());
+        let kl_fast = verify_iterable_entropy_model(&fast, &hist, 1e-8);
+
+        let perfect =
             ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_perfect(
                 &probabilities,
             )
             .unwrap();
-        super::super::super::tests::test_entropy_model(&model, 0..probabilities.len());
+        test_entropy_model(&perfect, 0..probabilities.len());
+        let kl_perfect = verify_iterable_entropy_model(&perfect, &hist, 1e-8);
+
+        assert!(kl_perfect < kl_fast);
     }
 }
