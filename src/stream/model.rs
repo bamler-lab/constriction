@@ -559,18 +559,25 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
 
     /// Returns the entropy in units of bits (i.e., base 2).
     ///
-    /// The entropy is the theoretical lower bound on the *expected* bit rate in any
-    /// lossless entropy coder.
+    /// The entropy is the expected amortized bit rate per symbol of an optimal lossless
+    /// entropy coder, assuming that the data is indeed distributed according to the model.
     ///
     /// Note that calling this method on a [`LeakilyQuantizedDistribution`] will return the
     /// entropy *after quantization*, not the differential entropy of the underlying
     /// continuous probability distribution.
+    ///
+    /// # See also
+    ///
+    /// - [`cross_entropy_base2`](Self::cross_entropy_base2)
+    /// - [`reverse_cross_entropy_base2`](Self::reverse_cross_entropy_base2)
+    /// - [`kl_divergence_base2`](Self::kl_divergence_base2)
+    /// - [`reverse_kl_divergence_base2`](Self::reverse_kl_divergence_base2)
     fn entropy_base2<F>(&'m self) -> F
     where
         F: num_traits::Float + core::iter::Sum,
         Self::Probability: Into<F>,
     {
-        let entropy_scaled = self
+        let scaled_shifted = self
             .symbol_table()
             .map(|(_, _, probability)| {
                 let probability = probability.get().into();
@@ -579,7 +586,161 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
             .sum::<F>();
 
         let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
-        F::from(PRECISION).unwrap() - entropy_scaled / whole
+        F::from(PRECISION).unwrap() - scaled_shifted / whole
+    }
+
+    /// Returns the cross entropy between argument `p` and this model in units of bits
+    /// (i.e., base 2).
+    ///
+    /// This is the expected amortized bit rate per symbol that an optimal coder will
+    /// achieve when using this model on a data source that draws symbols from the provided
+    /// probability distribution `p`.
+    ///
+    /// The cross entropy is defined as `H(p, self) = - sum_i p[i] * log2(self[i])` where
+    /// `p` is provided as an argument and `self[i]` denotes the corresponding probabilities
+    /// of the model. Note that `self[i]` is never zero for models in the `constriction`
+    /// library, so the logarithm in the (forward) cross entropy can never be infinite.
+    ///
+    /// The argument `p` must yield a sequence of probabilities (nonnegative values that sum
+    /// to 1) with the correct length and order to be compatible with the model.
+    ///
+    /// # See also
+    ///
+    /// - [`entropy_base2`](Self::entropy_base2)
+    /// - [`reverse_cross_entropy_base2`](Self::reverse_cross_entropy_base2)
+    /// - [`kl_divergence_base2`](Self::kl_divergence_base2)
+    /// - [`reverse_kl_divergence_base2`](Self::reverse_kl_divergence_base2)
+    fn cross_entropy_base2<F>(&'m self, p: impl IntoIterator<Item = F>) -> F
+    where
+        F: num_traits::Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let shift = F::from(PRECISION).unwrap();
+        self.symbol_table()
+            .zip(p)
+            .map(|((_, _, probability), p)| {
+                let probability = probability.get().into();
+                // Perform the shift for each item individually so that the result is
+                // reasonable even if `p` is not normalized.
+                p * (shift - probability.log2()) // probability is guaranteed to be nonzero.
+            })
+            .sum::<F>()
+    }
+
+    /// Returns the cross entropy between this model and argument `p` in units of bits
+    /// (i.e., base 2).
+    ///
+    /// This method is provided mostly for completeness. You're more likely to want to
+    /// calculate [`cross_entropy_base2`](Self::cross_entropy_base2).
+    ///
+    /// The reverse cross entropy is defined as `H(self, p) = - sum_i self[i] * log2(p[i])`
+    /// where `p` is provided as an argument and `self[i]` denotes the corresponding
+    /// probabilities of the model.
+    ///
+    /// The argument `p` must yield a sequence of *nonzero* probabilities (that sum to 1)
+    /// with the correct length and order to be compatible with the model.
+    ///
+    /// # See also
+    ///
+    /// - [`cross_entropy_base2`](Self::cross_entropy_base2)
+    /// - [`entropy_base2`](Self::entropy_base2)
+    /// - [`reverse_kl_divergence_base2`](Self::reverse_kl_divergence_base2)
+    /// - [`kl_divergence_base2`](Self::kl_divergence_base2)
+    fn reverse_cross_entropy_base2<F>(&'m self, p: impl IntoIterator<Item = F>) -> F
+    where
+        F: num_traits::Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let scaled = self
+            .symbol_table()
+            .zip(p)
+            .map(|((_, _, probability), p)| {
+                let probability = probability.get().into();
+                probability * p.log2()
+            })
+            .sum::<F>();
+
+        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
+        -scaled / whole
+    }
+
+    /// Returns Kullback-Leibler divergence `D_KL(p || self)`
+    ///
+    /// This is the expected *overhead* (due to model quantization) in bit rate per symbol
+    /// that an optimal coder will incur when using this model on a data source that draws
+    /// symbols from the provided probability distribution `p` (which this model is supposed
+    /// to approximate).
+    ///
+    /// The KL-divergence is defined as `D_KL(p || self) = - sum_i p[i] * log2(self[i] /
+    /// p[i])`, where `p` is provided as an argument and `self[i]` denotes the corresponding
+    /// probabilities of the model. Any term in the sum where `p[i]` is *exactly* zero does
+    /// not contribute (regardless of whether or not `self[i]` would also be zero).
+    ///
+    /// The argument `p` must yield a sequence of probabilities (nonnegative values that sum
+    /// to 1) with the correct length and order to be compatible with the model.
+    ///
+    /// # See also
+    ///
+    /// - [`reverse_kl_divergence_base2`](Self::reverse_kl_divergence_base2)
+    /// - [`entropy_base2`](Self::entropy_base2)
+    /// - [`cross_entropy_base2`](Self::cross_entropy_base2)
+    /// - [`reverse_cross_entropy_base2`](Self::reverse_cross_entropy_base2)
+    fn kl_divergence_base2<F>(&'m self, p: impl IntoIterator<Item = F>) -> F
+    where
+        F: num_traits::Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let shifted = self
+            .symbol_table()
+            .zip(p)
+            .map(|((_, _, probability), p)| {
+                if p == F::zero() {
+                    F::zero()
+                } else {
+                    let probability = probability.get().into();
+                    p * (p.log2() - probability.log2())
+                }
+            })
+            .sum::<F>();
+
+        shifted + F::from(PRECISION).unwrap() // assumes that `p` is normalized
+    }
+
+    /// Returns reverse Kullback-Leibler divergence, i.e., `D_KL(self || p)`
+    ///
+    /// This method is provided mostly for completeness. You're more likely to want to
+    /// calculate [`kl_divergence_base2`](Self::kl_divergence_base2).
+    ///
+    /// The reverse KL-divergence is defined as `D_KL(self || p) = - sum_i self[i] *
+    /// log2(p[i] / self[i])` where `p`
+    /// is provided as an argument and `self[i]` denotes the corresponding probabilities of
+    /// the model.
+    ///
+    /// The argument `p` must yield a sequence of *nonzero* probabilities (that sum to 1)
+    /// with the correct length and order to be compatible with the model.
+    ///
+    /// # See also
+    ///
+    /// - [`kl_divergence_base2`](Self::kl_divergence_base2)
+    /// - [`entropy_base2`](Self::entropy_base2)
+    /// - [`cross_entropy_base2`](Self::cross_entropy_base2)
+    /// - [`reverse_cross_entropy_base2`](Self::reverse_cross_entropy_base2)
+    fn reverse_kl_divergence_base2<F>(&'m self, p: impl IntoIterator<Item = F>) -> F
+    where
+        F: num_traits::Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let scaled_shifted = self
+            .symbol_table()
+            .zip(p)
+            .map(|((_, _, probability), p)| {
+                let probability = probability.get().into();
+                probability * (probability.log2() - p.log2())
+            })
+            .sum::<F>();
+
+        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
+        scaled_shifted / whole - F::from(PRECISION).unwrap()
     }
 
     /// Creates an [`EncoderModel`] from this `EntropyModel`
@@ -770,12 +931,9 @@ pub use uniform::{DefaultUniformModel, SmallUniformModel, UniformModel};
 
 #[cfg(test)]
 mod tests {
+    use probability::prelude::*;
+
     use super::*;
-
-    use super::super::{stack::DefaultAnsCoder, Decode};
-
-    use alloc::{string::String, vec};
-    use probability::distribution::{Binomial, Cauchy, Gaussian, Laplace};
 
     #[test]
     fn entropy() {
