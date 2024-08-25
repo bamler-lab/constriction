@@ -28,7 +28,7 @@ use super::{
 ///
 /// See:
 /// - [`NonContiguousCategoricalEncoderModel`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type DefaultNonContiguousCategoricalEncoderModel<Symbol> =
     NonContiguousCategoricalEncoderModel<Symbol, u32, 24>;
 
@@ -37,7 +37,7 @@ pub type DefaultNonContiguousCategoricalEncoderModel<Symbol> =
 ///
 /// See:
 /// - [`NonContiguousCategoricalEncoderModel`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type SmallNonContiguousCategoricalEncoderModel<Symbol> =
     NonContiguousCategoricalEncoderModel<Symbol, u16, 12>;
 
@@ -45,7 +45,7 @@ pub type SmallNonContiguousCategoricalEncoderModel<Symbol> =
 ///
 /// See:
 /// - [`NonContiguousCategoricalDecoderModel`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type DefaultNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u32, Symbol)>> =
     NonContiguousCategoricalDecoderModel<Symbol, u32, Cdf, 24>;
 
@@ -54,7 +54,7 @@ pub type DefaultNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u32, Sym
 ///
 /// See:
 /// - [`NonContiguousCategoricalDecoderModel`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbol)>> =
     NonContiguousCategoricalDecoderModel<Symbol, u16, Cdf, 12>;
 
@@ -64,7 +64,7 @@ pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbo
 /// You will usually want to use this type through one of its type aliases,
 /// [`DefaultNonContiguousCategoricalDecoderModel`] or
 /// [`SmallNonContiguousCategoricalDecoderModel`], see [discussion of
-/// presets](super#presets).
+/// presets](crate::stream#presets).
 ///
 /// This type implements the trait [`DecoderModel`] but not the trait [`EncoderModel`].
 /// Thus, you can use a `NonContiguousCategoricalDecoderModel` for *decoding* with any of
@@ -436,7 +436,7 @@ where
     ///   memory overhead, so if you're going to use the resulting model only for a single
     ///   or a handful of symbols then you'll end up paying more than you gain.
     ///
-    /// [preset]: super#presets
+    /// [preset]: crate::stream#presets
     #[inline(always)]
     pub fn to_lookup_decoder_model(
         &self,
@@ -634,7 +634,7 @@ where
 /// You will usually want to use this type through one of its type aliases,
 /// [`DefaultNonContiguousCategoricalEncoderModel`] or
 /// [`SmallNonContiguousCategoricalEncoderModel`], see [discussion of
-/// presets](super#presets).
+/// presets](crate::stream#presets).
 ///
 /// This type implements the trait [`EncoderModel`] but not the trait [`DecoderModel`].
 /// Thus, you can use a `NonContiguousCategoricalEncoderModel` for *encoding* with any of

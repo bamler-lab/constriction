@@ -11,7 +11,7 @@ use super::super::{DecoderModel, EncoderModel, EntropyModel};
 ///
 /// See:
 /// - [`LazyContiguousCategoricalEntropyModel`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
     LazyContiguousCategoricalEntropyModel<u32, F, Pmf, 24>;
 
@@ -25,7 +25,7 @@ pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
 ///
 /// See:
 /// - [`LazyContiguousCategoricalEntropyModel`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
     LazyContiguousCategoricalEntropyModel<u16, F, Pmf, 12>;
 

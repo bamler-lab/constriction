@@ -766,7 +766,7 @@ pub use categorical::{
 pub use quantize::{
     DefaultLeakyQuantizer, LeakilyQuantizedDistribution, LeakyQuantizer, SmallLeakyQuantizer,
 };
-pub use uniform::UniformModel;
+pub use uniform::{DefaultUniformModel, SmallUniformModel, UniformModel};
 
 #[cfg(test)]
 mod tests {

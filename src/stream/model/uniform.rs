@@ -6,6 +6,21 @@ use crate::{generic_static_asserts, wrapping_pow2, BitArray, NonZeroBitArray};
 
 use super::{DecoderModel, EncoderModel, EntropyModel, IterableEntropyModel};
 
+/// Type alias for a typical [`UniformModel`].
+///
+/// See:
+/// - [`UniformModel`]
+/// - [discussion of presets](crate::stream#presets)
+pub type DefaultUniformModel = UniformModel<u32, 24>;
+
+/// Type alias for a [`UniformModel`] that is easier to use within a sequence of compressed symbols
+/// that also involves some lookup models.
+///
+/// See:
+/// - [`UniformModel`]
+/// - [discussion of presets](crate::stream#presets)
+pub type SmallUniformModel = UniformModel<u16, 12>;
+
 #[derive(Debug, Clone, Copy)]
 pub struct UniformModel<Probability: BitArray, const PRECISION: usize> {
     probability_per_bin: Probability::NonZero,

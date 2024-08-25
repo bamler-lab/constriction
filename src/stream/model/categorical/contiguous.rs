@@ -17,7 +17,7 @@ use super::{
 ///
 /// See:
 /// - [`ContiguousCategoricalEntropyModel`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type DefaultContiguousCategoricalEntropyModel<Cdf = Vec<u32>> =
     ContiguousCategoricalEntropyModel<u32, Cdf, 24>;
 
@@ -26,7 +26,7 @@ pub type DefaultContiguousCategoricalEntropyModel<Cdf = Vec<u32>> =
 ///
 /// See:
 /// - [`ContiguousCategoricalEntropyModel`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
     ContiguousCategoricalEntropyModel<u16, Cdf, 12>;
 
@@ -35,7 +35,7 @@ pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
 ///
 /// You will usually want to use this type through one of its type aliases,
 /// [`DefaultContiguousCategoricalEntropyModel`] or
-/// [`SmallContiguousCategoricalEntropyModel`], see [discussion of presets](super#presets).
+/// [`SmallContiguousCategoricalEntropyModel`], see [discussion of presets](crate::stream#presets).
 ///
 /// This entropy model implements both [`EncoderModel`] and [`DecoderModel`], which means
 /// that it can be used for both encoding and decoding with any of the stream coders
@@ -559,7 +559,7 @@ where
     ///   memory overhead, so if you're going to use the resulting model only for a single
     ///   or a handful of symbols then you'll end up paying more than you gain.
     ///
-    /// [preset]: super#presets
+    /// [preset]: crate::stream#presets
     #[inline(always)]
     pub fn to_lookup_decoder_model(
         &self,

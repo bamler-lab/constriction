@@ -12,7 +12,7 @@ use super::{
 ///
 /// You will usually want to use this type through one of its type aliases,
 /// [`DefaultLeakyQuantizer`] or [`SmallLeakyQuantizer`], see [discussion of
-/// presets](super#presets).
+/// presets](crate::stream#presets).
 ///
 /// # Examples
 ///
@@ -231,7 +231,7 @@ pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
 ///
 /// See:
 /// - [`LeakyQuantizer`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type DefaultLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u32, 24>;
 
 /// Type alias for a [`LeakyQuantizer`] optimized for compatibility with lookup decoder
@@ -239,7 +239,7 @@ pub type DefaultLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u32, 24>;
 ///
 /// See:
 /// - [`LeakyQuantizer`]
-/// - [discussion of presets](super#presets)
+/// - [discussion of presets](crate::stream#presets)
 pub type SmallLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u16, 12>;
 
 impl<F, Symbol, Probability, const PRECISION: usize>
