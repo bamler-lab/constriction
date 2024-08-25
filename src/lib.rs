@@ -771,13 +771,15 @@ macro_rules! generic_static_asserts {
     (($($l:lifetime,)* $($($t:ident$(: $bound:path)?),+)? $(; $(const $c:ident:$ct:ty),+)?); $($label:ident: $test:expr);+$(;)?) => {
         #[allow(path_statements, clippy::no_effect)]
         {
-            struct Check<$($l,)* $($($t,)+)? $($(const $c:$ct,)+)?>($($($t,)+)?);
-            impl<$($l,)* $($($t$(:$bound)?,)+)? $($(const $c:$ct,)+)?> Check<$($l,)* $($($t,)+)? $($($c,)+)?> {
-                $(
-                    const $label: () = assert!($test);
-                )+
+            {
+                struct Check<$($l,)* $($($t,)+)? $($(const $c:$ct,)+)?>($($($t,)+)?);
+                impl<$($l,)* $($($t$(:$bound)?,)+)? $($(const $c:$ct,)+)?> Check<$($l,)* $($($t,)+)? $($($c,)+)?> {
+                    $(
+                        const $label: () = assert!($test);
+                    )+
+                }
+                generic_static_asserts!{@nested Check::<$($l,)* $($($t,)+)? $($($c,)+)?>, $($label: $test;)+}
             }
-            generic_static_asserts!{@nested Check::<$($l,)* $($($t,)+)? $($($c,)+)?>, $($label: $test;)+}
         }
     };
     (@nested $t:ty, $($label:ident: $test:expr;)+) => {
