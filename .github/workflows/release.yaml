@@ -37,6 +37,14 @@ jobs:
           RUSTFLAGS: "-D warnings"
         run: cargo clippy --all-targets --all-features
 
+      # The environment variable `RUSTFLAGS` doesn't actually seem to have any effect on rustdoc,
+      # but we set it here to the same value as in all other cargo runs as changing it would
+      # cause unnecessary recompilation of some dependencies.
+      - name: Check for broken doc links
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: cargo rustdoc -- -D rustdoc::broken-intra-doc-links
+
       - name: Test in development mode
         env:
           RUSTFLAGS: "-D warnings"
