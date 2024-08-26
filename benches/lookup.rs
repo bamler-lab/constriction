@@ -2,7 +2,7 @@ use std::any::type_name;
 
 use constriction::{
     stream::{
-        model::{LookupDecoderModel, NonContiguousCategoricalEncoderModel},
+        model::{NonContiguousCategoricalEncoderModel, NonContiguousLookupDecoderModel},
         queue::RangeEncoder,
         stack::AnsCoder,
         Code, Decode, Encode,
@@ -106,7 +106,7 @@ where
         .unwrap();
 
     let decoder_model =
-    LookupDecoderModel::<u16,Probability,_,_,PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
+    NonContiguousLookupDecoderModel::<u16, Probability, _, _, PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
         symbols,probabilities,false
     )
     .unwrap();
@@ -203,7 +203,7 @@ where
         .unwrap();
 
     let decoder_model =
-    LookupDecoderModel::<u16,Probability,_,_,PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
+    NonContiguousLookupDecoderModel::<u16, Probability, _, _, PRECISION>::from_symbols_and_nonzero_fixed_point_probabilities(
         symbols,probabilities,false
     )
     .unwrap();
