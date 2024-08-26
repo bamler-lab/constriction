@@ -85,22 +85,28 @@ pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbo
 ///
 /// Use a `NonContiguousCategoricalDecoderModel` for probabilistic models that can *only* be
 /// represented as an explicit probability table, and not by some more compact analytic
-/// expression. If you have a probability model that can be expressed by some analytical
-/// expression (e.g., a [`Binomial`](probability::distribution::Binomial) distribution),
-/// then use [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the
-/// same entropy model, in which case the explicitly tabulated representation of a
-/// categorical entropy model could improve runtime performance).
+/// expression.
 ///
-/// Further, if the *support* of your probabilistic model (i.e., the set of symbols to which
-/// the model assigns a non-zero probability) is a contiguous range of integers starting at
-/// zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
-/// computational efficiency and it is easier to use since it supports both encoding and
-/// decoding with a single type.
-///
-/// If you want to *decode* lots of symbols with the same entropy model, and if reducing the
-/// `PRECISION` to a moderate value is acceptable to you, then you may want to consider
-/// using a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] instead for even better runtime performance (at the cost
-/// of a larger memory footprint and worse compression efficiency due to lower `PRECISION`).
+/// - If you have a probability model that can be expressed by some analytical expression
+///   (e.g., a [`Binomial`](probability::distribution::Binomial) distribution), then use
+///   [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the same
+///   entropy model, in which case the explicitly tabulated representation of a categorical
+///   entropy model could improve runtime performance).
+/// - If the *support* of your probabilistic model (i.e., the set of symbols to which the
+///   model assigns a non-zero probability) is a contiguous range of integers starting at
+///   zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
+///   computational efficiency and it is easier to use since it supports both encoding and
+///   decoding with a single type.
+/// - If you want to decode only very few symbols with a given probability model, then use a
+///   [`LazyContiguousCategoricalEntropyModel`], which will be faster (use an array to map
+///   the decoded symbols from the contiguous range `0..N` to whatever noncontiguous
+///   alphabet you have). This use case occurs, e.g., in autoregressive models, where each
+///   individual model is often used for only exactly one symbol.
+/// - If you want to decode lots of symbols with the same entropy model, and if reducing the
+///   `PRECISION` to a moderate value is acceptable to you, then you may want to consider
+///   using a [`NonContiguousLookupDecoderModel`] instead for even better runtime
+///   performance (at the cost of a larger memory footprint and worse compression efficiency
+///   due to lower `PRECISION`).
 ///
 /// # Computational Efficiency
 ///
@@ -108,12 +114,10 @@ pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbo
 /// `NonContiguousCategoricalDecoderModel` has the following asymptotic costs:
 ///
 /// - creation:
-///   - runtime cost: `Θ(N)` when creating from fixed point probabilities, `Θ(N log(N))`
-///     when creating from floating point probabilities;
+///   - runtime cost: `Θ(N log(N))` (when creating with the [`..._fast` constructor]);
 ///   - memory footprint: `Θ(N)`;
-///   - both are more expensive by a constant factor than for a
-///     [`ContiguousCategoricalEntropyModel`].
-/// - encoding a symbol: not supported; use a [`NonContiguousCategoricalEncoderModel`].
+/// - encoding a symbol: not supported; use a [`NonContiguousCategoricalEncoderModel`]
+///   instead.
 /// - decoding a symbol (calling [`DecoderModel::quantile_function`]):
 ///   - runtime cost: `Θ(log(N))` (both expected and worst-case)
 ///   - memory footprint: no heap allocations, constant stack space.
@@ -122,10 +126,14 @@ pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbo
 /// [`Encode`]: crate::Encode
 /// [`Decode`]: crate::Decode
 /// [`HashMap`]: std::hash::HashMap
-/// [`ContiguousCategoricalEntropyModel`]: crate::stream::model::ContiguousCategoricalEntropyModel
-/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
-/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
+/// [`ContiguousCategoricalEntropyModel`]:
+///     crate::stream::model::ContiguousCategoricalEntropyModel
+/// [`NonContiguousLookupDecoderModel`]:
+///     crate::stream::model::NonContiguousLookupDecoderModel
 /// [`LeakyQuantizer`]: crate::stream::model::LeakyQuantizer
+/// [`..._fast` constructor]: Self::from_symbols_and_floating_point_probabilities_fast
+/// [`LazyContiguousCategoricalEntropyModel`]:
+///     crate::stream::model::LazyContiguousCategoricalEntropyModel
 #[derive(Debug, Clone, Copy)]
 pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Cdf, const PRECISION: usize> {
     /// Invariants:
@@ -729,17 +737,27 @@ where
 ///
 /// Use a `NonContiguousCategoricalEncoderModel` for probabilistic models that can *only* be
 /// represented as an explicit probability table, and not by some more compact analytic
-/// expression. If you have a probability model that can be expressed by some analytical
-/// expression (e.g., a [`Binomial`](probability::distribution::Binomial) distribution),
-/// then use [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the
-/// same entropy model, in which case the explicitly tabulated representation of a
-/// categorical entropy model could improve runtime performance).
+/// expression.
 ///
-/// Further, if the *support* of your probabilistic model (i.e., the set of symbols to which
-/// the model assigns a non-zero probability) is a contiguous range of integers starting at
-/// zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
-/// computational efficiency and it is easier to use since it supports both encoding and
-/// decoding with a single type.
+/// Use a `NonContiguousCategoricalDecoderModel` for probabilistic models that can *only* be
+/// represented as an explicit probability table, and not by some more compact analytic
+/// expression.
+///
+/// - If you have a probability model that can be expressed by some analytical expression
+///   (e.g., a [`Binomial`](probability::distribution::Binomial) distribution), then use
+///   [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the same
+///   entropy model, in which case the explicitly tabulated representation of a categorical
+///   entropy model could improve runtime performance).
+/// - If the *support* of your probabilistic model (i.e., the set of symbols to which the
+///   model assigns a non-zero probability) is a contiguous range of integers starting at
+///   zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
+///   computational efficiency and it is easier to use since it supports both encoding and
+///   decoding with a single type.
+/// - If you want to encode only very few symbols with a given probability model, then use a
+///   [`LazyContiguousCategoricalEntropyModel`], which will be faster (use `HashMap` to
+///   first map from your noncontiguous support to indices in a contiguous range `0..N`,
+///   where `N` is the size of your support). This use case occurs, e.g., in autoregressive
+///   models, where each individual model is often used for only exactly one symbol.
 ///
 /// # Computational Efficiency
 ///
@@ -747,11 +765,8 @@ where
 /// `NonContiguousCategoricalEncoderModel` has the following asymptotic costs:
 ///
 /// - creation:
-///   - runtime cost: `Θ(N)` when creating from fixed point probabilities, `Θ(N log(N))`
-///     when creating from floating point probabilities;
+///   - runtime cost: `Θ(N log(N))` (when creating with the [`..._fast` constructor]);
 ///   - memory footprint: `Θ(N)`;
-///   - both are more expensive by a constant factor than for a
-///     [`ContiguousCategoricalEntropyModel`].
 /// - encoding a symbol (calling [`EncoderModel::left_cumulative_and_probability`]):
 ///   - expected runtime cost: `Θ(1)` (worst case can be more expensive, uses a `HashMap`
 ///     under the hood).
@@ -764,6 +779,9 @@ where
 /// [`HashMap`]: std::hash::HashMap
 /// [`ContiguousCategoricalEntropyModel`]: crate::stream::model::ContiguousCategoricalEntropyModel
 /// [`LeakyQuantizer`]: crate::stream::model::LeakyQuantizer
+/// [`..._fast` constructor]: Self::from_symbols_and_floating_point_probabilities_fast
+/// [`LazyContiguousCategoricalEntropyModel`]:
+///     crate::stream::model::LazyContiguousCategoricalEntropyModel
 #[derive(Debug, Clone)]
 pub struct NonContiguousCategoricalEncoderModel<Symbol, Probability, const PRECISION: usize>
 where

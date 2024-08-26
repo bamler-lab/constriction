@@ -360,8 +360,9 @@ where
 /// [`LeakyQuantizer`] to such a [`Categorical`] distribution, you will get better
 /// computational performance (and also *slightly* better compression effectiveness) if you
 /// instead use one of the dedicated types [`ContiguousCategoricalEntropyModel`],
-/// [`NonContiguousCategoricalEncoderModel`], [`NonContiguousCategoricalDecoderModel`], or
-/// [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`].
+/// [`NonContiguousCategoricalEncoderModel`], [`NonContiguousCategoricalDecoderModel`],
+/// [`ContiguousLookupDecoderModel`], [`NonContiguousLookupDecoderModel`], or
+/// [`LazyContiguousCategoricalEntropyModel`].
 ///
 /// # Examples
 ///
@@ -376,11 +377,17 @@ where
 /// [`Exponential`]: probability::distribution::Exponential
 /// [`Binomial`]: probability::distribution::Binomial
 /// [`Categorical`]: probability::distribution::Categorical
-/// [`ContiguousCategoricalEntropyModel`]: crate::stream::model::ContiguousCategoricalEntropyModel
-/// [`NonContiguousCategoricalEncoderModel`]: crate::stream::model::NonContiguousCategoricalEncoderModel
-/// [`NonContiguousCategoricalDecoderModel`]: crate::stream::model::NonContiguousCategoricalDecoderModel
+/// [`ContiguousCategoricalEntropyModel`]:
+///     crate::stream::model::ContiguousCategoricalEntropyModel
+/// [`NonContiguousCategoricalEncoderModel`]:
+///     crate::stream::model::NonContiguousCategoricalEncoderModel
+/// [`NonContiguousCategoricalDecoderModel`]:
+///     crate::stream::model::NonContiguousCategoricalDecoderModel
 /// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
-/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
+/// [`LazyContiguousCategoricalEntropyModel`]:
+///     crate::stream::model::LazyContiguousCategoricalEntropyModel
+/// [`NonContiguousLookupDecoderModel`]:
+///     crate::stream::model::NonContiguousLookupDecoderModel
 #[derive(Debug, Clone, Copy)]
 pub struct LeakilyQuantizedDistribution<F, Symbol, Probability, D, const PRECISION: usize> {
     inner: D,

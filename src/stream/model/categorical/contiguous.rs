@@ -35,7 +35,8 @@ pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
 ///
 /// You will usually want to use this type through one of its type aliases,
 /// [`DefaultContiguousCategoricalEntropyModel`] or
-/// [`SmallContiguousCategoricalEntropyModel`], see [discussion of presets](crate::stream#presets).
+/// [`SmallContiguousCategoricalEntropyModel`], see [discussion of
+/// presets](crate::stream#presets).
 ///
 /// This entropy model implements both [`EncoderModel`] and [`DecoderModel`], which means
 /// that it can be used for both encoding and decoding with any of the stream coders
@@ -84,25 +85,31 @@ pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
 ///
 /// Use a `ContiguousCategoricalEntropyModel` for probabilistic models that can *only* be
 /// represented as an explicit probability table, and not by some more compact analytic
-/// expression. If you have a probability model that can be expressed by some analytical
-/// expression (e.g., a [`Binomial`](probability::distribution::Binomial) distribution),
-/// then use [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the
-/// same entropy model, in which case the explicitly tabulated representation of a
-/// categorical entropy model could improve runtime performance).
+/// expression, and if you want to encode several i.i.d. symbols with this model.
 ///
-/// Further, a `ContiguousCategoricalEntropyModel` can only represent probability
-/// distribution whose support (i.e., the set of symbols to which the model assigns a
-/// non-zero probability) is a contiguous range of integers starting at zero. If the support
-/// of your probability distribution has a more complicated structure (or if the `Symbol`
-/// type is not an integer type), then you can use a
-/// [`NonContiguousCategoricalEncoderModel`] or a [`NonContiguousCategoricalDecoderModel`],
-/// which are strictly more general than a `ContiguousCategoricalEntropyModel` but which
-/// have a larger memory footprint and slightly worse runtime performance.
-///
-/// If you want to *decode* lots of symbols with the same entropy model, and if reducing the
-/// `PRECISION` to a moderate value is acceptable to you, then you may want to consider
-/// using a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] instead for even better runtime performance (at the cost
-/// of a larger memory footprint and worse compression efficiency due to lower `PRECISION`).
+/// - If you have a probability model that can be expressed by some analytical expression
+///   (e.g., a [`Binomial`](probability::distribution::Binomial) distribution), then use
+///   [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the same
+///   entropy model, in which case the explicitly tabulated representation of a categorical
+///   entropy model could improve runtime performance).
+/// - If you want to encode only very few symbols with a given probability model, then use a
+///   [`LazyContiguousCategoricalEntropyModel`], which will be faster. This is relevant,
+///   e.g., in autoregressive models, where each individual model is often used for only
+///   exactly one symbol.
+/// - Further, a `ContiguousCategoricalEntropyModel` can only represent probability
+///   distribution whose support (i.e., the set of symbols to which the model assigns a
+///   non-zero probability) is a contiguous range of integers starting at zero. If the
+///   support of your probability distribution has a more complicated structure (or if the
+///   `Symbol` type is not an integer type), then you can use a
+///   [`NonContiguousCategoricalEncoderModel`] or a
+///   [`NonContiguousCategoricalDecoderModel`], which are strictly more general than a
+///   `ContiguousCategoricalEntropyModel` but which have a larger memory footprint and
+///   slightly worse runtime performance.
+/// - If you want to *decode* lots of symbols with the same entropy model, and if reducing
+///   the `PRECISION` to a moderate value is acceptable to you, then you may want to
+///   consider using a [`ContiguousLookupDecoderModel`] instead for even better runtime
+///   performance (at the cost of a larger memory footprint and worse compression efficiency
+///   due to lower `PRECISION`).
 ///
 /// # Computational Efficiency
 ///
@@ -110,12 +117,8 @@ pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
 /// `ContiguousCategoricalEntropyModel` has the following asymptotic costs:
 ///
 /// - creation:
-///   - runtime cost: `Θ(N)` when creating from fixed point probabilities, `Θ(N log(N))`
-///     when creating from floating point probabilities;
+///   - runtime cost: `Θ(N)` (when creating with the [`..._fast` constructor])
 ///   - memory footprint: `Θ(N)`;
-///   - both are cheaper by a constant factor than for a
-///     [`NonContiguousCategoricalEncoderModel`] or a
-///     [`NonContiguousCategoricalDecoderModel`].
 /// - encoding a symbol (calling [`EncoderModel::left_cumulative_and_probability`]):
 ///   - runtime cost: `Θ(1)` (cheaper than for [`NonContiguousCategoricalEncoderModel`]
 ///     since it compiles to a simiple array lookup rather than a `HashMap` lookup)
@@ -129,10 +132,16 @@ pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
 /// [`Encode`]: crate::Encode
 /// [`Decode`]: crate::Decode
 /// [`HashMap`]: std::hash::HashMap
-/// [`NonContiguousCategoricalEncoderModel`]: crate::stream::model::NonContiguousCategoricalEncoderModel
-/// [`NonContiguousCategoricalDecoderModel`]: crate::stream::model::NonContiguousCategoricalDecoderModel
+/// [`NonContiguousCategoricalEncoderModel`]:
+///     crate::stream::model::NonContiguousCategoricalEncoderModel
+/// [`NonContiguousCategoricalDecoderModel`]:
+///     crate::stream::model::NonContiguousCategoricalDecoderModel
 /// [`LeakyQuantizer`]: crate::stream::model::LeakyQuantizer
-/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
+/// [`ContiguousLookupDecoderModel`]:
+///     crate::stream::model::ContiguousLookupDecoderModel
+/// [`..._fast` constructor]: Self::from_floating_point_probabilities_fast
+/// [`LazyContiguousCategoricalEntropyModel`]:
+///     crate::stream::model::LazyContiguousCategoricalEntropyModel
 #[derive(Debug, Clone, Copy)]
 pub struct ContiguousCategoricalEntropyModel<Probability, Cdf, const PRECISION: usize> {
     /// Invariants:

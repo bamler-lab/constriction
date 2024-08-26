@@ -29,6 +29,79 @@ pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
 pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
     LazyContiguousCategoricalEntropyModel<u16, F, Pmf, 12>;
 
+/// Lazily constructed variant of [`ContiguousCategoricalEntropyModel`]
+///
+/// This type is similar to [`ContiguousCategoricalEntropyModel`], and data encoded with
+/// either of the two models can be decoded with either of the two models (provided the both
+/// models are constructed with constructors with the same name; see [compatibility table
+/// for `ContiguousCategoricalEntropyModel`]).
+///
+/// The difference between this type and `ContiguousCategoricalEntropyModel` is that this
+/// type is lazy, i.e., it delays most of the calculation necessary for approximating a
+/// given floating-point probability mass function into fixed-point precision to encoding or
+/// decoding time (and then only does the work necessary for the models that actually get
+/// encoded or decoded).
+///
+/// # When Should I Use This Type of Entropy Model?
+///
+/// - Use this type if you want to encode or decode only a few (or even just a single)
+///   symbol with the same categorical distribution.
+/// - Use [`ContiguousCategoricalEntropyModel`], [`NonContiguousCategoricalEncoderModel`],
+///   or [`NonContiguousCategoricalDecoderModel`] if you want to encode many symbols with
+///   the same categorical distribution (more precisely, if the number of encoded or decoded
+///   symbols is on the order of, or larger than, the square root of the size of the
+///   alphabet, i.e., the support of the model). These models precalculate the fixed-point
+///   approximation of the entire cumulative distribution function at model construction.
+/// - Use [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] (together
+///   with a small `Probability` data type, see [discussion of presets]) for decoding a
+///   *very* large number of i.i.d. symbols if runtime is more important to you than
+///   near-optimal bit rate.
+///
+/// # Computational Efficiency
+///
+/// For a probability distribution with a support of `N` symbols, a
+/// `LazyContiguousCategoricalEntropyModel` has the following asymptotic costs:
+///
+/// - creation:
+///   - runtime cost: `Θ(1)` if the normalization constant is known and provided, `O(N)`
+///     otherwise (but still faster by a constant factor than creating a
+///     [`ContiguousCategoricalEntropyModel`] from floating point probabilities);
+///   - memory footprint: `Θ(N)`;
+///   - both are cheaper by a constant factor than for a
+///     [`NonContiguousCategoricalEncoderModel`] or a
+///     [`NonContiguousCategoricalDecoderModel`].
+/// - encoding a symbol (calling [`EncoderModel::left_cumulative_and_probability`]):
+///   - runtime cost: `Θ(1)` (cheaper than for [`NonContiguousCategoricalEncoderModel`]
+///     since it compiles to a simiple array lookup rather than a `HashMap` lookup)
+///   - memory footprint: no heap allocations, constant stack space.
+/// - decoding a symbol (calling [`DecoderModel::quantile_function`]):
+///   - runtime cost: `Θ(log(N))` (both expected and worst-case; probably slightly cheaper
+///     than for [`NonContiguousCategoricalDecoderModel`] due to better memory locality)
+///   - memory footprint: no heap allocations, constant stack space.
+///
+/// # Why is there no `NonContiguous` variant of this model?
+///
+/// In contrast to `NonContiguousCategorical{En, De}coderModel`, there is no `NonContiguous`
+/// variant of this type. A `NonContiguous` variant of this type would offer no improvement
+/// in runtime performance compared to using this type
+/// (`LazyContiguousCategoricalEntropyModel`) together with a HashMap or Array (for encoding
+/// or decoding, respectively) to map between a non-contiguous alphabet and a contiguous set
+/// of indices. (This is different for `NonContiguousCategorical{En, De}coderModel`, which
+/// avoid an otherwise additional array lookup).
+///
+/// [`ContiguousCategoricalEntropyModel`]:
+///     crate::stream::model::ContiguousCategoricalEntropyModel
+/// [`NonContiguousCategoricalEncoderModel`]:
+///     crate::stream::model::NonContiguousCategoricalEncoderModel
+/// [`NonContiguousCategoricalDecoderModel`]:
+///     crate::stream::model::NonContiguousCategoricalDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]:
+///     crate::stream::model::NonContiguousLookupDecoderModel
+/// [compatibility table for `ContiguousCategoricalEntropyModel`]:
+///     crate::stream::model::ContiguousCategoricalEntropyModel#compatibility-table
+/// [discussion of presets]: crate::stream#presets
+
 #[derive(Debug, Clone, Copy)]
 pub struct LazyContiguousCategoricalEntropyModel<Probability, F, Pmf, const PRECISION: usize> {
     /// Invariants:
@@ -45,6 +118,15 @@ where
     F: FloatCore + core::iter::Sum<F>,
     Pmf: AsRef<[F]>,
 {
+    /// Lazily constructs a leaky distribution whose PMF approximates given probabilities.
+    ///
+    /// Equivalent (and binary compatible to) the [constructor for
+    /// `ContiguousCategoricalEntropyModel` with the same
+    /// name](crate::stream::model::ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast).
+    /// However, this constructor is lazy, i.e., it delays most of the calculation necessary
+    /// for approximating the given `probabilities` into fixed-point precision to encoding
+    /// or decoding time (and then only does the work necessary for the models that actually
+    /// get encoded or decoded). See [struct documentation](Self).
     #[allow(clippy::result_unit_err)]
     pub fn from_floating_point_probabilities_fast(
         probabilities: Pmf,
