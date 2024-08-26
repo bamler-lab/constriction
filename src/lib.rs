@@ -362,6 +362,7 @@ impl<FrontendError, BackendError> From<BackendError> for CoderError<FrontendErro
 
 impl<FrontendError> CoderError<FrontendError, Infallible> {
     fn into_frontend_error(self) -> FrontendError {
+        #[allow(unreachable_patterns)]
         match self {
             CoderError::Frontend(frontend_error) => frontend_error,
             CoderError::Backend(infallible) => match infallible {},
@@ -744,6 +745,7 @@ pub trait UnwrapInfallible<T> {
 impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
     #[inline(always)]
     fn unwrap_infallible(self) -> T {
+        #[allow(unreachable_patterns)]
         match self {
             Ok(x) => x,
             Err(infallible) => match infallible {},
@@ -753,8 +755,10 @@ impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
 
 impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
     fn unwrap_infallible(self) -> T {
+        #[allow(unreachable_patterns)]
         match self {
             Ok(x) => x,
+            #[allow(unreachable_patterns)]
             Err(infallible) => match infallible {
                 CoderError::Backend(infallible) => match infallible {},
                 CoderError::Frontend(infallible) => match infallible {},
