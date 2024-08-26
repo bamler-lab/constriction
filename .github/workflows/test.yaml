@@ -52,12 +52,12 @@ jobs:
       - name: Test in development mode
         env:
           RUSTFLAGS: "-D warnings"
-        run: cargo test
+        run: cargo test --all-targets
 
       - name: Test in release mode
         env:
           RUSTFLAGS: "-D warnings"
-        run: cargo test --release
+        run: cargo test --release --all-targets
 
   miri-test:
     name: no_std and miri
