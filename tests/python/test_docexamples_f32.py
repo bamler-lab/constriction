@@ -211,8 +211,8 @@ def test_stack1():
     means_part2 = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float32)
     stds_part2 = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float32)
     model_family_part2 = constriction.stream.model.QuantizedGaussian(-100, 100)
-    # `model_part2` is a *family* of Gaussian distributions that are quantized
-    # to bins of with 1 centered at the integers -100, -99, ..., 100. We could
+    # `model_family_part2` is a *family* of Gaussian distributions, quantized to
+    # bins of width 1 centered at the integers -100, -99, ..., 100. We could
     # have provided a fixed mean and standard deviation to the constructor of
     # `QuantizedGaussian` but we'll instead provide individual means and standard
     # deviations for each symbol when we encode and decode `message_part2` below.
@@ -435,8 +435,8 @@ def test_range_coding_mod():
     means_part2 = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float32)
     stds_part2 = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float32)
     model_family_part2 = constriction.stream.model.QuantizedGaussian(-100, 100)
-    # `model_part2` is a *family* of Gaussian distributions that are quantized
-    # to bins of with 1 centered at the integers -100, -99, ..., 100. We could
+    # `model_family_part2` is a *family* of Gaussian distributions, quantized to
+    # bins of width 1 centered at the integers -100, -99, ..., 100. We could
     # have provided a fixed mean and standard deviation to the constructor of
     # `QuantizedGaussian` but we'll instead provide individual means and standard
     # deviations for each symbol when we encode and decode `message_part2` below.
