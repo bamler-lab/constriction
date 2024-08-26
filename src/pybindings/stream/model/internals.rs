@@ -389,7 +389,73 @@ impl<'py, 'p> Inverse for SpecializedPythonDistribution<'py, 'p> {
     }
 }
 
-pub struct UnparameterizedCategoricalDistribution;
+pub struct UnparameterizedCategoricalDistribution {
+    lazy: bool,
+    /// `perfect` is ignored if `lazy` is `true`.
+    perfect: bool,
+}
+
+impl UnparameterizedCategoricalDistribution {
+    pub fn new(lazy: bool, perfect: bool) -> Self {
+        Self { lazy, perfect }
+    }
+}
+
+#[inline(always)]
+fn parameterize_categorical_specialized<'a, M: DefaultEntropyModel + 'a>(
+    probabilities: impl Iterator<Item = &'a [f64]>,
+    make_model: impl Fn(&'a [f64]) -> Result<M, ()>,
+    callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
+) -> PyResult<()> {
+    for probabilities in probabilities {
+        let model = make_model(probabilities).map_err(|()| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Probability distribution not normalizable (the array of probabilities\n\
+                might be empty, contain negative values or NaNs, or sum to infinity).",
+            )
+        })?;
+        callback(&model)?;
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn parameterize_categorical<'a>(
+    probabilities: impl Iterator<Item = &'a [f64]>,
+    lazy: bool,
+    perfect: bool,
+    callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
+) -> PyResult<()> {
+    if lazy {
+        parameterize_categorical_specialized(
+            probabilities,
+            |probabilities| {
+                DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                    probabilities,
+                    None,
+                )
+            },
+            callback,
+        )
+    } else if perfect {
+        parameterize_categorical_specialized(
+            probabilities,
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect,
+            callback,
+        )
+    } else {
+        parameterize_categorical_specialized(
+            probabilities,
+            |probabilities| {
+                DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                    probabilities,
+                    None,
+                )
+            },
+            callback,
+        )
+    }
+}
 
 impl Model for UnparameterizedCategoricalDistribution {
     fn parameterize(
@@ -415,39 +481,13 @@ impl Model for UnparameterizedCategoricalDistribution {
         let probabilities = params[0].extract::<PyReadonlyFloatArray2<'_>>()?;
         let probabilities = probabilities.cast_f64()?;
         let range = probabilities.shape()[1];
-        let probabilities = probabilities.as_slice()?;
+        let probabilities = probabilities.as_slice()?.chunks_exact(range);
 
         if reverse {
-            for probabilities in probabilities.chunks_exact(range).rev() {
-                let model =
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-                        probabilities,
-                    )
-                    .map_err(|()| {
-                        pyo3::exceptions::PyValueError::new_err(
-                        "Probability distribution not normalizable (the array of probabilities\n\
-                        might be empty, contain negative values or NaNs, or sum to infinity).",
-                    )
-                    })?;
-                callback(&model)?;
-            }
+            parameterize_categorical(probabilities.rev(), self.lazy, self.perfect, callback)
         } else {
-            for probabilities in probabilities.chunks_exact(range) {
-                let model =
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-                        probabilities,
-                    )
-                    .map_err(|()| {
-                        pyo3::exceptions::PyValueError::new_err(
-                        "Probability distribution not normalizable (the array of probabilities\n\
-                        might be empty, contain negative values or NaNs, or sum to infinity).",
-                    )
-                    })?;
-                callback(&model)?;
-            }
+            parameterize_categorical(probabilities, self.lazy, self.perfect, callback)
         }
-
-        Ok(())
     }
 
     fn len(&self, param0: &PyAny) -> PyResult<usize> {
@@ -525,9 +565,10 @@ impl Model for UnparameterizedLazyCategoricalDistribution {
     }
 }
 
-impl<Table> DefaultEntropyModel for LazyContiguousCategoricalEntropyModel<u32, f32, Table, 24>
+impl<F, Cdf> DefaultEntropyModel for DefaultLazyContiguousCategoricalEntropyModel<F, Cdf>
 where
-    Table: AsRef<[f32]>,
+    DefaultLazyContiguousCategoricalEntropyModel<F, Cdf>:
+        EncoderModel<24, Symbol = usize, Probability = u32> + DecoderModel<24>,
 {
     #[inline]
     fn left_cumulative_and_probability(&self, symbol: i32) -> Option<(u32, NonZeroU32)> {

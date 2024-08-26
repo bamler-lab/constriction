@@ -339,11 +339,39 @@ struct Categorical;
 #[pymethods]
 impl Categorical {
     #[new]
-    #[pyo3(text_signature = "(self, probabilities=None)")]
-    pub fn new(probabilities: Option<PyReadonlyFloatArray1<'_>>) -> PyResult<(Self, Model)> {
+    #[pyo3(text_signature = "(self, probabilities=None, lazy=False, perfect=True)")]
+    pub fn new(
+        probabilities: Option<PyReadonlyFloatArray1<'_>>,
+        lazy: Option<bool>,
+        perfect: Option<bool>,
+    ) -> PyResult<(Self, Model)> {
+        let lazy = lazy.unwrap_or(false);
+        // match (lazy, perfect) {
+        //     (false, Some(false)) => {
+        //         // categorical distribution with `_fast`
+        //         todo!()
+        //     }
+        //     (false,perfect){
+        //         // categorical distribution with `_perfect`
+        //         if perfect.is_some(){
+        //             // deprecation warning
+        //             todo!()
+        //         }
+        //         todo!()
+        //     }
+        //     (true, Some(true)) => {
+        //         // error
+        //         todo!()
+        //     }
+        //     (true, _) => {
+        //         // lazy categorical
+        //         todo!()
+        //     }
+        // }
         let model = match probabilities {
-            None => Arc::new(internals::UnparameterizedCategoricalDistribution)
-                as Arc<dyn internals::Model>,
+            None => Arc::new(internals::UnparameterizedCategoricalDistribution::new(
+                false, true,
+            )) as Arc<dyn internals::Model>,
             Some(probabilities) => {
                 let model =
                     DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
