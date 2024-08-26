@@ -1,12 +1,17 @@
 pub mod internals;
 
+use core::{
+    iter::Sum,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use std::prelude::v1::*;
 
 use alloc::sync::Arc;
+use num_traits::{float::FloatCore, AsPrimitive};
 use pyo3::prelude::*;
 
 use crate::{
-    pybindings::PyReadonlyFloatArray1,
+    pybindings::{PyReadonlyFloatArray, PyReadonlyFloatArray1},
     stream::model::{
         DefaultContiguousCategoricalEntropyModel, DefaultLazyContiguousCategoricalEntropyModel,
         DefaultLeakyQuantizer, UniformModel,
@@ -336,54 +341,92 @@ impl ScipyModel {
 #[derive(Debug)]
 struct Categorical;
 
+#[inline(always)]
+fn parameterize_categorical<F>(
+    probabilities: &[F],
+    lazy: bool,
+    perfect: bool,
+) -> Result<Arc<dyn internals::Model>, ()>
+where
+    F: FloatCore + Sum<F> + AsPrimitive<u32> + Into<f64> + Send + Sync,
+    u32: AsPrimitive<F>,
+    usize: AsPrimitive<F>,
+{
+    if lazy {
+        let model =
+            DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                probabilities.to_vec(),
+                None,
+            )?;
+        Ok(Arc::new(model) as Arc<dyn internals::Model>)
+    } else if perfect {
+        let model =
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                probabilities,
+            )?;
+        Ok(Arc::new(model) as Arc<dyn internals::Model>)
+    } else {
+        let model =
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                probabilities,
+                None,
+            )?;
+        Ok(Arc::new(model) as Arc<dyn internals::Model>)
+    }
+}
+
 #[pymethods]
 impl Categorical {
     #[new]
-    #[pyo3(text_signature = "(self, probabilities=None, lazy=False, perfect=True)")]
+    #[pyo3(text_signature = "(self, probabilities=None, lazy=False, perfect)")]
     pub fn new(
+        py: Python<'_>,
         probabilities: Option<PyReadonlyFloatArray1<'_>>,
         lazy: Option<bool>,
         perfect: Option<bool>,
     ) -> PyResult<(Self, Model)> {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+
         let lazy = lazy.unwrap_or(false);
-        // match (lazy, perfect) {
-        //     (false, Some(false)) => {
-        //         // categorical distribution with `_fast`
-        //         todo!()
-        //     }
-        //     (false,perfect){
-        //         // categorical distribution with `_perfect`
-        //         if perfect.is_some(){
-        //             // deprecation warning
-        //             todo!()
-        //         }
-        //         todo!()
-        //     }
-        //     (true, Some(true)) => {
-        //         // error
-        //         todo!()
-        //     }
-        //     (true, _) => {
-        //         // lazy categorical
-        //         todo!()
-        //     }
-        // }
+        if !lazy && perfect.is_none() && !WARNED.swap(true, Ordering::AcqRel) {
+            let _ = py.run(
+                "print('WARNING: Argument `perfect` was not specified for `Categorical` entropy model with `lazy=False`.\\n\
+                     \x20        It currently defaults to `perfect=True` for backward compatibility, but this default\\n\
+                     \x20        will change to `perfect=False` in constriction version 0.5. To suppress this warning,\\n\
+                     \x20        explicitly set `perfect=False` (recommended for most new use cases) or explicitly set\\n\
+                     \x20        `perfect=True` (if you need backward compatibility with constriction <= 0.3.5).')",
+                None,
+                None
+            );
+        }
+
+        let perfect = perfect.unwrap_or(!lazy);
+        if lazy && perfect {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Both arguments `lazy` and `perfect` cannot be set to `True` at the same time.\n\
+                Lazy categorical entropy models cannot perfectly quantize probabilities.",
+            ));
+        }
+
         let model = match probabilities {
             None => Arc::new(internals::UnparameterizedCategoricalDistribution::new(
-                false, true,
+                lazy, perfect,
             )) as Arc<dyn internals::Model>,
             Some(probabilities) => {
-                let model =
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-                        probabilities.cast_f64()?.as_slice()?,
-                    )
-                    .map_err(|()| {
-                        pyo3::exceptions::PyValueError::new_err(
-                            "Probability distribution not normalizable (the array of probabilities\n\
+                let model = match probabilities {
+                    PyReadonlyFloatArray::F32(probabilities) => {
+                        parameterize_categorical(probabilities.as_slice()?, lazy, perfect)
+                    }
+                    PyReadonlyFloatArray::F64(probabilities) => {
+                        parameterize_categorical(probabilities.as_slice()?, lazy, perfect)
+                    }
+                };
+                model.map_err(|()| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Probability distribution not normalizable (the array of probabilities\n\
                             might be empty, contain negative values or NaNs, or sum to infinity).",
-                        )
-                    })?;
-                Arc::new(model) as Arc<dyn internals::Model>
+                    )
+                })?
             }
         };
 
@@ -848,25 +891,58 @@ struct Bernoulli;
 #[pymethods]
 impl Bernoulli {
     #[new]
-    #[pyo3(text_signature = "(self, p=None)")]
-    pub fn new(p: Option<f64>) -> PyResult<(Self, Model)> {
-        let model = match p {
-            None => {
+    #[pyo3(text_signature = "(self, p=None, perfect)")]
+    pub fn new(py: Python<'_>, p: Option<f64>, perfect: Option<bool>) -> PyResult<(Self, Model)> {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+
+        if perfect.is_none() && !WARNED.swap(true, Ordering::AcqRel) {
+            let _ = py.run(
+                "print('WARNING: Argument `perfect` was not specified for `Bernoulli` distribution.\\n\
+                     \x20        It currently defaults to `perfect=True` for backward compatibility, but this default\\n\
+                     \x20        will change to `perfect=False` in constriction version 0.5. To suppress this warning,\\n\
+                     \x20        explicitly set `perfect=False` (recommended for most new use cases) or explicitly set\\n\
+                     \x20        `perfect=True` (if you need backward compatibility with constriction <= 0.3.5).')",
+                None,
+                None
+            );
+        }
+
+        let model = match (p, perfect) {
+            (None, Some(false)) => {
                 let model = internals::ParameterizableModel::new(move |(p,): (f64,)| {
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&[
-                        1.0 - p,
-                        p,
-                    ])
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                        &[1.0 - p, p],
+                        None
+                    )
                     .expect("`p` must be >= 0.0 and <= 1.0.")
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
-            Some(p) => {
+            (None, _) => {
+                let model = internals::ParameterizableModel::new(move |(p,): (f64,)| {
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                        &[1.0 - p, p]
+                    )
+                    .expect("`p` must be >= 0.0 and <= 1.0.")
+                });
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+            (Some(p), Some(false)) => {
                 let model =
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&[
-                        1.0 - p,
-                        p,
-                    ])
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                        &[1.0 - p, p],
+                        None
+                    )
+                    .map_err(|()| {
+                        pyo3::exceptions::PyValueError::new_err("`p` must be >= 0.0 and <= 1.0.")
+                    })?;
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+            (Some(p), _) => {
+                let model =
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                        &[1.0 - p, p]
+                    )
                     .map_err(|()| {
                         pyo3::exceptions::PyValueError::new_err("`p` must be >= 0.0 and <= 1.0.")
                     })?;

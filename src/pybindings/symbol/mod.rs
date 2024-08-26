@@ -81,7 +81,7 @@ impl StackCoder {
             None => DefaultStackCoder::new(),
             Some(compressed) => {
                 DefaultStackCoder::from_compressed(compressed.to_vec()?).map_err(|_| {
-                    pyo3::exceptions::PyAttributeError::new_err(
+                    pyo3::exceptions::PyValueError::new_err(
                         "Compressed data for a stack must not end in a zero word.",
                     )
                 })?

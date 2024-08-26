@@ -276,7 +276,7 @@ impl RangeEncoder {
         // models that take no range.
         if let Ok(symbol) = symbols.extract::<i32>() {
             if !params.is_empty() {
-                return Err(pyo3::exceptions::PyAttributeError::new_err(
+                return Err(pyo3::exceptions::PyValueError::new_err(
                     "To encode a single symbol, use a concrete model, i.e., pass the\n\
                     model parameters directly to the constructor of the model and not to the\n\
                     `encode` method of the entropy coder. Delaying the specification of model\n\
@@ -306,7 +306,7 @@ impl RangeEncoder {
             })?;
         } else {
             if symbols.len() != model.0.len(&params[0])? {
-                return Err(pyo3::exceptions::PyAttributeError::new_err(
+                return Err(pyo3::exceptions::PyValueError::new_err(
                     "`symbols` argument has wrong length.",
                 ));
             }
@@ -397,9 +397,9 @@ impl RangeDecoder {
     pub fn seek(&mut self, position: usize, state: (u64, u64)) -> PyResult<()> {
         let (lower, range) = state;
         let state = RangeCoderState::new(lower, range)
-            .map_err(|()| pyo3::exceptions::PyAttributeError::new_err("Invalid coder state."))?;
+            .map_err(|()| pyo3::exceptions::PyValueError::new_err("Invalid coder state."))?;
         self.inner.seek((position, state)).map_err(|()| {
-            pyo3::exceptions::PyAttributeError::new_err("Tried to seek past end of stream.")
+            pyo3::exceptions::PyValueError::new_err("Tried to seek past end of stream.")
         })
     }
 

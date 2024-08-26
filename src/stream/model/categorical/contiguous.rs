@@ -197,7 +197,6 @@ impl<Probability: BitArray, const PRECISION: usize>
     where
         F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
         Probability: BitArray + AsPrimitive<usize>,
-        f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability> + AsPrimitive<F>,
     {
         let cdf = fast_quantized_cdf::<_, _, PRECISION>(probabilities, normalization)?;
@@ -689,8 +688,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::NonZeroBitArray;
-
     use super::super::super::tests::{test_entropy_model, verify_iterable_entropy_model};
     use super::*;
 

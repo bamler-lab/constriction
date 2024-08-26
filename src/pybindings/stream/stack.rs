@@ -212,7 +212,7 @@ impl AnsCoder {
     #[pyo3(text_signature = "(self, position, state)")]
     pub fn seek(&mut self, position: usize, state: u64) -> PyResult<()> {
         self.inner.seek((position, state)).map_err(|()| {
-            pyo3::exceptions::PyAttributeError::new_err(
+            pyo3::exceptions::PyValueError::new_err(
                 "Tried to seek past end of stream. Note: in an ANS coder,\n\
                 both decoding and seeking *consume* compressed data. The Python API of\n\
                 `constriction`'s ANS coder currently does not support seeking backward.",
@@ -448,7 +448,7 @@ impl AnsCoder {
     ) -> PyResult<()> {
         if let Ok(symbol) = symbols.extract::<i32>() {
             if !params.is_empty() {
-                return Err(pyo3::exceptions::PyAttributeError::new_err(
+                return Err(pyo3::exceptions::PyValueError::new_err(
                     "To encode a single symbol, use a concrete model, i.e., pass the\n\
                     model parameters directly to the constructor of the model and not to the\n\
                     `encode` method of the entropy coder. Delaying the specification of model\n\
@@ -478,7 +478,7 @@ impl AnsCoder {
             })?;
         } else {
             if symbols.len() != model.0.len(&params[0])? {
-                return Err(pyo3::exceptions::PyAttributeError::new_err(
+                return Err(pyo3::exceptions::PyValueError::new_err(
                     "`symbols` argument has wrong length.",
                 ));
             }

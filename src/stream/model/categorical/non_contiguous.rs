@@ -194,7 +194,6 @@ where
     where
         F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
         Probability: AsPrimitive<usize>,
-        f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability> + AsPrimitive<F>,
     {
         let cdf = fast_quantized_cdf::<Probability, F, PRECISION>(probabilities, normalization)?;
@@ -761,7 +760,6 @@ where
     where
         F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
         Probability: AsPrimitive<usize>,
-        f64: AsPrimitive<Probability>,
         usize: AsPrimitive<Probability> + AsPrimitive<F>,
     {
         let cdf = fast_quantized_cdf::<Probability, F, PRECISION>(probabilities, normalization)?;

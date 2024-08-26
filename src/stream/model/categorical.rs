@@ -20,7 +20,6 @@ fn fast_quantized_cdf<Probability, F, const PRECISION: usize>(
 where
     F: FloatCore + core::iter::Sum<F> + AsPrimitive<Probability>,
     Probability: BitArray + AsPrimitive<usize>,
-    f64: AsPrimitive<Probability>,
     usize: AsPrimitive<Probability> + AsPrimitive<F>,
 {
     generic_static_asserts!(
