@@ -441,7 +441,7 @@ where
         parameterize_categorical_with_model_builder(
             probabilities,
             |probabilities| {
-                DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
                     probabilities,
                     None,
                 )
@@ -573,7 +573,7 @@ impl Model for UnparameterizedLazyCategoricalDistribution {
         if reverse {
             for probabilities in probabilities.chunks_exact(range).rev() {
                 let model =
-                    DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                    DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
                         probabilities,
                         None,
                     ).unwrap();
@@ -582,7 +582,7 @@ impl Model for UnparameterizedLazyCategoricalDistribution {
         } else {
             for probabilities in probabilities.chunks_exact(range) {
                 let model =
-                    DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                    DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
                         probabilities,
                         None,
                     ).unwrap();

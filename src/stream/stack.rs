@@ -138,17 +138,18 @@ where
 /// many typical use cases.
 pub type DefaultAnsCoder<Backend = Vec<u32>> = AnsCoder<u32, u64, Backend>;
 
-/// Type alias for an [`AnsCoder`] for use with a [`LookupDecoderModel`]
+/// Type alias for an [`AnsCoder`] for use with a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`]
 ///
 /// This encoder has a smaller word size and internal state than [`AnsCoder`]. It is
-/// optimized for use with a [`LookupDecoderModel`].
+/// optimized for use with a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`].
 ///
 /// # Examples
 ///
-/// See [`SmallContiguousLookupDecoderModel`].
+/// See [`ContiguousLookupDecoderModel`].
 ///
-/// [`LookupDecoderModel`]: super::model::LookupDecoderModel
-/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
 pub type SmallAnsCoder<Backend = Vec<u16>> = AnsCoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> Debug for AnsCoder<Word, State, Backend>

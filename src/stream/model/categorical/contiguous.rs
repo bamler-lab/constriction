@@ -101,7 +101,7 @@ pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
 ///
 /// If you want to *decode* lots of symbols with the same entropy model, and if reducing the
 /// `PRECISION` to a moderate value is acceptable to you, then you may want to consider
-/// using a [`LookupDecoderModel`] instead for even better runtime performance (at the cost
+/// using a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] instead for even better runtime performance (at the cost
 /// of a larger memory footprint and worse compression efficiency due to lower `PRECISION`).
 ///
 /// # Computational Efficiency
@@ -129,6 +129,10 @@ pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
 /// [`Encode`]: crate::Encode
 /// [`Decode`]: crate::Decode
 /// [`HashMap`]: std::hash::HashMap
+/// [`NonContiguousCategoricalEncoderModel`]: crate::stream::model::NonContiguousCategoricalEncoderModel
+/// [`NonContiguousCategoricalDecoderModel`]: crate::stream::model::NonContiguousCategoricalDecoderModel
+/// [`LeakyQuantizer`]: crate::stream::model::LeakyQuantizer
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
 #[derive(Debug, Clone, Copy)]
 pub struct ContiguousCategoricalEntropyModel<Probability, Cdf, const PRECISION: usize> {
     /// Invariants:
@@ -208,7 +212,12 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// Constructs a leaky distribution whose PMF approximates given probabilities as well
     /// as possible within a `PRECISION`-bit fixed-point representation. The returned
     /// distribution will be defined for symbols of type `usize` from the range
-    /// `0..probabilities.len()`.
+    /// `0..probabilities.len()`. Every symbol will have a strictly nonzero probability,
+    /// even if its corresponding entry in the provided argument `probabilities` is smaller
+    /// than the smallest nonzero probability that can be represented with `PRECISION` bits
+    /// (including if the provided probability is exactly zero). This guarantee ensures that
+    /// every symbol in the range `0..probabilities.len()` can be encoded with the resulting
+    /// model.
     ///
     /// # Comparison to `from_floating_point_probabilities_fast`
     ///
@@ -236,9 +245,15 @@ impl<Probability: BitArray, const PRECISION: usize>
     ///   read in every time the data gets decoded); or
     /// - you need backward compatibility with constriction <= version 0.3.5.
     ///
+    /// If you're unsure whether you should use the `..._fast` or the `..._perfect`
+    /// constructor, run both and then call
+    /// [`cross_entropy_base2`](crate::stream::model::IterableEntropyModel::cross_entropy_base2)
+    /// on both (giving it the same floating point `probabilities` as the two constructors).
+    /// The cross entropy of each model is the expected bit rate per symbol that each model
+    /// will incur. Unless the difference between the two is large enough for you to care,
+    /// use the `..._fast` constructor.
+    ///
     /// # Details
-    ///
-    ///
     ///
     /// The argument `probabilities` is a slice of floating point values (`F` is typically
     /// `f64` or `f32`). All entries must be nonnegative, and at least one entry has to be
@@ -248,22 +263,12 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// errors).
     ///
     /// The probability mass function of the returned distribution will approximate the
-    /// provided probabilities as well as possible, subject to the following constraints:
-    /// - probabilities are represented in fixed point arithmetic, where the const generic
-    ///   parameter `PRECISION` controls the number of bits of precision. This typically
-    ///   introduces rounding errors;
-    /// - despite the possibility of rounding errors, the returned probability distribution
-    ///   will be exactly normalized; and
-    /// - each symbol in the support `0..probabilities.len()` gets assigned a strictly
-    ///   nonzero probability, even if the provided probability for the symbol is zero or
-    ///   below the threshold that can be resolved in fixed point arithmetic with
-    ///   `PRECISION` bits. We refer to this property as the resulting distribution being
-    ///   "leaky". The leakiness guarantees that all symbols within the support can be
-    ///   encoded when this distribution is used as an entropy model.
-    ///
-    /// More precisely, the resulting probability distribution minimizes the cross entropy
-    /// from the provided (floating point) to the resulting (fixed point) probabilities
-    /// subject to the above three constraints.
+    /// provided probabilities as well as possible within the constraints of (i)
+    /// `PRECISION`-bit fixed point precision, (ii) every symbol getting assigned a nonzero
+    /// probability, and (ii) the resulting model being *exactly* invertible. More
+    /// precisely, the resulting probability distribution minimizes the cross entropy from
+    /// the provided (floating point) to the resulting (fixed point) probabilities subject
+    /// to constraints (i)-(iii).
     ///
     /// # Error Handling
     ///
@@ -309,33 +314,33 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// # Upgrade Instructions
     ///
     /// Most *new* use cases should call [`from_floating_point_probabilities_fast`] instead.
-    /// Using the `..._fast` constructor may lead to very slightly larger bit rates, but it
-    /// runs considerably faster.
+    /// Using that constructor (abbreviated as `..._fast` in the following) may lead to very
+    /// slightly larger bit rates, but it runs considerably faster.
     ///
-    /// However, note that [`from_floating_point_probabilities_fast`] breaks binary
-    /// compatibility with `constriction` version <= 0.3.5. If you need to be able to
-    /// exchange binary compressed data with a program that uses a categorical entropy model
-    /// from `constriction` version <= 0.3.5, then call
-    /// [`from_floating_point_probabilities_perfect`] instead. Another reason for using the
-    /// `..._perfect` constructor could be if compression performance is much more important
-    /// to you than runtime performance.
+    /// However, note that the `..._fast` constructor breaks binary compatibility with
+    /// `constriction` version <= 0.3.5. If you need to be able to exchange binary
+    /// compressed data with a program that uses a categorical entropy model from
+    /// `constriction` version <= 0.3.5, then call
+    /// [`from_floating_point_probabilities_perfect`] instead (`..._perfect` for short).
+    /// Another reason for using the `..._perfect` constructor could be if compression
+    /// performance is *much* more important to you than runtime performance. See
+    /// documentation of [`from_floating_point_probabilities_perfect`] for more information.
     ///
     /// # Compatibility Table
     ///
-    /// This deprecated constructor currently delegates to
-    /// [`from_floating_point_probabilities_perfect`] (referred to as `..._perfect` in the
-    /// table below).
-    ///
-    /// | Constructor used for compression → <br> ↓ Constructor used for decompression ↓ | This one |  `..._perfect` | `..._fast` |
-    /// | ----------------: | ------------ | ------------ | ------------ |
-    /// | **This one**      | compatible   | compatible   | incompatible |
-    /// | **`..._perfect`** | compatible   | compatible   | incompatible |
-    /// | **`..._fast`**    | incompatible | incompatible | compatible   |
+    /// | constructor used for encoding → <br> ↓ constructor used for decoding ↓ | legacy <br> (this one) |  [`..._perfect`] | [`..._fast`] <br> (including [lazy])|
+    /// | ----------------------------------: | --------------- | --------------- | --------------- |
+    /// | **legacy (this one)**               | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._perfect`]**                 | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._fast`] (including [lazy])** | ❌ incompatible | ❌ incompatible | ✅ compatible   |
     ///
     /// [`from_floating_point_probabilities_perfect`]:
     ///     Self::from_floating_point_probabilities_perfect
+    /// [`..._perfect`]: Self::from_floating_point_probabilities_perfect
     /// [`from_floating_point_probabilities_fast`]:
     ///     Self::from_floating_point_probabilities_fast
+    /// [`..._fast`]: Self::from_floating_point_probabilities_fast
+    /// [lazy]: crate::stream::model::LazyContiguousCategoricalEntropyModel
     #[deprecated(
         since = "0.4.0",
         note = "Please use `from_floating_point_probabilities_fast` or \
@@ -527,8 +532,8 @@ where
     /// *view* instead may be slightly more efficient because it avoids one level of
     /// dereferencing.
     ///
-    /// [`Encode::encode_iid_symbols`]: super::Encode::encode_iid_symbols
-    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
+    /// [`Encode::encode_iid_symbols`]: crate::stream::Encode::encode_iid_symbols
+    /// [`Decode::decode_iid_symbols`]: crate::stream::Decode::decode_iid_symbols
     #[inline]
     pub fn as_view(
         &self,
@@ -539,7 +544,7 @@ where
         }
     }
 
-    /// Creates a [`LookupDecoderModel`] for efficient decoding of i.i.d. data
+    /// Creates a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] for efficient decoding of i.i.d. data
     ///
     /// While a `ContiguousCategoricalEntropyModel` can already be used for decoding (since
     /// it implements [`DecoderModel`]), you may prefer converting it to a
@@ -559,6 +564,7 @@ where
     ///   or a handful of symbols then you'll end up paying more than you gain.
     ///
     /// [preset]: crate::stream#presets
+    /// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
     #[inline(always)]
     pub fn to_lookup_decoder_model(
         &self,

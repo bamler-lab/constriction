@@ -123,7 +123,7 @@ where
     ///
     /// # Example
     ///
-    /// See [`SmallContiguousLookupDecoderModel`].
+    /// See [`ContiguousLookupDecoderModel`].
     #[allow(clippy::result_unit_err)]
     pub fn from_nonzero_fixed_point_probabilities_contiguous<I>(
         probabilities: I,
@@ -183,7 +183,7 @@ where
     /// `Copy`), but passing a *view* instead may be slightly more efficient because it
     /// avoids one level of dereferencing.
     ///
-    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
+    /// [`Decode::decode_iid_symbols`]: crate::stream::Decode::decode_iid_symbols
     pub fn as_view(
         &self,
     ) -> ContiguousLookupDecoderModel<Probability, &[Probability], &[Probability], PRECISION> {

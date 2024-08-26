@@ -46,7 +46,7 @@ where
     Pmf: AsRef<[F]>,
 {
     #[allow(clippy::result_unit_err)]
-    pub fn from_floating_point_probabilities(
+    pub fn from_floating_point_probabilities_fast(
         probabilities: Pmf,
         normalization: Option<F>,
     ) -> Result<Self, ()>
@@ -111,8 +111,9 @@ where
     /// views to the same `LazyContiguousCategoricalEntropyModel` then you'd likely be better off
     /// using a [`ContiguousCategoricalEntropyModel`] instead.
     ///
-    /// [`Encode::encode_iid_symbols`]: super::Encode::encode_iid_symbols
-    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
+    /// [`Encode::encode_iid_symbols`]: crate::stream::Encode::encode_iid_symbols
+    /// [`Decode::decode_iid_symbols`]: crate::stream::Decode::decode_iid_symbols
+    /// [`ContiguousCategoricalEntropyModel`]: crate::stream::model::ContiguousCategoricalEntropyModel
     #[inline]
     pub fn as_view(
         &self,
@@ -265,7 +266,7 @@ mod tests {
 
         const PRECISION: usize = 32;
         let model =
-            LazyContiguousCategoricalEntropyModel::<u32, _,_, PRECISION>::from_floating_point_probabilities(
+            LazyContiguousCategoricalEntropyModel::<u32, _,_, PRECISION>::from_floating_point_probabilities_fast(
                 &unnormalized_probs,
                 None,
             ).unwrap();

@@ -233,7 +233,7 @@ where
     /// `Copy`), but passing a *view* instead may be slightly more efficient because it
     /// avoids one level of dereferencing.
     ///
-    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
+    /// [`Decode::decode_iid_symbols`]: crate::stream::Decode::decode_iid_symbols
     pub fn as_view(
         &self,
     ) -> NonContiguousLookupDecoderModel<
@@ -254,7 +254,7 @@ where
     ///
     /// # See also
     ///
-    /// - [`into_contiguous_categorical`](Self::into_contiguous_categorical)
+    /// - [`into_non_contiguous_categorical`](Self::into_non_contiguous_categorical)
     pub fn as_non_contiguous_categorical(
         &self,
     ) -> NonContiguousCategoricalDecoderModel<
@@ -276,7 +276,7 @@ where
     ///
     /// # See also
     ///
-    /// - [`as_contiguous_categorical`](Self::as_contiguous_categorical)
+    /// - [`as_non_contiguous_categorical`](Self::as_non_contiguous_categorical)
     pub fn into_non_contiguous_categorical(
         self,
     ) -> NonContiguousCategoricalDecoderModel<Symbol, Probability, Cdf, PRECISION> {

@@ -41,14 +41,14 @@
 //!   *decoding* of i.i.d. data; these types build up a lookup table with `2^PRECISION`
 //!   entries (one entry per
 //!   possible *quantile*) and are therefore only recommended to be used with relatively
-//!   small `PRECISION`. See [`SmallContiguousLookupDecoderModel`] and
-//!   [`SmallNonContiguousLookupDecoderModel`].
+//!   small `PRECISION`. See [`ContiguousLookupDecoderModel`] and
+//!   [`NonContiguousLookupDecoderModel`].
 //!
 //! # Examples
 //!
 //! See [`LeakyQuantizer`](LeakyQuantizer#examples), [`ContiguousCategoricalEntropyModel`],
 //! [`NonContiguousCategoricalEncoderModel`]. [`NonContiguousCategoricalDecoderModel`], and
-//! [`LookupDecoderModel`].
+//! [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`].
 //!
 //! TODO: direct links to "Examples" sections.
 //!
@@ -199,7 +199,8 @@ use crate::{BitArray, NonZeroBitArray};
 ///   e.g., [`Encode::encode_iid_symbols`](super::Encode::encode_iid_symbols)). This will
 ///   allow users to call your function either with a reference to an entropy model (all
 ///   shared references implement `Copy`), or with some cheaply copyable entropy model such
-///   as a view to a lookup model (see [`LookupDecoderModel::as_view`]).
+///   as a view to a lookup model (see [`ContiguousLookupDecoderModel::as_view`] or
+///   [`NonContiguousLookupDecoderModel::as_view`]).
 ///
 /// # See Also
 ///
@@ -491,7 +492,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// This method may be used, e.g., to export the model into a serializable format. It is
     /// also used internally by constructors that create a different but equivalent
     /// representation of the same entropy model (e.g., to construct a
-    /// [`LookupDecoderModel`] from some `EncoderModel`).
+    /// [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] from some `EncoderModel`).
     ///
     /// # Example
     ///
@@ -795,7 +796,7 @@ pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISI
     /// Creates a [`DecoderModel`] from this `EntropyModel`
     ///
     /// This is a fallback method that should only be used if no more specialized
-    /// conversions are available. It generates a [`LookupDecoderModel`] that makes no
+    /// conversions are available. It generates a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] that makes no
     /// assumption about contiguity of the support. Thus, before calling this method first
     /// check if the `Self` type has some inherent method with a name like
     /// `to_lookup_decoder_model`. If it does, that method probably returns a

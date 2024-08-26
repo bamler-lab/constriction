@@ -99,7 +99,7 @@ pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbo
 ///
 /// If you want to *decode* lots of symbols with the same entropy model, and if reducing the
 /// `PRECISION` to a moderate value is acceptable to you, then you may want to consider
-/// using a [`LookupDecoderModel`] instead for even better runtime performance (at the cost
+/// using a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] instead for even better runtime performance (at the cost
 /// of a larger memory footprint and worse compression efficiency due to lower `PRECISION`).
 ///
 /// # Computational Efficiency
@@ -122,6 +122,10 @@ pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbo
 /// [`Encode`]: crate::Encode
 /// [`Decode`]: crate::Decode
 /// [`HashMap`]: std::hash::HashMap
+/// [`ContiguousCategoricalEntropyModel`]: crate::stream::model::ContiguousCategoricalEntropyModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
+/// [`LeakyQuantizer`]: crate::stream::model::LeakyQuantizer
 #[derive(Debug, Clone, Copy)]
 pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Cdf, const PRECISION: usize> {
     /// Invariants:
@@ -141,50 +145,25 @@ impl<Symbol, Probability: BitArray, const PRECISION: usize>
 where
     Symbol: Clone,
 {
-    /// Constructs a leaky distribution over the provided `symbols` whose PMF approximates
-    /// given `probabilities`.
+    /// Constructs a leaky distribution (for decoding) over the provided `symbols` whose PMF
+    /// approximates given `probabilities`.
     ///
-    /// The argument `probabilities` is a slice of floating point values (`F` is
-    /// typically `f64` or `f32`). All entries must be nonnegative and at least one
-    /// entry has to be nonzero. The entries do not necessarily need to add up to
-    /// one (the resulting distribution will automatically get normalized and an
-    /// overall scaling of all entries of `probabilities` does not affect the
-    /// result, up to effects due to rounding errors).
+    /// Semantics are analogous to
+    /// [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast`],
+    /// except that this constructor has an additional `symbols` argument to provide an
+    /// iterator over the symbols in the alphabet (which has to yield exactly
+    /// `probabilities.len()` symbols).
     ///
-    /// The probability mass function of the returned distribution will approximate
-    /// the provided probabilities as well as possible, subject to the following
-    /// constraints:
-    /// - probabilities are represented in fixed point arithmetic, where the const
-    ///   generic parameter `PRECISION` controls the number of bits of precision.
-    ///   This typically introduces rounding errors;
-    /// - despite the possibility of rounding errors, the returned probability
-    ///   distribution will be exactly normalized; and
-    /// - each symbol gets assigned a strictly nonzero probability, even if the provided
-    ///   probability for the symbol is zero or below the threshold that can be resolved in
-    ///   fixed point arithmetic with `PRECISION` bits. We refer to this property as the
-    ///   resulting distribution being "leaky". The leakiness guarantees that a decoder can
-    ///   in principle decode any of the provided symbols (if given appropriate compressed
-    ///   data).
+    /// # See also
     ///
-    /// More precisely, the resulting probability distribution minimizes the cross
-    /// entropy from the provided (floating point) to the resulting (fixed point)
-    /// probabilities subject to the above three constraints.
+    /// - [`from_symbols_and_floating_point_probabilities_perfect`], which can be
+    ///   considerably slower but typically approximates the provided `probabilities` *very
+    ///   slightly* better.
     ///
-    /// # Error Handling
-    ///
-    /// Returns an error if `symbols.len() != probabilities.len()`.
-    ///
-    /// Also returns an error if the provided probability distribution cannot be normalized,
-    /// either because `probabilities` is of length zero, or because one of its entries is
-    /// negative with a nonzero magnitude, or because the sum of its elements is zero,
-    /// infinite, or NaN.
-    ///
-    /// Also returns an error if the probability distribution is degenerate, i.e.,
-    /// if `probabilities` has only a single element, because degenerate probability
-    /// distributions currently cannot be represented.
-    ///
-    /// TODO: should also return an error if support is too large to support leaky
-    /// distribution
+    /// [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast`]:
+    ///     crate::stream::model::ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast
+    /// [`from_symbols_and_floating_point_probabilities_perfect`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_perfect
     #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities_fast<F>(
         symbols: impl IntoIterator<Item = Symbol>,
@@ -206,6 +185,22 @@ where
         Ok(Self::from_extended_cdf(extended_cdf))
     }
 
+    /// Slower variant of [`from_symbols_and_floating_point_probabilities_fast`].
+    ///
+    /// Similar to [`from_symbols_and_floating_point_probabilities_fast`], but the resulting
+    /// (fixed-point precision) model typically approximates the provided floating point
+    /// `probabilities` *very slightly* better. Only recommended if compression performance
+    /// is *much* more important to you than runtime as this constructor can be
+    /// significantly slower.
+    ///
+    /// See [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect`]
+    /// for a detailed comparison between `..._fast` and `..._perfect` constructors of
+    /// categorical entropy models.
+    ///
+    /// [`from_symbols_and_floating_point_probabilities_fast`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_fast
+    /// [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect`]:
+    ///     crate::stream::model::ContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect
     #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities_perfect<F>(
         symbols: impl IntoIterator<Item = Symbol>,
@@ -225,6 +220,42 @@ where
         )
     }
 
+    /// Deprecated constructor.
+    ///
+    /// This constructor has been deprecated in constriction version 0.4.0, and it will be
+    /// removed in constriction version 0.5.0.
+    ///
+    /// # Upgrade Instructions
+    ///
+    /// Most *new* use cases should call
+    /// [`from_symbols_and_floating_point_probabilities_fast`] instead. Using that
+    /// constructor (abbreviated as `..._fast` in the following) may lead to very slightly
+    /// larger bit rates, but it runs considerably faster.
+    ///
+    /// However, note that the `..._fast` constructor breaks binary compatibility with
+    /// `constriction` version <= 0.3.5. If you need to be able to exchange binary
+    /// compressed data with a program that uses a categorical entropy model from
+    /// `constriction` version <= 0.3.5, then call
+    /// [`from_symbols_and_floating_point_probabilities_perfect`] instead (`..._perfect` for
+    /// short). Another reason for using the `..._perfect` constructor could be if
+    /// compression performance is *much* more important to you than runtime performance.
+    /// See documentation of [`from_symbols_and_floating_point_probabilities_perfect`] for
+    /// more information.
+    ///
+    /// # Compatibility Table
+    ///
+    /// | constructor used for encoding → <br> ↓ constructor used for decoding ↓ | legacy <br> (this one) |  [`..._perfect`] | [`..._fast`] |
+    /// | --------------------: | --------------- | --------------- | --------------- |
+    /// | **legacy (this one)** | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._perfect`]**   | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._fast`]**      | ❌ incompatible | ❌ incompatible | ✅ compatible   |
+    ///
+    /// [`from_symbols_and_floating_point_probabilities_perfect`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_perfect
+    /// [`..._perfect`]: Self::from_symbols_and_floating_point_probabilities_perfect
+    /// [`from_symbols_and_floating_point_probabilities_fast`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_fast
+    /// [`..._fast`]: Self::from_symbols_and_floating_point_probabilities_fast
     #[deprecated(
         since = "0.4.0",
         note = "Please use `from_symbols_and_floating_point_probabilities_fast` or \
@@ -252,18 +283,18 @@ where
     ///
     /// This is a low level method that allows, e.g,. reconstructing a probability
     /// distribution previously exported with [`symbol_table`]. The more common way to
-    /// construct a `NonContiguousCategoricalDecoderModel` distribution is via
-    /// [`from_symbols_and_floating_point_probabilities`].
+    /// construct a `NonContiguousCategoricalDecoderModel` is via
+    /// [`from_symbols_and_floating_point_probabilities_fast`].
     ///
     /// The items of `probabilities` have to be nonzero and smaller than `1 << PRECISION`,
     /// where `PRECISION` is a const generic parameter on the
     /// `NonContiguousCategoricalDecoderModel`.
     ///
     /// If `infer_last_probability` is `false` then `probabilities` must yield the same
-    /// number of items as `symbols` does and the items yielded by `probabilities` have to
+    /// number of items as `symbols` does, and the items yielded by `probabilities` have to
     /// to (logically) sum up to `1 << PRECISION`. If `infer_last_probability` is `true`
-    /// then `probabilities` must yield one fewer item than `symbols`, they items must sum
-    /// up to a value strictly smaller than `1 << PRECISION`, and the method will assign the
+    /// then `probabilities` must yield one fewer item than `symbols`, they must sum up to a
+    /// value strictly smaller than `1 << PRECISION`, and the method will assign the
     /// (nonzero) remaining probability to the last symbol.
     ///
     /// # Example
@@ -303,8 +334,10 @@ where
     ///
     /// [`symbol_table`]: IterableEntropyModel::symbol_table
     /// [`fixed_point_probabilities`]: Self::fixed_point_probabilities
-    /// [`from_symbols_and_floating_point_probabilities`]:
-    ///     Self::from_symbols_and_floating_point_probabilities
+    /// [`from_symbols_and_floating_point_probabilities_fast`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_fast
+    /// [`ContiguousCategoricalEntropyModel::from_nonzero_fixed_point_probabilities`]:
+    ///     crate::stream::model::ContiguousCategoricalEntropyModel::from_nonzero_fixed_point_probabilities`
     #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
@@ -353,17 +386,15 @@ where
     /// Calling `NonContiguousCategoricalDecoderModel::from_iterable_entropy_model(&model)`
     /// is equivalent to calling `model.to_generic_decoder_model()`, where the latter
     /// requires bringing [`IterableEntropyModel`] into scope.
-    ///
-    /// TODO: test
     pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
     where
         M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
     {
         let symbol_table = model.symbol_table();
-        let mut cdf = Vec::with_capacity(symbol_table.size_hint().0);
-        for (symbol, left_sided_cumulative, _) in symbol_table {
-            cdf.push((left_sided_cumulative, symbol));
-        }
+        let mut cdf = Vec::with_capacity(symbol_table.size_hint().0 + 1);
+        cdf.extend(
+            symbol_table.map(|(symbol, left_sided_cumulative, _)| (left_sided_cumulative, symbol)),
+        );
         cdf.push((
             wrapping_pow2(PRECISION),
             cdf.last().expect("`symbol_table` is not empty").1.clone(),
@@ -400,7 +431,7 @@ where
     /// references implement `Copy`), but passing a *view* instead may be slightly more
     /// efficient because it avoids one level of dereferencing.
     ///
-    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
+    /// [`Decode::decode_iid_symbols`]: crate::stream::Decode::decode_iid_symbols
     #[inline]
     pub fn as_view(
         &self,
@@ -416,7 +447,7 @@ where
         }
     }
 
-    /// Creates a [`LookupDecoderModel`] for efficient decoding of i.i.d. data
+    /// Creates a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] for efficient decoding of i.i.d. data
     ///
     /// While a `NonContiguousCategoricalEntropyModel` can already be used for decoding (since
     /// it implements [`DecoderModel`]), you may prefer converting it to a
@@ -436,6 +467,7 @@ where
     ///   or a handful of symbols then you'll end up paying more than you gain.
     ///
     /// [preset]: crate::stream#presets
+    /// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
     #[inline(always)]
     pub fn to_lookup_decoder_model(
         &self,
@@ -730,6 +762,8 @@ where
 /// [`Encode`]: crate::Encode
 /// [`Decode`]: crate::Decode
 /// [`HashMap`]: std::hash::HashMap
+/// [`ContiguousCategoricalEntropyModel`]: crate::stream::model::ContiguousCategoricalEntropyModel
+/// [`LeakyQuantizer`]: crate::stream::model::LeakyQuantizer
 #[derive(Debug, Clone)]
 pub struct NonContiguousCategoricalEncoderModel<Symbol, Probability, const PRECISION: usize>
 where
@@ -745,12 +779,25 @@ where
     Symbol: Hash + Eq,
     Probability: BitArray,
 {
-    /// Constructs a leaky distribution over the provided `symbols` whose PMF approximates
-    /// given `probabilities`.
+    /// Constructs a leaky distribution (for encoding) over the provided `symbols` whose PMF
+    /// approximates given `probabilities`.
     ///
-    /// This method operates logically identically to
-    /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities`]
-    /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
+    /// Semantics are analogous to
+    /// [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast`],
+    /// except that this constructor has an additional `symbols` argument to provide an
+    /// iterator over the symbols in the alphabet (which has to yield exactly
+    /// `probabilities.len()` symbols).
+    ///
+    /// # See also
+    ///
+    /// - [`from_symbols_and_floating_point_probabilities_perfect`], which can be
+    ///   considerably slower but typically approximates the provided `probabilities` *very
+    ///   slightly* better.
+    ///
+    /// [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast`]:
+    ///     crate::stream::model::ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast
+    /// [`from_symbols_and_floating_point_probabilities_perfect`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_perfect
     #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities_fast<F>(
         symbols: impl IntoIterator<Item = Symbol>,
@@ -766,6 +813,22 @@ where
         Self::from_symbols_and_cdf(symbols, cdf)
     }
 
+    /// Slower variant of [`from_symbols_and_floating_point_probabilities_fast`].
+    ///
+    /// Similar to [`from_symbols_and_floating_point_probabilities_fast`], but the resulting
+    /// (fixed-point precision) model typically approximates the provided floating point
+    /// `probabilities` *very slightly* better. Only recommended if compression performance
+    /// is *much* more important to you than runtime as this constructor can be
+    /// significantly slower.
+    ///
+    /// See [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect`]
+    /// for a detailed comparison between `..._fast` and `..._perfect` constructors of
+    /// categorical entropy models.
+    ///
+    /// [`from_symbols_and_floating_point_probabilities_fast`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_fast
+    /// [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect`]:
+    ///     crate::stream::model::ContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect
     #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities_perfect<F>(
         symbols: impl IntoIterator<Item = Symbol>,
@@ -785,6 +848,42 @@ where
         )
     }
 
+    /// Deprecated constructor.
+    ///
+    /// This constructor has been deprecated in constriction version 0.4.0, and it will be
+    /// removed in constriction version 0.5.0.
+    ///
+    /// # Upgrade Instructions
+    ///
+    /// Most *new* use cases should call
+    /// [`from_symbols_and_floating_point_probabilities_fast`] instead. Using that
+    /// constructor (abbreviated as `..._fast` in the following) may lead to very slightly
+    /// larger bit rates, but it runs considerably faster.
+    ///
+    /// However, note that the `..._fast` constructor breaks binary compatibility with
+    /// `constriction` version <= 0.3.5. If you need to be able to exchange binary
+    /// compressed data with a program that uses a categorical entropy model from
+    /// `constriction` version <= 0.3.5, then call
+    /// [`from_symbols_and_floating_point_probabilities_perfect`] instead (`..._perfect` for
+    /// short). Another reason for using the `..._perfect` constructor could be if
+    /// compression performance is *much* more important to you than runtime performance.
+    /// See documentation of [`from_symbols_and_floating_point_probabilities_perfect`] for
+    /// more information.
+    ///
+    /// # Compatibility Table
+    ///
+    /// | constructor used for encoding → <br> ↓ constructor used for decoding ↓ | legacy <br> (this one) |  [`..._perfect`] | [`..._fast`] |
+    /// | --------------------: | --------------- | --------------- | --------------- |
+    /// | **legacy (this one)** | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._perfect`]**   | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._fast`]**      | ❌ incompatible | ❌ incompatible | ✅ compatible   |
+    ///
+    /// [`from_symbols_and_floating_point_probabilities_perfect`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_perfect
+    /// [`..._perfect`]: Self::from_symbols_and_floating_point_probabilities_perfect
+    /// [`from_symbols_and_floating_point_probabilities_fast`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_fast
+    /// [`..._fast`]: Self::from_symbols_and_floating_point_probabilities_fast
     #[deprecated(
         since = "0.4.0",
         note = "Please use `from_symbols_and_floating_point_probabilities_fast` or \
@@ -896,8 +995,6 @@ where
     /// Calling `NonContiguousCategoricalEncoderModel::from_iterable_entropy_model(&model)`
     /// is equivalent to calling `model.to_generic_encoder_model()`, where the latter
     /// requires bringing [`IterableEntropyModel`] into scope.
-    ///
-    /// TODO: test
     pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
     where
         M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,

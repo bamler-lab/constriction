@@ -354,7 +354,7 @@ where
 {
     if lazy {
         let model =
-            DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+            DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
                 probabilities.to_vec(),
                 None,
             )?;
@@ -451,7 +451,7 @@ impl LazyCategorical {
                 as Arc<dyn internals::Model>,
             Some(probabilities) => {
                 let model =
-                    DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities(
+                    DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
                         probabilities.cast_f32()?.to_vec()?,
                         normalization,
                     ).unwrap();

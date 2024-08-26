@@ -137,7 +137,8 @@ use super::{
 /// lead to poor computational performance (and also to *slightly* suboptimal compression
 /// efficiency). If you're dealing with categorical distributions, use one of the dedicated
 /// types [`ContiguousCategoricalEntropyModel`], [`NonContiguousCategoricalEncoderModel`],
-/// [`NonContiguousCategoricalDecoderModel`], or [`LookupDecoderModel`] instead.
+/// [`NonContiguousCategoricalDecoderModel`], or [`ContiguousLookupDecoderModel`] or
+/// [`NonContiguousLookupDecoderModel`] instead.
 ///
 /// By contrast, *do* use a `LeakyQuantizer` if the underlying probability [`Distribution`]
 /// can be described by some analytic function (e.g., the function `f(x) ∝ e^{-(x-\mu)^2/2}`
@@ -219,6 +220,11 @@ use super::{
 /// [`to_generic_decoder_model`]: IterableEntropyModel::to_generic_decoder_model
 /// [`to_generic_lookup_decoder_model`]: IterableEntropyModel::to_generic_lookup_decoder_model
 /// [`IterableEntropyModel`]: IterableEntropyModel
+/// [`ContiguousCategoricalEntropyModel`]: crate::stream::model::ContiguousCategoricalEntropyModel
+/// [`NonContiguousCategoricalEncoderModel`]: crate::stream::model::NonContiguousCategoricalEncoderModel
+/// [`NonContiguousCategoricalDecoderModel`]: crate::stream::model::NonContiguousCategoricalDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
 #[derive(Debug, Clone, Copy)]
 pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
     min_symbol_inclusive: Symbol,
@@ -355,7 +361,7 @@ where
 /// computational performance (and also *slightly* better compression effectiveness) if you
 /// instead use one of the dedicated types [`ContiguousCategoricalEntropyModel`],
 /// [`NonContiguousCategoricalEncoderModel`], [`NonContiguousCategoricalDecoderModel`], or
-/// [`LookupDecoderModel`].
+/// [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`].
 ///
 /// # Examples
 ///
@@ -370,6 +376,11 @@ where
 /// [`Exponential`]: probability::distribution::Exponential
 /// [`Binomial`]: probability::distribution::Binomial
 /// [`Categorical`]: probability::distribution::Categorical
+/// [`ContiguousCategoricalEntropyModel`]: crate::stream::model::ContiguousCategoricalEntropyModel
+/// [`NonContiguousCategoricalEncoderModel`]: crate::stream::model::NonContiguousCategoricalEncoderModel
+/// [`NonContiguousCategoricalDecoderModel`]: crate::stream::model::NonContiguousCategoricalDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
 #[derive(Debug, Clone, Copy)]
 pub struct LeakilyQuantizedDistribution<F, Symbol, Probability, D, const PRECISION: usize> {
     inner: D,
