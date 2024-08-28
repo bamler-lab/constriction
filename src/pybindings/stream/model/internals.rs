@@ -391,14 +391,12 @@ impl<'py, 'p> Inverse for SpecializedPythonDistribution<'py, 'p> {
 }
 
 pub struct UnparameterizedCategoricalDistribution {
-    lazy: bool,
-    /// `perfect` is ignored if `lazy` is `true`.
     perfect: bool,
 }
 
 impl UnparameterizedCategoricalDistribution {
-    pub fn new(lazy: bool, perfect: bool) -> Self {
-        Self { lazy, perfect }
+    pub fn new(perfect: bool) -> Self {
+        Self { perfect }
     }
 }
 
@@ -428,7 +426,6 @@ where
 #[inline(always)]
 fn parameterize_categorical_with_float_type<'a, F>(
     probabilities: impl Iterator<Item = &'a [F]>,
-    lazy: bool,
     perfect: bool,
     callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
 ) -> PyResult<()>
@@ -437,18 +434,7 @@ where
     u32: AsPrimitive<F>,
     usize: AsPrimitive<F>,
 {
-    if lazy {
-        parameterize_categorical_with_model_builder(
-            probabilities,
-            |probabilities| {
-                DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
-                    probabilities,
-                    None,
-                )
-            },
-            callback,
-        )
-    } else if perfect {
+    if perfect {
         parameterize_categorical_with_model_builder(
             probabilities,
             DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect,
@@ -458,7 +444,7 @@ where
         parameterize_categorical_with_model_builder(
             probabilities,
             |probabilities| {
-                DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
                     probabilities,
                     None,
                 )
@@ -472,7 +458,6 @@ where
 fn parameterize_categorical<F>(
     probabilities: PyReadonlyArray2<'_, F>,
     reverse: bool,
-    lazy: bool,
     perfect: bool,
     callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
 ) -> PyResult<()>
@@ -484,9 +469,9 @@ where
     let range = probabilities.shape()[1];
     let probabilities = probabilities.as_slice()?.chunks_exact(range);
     if reverse {
-        parameterize_categorical_with_float_type(probabilities.rev(), lazy, perfect, callback)
+        parameterize_categorical_with_float_type(probabilities.rev(), perfect, callback)
     } else {
-        parameterize_categorical_with_float_type(probabilities, lazy, perfect, callback)
+        parameterize_categorical_with_float_type(probabilities, perfect, callback)
     }
 }
 
@@ -515,10 +500,10 @@ impl Model for UnparameterizedCategoricalDistribution {
 
         match probabilities {
             PyReadonlyFloatArray::F32(probabilities) => {
-                parameterize_categorical(probabilities, reverse, self.lazy, self.perfect, callback)
+                parameterize_categorical(probabilities, reverse, self.perfect, callback)
             }
             PyReadonlyFloatArray::F64(probabilities) => {
-                parameterize_categorical(probabilities, reverse, self.lazy, self.perfect, callback)
+                parameterize_categorical(probabilities, reverse, self.perfect, callback)
             }
         }
     }
@@ -539,62 +524,6 @@ impl DefaultEntropyModel for DefaultContiguousCategoricalEntropyModel {
         let (symbol, left_cumulative, probability) =
             DecoderModel::quantile_function(self, quantile);
         (symbol as i32, left_cumulative, probability)
-    }
-}
-
-pub struct UnparameterizedLazyCategoricalDistribution;
-
-impl Model for UnparameterizedLazyCategoricalDistribution {
-    fn parameterize(
-        &self,
-        _py: Python<'_>,
-        params: &PyTuple,
-        reverse: bool,
-        callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
-    ) -> PyResult<()> {
-        if params.len() != 1 {
-            return Err(pyo3::exceptions::PyValueError::new_err(alloc::format!(
-                "Wrong number of model parameters: expected 1, got {}. To use a\n\
-                categorical distribution, either provide a rank-1 numpy array of probabilities\n\
-                to the constructor of the model and no model parameters to the entropy coder's
-                `encode` or `decode` method; or, if you want to encode several symbols in a row\n\
-                with an individual categorical probability distribution for each symbol, provide
-                no model parameters to the constructor and then provide a single rank-2 numpy\n\
-                array to the entropy coder's `encode` or `decode` method.",
-                params.len()
-            )));
-        }
-
-        let probabilities = params[0].extract::<PyReadonlyFloatArray2<'_>>()?;
-        let probabilities = probabilities.cast_f32()?;
-        let range = probabilities.shape()[1];
-        let probabilities = probabilities.as_slice()?;
-
-        if reverse {
-            for probabilities in probabilities.chunks_exact(range).rev() {
-                let model =
-                    DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
-                        probabilities,
-                        None,
-                    ).unwrap();
-                callback(&model)?;
-            }
-        } else {
-            for probabilities in probabilities.chunks_exact(range) {
-                let model =
-                    DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
-                        probabilities,
-                        None,
-                    ).unwrap();
-                callback(&model)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn len(&self, param0: &PyAny) -> PyResult<usize> {
-        Ok(param0.extract::<PyReadonlyFloatArray2<'_>>()?.shape()[0])
     }
 }
 
