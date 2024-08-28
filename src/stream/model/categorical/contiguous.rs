@@ -400,7 +400,8 @@ impl<Probability: BitArray, const PRECISION: usize>
     /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
     ///
     /// let model = DefaultContiguousCategoricalEntropyModel
-    ///     ::from_nonzero_fixed_point_probabilities(&probabilities, false).unwrap();
+    ///     ::from_nonzero_fixed_point_probabilities(
+    ///         probabilities.iter().copied(), false).unwrap();
     /// let symbol_table = model.floating_point_symbol_table::<f64>().collect::<Vec<_>>();
     /// assert_eq!(
     ///     symbol_table,

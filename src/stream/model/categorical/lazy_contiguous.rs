@@ -44,13 +44,11 @@ pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
 ///
 /// # When Should I Use This Type of Entropy Model?
 ///
-/// - Use this type if you want to encode or decode only a few (or even just a single)
+/// - Use this type if you want to encode or decode only very few (or even just a single)
 ///   symbol with the same categorical distribution.
 /// - Use [`ContiguousCategoricalEntropyModel`], [`NonContiguousCategoricalEncoderModel`],
-///   or [`NonContiguousCategoricalDecoderModel`] if you want to encode many symbols with
-///   the same categorical distribution (more precisely, if the number of encoded or decoded
-///   symbols is on the order of, or larger than, the square root of the size of the
-///   alphabet, i.e., the support of the model). These models precalculate the fixed-point
+///   or [`NonContiguousCategoricalDecoderModel`] if you want to encode several symbols with
+///   the same categorical distribution. These models precalculate the fixed-point
 ///   approximation of the entire cumulative distribution function at model construction.
 /// - Use [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] (together
 ///   with a small `Probability` data type, see [discussion of presets]) for decoding a
@@ -72,7 +70,7 @@ pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
 ///     [`NonContiguousCategoricalDecoderModel`].
 /// - encoding a symbol (calling [`EncoderModel::left_cumulative_and_probability`]):
 ///   - runtime cost: `Θ(1)` (cheaper than for [`NonContiguousCategoricalEncoderModel`]
-///     since it compiles to a simiple array lookup rather than a `HashMap` lookup)
+///     since it compiles to a simple array lookup rather than a `HashMap` lookup)
 ///   - memory footprint: no heap allocations, constant stack space.
 /// - decoding a symbol (calling [`DecoderModel::quantile_function`]):
 ///   - runtime cost: `Θ(log(N))` (both expected and worst-case; probably slightly cheaper
@@ -101,7 +99,6 @@ pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
 /// [compatibility table for `ContiguousCategoricalEntropyModel`]:
 ///     crate::stream::model::ContiguousCategoricalEntropyModel#compatibility-table
 /// [discussion of presets]: crate::stream#presets
-
 #[derive(Debug, Clone, Copy)]
 pub struct LazyContiguousCategoricalEntropyModel<Probability, F, Pmf, const PRECISION: usize> {
     /// Invariants:

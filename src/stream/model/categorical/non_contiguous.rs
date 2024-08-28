@@ -252,7 +252,10 @@ where
     ///
     /// # Compatibility Table
     ///
-    /// | constructor used for encoding → <br> ↓ constructor used for decoding ↓ | legacy <br> (this one) |  [`..._perfect`] | [`..._fast`] |
+    /// (In the following table, "encoding" refers to
+    /// [`NonContiguousCategoricalEncoderModel`])
+    ///
+    /// | constructor used for encoding → <br> ↓ constructor used for decoding ↓ | [legacy](NonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities) |  [`..._perfect`](NonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_perfect) | [`..._fast`](NonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_fast) |
     /// | --------------------: | --------------- | --------------- | --------------- |
     /// | **legacy (this one)** | ✅ compatible   | ✅ compatible   | ❌ incompatible |
     /// | **[`..._perfect`]**   | ✅ compatible   | ✅ compatible   | ❌ incompatible |
@@ -890,11 +893,14 @@ where
     ///
     /// # Compatibility Table
     ///
+    /// (In the following table, "encoding" refers to
+    /// [`NonContiguousCategoricalDecoderModel`])
+    ///
     /// | constructor used for encoding → <br> ↓ constructor used for decoding ↓ | legacy <br> (this one) |  [`..._perfect`] | [`..._fast`] |
     /// | --------------------: | --------------- | --------------- | --------------- |
-    /// | **legacy (this one)** | ✅ compatible   | ✅ compatible   | ❌ incompatible |
-    /// | **[`..._perfect`]**   | ✅ compatible   | ✅ compatible   | ❌ incompatible |
-    /// | **[`..._fast`]**      | ❌ incompatible | ❌ incompatible | ✅ compatible   |
+    /// | **[legacy](NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities)** | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._perfect`](NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_perfect)**   | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._fast`](NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast)**      | ❌ incompatible | ❌ incompatible | ✅ compatible   |
     ///
     /// [`from_symbols_and_floating_point_probabilities_perfect`]:
     ///     Self::from_symbols_and_floating_point_probabilities_perfect

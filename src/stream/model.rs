@@ -354,7 +354,7 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     /// let probabilities = vec![1u32 << 21, 1 << 23, 1 << 22, 1 << 21];
     /// let model = DefaultNonContiguousCategoricalEncoderModel // "Default" uses `PRECISION = 24`
     ///     ::from_symbols_and_nonzero_fixed_point_probabilities(
-    ///         symbols.iter().copied(), &probabilities, false)
+    ///         symbols.iter().copied(), probabilities.iter().copied(), false)
     ///     .unwrap();
     ///
     /// assert_eq!(model.floating_point_probability::<f64>('a'), 0.125);

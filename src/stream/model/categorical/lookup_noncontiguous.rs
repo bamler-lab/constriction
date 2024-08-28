@@ -13,8 +13,141 @@ use super::{
 };
 
 /// A tabularized [`DecoderModel`] that is optimized for fast decoding of i.i.d. symbols
+/// over a arbitrary (i.e., not necessarily contiguous) alphabet of symbols
 ///
-/// TODO: documentation
+/// The default type parameters correspond to the "small" [preset], i.e., they allow
+/// decoding with a [`SmallAnsCoder`] or a [`SmallRangeDecoder`] (as well as with a
+/// [`DefaultAnsCoder`] or a [`DefaultRangeDecoder`], since you can always use a "bigger"
+/// coder on a "smaller" model). Increasing the const generic `PRECISION` by much beyond its
+/// default value is not recommended because the size of the lookup table grows
+/// exponentially in `PRECISION`, thus increasing both memory consumption and runtime (due
+/// to reduced cache locality).
+///
+/// # See also
+///
+/// - [`ContiguousLookupDecoderModel`]
+///
+/// # Example
+///
+/// ## Full typical usage example
+///
+/// ```
+/// use constriction::stream::{
+///     model::{
+///         EncoderModel, NonContiguousLookupDecoderModel, IterableEntropyModel,
+///         SmallNonContiguousCategoricalEncoderModel,
+///     },
+///     queue::{SmallRangeDecoder, SmallRangeEncoder},
+///     Decode, Encode,
+/// };
+///
+/// // Let's first encode some message. We use a `SmallContiguousCategoricalEntropyModel`
+/// // for encoding, so that we can decode with a lookup model later.
+/// let message = "Mississippi";
+/// let symbols = ['M', 'i', 's', 'p'];
+/// let floating_point_probabilities = [1.0f32 / 11., 4. / 11., 4. / 11., 2. / 11.];
+/// let encoder_model = SmallNonContiguousCategoricalEncoderModel
+///     ::from_symbols_and_floating_point_probabilities_perfect(
+///         symbols.iter().cloned(),
+///         &floating_point_probabilities,
+///     )
+///     .unwrap();
+/// let mut encoder = SmallRangeEncoder::new();
+/// encoder.encode_iid_symbols(message.chars(), &encoder_model);
+///
+/// let compressed = encoder.get_compressed();
+/// let fixed_point_probabilities = symbols
+///     .iter()
+///     .map(|symbol| encoder_model.left_cumulative_and_probability(symbol).unwrap().1.get())
+///     .collect::<Vec<_>>();
+///
+/// // ... write `compressed` and `fixed_point_probabilities` to a file and read them back ...
+///
+/// let lookup_decoder_model =
+///     NonContiguousLookupDecoderModel::<_, u16, _, _>::from_symbols_and_nonzero_fixed_point_probabilities(
+///         symbols.iter().cloned(),
+///         &fixed_point_probabilities,
+///         false,
+///     )
+///     .unwrap();
+/// let mut decoder = SmallRangeDecoder::from_compressed(compressed).unwrap();
+///
+/// let reconstructed = decoder
+///     .decode_iid_symbols(11, &lookup_decoder_model)
+///     .collect::<Result<String, _>>()
+///     .unwrap();
+///
+/// assert_eq!(&reconstructed, message);
+/// ```
+///
+/// ## Compatibility with "default" entropy coders
+///
+/// The above example uses coders with the "small" [preset] to demonstrate typical usage of
+/// lookup decoder models. However, lookup models are also compatible with coders with the
+/// "default" preset (you can always use a "smaller" model with a "larger" coder; so you
+/// could, e.g., encode part of a message with a model that uses the "default" preset and
+/// another part of the message with a model that uses the "small" preset so it can be
+/// decoded with a lookup model).
+///
+/// ```
+/// // Same imports, `message`, `symbols` and `floating_point_probabilities` as above ...
+/// # use constriction::stream::{
+/// #     model::{
+/// #         EncoderModel, NonContiguousLookupDecoderModel, IterableEntropyModel,
+/// #         SmallNonContiguousCategoricalEncoderModel,
+/// #     },
+/// #     queue::{DefaultRangeDecoder, DefaultRangeEncoder},
+/// #     Decode, Encode,
+/// # };
+/// #
+/// # let message = "Mississippi";
+/// # let symbols = ['M', 'i', 's', 'p'];
+/// # let floating_point_probabilities = [1.0f32 / 11., 4. / 11., 4. / 11., 2. / 11.];
+///
+/// let encoder_model = SmallNonContiguousCategoricalEncoderModel
+///     ::from_symbols_and_floating_point_probabilities_perfect(
+///         symbols.iter().cloned(),
+///         &floating_point_probabilities,
+///     )
+///     .unwrap(); // We're using a "small" encoder model again ...
+/// let mut encoder = DefaultRangeEncoder::new(); // ... but now with a "default" coder.
+/// encoder.encode_iid_symbols(message.chars(), &encoder_model);
+///
+/// // ... obtain `compressed` and `fixed_point_probabilities` as in the example above ...
+/// # let compressed = encoder.get_compressed();
+/// # let fixed_point_probabilities = symbols
+/// #     .iter()
+/// #     .map(|symbol| encoder_model.left_cumulative_and_probability(symbol).unwrap().1.get())
+/// #     .collect::<Vec<_>>();
+///
+/// // Then decode with the same lookup model as before, but now with a "default" decoder:
+/// let lookup_decoder_model =
+///     NonContiguousLookupDecoderModel::<_, u16, _, _>::from_symbols_and_nonzero_fixed_point_probabilities(
+///         symbols.iter().cloned(),
+///         &fixed_point_probabilities,
+///         false,
+///     )
+///     .unwrap();
+/// let mut decoder = DefaultRangeDecoder::from_compressed(compressed).unwrap();
+///
+/// let reconstructed = decoder
+///     .decode_iid_symbols(11, &lookup_decoder_model)
+///     .collect::<Result<String, _>>()
+///     .unwrap();
+///
+/// assert_eq!(&reconstructed, message);
+/// ```
+///
+/// You can also use an [`AnsCoder`] instead of a range coder of course.
+///
+/// [`AnsCoder`]: crate::stream::stack::AnsCoder
+/// [`SmallAnsCoder`]: crate::stream::stack::SmallAnsCoder
+/// [`SmallRangeDecoder`]: crate::stream::queue::SmallRangeDecoder
+/// [`DefaultAnsCoder`]: crate::stream::stack::DefaultAnsCoder
+/// [`DefaultRangeDecoder`]: crate::stream::queue::DefaultRangeDecoder
+/// [`ContiguousLookupDecoderModel`]:
+///     crate::stream::model::ContiguousLookupDecoderModel
+/// [preset]: crate::stream#presets
 #[derive(Debug, Clone, Copy)]
 pub struct NonContiguousLookupDecoderModel<
     Symbol,
@@ -50,6 +183,121 @@ where
     Symbol: Clone,
     usize: AsPrimitive<Probability>,
 {
+    /// Constructs a lookup table for decoding whose PMF approximates given `probabilities`.
+    ///
+    /// Similar to [`from_symbols_and_floating_point_probabilities_fast`], but the resulting
+    /// (fixed-point precision) model typically approximates the provided floating point
+    /// `probabilities` slightly better.
+    ///
+    /// See [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect`]
+    /// for a detailed comparison between `..._fast` and `..._perfect` constructors of
+    /// categorical entropy models. However, note that, different to the case with
+    /// non-lookup models, using this `..._perfect` variant of the constructor may be
+    /// justified in more cases because
+    /// - lookup decoder models use a smaller `PRECISION` by default, so the differences in
+    ///   bit rate between the `..._fast` and the `..._perfect` constructor are more
+    ///   pronounced; and
+    /// - lookup decoder models should only be used if you expect to use them to decode
+    ///   *lots of* symbols anyway, so an increased upfront cost for construction is less of
+    ///   an issue.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::stream::{
+    ///     model::NonContiguousLookupDecoderModel,
+    ///     stack::SmallAnsCoder,
+    ///     Decode, Code,
+    /// };
+    ///
+    /// let probabilities = [0.3f32, 0.1, 0.4, 0.2];
+    /// let symbols = ['a', 'b', 'x', 'y'];
+    /// let decoder_model = NonContiguousLookupDecoderModel::<_, u16, _, _>
+    ///     ::from_symbols_and_floating_point_probabilities_perfect(
+    ///         symbols.iter().copied(),
+    ///         &probabilities
+    ///     ).unwrap();
+    ///
+    /// let compressed = [0x956Eu16, 0x0155]; // (imagine this was read from a file)
+    /// let expected = ['b', 'a', 'a', 'x', 'x', 'y', 'x', 'x', 'a'];
+    /// let mut coder = SmallAnsCoder::from_compressed_slice(&compressed).unwrap();
+    ///
+    /// let reconstructed = coder
+    ///     .decode_iid_symbols(9, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+    /// assert!(coder.is_empty());
+    /// assert_eq!(reconstructed, expected);
+    /// ```
+    ///
+    /// [`from_symbols_and_floating_point_probabilities_fast`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_fast
+    /// [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect`]:
+    ///     crate::stream::model::ContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect
+    #[allow(clippy::result_unit_err)]
+    pub fn from_symbols_and_floating_point_probabilities_perfect<F>(
+        symbols: impl IntoIterator<Item = Symbol>,
+        probabilities: &[F],
+    ) -> Result<Self, ()>
+    where
+        F: FloatCore + core::iter::Sum<F> + Into<f64>,
+        Probability: Into<f64> + AsPrimitive<usize>,
+        f64: AsPrimitive<Probability>,
+        usize: AsPrimitive<Probability>,
+    {
+        let slots = perfectly_quantized_probabilities::<_, _, PRECISION>(probabilities)?;
+        Self::from_symbols_and_nonzero_fixed_point_probabilities(
+            symbols,
+            slots.into_iter().map(|slot| slot.weight),
+            false,
+        )
+    }
+
+    /// Faster but less accurate variant of
+    /// [`from_symbols_and_floating_point_probabilities_perfect`]
+    ///
+    /// Semantics are analogous to
+    /// [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast`],
+    /// except that this method constructs a *lookup table*, i.e., a model that takes
+    /// considerably more runtime to build but, once built, is optimized for very fast
+    /// decoding of lots i.i.d. symbols.
+    ///
+    /// # See also
+    ///
+    /// - [`from_symbols_and_floating_point_probabilities_perfect`], which can be slower but
+    ///   typically approximates the provided `probabilities` better, which may be a good
+    ///   trade-off in the kind of situations that lookup decoder models are intended for.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::stream::{
+    ///     model::NonContiguousLookupDecoderModel,
+    ///     stack::SmallAnsCoder,
+    ///     Decode, Code,
+    /// };
+    ///
+    /// let probabilities = [0.3f32, 0.1, 0.4, 0.2];
+    /// let symbols = ['a', 'b', 'x', 'y'];
+    /// let decoder_model = NonContiguousLookupDecoderModel::<_, u16, _, _>
+    ///     ::from_symbols_and_floating_point_probabilities_fast(
+    ///         symbols.iter().copied(),
+    ///         &probabilities,
+    ///         None,
+    ///     ).unwrap();
+    ///
+    /// let compressed = [0xF592u16, 0x0133]; // (imagine this was read from a file)
+    /// let expected = ['b', 'a', 'a', 'x', 'x', 'y', 'x', 'x', 'a'];
+    /// let mut coder = SmallAnsCoder::from_compressed_slice(&compressed).unwrap();
+    ///
+    /// let reconstructed = coder
+    ///     .decode_iid_symbols(9, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
+    /// assert!(coder.is_empty());
+    /// assert_eq!(reconstructed, expected);
+    /// ```
+    ///
+    /// [`ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast`]:
+    ///     crate::stream::model::ContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast
+    /// [`from_symbols_and_floating_point_probabilities_perfect`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_perfect
     #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_floating_point_probabilities_fast<F>(
         symbols: impl IntoIterator<Item = Symbol>,
@@ -83,28 +331,56 @@ where
         Ok(Self::from_symbol_table(symbol_table))
     }
 
-    #[allow(clippy::result_unit_err)]
-    pub fn from_symbols_and_floating_point_probabilities_perfect<F>(
-        symbols: impl IntoIterator<Item = Symbol>,
-        probabilities: &[F],
-    ) -> Result<Self, ()>
-    where
-        F: FloatCore + core::iter::Sum<F> + Into<f64>,
-        Probability: Into<f64> + AsPrimitive<usize>,
-        f64: AsPrimitive<Probability>,
-        usize: AsPrimitive<Probability>,
-    {
-        let slots = perfectly_quantized_probabilities::<_, _, PRECISION>(probabilities)?;
-        Self::from_symbols_and_nonzero_fixed_point_probabilities(
-            symbols,
-            slots.into_iter().map(|slot| slot.weight),
-            false,
-        )
-    }
-
-    /// Create a `LookupDecoderModel` over arbitrary symbols.
+    /// Deprecated constructor.
     ///
-    /// TODO: example
+    /// This constructor has been deprecated in constriction version 0.4.0, and it will be
+    /// removed in constriction version 0.5.0.
+    ///
+    /// # Upgrade Instructions
+    ///
+    /// Call either of the following two constructors instead:
+    /// - [`from_symbols_and_floating_point_probabilities_perfect`] (referred to as
+    ///   `..._perfect` in the following); or
+    /// - [`from_symbols_and_floating_point_probabilities_fast`] (referred to as `..._fast`
+    ///   in the following).
+    ///
+    /// Both constructors approximate the given (floating-point) probability distribution in
+    /// fixed point arithmetic, and both construct a valid (exactly invertible) model that
+    /// is guaranteed to assign a nonzero probability to all symbols. The `..._perfect`
+    /// constructor finds the best possible approximation of the provided fixed-point
+    /// probability distribution (thus leading to the lowest bit rates), while the
+    /// `..._fast` constructor is faster but may find a *slightly* imperfect approximation.
+    /// Note that, since lookup models use a smaller fixed-point `PRECISION` than other
+    /// models (e.g., [`NonContiguousCategoricalDecoderModel`]), the difference in bit rate
+    /// between the two models is more pronounced.
+    ///
+    /// Note that the `..._fast` constructor breaks binary compatibility with `constriction`
+    /// version <= 0.3.5. If you need to be able to exchange binary compressed data with a
+    /// program that uses a lookup decoder model or a categorical entropy model from
+    /// `constriction` version <= 0.3.5, then call
+    /// [`from_symbols_and_floating_point_probabilities_perfect`].
+    ///
+    /// # Compatibility Table
+    ///
+    /// (Lookup decoder models can only be used for decoding; in the following table,
+    /// "encoding" refers to [`NonContiguousCategoricalEncoderModel`])
+    ///
+    /// | constructor used for encoding → <br> ↓ constructor used for decoding ↓ | [legacy](crate::stream::model::NonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities) |  [`..._perfect`](crate::stream::model::NonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_perfect) | [`..._fast`](crate::stream::model::NonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_fast) |
+    /// | --------------------: | --------------- | --------------- | --------------- |
+    /// | **legacy (this one)** | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._perfect`]**   | ✅ compatible   | ✅ compatible   | ❌ incompatible |
+    /// | **[`..._fast`]**      | ❌ incompatible | ❌ incompatible | ✅ compatible   |
+    ///
+    /// [`from_symbols_and_floating_point_probabilities_perfect`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_perfect
+    /// [`..._perfect`]: Self::from_symbols_and_floating_point_probabilities_perfect
+    /// [`from_symbols_and_floating_point_probabilities_fast`]:
+    ///     Self::from_symbols_and_floating_point_probabilities_fast
+    /// [`..._fast`]: Self::from_symbols_and_floating_point_probabilities_fast
+    /// [`NonContiguousCategoricalEncoderModel`]:
+    ///     crate::stream::model::NonContiguousCategoricalEncoderModel
+    /// [`NonContiguousCategoricalDecoderModel`]:
+    ///     crate::stream::model::NonContiguousCategoricalDecoderModel
     #[deprecated(
         since = "0.4.0",
         note = "Please use `from_symbols_and_floating_point_probabilities_fast` or \
@@ -128,9 +404,12 @@ where
         )
     }
 
-    /// Create a `LookupDecoderModel` over arbitrary symbols.
+    /// Create a `NonContiguousLookupDecoderModel` from pre-calculated fixed-point
+    /// probabilities.
     ///
-    /// TODO: example
+    /// # Example
+    ///
+    /// See [type level documentation](Self).
     #[allow(clippy::result_unit_err)]
     pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
         symbols: S,
@@ -271,8 +550,8 @@ where
 
     /// Converts a lookup model into a non-lookup model.
     ///
-    /// This drops the lookup table, so its only conceivable use case is to
-    /// free memory while still holding on to the model.
+    /// This drops the lookup table, so its only conceivable use case is to free memory
+    /// while still holding on to (a slower variant of) the model.
     ///
     /// # See also
     ///
