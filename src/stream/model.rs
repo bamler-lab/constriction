@@ -917,8 +917,8 @@ pub use categorical::{
         DefaultLazyContiguousCategoricalEntropyModel, LazyContiguousCategoricalEntropyModel,
         SmallLazyContiguousCategoricalEntropyModel,
     },
-    lookup_contiguous::ContiguousLookupDecoderModel,
-    lookup_noncontiguous::NonContiguousLookupDecoderModel,
+    lookup_contiguous::{ContiguousLookupDecoderModel, SmallContiguousLookupDecoderModel},
+    lookup_noncontiguous::{NonContiguousLookupDecoderModel, SmallNonContiguousLookupDecoderModel},
     non_contiguous::{
         DefaultNonContiguousCategoricalDecoderModel, DefaultNonContiguousCategoricalEncoderModel,
         NonContiguousCategoricalDecoderModel, NonContiguousCategoricalEncoderModel,

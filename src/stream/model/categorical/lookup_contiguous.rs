@@ -12,6 +12,19 @@ use super::{
     fast_quantized_cdf, iter_extended_cdf, perfectly_quantized_probabilities,
 };
 
+/// Type alias for a [`ContiguousLookupDecoderModel`] with sane [presets].
+///
+/// See documentation of [`ContiguousLookupDecoderModel`] for a detailed code example.
+///
+/// Note that, in contrast to most other models (and entropy coders), there is no type alias
+/// for the "default" [preset] because using lookup tables with these presets is strongly
+/// discouraged (the lookup tables would be enormous).
+///
+/// [preset]: crate::stream#presets
+/// [presets]: crate::stream#presets
+pub type SmallContiguousLookupDecoderModel<Cdf = Vec<u16>, LookupTable = Box<[u16]>> =
+    ContiguousLookupDecoderModel<u16, Cdf, LookupTable, 12>;
+
 /// A tabularized [`DecoderModel`] that is optimized for fast decoding of i.i.d. symbols
 /// over a contiguous alphabet of symbols (i.e., `{0, 1, ..., n-1}`)
 ///
@@ -34,8 +47,8 @@ use super::{
 /// ```
 /// use constriction::stream::{
 ///     model::{
-///         ContiguousLookupDecoderModel, IterableEntropyModel,
-///         SmallContiguousCategoricalEntropyModel,
+///         IterableEntropyModel, SmallContiguousCategoricalEntropyModel,
+///         SmallContiguousLookupDecoderModel,
 ///     },
 ///     queue::{SmallRangeDecoder, SmallRangeEncoder},
 ///     Decode, Encode,
@@ -72,7 +85,7 @@ use super::{
 /// // ... write `compressed` and `fixed_point_probabilities` to a file and read them back ...
 ///
 /// let lookup_decoder_model =
-///     ContiguousLookupDecoderModel::<u16>::from_nonzero_fixed_point_probabilities(
+///     SmallContiguousLookupDecoderModel::from_nonzero_fixed_point_probabilities(
 ///         &fixed_point_probabilities,
 ///         false,
 ///     )
@@ -100,8 +113,8 @@ use super::{
 /// // Same imports, `message`, and `floating_point_probabilities` as in the example above ...
 /// # use constriction::stream::{
 /// #     model::{
-/// #         ContiguousLookupDecoderModel, IterableEntropyModel,
-/// #         SmallContiguousCategoricalEntropyModel,
+/// #         IterableEntropyModel, SmallContiguousCategoricalEntropyModel,
+/// #         SmallContiguousLookupDecoderModel,
 /// #     },
 /// #     queue::{DefaultRangeDecoder, DefaultRangeEncoder},
 /// #     Decode, Encode,
@@ -127,7 +140,7 @@ use super::{
 ///
 /// // Then decode with the same lookup model as before, but now with a "default" decoder:
 /// let lookup_decoder_model =
-///     ContiguousLookupDecoderModel::<u16>::from_nonzero_fixed_point_probabilities(
+///     SmallContiguousLookupDecoderModel::from_nonzero_fixed_point_probabilities(
 ///         &fixed_point_probabilities,
 ///         false,
 ///     )
@@ -201,13 +214,13 @@ where
     ///
     /// ```
     /// use constriction::stream::{
-    ///     model::ContiguousLookupDecoderModel,
+    ///     model::SmallContiguousLookupDecoderModel,
     ///     stack::SmallAnsCoder,
     ///     Decode, Code,
     /// };
     ///
     /// let probabilities = [0.3f32, 0.1, 0.4, 0.2];
-    /// let decoder_model = ContiguousLookupDecoderModel::<u16>
+    /// let decoder_model = SmallContiguousLookupDecoderModel
     ///     ::from_floating_point_probabilities_perfect(&probabilities).unwrap();
     ///
     /// let compressed = [0x956Eu16, 0x0155]; // (imagine this was read from a file)
@@ -257,13 +270,13 @@ where
     ///
     /// ```
     /// use constriction::stream::{
-    ///     model::ContiguousLookupDecoderModel,
+    ///     model::SmallContiguousLookupDecoderModel,
     ///     stack::SmallAnsCoder,
     ///     Decode, Code,
     /// };
     ///
     /// let probabilities = [0.3f32, 0.1, 0.4, 0.2];
-    /// let decoder_model = ContiguousLookupDecoderModel::<u16>
+    /// let decoder_model = SmallContiguousLookupDecoderModel
     ///     ::from_floating_point_probabilities_fast(&probabilities, None).unwrap();
     ///
     /// let compressed = [0xF592u16, 0x0133]; // (imagine this was read from a file)
@@ -452,8 +465,8 @@ where
     /// ```
     /// use constriction::stream::{
     ///     model::{
-    ///         ContiguousLookupDecoderModel, IterableEntropyModel,
-    ///         SmallContiguousCategoricalEntropyModel,
+    ///         IterableEntropyModel, SmallContiguousCategoricalEntropyModel,
+    ///         SmallContiguousLookupDecoderModel
     ///     },
     ///     queue::SmallRangeDecoder,
     ///     Decode, Encode,
@@ -461,7 +474,7 @@ where
     ///
     /// let expected = [2, 1, 3, 0, 0, 2, 0, 2, 1, 0, 2];
     /// let probabilities = [0.4f32, 0.2, 0.1, 0.3];
-    /// let decoder_model = ContiguousLookupDecoderModel::<u16>
+    /// let decoder_model = SmallContiguousLookupDecoderModel
     ///     ::from_floating_point_probabilities_perfect(&probabilities).unwrap();
     ///
     /// let compressed = [0xA78Cu16, 0xA856]; // (imagine this was read from a file)

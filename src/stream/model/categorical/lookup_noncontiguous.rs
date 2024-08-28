@@ -12,6 +12,21 @@ use super::{
     perfectly_quantized_probabilities,
 };
 
+/// Type alias for a [`NonContiguousLookupDecoderModel`] with sane settings.
+///
+/// See documentation of [`NonContiguousLookupDecoderModel`] for a detailed code example.
+///
+/// Note that, in contrast to most other models (and entropy coders), there is no type alias
+/// for the "default" [preset] because using lookup tables with these presets is strongly
+/// discouraged (the lookup tables would be enormous).
+///
+/// [preset]: crate::stream#presets
+pub type SmallNonContiguousLookupDecoderModel<
+    Symbol,
+    Cdf = Vec<(u16, Symbol)>,
+    LookupTable = Box<[u16]>,
+> = NonContiguousLookupDecoderModel<Symbol, u16, Cdf, LookupTable, 12>;
+
 /// A tabularized [`DecoderModel`] that is optimized for fast decoding of i.i.d. symbols
 /// over a arbitrary (i.e., not necessarily contiguous) alphabet of symbols
 ///
@@ -34,8 +49,8 @@ use super::{
 /// ```
 /// use constriction::stream::{
 ///     model::{
-///         EncoderModel, NonContiguousLookupDecoderModel, IterableEntropyModel,
-///         SmallNonContiguousCategoricalEncoderModel,
+///         EncoderModel, IterableEntropyModel, SmallNonContiguousCategoricalEncoderModel,
+///         SmallNonContiguousLookupDecoderModel,
 ///     },
 ///     queue::{SmallRangeDecoder, SmallRangeEncoder},
 ///     Decode, Encode,
@@ -64,7 +79,7 @@ use super::{
 /// // ... write `compressed` and `fixed_point_probabilities` to a file and read them back ...
 ///
 /// let lookup_decoder_model =
-///     NonContiguousLookupDecoderModel::<_, u16, _, _>::from_symbols_and_nonzero_fixed_point_probabilities(
+///     SmallNonContiguousLookupDecoderModel::from_symbols_and_nonzero_fixed_point_probabilities(
 ///         symbols.iter().cloned(),
 ///         &fixed_point_probabilities,
 ///         false,
@@ -93,8 +108,8 @@ use super::{
 /// // Same imports, `message`, `symbols` and `floating_point_probabilities` as above ...
 /// # use constriction::stream::{
 /// #     model::{
-/// #         EncoderModel, NonContiguousLookupDecoderModel, IterableEntropyModel,
-/// #         SmallNonContiguousCategoricalEncoderModel,
+/// #         EncoderModel, IterableEntropyModel, SmallNonContiguousCategoricalEncoderModel,
+/// #         SmallNonContiguousLookupDecoderModel
 /// #     },
 /// #     queue::{DefaultRangeDecoder, DefaultRangeEncoder},
 /// #     Decode, Encode,
@@ -122,7 +137,7 @@ use super::{
 ///
 /// // Then decode with the same lookup model as before, but now with a "default" decoder:
 /// let lookup_decoder_model =
-///     NonContiguousLookupDecoderModel::<_, u16, _, _>::from_symbols_and_nonzero_fixed_point_probabilities(
+///     SmallNonContiguousLookupDecoderModel::from_symbols_and_nonzero_fixed_point_probabilities(
 ///         symbols.iter().cloned(),
 ///         &fixed_point_probabilities,
 ///         false,
@@ -205,14 +220,14 @@ where
     ///
     /// ```
     /// use constriction::stream::{
-    ///     model::NonContiguousLookupDecoderModel,
+    ///     model::SmallNonContiguousLookupDecoderModel,
     ///     stack::SmallAnsCoder,
     ///     Decode, Code,
     /// };
     ///
     /// let probabilities = [0.3f32, 0.1, 0.4, 0.2];
     /// let symbols = ['a', 'b', 'x', 'y'];
-    /// let decoder_model = NonContiguousLookupDecoderModel::<_, u16, _, _>
+    /// let decoder_model = SmallNonContiguousLookupDecoderModel
     ///     ::from_symbols_and_floating_point_probabilities_perfect(
     ///         symbols.iter().copied(),
     ///         &probabilities
@@ -270,14 +285,14 @@ where
     ///
     /// ```
     /// use constriction::stream::{
-    ///     model::NonContiguousLookupDecoderModel,
+    ///     model::SmallNonContiguousLookupDecoderModel,
     ///     stack::SmallAnsCoder,
     ///     Decode, Code,
     /// };
     ///
     /// let probabilities = [0.3f32, 0.1, 0.4, 0.2];
     /// let symbols = ['a', 'b', 'x', 'y'];
-    /// let decoder_model = NonContiguousLookupDecoderModel::<_, u16, _, _>
+    /// let decoder_model = SmallNonContiguousLookupDecoderModel
     ///     ::from_symbols_and_floating_point_probabilities_fast(
     ///         symbols.iter().copied(),
     ///         &probabilities,
