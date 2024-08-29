@@ -48,8 +48,8 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
 /// model = constriction.stream.model.QuantizedGaussian(
 ///     min_supported_symbol, max_supported_symbol)
-/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float64)
+/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float32)
+/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float32)
 ///
 /// ans.encode_reverse(symbols, model, means, stds)
 ///
@@ -78,8 +78,8 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// min_supported_symbol, max_supported_symbol = -10, 10  # both inclusively
 /// model = constriction.stream.model.QuantizedGaussian(
 ///     min_supported_symbol, max_supported_symbol)
-/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float64)
-/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float64)
+/// means = np.array([2.3, -1.7, 0.1, 2.2, -5.1], dtype=np.float32)
+/// stds = np.array([1.1, 5.3, 3.8, 1.4, 3.9], dtype=np.float32)
 ///
 /// reconstructed = ans.decode(model, means, stds)
 /// assert ans.is_empty()
@@ -186,7 +186,7 @@ impl AnsCoder {
     /// ## Example
     ///
     /// ```python
-    /// probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
+    /// probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float32)
     /// model         = constriction.stream.model.Categorical(probabilities, perfect=False)
     /// message_part1 = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
     /// message_part2 = np.array([2, 2, 0, 1, 3], dtype=np.int32)
@@ -357,7 +357,7 @@ impl AnsCoder {
     /// ```python
     /// # Define a concrete categorical entropy model over the (implied)
     /// # alphabet {0, 1, 2}:
-    /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
+    /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float32)
     /// model = constriction.stream.model.Categorical(probabilities, perfect=False)
     ///
     /// # Encode a single symbol with this entropy model:
@@ -400,7 +400,7 @@ impl AnsCoder {
     ///
     /// For example, the
     /// [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model family
-    /// expects two rank-1 model parameters of dtype `np.float64`, which specify the mean and
+    /// expects two rank-1 model parameters with float `dtype`, which specify the mean and
     /// standard deviation for each entropy model:
     ///
     /// ```python
@@ -409,8 +409,8 @@ impl AnsCoder {
     /// model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
     ///    
     /// # Specify the model parameters for each symbol:
-    /// means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
-    /// stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
+    /// means = np.array([10.3, -4.7, 20.5], dtype=np.float32)
+    /// stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float32)
     ///    
     /// # Encode an example message:
     /// # (needs `len(symbols) == len(means) == len(stds)`)
@@ -429,14 +429,14 @@ impl AnsCoder {
     /// probabilities = np.array(
     ///     [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for symbols[0])
     ///      [0.3, 0.2, 0.2, 0.2, 0.1]], # (for symbols[1])
-    ///     dtype=np.float64)
+    ///     dtype=np.float32)
     /// model_family = constriction.stream.model.Categorical(perfect=False)
     ///
     /// # Encode 2 symbols (needs `len(symbols) == probabilities.shape[0]`):
     /// symbols = np.array([3, 1], dtype=np.int32)
     /// coder = constriction.stream.stack.AnsCoder()
     /// coder.encode_reverse(symbols, model_family, probabilities)
-    /// print(coder.get_compressed()) # (prints: [45298481])
+    /// print(coder.get_compressed()) # (prints: [45298482])
     /// ```
     #[pyo3(signature = (symbols, model, *params), text_signature = "(self, symbols, model, *optional_model_params)")]
     pub fn encode_reverse(
@@ -552,7 +552,7 @@ impl AnsCoder {
     ///
     /// For example, the
     /// [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian) model family
-    /// expects two rank-1 model parameters of dtype `np.float64`, which specify the mean and
+    /// expects two rank-1 model parameters with float `dtype`, which specify the mean and
     /// standard deviation for each entropy model:
     ///
     /// ```python
@@ -561,8 +561,8 @@ impl AnsCoder {
     /// model_family = constriction.stream.model.QuantizedGaussian(-100, 100)
     ///
     /// # Specify the model parameters for each symbol:
-    /// means = np.array([10.3, -4.7, 20.5], dtype=np.float64)
-    /// stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float64)
+    /// means = np.array([10.3, -4.7, 20.5], dtype=np.float32)
+    /// stds  = np.array([ 5.2, 24.2,  3.1], dtype=np.float32)
     ///
     /// # Decode a message from some example compressed data:
     /// compressed = np.array([597775281, 3], dtype=np.uint32)
@@ -580,7 +580,7 @@ impl AnsCoder {
     /// probabilities = np.array(
     ///     [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first decoded symbol)
     ///      [0.3, 0.2, 0.2, 0.2, 0.1]], # (for second decoded symbol)
-    ///     dtype=np.float64)
+    ///     dtype=np.float32)
     /// model_family = constriction.stream.model.Categorical(perfect=False)
     ///
     /// # Decode 2 symbols:

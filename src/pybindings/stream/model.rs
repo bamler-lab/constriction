@@ -89,8 +89,8 @@ pub struct Model(pub Arc<dyn internals::Model>);
 ///
 /// # Encode and decode an example message with per-symbol model parameters:
 /// symbols       = np.array([... TODO ...], dtype=np.int32)
-/// model_params1 = np.array([... TODO ...], dtype=np.float64)
-/// model_params2 = np.array([... TODO ...], dtype=np.float64)
+/// model_params1 = np.array([... TODO ...], dtype=np.float32)
+/// model_params2 = np.array([... TODO ...], dtype=np.float32)
 /// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model_family, model_params1, model_params2)
 /// print(coder.get_compressed())
@@ -222,11 +222,11 @@ impl CustomModel {
 ///
 /// # Encode and decode an example message with per-symbol model parameters:
 /// symbols = np.array([22,   14,   5,   -3,   19,   7  ], dtype=np.int32)
-/// locs    = np.array([26.2, 10.9, 8.7, -6.3, 25.1, 8.9], dtype=np.float64)
-/// scales  = np.array([ 4.3, 7.4,  2.9,  4.1,  9.7, 3.4], dtype=np.float64)
+/// locs    = np.array([26.2, 10.9, 8.7, -6.3, 25.1, 8.9], dtype=np.float32)
+/// scales  = np.array([ 4.3, 7.4,  2.9,  4.1,  9.7, 3.4], dtype=np.float32)
 /// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model_family, locs, scales)
-/// print(coder.get_compressed()) # (prints: [3493721376, 17526])
+/// print(coder.get_compressed()) # (prints: [3611353862, 17526])
 ///
 /// reconstructed = coder.decode(model_family, locs, scales)
 /// assert np.all(reconstructed == symbols) # (verify correctness)
@@ -318,7 +318,7 @@ impl ScipyModel {
 /// ```python
 /// # Define a categorical distribution over the (implied) alphabet {0,1,2,3}
 /// # with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3:
-/// probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
+/// probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float32)
 /// model = constriction.stream.model.Categorical(probabilities, perfect=False)
 ///
 /// # Encode and decode an example message:
@@ -341,12 +341,12 @@ impl ScipyModel {
 ///     [[0.3, 0.1, 0.1, 0.3, 0.2],  # (for symbols[0])
 ///      [0.1, 0.4, 0.2, 0.1, 0.2],  # (for symbols[1])
 ///      [0.4, 0.2, 0.1, 0.2, 0.1]], # (for symbols[2])
-///     dtype=np.float64)
+///     dtype=np.float32)
 ///
 /// symbols = np.array([0, 4, 1], dtype=np.int32)
 /// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model_family, probabilities)
-/// print(coder.get_compressed()) # (prints: [152672664])
+/// print(coder.get_compressed()) # (prints: [104018743])
 ///
 /// reconstructed = coder.decode(model_family, probabilities)
 /// assert np.all(reconstructed == symbols) # (verify correctness)
@@ -356,7 +356,7 @@ impl ScipyModel {
 ///
 /// - **probabilities** --- the probability table, as a numpy array. You can specify the
 ///   probabilities either directly when constructing the model by passing a rank-1 numpy
-///   array with `dtype=np.float64` and length `n` to the constructor; or you can call the
+///   array with a float `dtype` and length `n` to the constructor; or you can call the
 ///   constructor with no arguments and instead provide a rank-2 tensor of shape `(m, n)`
 ///   when encoding or decoding an array of `m` symbols, as in the second example above.
 ///
@@ -545,7 +545,7 @@ impl Uniform {
 /// ## Model Parameters
 ///
 /// Each of the following model parameters can either be specified as a scalar when
-/// constructing the model, or as a rank-1 numpy array (with `dtype=np.float64`) when
+/// constructing the model, or as a rank-1 numpy array (with a float `dtype`) when
 /// calling the entropy coder's encode or decode method.
 ///
 /// - **mean** --- the mean of the Gaussian distribution before quantization.
@@ -635,7 +635,7 @@ impl QuantizedGaussian {
 /// ## Model Parameters
 ///
 /// Each of the following model parameters can either be specified as a scalar when
-/// constructing the model, or as a rank-1 numpy array (with `dtype=np.float64`) when
+/// constructing the model, or as a rank-1 numpy array (with a float `dtype`) when
 /// calling the entropy coder's encode or decode method.
 ///
 /// - **mean** --- the mean of the Laplace distribution before quantization.
@@ -735,7 +735,7 @@ impl QuantizedLaplace {
 /// ## Model Parameters
 ///
 /// Each of the following model parameters can either be specified as a scalar when
-/// constructing the model, or as a rank-1 numpy array (with `dtype=np.float64`) when
+/// constructing the model, or as a rank-1 numpy array (with a float `dtype`) when
 /// calling the entropy coder's encode or decode method.
 ///
 /// - **loc** --- the location (mode) of the Cauchy distribution before quantization.
@@ -819,7 +819,7 @@ impl QuantizedCauchy {
 /// ## Model Parameters
 ///
 /// Each model parameter can either be specified as a scalar when constructing the model, or
-/// as a rank-1 numpy array (with `dtype=np.int32` for `n` and `dtype=np.float64` for `p`)
+/// as a rank-1 numpy array (with `dtype=np.int32` for `n` and a float `dtype` for `p`)
 /// when calling the entropy coder's encode or decode method (see [discussion
 /// above](#concrete-models-vs-model-families)). Note that, even if you delay all model
 /// parameters to the point of encoding or decoding, then  you still have to *call* the
@@ -882,7 +882,7 @@ impl Binomial {
 /// ## Model Parameter
 ///
 /// The model parameter can either be specified as a scalar when constructing the model, or
-/// as a rank-1 numpy array with `dtype=np.float64` when calling the entropy coder's encode
+/// as a rank-1 numpy array with a float `dtype` when calling the entropy coder's encode
 /// or decode method (see [discussion above](#concrete-models-vs-model-families)). Note
 /// that, in the latter case, you still have to *call* the constructor of the model, i.e.:
 /// `model_family = constriction.stream.model.Bernoulli()` --- note the trailing `()`.

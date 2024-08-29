@@ -664,7 +664,7 @@ def test_range_coding_decode4():
     model_family = constriction.stream.model.Categorical(perfect=False)
 
     # Decode 2 symbols:
-    compressed = np.array([2705829535], dtype=np.uint32)
+    compressed = np.array([2705829510], dtype=np.uint32)
     decoder = constriction.stream.queue.RangeDecoder(compressed)
     symbols = decoder.decode(model_family, probabilities)
     assert np.all(symbols == np.array([3, 1], dtype=np.int32))

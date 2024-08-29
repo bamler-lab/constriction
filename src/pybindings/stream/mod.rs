@@ -85,13 +85,13 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// # Define arrays of model parameters (means and standard deviations):
 /// symbols = np.array([12,   15,   4,   -2,   18,   5  ], dtype=np.int32)
-/// means   = np.array([13.2, 17.9, 7.3, -4.2, 25.1, 3.2], dtype=np.float64)
-/// stds    = np.array([ 3.2,  4.7, 5.2,  3.1,  6.3, 2.9], dtype=np.float64)
+/// means   = np.array([13.2, 17.9, 7.3, -4.2, 25.1, 3.2], dtype=np.float32)
+/// stds    = np.array([ 3.2,  4.7, 5.2,  3.1,  6.3, 2.9], dtype=np.float32)
 ///
 /// # Encode and decode an example message:
 /// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model_family, means, stds)
-/// print(coder.get_compressed()) # (prints: [2051958011, 1549])
+/// print(coder.get_compressed()) # (prints: [2051912079, 1549])
 ///
 /// reconstructed = coder.decode(model_family, means, stds)
 /// assert np.all(reconstructed == symbols) # (verify correctness)
@@ -126,15 +126,15 @@ fn init_model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// # Define the two parts of the message and their respective entropy models:
 /// message_part1       = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
-/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
+/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float32)
 /// model_part1       = constriction.stream.model.Categorical(probabilities_part1, perfect=False)
 /// # `model_part1` is a categorical distribution over the (implied) alphabet
 /// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
 /// # we will use it below to encode each of the 7 symbols in `message_part1`.
 ///
 /// message_part2       = np.array([6,   10,   -4,    2  ], dtype=np.int32)
-/// means_part2         = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float64)
-/// stds_part2          = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float64)
+/// means_part2         = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float32)
+/// stds_part2          = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float32)
 /// model_family_part2  = constriction.stream.model.QuantizedGaussian(-100, 100)
 /// # `model_family_part2` is a *family* of Gaussian distributions, quantized to
 /// # bins of width 1 centered at the integers -100, -99, ..., 100. We could
@@ -226,15 +226,15 @@ fn init_queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// # Define the two parts of the message and their respective entropy models:
 /// message_part1       = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
-/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
+/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float32)
 /// model_part1       = constriction.stream.model.Categorical(probabilities_part1, perfect=False)
 /// # `model_part1` is a categorical distribution over the (implied) alphabet
 /// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
 /// # we will use it below to encode each of the 7 symbols in `message_part1`.
 ///
 /// message_part2       = np.array([6,   10,   -4,    2  ], dtype=np.int32)
-/// means_part2         = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float64)
-/// stds_part2          = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float64)
+/// means_part2         = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float32)
+/// stds_part2          = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float32)
 /// model_family_part2  = constriction.stream.model.QuantizedGaussian(-100, 100)
 /// # `model_family_part2` is a *family* of Gaussian distributions, quantized to
 /// # bins of width 1 centered at the integers -100, -99, ..., 100. We could

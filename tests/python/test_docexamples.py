@@ -790,7 +790,7 @@ def test_categorical2():
     coder = constriction.stream.stack.AnsCoder()  # (RangeEncoder also works)
     coder.encode_reverse(symbols, model_family, probabilities)
     assert np.all(coder.get_compressed() == np.array(
-        [152672664], dtype=np.uint32))
+        [104018741], dtype=np.uint32))
 
     reconstructed = coder.decode(model_family, probabilities)
     assert np.all(reconstructed == symbols)  # (verify correctness)
