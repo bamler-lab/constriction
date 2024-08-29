@@ -1,14 +1,20 @@
 pub mod internals;
 
+use core::{
+    iter::Sum,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use std::prelude::v1::*;
 
 use alloc::sync::Arc;
+use num_traits::{float::FloatCore, AsPrimitive};
 use pyo3::prelude::*;
 
 use crate::{
-    pybindings::PyReadonlyFloatArray1,
+    pybindings::{PyReadonlyFloatArray, PyReadonlyFloatArray1},
     stream::model::{
-        DefaultContiguousCategoricalEntropyModel, DefaultLeakyQuantizer, UniformModel,
+        DefaultContiguousCategoricalEntropyModel, DefaultLazyContiguousCategoricalEntropyModel,
+        DefaultLeakyQuantizer, UniformModel,
     },
 };
 
@@ -83,8 +89,8 @@ pub struct Model(pub Arc<dyn internals::Model>);
 ///
 /// # Encode and decode an example message with per-symbol model parameters:
 /// symbols       = np.array([... TODO ...], dtype=np.int32)
-/// model_params1 = np.array([... TODO ...], dtype=np.float64)
-/// model_params2 = np.array([... TODO ...], dtype=np.float64)
+/// model_params1 = np.array([... TODO ...], dtype=np.float32)
+/// model_params2 = np.array([... TODO ...], dtype=np.float32)
 /// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model_family, model_params1, model_params2)
 /// print(coder.get_compressed())
@@ -216,11 +222,11 @@ impl CustomModel {
 ///
 /// # Encode and decode an example message with per-symbol model parameters:
 /// symbols = np.array([22,   14,   5,   -3,   19,   7  ], dtype=np.int32)
-/// locs    = np.array([26.2, 10.9, 8.7, -6.3, 25.1, 8.9], dtype=np.float64)
-/// scales  = np.array([ 4.3, 7.4,  2.9,  4.1,  9.7, 3.4], dtype=np.float64)
+/// locs    = np.array([26.2, 10.9, 8.7, -6.3, 25.1, 8.9], dtype=np.float32)
+/// scales  = np.array([ 4.3, 7.4,  2.9,  4.1,  9.7, 3.4], dtype=np.float32)
 /// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model_family, locs, scales)
-/// print(coder.get_compressed()) # (prints: [3493721376, 17526])
+/// print(coder.get_compressed()) # (prints: [3611353862, 17526])
 ///
 /// reconstructed = coder.decode(model_family, locs, scales)
 /// assert np.all(reconstructed == symbols) # (verify correctness)
@@ -263,8 +269,47 @@ impl ScipyModel {
 
 /// A categorical distribution with explicitly provided probabilities.
 ///
-/// Allows you to define any probability distribution over the alphabet `{0, 1, ... n-1}`
-/// by explicitly providing the probability of each symbol in the alphabet.
+/// Allows you to define any probability distribution over the alphabet `{0, 1, ... n-1}` by
+/// explicitly providing the probability of each symbol in the alphabet.
+///
+/// ## Fixed Arguments
+///
+/// The following arguments have to be provided directly to the constructor of the model.
+/// They cannot be delayed until encoding or decoding.
+///
+/// - **lazy** --- set `lazy=True` if construction of the model should be delayed until the
+///   model is used for encoding or decoding. This is faster if the model is used for only a
+///   few symbols, but it is slower if you encode or decode lots of i.i.d. symbols. Note
+///   that setting `lazy=True` implies `perfect=False`, see below. If you explicitly set
+///   `perfect=False` anyway then the value of `lazy` only affects run time but has no
+///   effect on the compression semantics. Thus, encoder and decoder may set `lazy`
+///   differently as long as both set `perfect=False`. Ignored if `perfect=False` and
+///   `probabilities` is not given (in this case, lazy model construction is always used as
+///   it is always faster without changing semantics).
+/// - **perfect** -- whether the constructor should accept a potentially long run time to
+///   find the best possible approximation of the provided probability distribution. If set
+///   to `False` (recommended in most cases) then the constructor will run faster but might
+///   find a *very slightly* worse approximation of the provided probability distribution,
+///   thus leading to marginally lower bit rates. Note that encoder and decoder have to use
+///   the same setting for `perfect`. Most new code should set `perfect=False` as the
+///   differences in bit rate are usually hardly noticeable. However, if neither `lazy` nor
+///   `perfect` are explicitly set to any value then `perfect` currently defaults to `True`
+///   for binary backward compatibility with `constriction` version <= 0.3.5, which
+///   supported only `perfect=True` (see discussion of defaults below).
+///
+/// **Defaults:**
+///
+/// - If neither `lazy` nor `perfect` are set, then `constriction` currently defaults to
+///   `perfect=True` (and therefore `lazy=False`) to provide binary backward compatibility
+///   with `constriction` version <= 0.3.5. If you don't need to exchange binary compressed
+///   data with code that uses `constriction` version <= 0.3.5 then it is recommended to set
+///   `perfect=True` to improve runtime performance. **Warning:** this default will change
+///   in `constriction` version 0.5, which will default to `perfect=False`.
+/// - If either one of `lazy` or `perfect` is specified but the other isn't, then the
+///   unspecified argument defaults to `False` with the following exception:
+/// - If `perfect=False` and `probabilities` is not specified (i.e., if you're constructing
+///   a model *family*) then `lazy` is automatically always `True` since, in this case, lazy
+///   model construction is always faster without changing semantics.
 ///
 /// ## Examples
 ///
@@ -273,47 +318,45 @@ impl ScipyModel {
 /// ```python
 /// # Define a categorical distribution over the (implied) alphabet {0,1,2,3}
 /// # with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3:
-/// probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
-/// model = constriction.stream.model.Categorical(probabilities)
+/// probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float32)
+/// model = constriction.stream.model.Categorical(probabilities, perfect=False)
 ///
 /// # Encode and decode an example message:
 /// symbols = np.array([0, 3, 2, 3, 2, 0, 2, 1], dtype=np.int32)
 /// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model)
-/// print(coder.get_compressed()) # (prints: [488222996, 175])
+/// print(coder.get_compressed()) # (prints: [2484720979, 175])
 ///
 /// reconstructed = coder.decode(model, 8) # (decodes 8 i.i.d. symbols)
 /// assert np.all(reconstructed == symbols) # (verify correctness)
 /// ```
 ///
-/// Using a model *family* so that we can provide individual probabilities for each
-/// encoded or decoded symbol:
+/// Using a model *family* so that we can provide individual probabilities for each encoded
+/// or decoded symbol:
 ///
 /// ```python
 /// # Define 3 categorical distributions, each over the alphabet {0,1,2,3,4}:
-/// model_family = constriction.stream.model.Categorical() # note empty `()`
+/// model_family = constriction.stream.model.Categorical(perfect=False)
 /// probabilities = np.array(
 ///     [[0.3, 0.1, 0.1, 0.3, 0.2],  # (for symbols[0])
 ///      [0.1, 0.4, 0.2, 0.1, 0.2],  # (for symbols[1])
 ///      [0.4, 0.2, 0.1, 0.2, 0.1]], # (for symbols[2])
-///     dtype=np.float64)
+///     dtype=np.float32)
 ///
 /// symbols = np.array([0, 4, 1], dtype=np.int32)
 /// coder = constriction.stream.stack.AnsCoder() # (RangeEncoder also works)
 /// coder.encode_reverse(symbols, model_family, probabilities)
-/// print(coder.get_compressed()) # (prints: [152672664])
+/// print(coder.get_compressed()) # (prints: [104018743])
 ///
 /// reconstructed = coder.decode(model_family, probabilities)
 /// assert np.all(reconstructed == symbols) # (verify correctness)
 /// ```
 ///
-///
-///
 /// ## Model Parameters
 ///
 /// - **probabilities** --- the probability table, as a numpy array. You can specify the
 ///   probabilities either directly when constructing the model by passing a rank-1 numpy
-///   array with `dtype=np.float64` and length `n` to the constructor; or you can call the
+///   array with a float `dtype` and length `n` to the constructor; or you can call the
 ///   constructor with no arguments and instead provide a rank-2 tensor of shape `(m, n)`
 ///   when encoding or decoding an array of `m` symbols, as in the second example above.
 ///
@@ -325,35 +368,102 @@ impl ScipyModel {
 /// provided probabilities), even if the provided probability for some symbol is smaller
 /// than the smallest representable probability (including if it is exactly `0.0`). This
 /// ensures that all symbols from this range can in principle be encoded.
-///
-/// Note that, if you delay providing the probabilities until encoding or decoding as in
-/// the second example above, you still have to *call* the constructor of the model, i.e.,
-/// `model_family = constriction.stream.model.Categorical()` --- note the empty parentheses
-/// `()` at the end.
 #[pyclass(extends=Model)]
 #[derive(Debug)]
 struct Categorical;
 
+#[inline(always)]
+fn parameterize_categorical<F>(
+    probabilities: &[F],
+    lazy: bool,
+    perfect: bool,
+) -> Result<Arc<dyn internals::Model>, ()>
+where
+    F: FloatCore + Sum<F> + AsPrimitive<u32> + Into<f64> + Send + Sync,
+    u32: AsPrimitive<F>,
+    usize: AsPrimitive<F>,
+{
+    if lazy {
+        let model =
+            DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                probabilities.to_vec(),
+                None,
+            )?;
+        Ok(Arc::new(model) as Arc<dyn internals::Model>)
+    } else if perfect {
+        let model =
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                probabilities,
+            )?;
+        Ok(Arc::new(model) as Arc<dyn internals::Model>)
+    } else {
+        let model =
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                probabilities,
+                None,
+            )?;
+        Ok(Arc::new(model) as Arc<dyn internals::Model>)
+    }
+}
+
 #[pymethods]
 impl Categorical {
     #[new]
-    #[pyo3(text_signature = "(self, probabilities=None)")]
-    pub fn new(probabilities: Option<PyReadonlyFloatArray1<'_>>) -> PyResult<(Self, Model)> {
+    #[pyo3(text_signature = "(self, probabilities=None, lazy=None, perfect=None)")]
+    pub fn new(
+        py: Python<'_>,
+        probabilities: Option<PyReadonlyFloatArray1<'_>>,
+        lazy: Option<bool>,
+        perfect: Option<bool>,
+    ) -> PyResult<(Self, Model)> {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+
+        let (lazy, perfect) = match (lazy, perfect) {
+            (None, None) => {
+                if !WARNED.swap(true, Ordering::AcqRel) {
+                    let _ = py.run(
+                        "print('WARNING: Neither argument `perfect` nor `lazy` were specified for `Categorical` entropy model.\\n\
+                             \x20        In this case, `perfect` currently defaults to `True` for backward compatibility, but\\n\
+                             \x20        this default will change to `perfect=False` in constriction version 0.5.\\n\
+                             \x20        To suppress this warning, explicitly set:\\n\
+                             \x20        - `perfect=False`: recommended for most new use cases; or\\n\
+                             \x20        - `perfect=True`: if you need backward compatibility with constriction <= 0.3.5.')",
+                        None,
+                        None
+                    );
+                }
+                (false, true)
+            }
+            (Some(true), Some(true)) => return Err(pyo3::exceptions::PyValueError::new_err(
+                "Both arguments `lazy` and `perfect` cannot be set to `True` at the same time.\n\
+                Lazy categorical entropy models cannot perfectly quantize probabilities.",
+            )),
+            (lazy, perfect) => (lazy.unwrap_or(false), perfect.unwrap_or(false)),
+        };
+
         let model = match probabilities {
-            None => Arc::new(internals::UnparameterizedCategoricalDistribution)
-                as Arc<dyn internals::Model>,
+            None => {
+                // We ignore the user's `lazy`-setting for unparameterized models because
+                // these should always be lazy if possible (i.e., if not `perfect`).
+                Arc::new(internals::UnparameterizedCategoricalDistribution::new(
+                    perfect,
+                )) as Arc<dyn internals::Model>
+            }
             Some(probabilities) => {
-                let model =
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-                        probabilities.cast_f64()?.as_slice()?,
-                    )
-                    .map_err(|()| {
-                        pyo3::exceptions::PyValueError::new_err(
-                            "Probability distribution not normalizable (the array of probabilities\n\
+                let model = match probabilities {
+                    PyReadonlyFloatArray::F32(probabilities) => {
+                        parameterize_categorical(probabilities.as_slice()?, lazy, perfect)
+                    }
+                    PyReadonlyFloatArray::F64(probabilities) => {
+                        parameterize_categorical(probabilities.as_slice()?, lazy, perfect)
+                    }
+                };
+                model.map_err(|()| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Probability distribution not normalizable (the array of probabilities\n\
                             might be empty, contain negative values or NaNs, or sum to infinity).",
-                        )
-                    })?;
-                Arc::new(model) as Arc<dyn internals::Model>
+                    )
+                })?
             }
         };
 
@@ -390,11 +500,11 @@ impl Uniform {
         let model = match size {
             None => {
                 let model = internals::ParameterizableModel::new(|(size,): (i32,)| {
-                    UniformModel::new(size as u32)
+                    UniformModel::new(size as usize)
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
-            Some(size) => Arc::new(UniformModel::new(size as u32)) as Arc<dyn internals::Model>,
+            Some(size) => Arc::new(UniformModel::new(size as usize)) as Arc<dyn internals::Model>,
         };
 
         Ok((Self, Model(model)))
@@ -435,7 +545,7 @@ impl Uniform {
 /// ## Model Parameters
 ///
 /// Each of the following model parameters can either be specified as a scalar when
-/// constructing the model, or as a rank-1 numpy array (with `dtype=np.float64`) when
+/// constructing the model, or as a rank-1 numpy array (with a float `dtype`) when
 /// calling the entropy coder's encode or decode method.
 ///
 /// - **mean** --- the mean of the Gaussian distribution before quantization.
@@ -525,7 +635,7 @@ impl QuantizedGaussian {
 /// ## Model Parameters
 ///
 /// Each of the following model parameters can either be specified as a scalar when
-/// constructing the model, or as a rank-1 numpy array (with `dtype=np.float64`) when
+/// constructing the model, or as a rank-1 numpy array (with a float `dtype`) when
 /// calling the entropy coder's encode or decode method.
 ///
 /// - **mean** --- the mean of the Laplace distribution before quantization.
@@ -625,7 +735,7 @@ impl QuantizedLaplace {
 /// ## Model Parameters
 ///
 /// Each of the following model parameters can either be specified as a scalar when
-/// constructing the model, or as a rank-1 numpy array (with `dtype=np.float64`) when
+/// constructing the model, or as a rank-1 numpy array (with a float `dtype`) when
 /// calling the entropy coder's encode or decode method.
 ///
 /// - **loc** --- the location (mode) of the Cauchy distribution before quantization.
@@ -709,7 +819,7 @@ impl QuantizedCauchy {
 /// ## Model Parameters
 ///
 /// Each model parameter can either be specified as a scalar when constructing the model, or
-/// as a rank-1 numpy array (with `dtype=np.int32` for `n` and `dtype=np.float64` for `p`)
+/// as a rank-1 numpy array (with `dtype=np.int32` for `n` and a float `dtype` for `p`)
 /// when calling the entropy coder's encode or decode method (see [discussion
 /// above](#concrete-models-vs-model-families)). Note that, even if you delay all model
 /// parameters to the point of encoding or decoding, then  you still have to *call* the
@@ -772,7 +882,7 @@ impl Binomial {
 /// ## Model Parameter
 ///
 /// The model parameter can either be specified as a scalar when constructing the model, or
-/// as a rank-1 numpy array with `dtype=np.float64` when calling the entropy coder's encode
+/// as a rank-1 numpy array with a float `dtype` when calling the entropy coder's encode
 /// or decode method (see [discussion above](#concrete-models-vs-model-families)). Note
 /// that, in the latter case, you still have to *call* the constructor of the model, i.e.:
 /// `model_family = constriction.stream.model.Bernoulli()` --- note the trailing `()`.
@@ -789,25 +899,58 @@ struct Bernoulli;
 #[pymethods]
 impl Bernoulli {
     #[new]
-    #[pyo3(text_signature = "(self, p=None)")]
-    pub fn new(p: Option<f64>) -> PyResult<(Self, Model)> {
-        let model = match p {
-            None => {
+    #[pyo3(text_signature = "(self, p=None, perfect)")]
+    pub fn new(py: Python<'_>, p: Option<f64>, perfect: Option<bool>) -> PyResult<(Self, Model)> {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+
+        if perfect.is_none() && !WARNED.swap(true, Ordering::AcqRel) {
+            let _ = py.run(
+                "print('WARNING: Argument `perfect` was not specified for `Bernoulli` distribution.\\n\
+                     \x20        It currently defaults to `perfect=True` for backward compatibility, but this default\\n\
+                     \x20        will change to `perfect=False` in constriction version 0.5. To suppress this warning,\\n\
+                     \x20        explicitly set `perfect=False` (recommended for most new use cases) or explicitly set\\n\
+                     \x20        `perfect=True` (if you need backward compatibility with constriction <= 0.3.5).')",
+                None,
+                None
+            );
+        }
+
+        let model = match (p, perfect) {
+            (None, Some(false)) => {
                 let model = internals::ParameterizableModel::new(move |(p,): (f64,)| {
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&[
-                        1.0 - p,
-                        p,
-                    ])
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                        &[1.0 - p, p],
+                        None
+                    )
                     .expect("`p` must be >= 0.0 and <= 1.0.")
                 });
                 Arc::new(model) as Arc<dyn internals::Model>
             }
-            Some(p) => {
+            (None, _) => {
+                let model = internals::ParameterizableModel::new(move |(p,): (f64,)| {
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                        &[1.0 - p, p]
+                    )
+                    .expect("`p` must be >= 0.0 and <= 1.0.")
+                });
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+            (Some(p), Some(false)) => {
                 let model =
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&[
-                        1.0 - p,
-                        p,
-                    ])
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                        &[1.0 - p, p],
+                        None
+                    )
+                    .map_err(|()| {
+                        pyo3::exceptions::PyValueError::new_err("`p` must be >= 0.0 and <= 1.0.")
+                    })?;
+                Arc::new(model) as Arc<dyn internals::Model>
+            }
+            (Some(p), _) => {
+                let model =
+                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                        &[1.0 - p, p]
+                    )
                     .map_err(|()| {
                         pyo3::exceptions::PyValueError::new_err("`p` must be >= 0.0 and <= 1.0.")
                     })?;

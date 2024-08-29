@@ -115,10 +115,11 @@
 //!   branches and a smaller internal coder state. Empirically, our decoding benchmarks in
 //!   the file `benches/lookup.rs` run more than twice as fast with an `AnsCoder` than with
 //!   a `RangeDecoder`. However, please note that (i) these benchmarks use the highly
-//!   optimized [lookup models](model::LookupDecoderModel); if you use other entropy
-//!   models then these will likely be the computational bottleneck, not the coder; (ii)
-//!   future versions of `constriction` may introduce further run-time optimizations; and
-//!   (iii) while *decoding* is more than two times faster with ANS, *encoding* is somewhat
+//!   optimized lookup models (see [`ContiguousLookupDecoderModel`] and
+//!   [`NonContiguousLookupDecoderModel`]); if you use other entropy models then these will
+//!   likely be the computational bottleneck, not the coder; (ii) future versions of
+//!   `constriction` may introduce further run-time optimizations; and (iii) while
+//!   *decoding* is more than two times faster with ANS, *encoding* is somewhat
 //!   (~&nbsp;10&nbsp;%) faster with Range Coding (this *might* be because encoding with
 //!   ANS, unlike decoding, involves an integer division, which is a surprisingly slow
 //!   operation on most hardware).
@@ -155,12 +156,12 @@
 //!
 //! *The near-optimal compression performance* of stream codes is to be seen in contrast to
 //! symbol codes (see module [`symbol`](crate::symbol)), such as the well-known [Huffman
-//! code](crate::symbol::huffman). Symbol codes do not amortize over symbols.
-//! Instead, they map each symbol to a fixed sequence of bits of integer length (a
-//! "codeword"). This leads to a typical overhead of 0.5&nbsp;bits *per symbol* in the best
-//! case, and to an overhead of almost 1&nbsp;bit per symbol for entropy models with very
-//! low (≪&nbsp;1&nbsp;bit of) entropy per symbol, which is common for deep learning based
-//! entropy models. Stream codes do not suffer from this overhead.
+//! code](crate::symbol::huffman). Symbol codes do not amortize over symbols. Instead, they
+//! map each symbol to a fixed sequence of bits of integer length (a "codeword"). This leads
+//! to a typical overhead of 0.5&nbsp;bits *per symbol* in the best case, and to an overhead
+//! of almost 1&nbsp;bit per symbol for entropy models with very low (≪&nbsp;1&nbsp;bit of)
+//! entropy per symbol, which is common for deep learning based entropy models. Stream codes
+//! do not suffer from this overhead.
 //!
 //! *The computational efficiency* of stream codes is to be seen in contrast to block codes.
 //! Block codes are symbol codes that operate on blocks of several consecutive symbols at
@@ -190,9 +191,10 @@
 //!   API](https://bamler-lab.github.io/constriction/apidoc/python/). The "default" presets
 //!   provide very near-optimal compression effectiveness for most conceivable applications
 //!   and high runtime performance on typical (64&nbsp;bit) desktop computers. However, the
-//!   "default" presets are *not* recommended for a [`LookupDecoderModel`] as their high
-//!   numerical precision would lead to enormeous lookup tables (~&nbsp;67&nbsp;MB), which
-//!   would take a considerable time to build and likely leead to extremely poor cashing.
+//!   "default" presets are *not* recommended for a [`ContiguousLookupDecoderModel`] or
+//!   [`NonContiguousLookupDecoderModel`] as their high numerical precision would lead to
+//!   enormeous lookup tables (~&nbsp;67&nbsp;MB), which would take a considerable time to
+//!   build and likely leead to extremely poor cashing.
 //!   - entropy *coders* with "default" presets: [`DefaultAnsCoder`],
 //!     [`DefaultRangeEncoder`], [`DefaultRangeDecoder`], and [`DefaultChainCoder`];
 //!   - entropy *models* with "default" presets: [`DefaultLeakyQuantizer`],
@@ -203,14 +205,13 @@
 //!   efficiency and memory consumption. The "small" presets use a lower numerical precision
 //!   and a smaller state and word size than the "default" presets. The lower numerical
 //!   precision makes it possible to use the highly runtime efficient
-//!   [`LookupDecoderModel`], the smaller state size reduces the memory overhead of jump
-//!   tables for random access, and the smaller word size may be advantageous on some
-//!   embedded devices.
+//!   [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`], the smaller
+//!   state size reduces the memory overhead of jump tables for random access, and the
+//!   smaller word size may be advantageous on some embedded devices.
 //!   - entropy *coders* with "small" presets: [`SmallAnsCoder`], [`SmallRangeEncoder`],
 //!     [`SmallRangeDecoder`], and [`SmallChainCoder`];
-//!   - entropy *models* with "small" presets: [`SmallContiguousLookupDecoderModel`],
-//!     [`SmallNonContiguousLookupDecoderModel`],
-//!     [`SmallContiguousCategoricalEntropyModel`],
+//!   - entropy *models* with "small" presets: [`ContiguousLookupDecoderModel`],
+//!     [`NonContiguousLookupDecoderModel`], [`SmallContiguousCategoricalEntropyModel`],
 //!     [`SmallNonContiguousCategoricalEncoderModel`],
 //!     [`SmallNonContiguousCategoricalDecoderModel`], and [`SmallLeakyQuantizer`].
 //!
@@ -268,8 +269,9 @@
 //!   representing probabilities in fixed-point arithmetic. Must not be zero or larger than
 //!   `Probability::BITS`. A small `PRECISION` will lead to compression overhead due to poor
 //!   approximations of the true probability distribution. A large `PRECISION` will lead to
-//!   a large memory overhead if you use a [`LookupDecoderModel`], and it can make decoding
-//!   with a [`LeakilyQuantizedDistribution`] slow.
+//!   a large memory overhead if you use a [`ContiguousLookupDecoderModel`] or
+//!   [`NonContiguousLookupDecoderModel`], and it can make decoding with a
+//!   [`LeakilyQuantizedDistribution`] slow.
 //!   - The "default" preset sets `PRECISION = 24`.
 //!   - The "small" preset sets `PRECISION = 12`.
 //!
@@ -282,26 +284,33 @@
 //! [`DefaultRangeDecoder`]: queue::DefaultRangeDecoder
 //! [`DefaultChainCoder`]: chain::DefaultChainCoder
 //! [`DefaultLeakyQuantizer`]: model::DefaultLeakyQuantizer
-//! [`DefaultContiguousCategoricalEntropyModel`]: model::DefaultContiguousCategoricalEntropyModel
-//! [`DefaultNonContiguousCategoricalEncoderModel`]: model::DefaultNonContiguousCategoricalEncoderModel
-//! [`DefaultNonContiguousCategoricalDecoderModel`]: model::DefaultNonContiguousCategoricalDecoderModel
+//! [`DefaultContiguousCategoricalEntropyModel`]:
+//!     model::DefaultContiguousCategoricalEntropyModel
+//! [`DefaultNonContiguousCategoricalEncoderModel`]:
+//!     model::DefaultNonContiguousCategoricalEncoderModel
+//! [`DefaultNonContiguousCategoricalDecoderModel`]:
+//!     model::DefaultNonContiguousCategoricalDecoderModel
 //! [`SmallAnsCoder`]: stack::SmallAnsCoder
 //! [`SmallRangeEncoder`]: queue::SmallRangeEncoder
 //! [`SmallRangeDecoder`]: queue::SmallRangeDecoder
 //! [`SmallChainCoder`]: chain::SmallChainCoder
 //! [`SmallLeakyQuantizer`]: model::SmallLeakyQuantizer
-//! [`SmallContiguousLookupDecoderModel`]: model::SmallContiguousLookupDecoderModel
-//! [`SmallNonContiguousLookupDecoderModel`]: model::SmallNonContiguousLookupDecoderModel
-//! [`SmallContiguousCategoricalEntropyModel`]: model::SmallContiguousCategoricalEntropyModel
-//! [`SmallNonContiguousCategoricalEncoderModel`]: model::SmallNonContiguousCategoricalEncoderModel
-//! [`SmallNonContiguousCategoricalDecoderModel`]: model::SmallNonContiguousCategoricalDecoderModel
+//! [`ContiguousLookupDecoderModel`]: model::ContiguousLookupDecoderModel
+//! [`NonContiguousLookupDecoderModel`]: model::NonContiguousLookupDecoderModel
+//! [`SmallContiguousCategoricalEntropyModel`]:
+//!     model::SmallContiguousCategoricalEntropyModel
+//! [`SmallNonContiguousCategoricalEncoderModel`]:
+//!     model::SmallNonContiguousCategoricalEncoderModel
+//! [`SmallNonContiguousCategoricalDecoderModel`]:
+//!     model::SmallNonContiguousCategoricalDecoderModel
 //! [`AnsCoder`]: stack::AnsCoder
 //! [`AnsCoder::from_binary`]: stack::AnsCoder::from_binary
 //! [`ChainCoder`]: chain::ChainCoder
 //! [`Cursor`]: crate::backends::Cursor
 //! [`backends`]: crate::backends
 //! [Deflate]: https://en.wikipedia.org/wiki/Deflate
-//! [`LookupDecoderModel`]: model::LookupDecoderModel
+//! [`ContiguousLookupDecoderModel`]: model::ContiguousLookupDecoderModel
+//! [`NonContiguousLookupDecoderModel`]: model::NonContiguousLookupDecoderModel
 //! [`LeakilyQuantizedDistribution`]: model::LeakilyQuantizedDistribution
 
 #![allow(clippy::type_complexity)]
@@ -995,7 +1004,7 @@ pub trait Decode<const PRECISION: usize>: Code {
     /// accidental misuse in this regard. We provide the ability to pass the `DecoderModel`
     /// by value as an opportunity for microoptimzations when dealing with models that can
     /// be cheaply copied (see, e.g.,
-    /// [`LookupDecoderModel::as_view`](model::LookupDecoderModel::as_view)).
+    /// [`ContiguousLookupDecoderModel::as_view`](crate::stream::model::ContiguousLookupDecoderModel::as_view)).
     ///
     /// If you want to decode each symbol with its individual entropy model, then consider
     /// calling [`decode_symbols`] instead. If you just want to decode a single symbol, then

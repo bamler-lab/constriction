@@ -11,6 +11,7 @@ name = "constriction"
 readme = "README-rust.md"
 repository = "https://github.com/bamler-lab/constriction/"
 version = "0.3.5"
+rust-version = "1.75" # for feature `return_position_impl_trait_in_traits`
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -24,7 +25,7 @@ std = []
 
 # Use feature `pybindings` to compile the python extension module that provides
 # access to this library from python. This feature is turned off by default
-# because it causes problems with `cargo test`. To turn it on, run:
+# because it causes problems with `cargo test` on Mac OS. To turn it on, run:
 #   cargo build --release --features pybindings
 pybindings = ["ndarray", "numpy", "pyo3"]
 

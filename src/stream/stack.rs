@@ -38,8 +38,9 @@ use crate::{
         self, AsReadWords, AsSeekReadWords, BoundedReadWords, Cursor, FallibleIteratorReadWords,
         IntoReadWords, IntoSeekReadWords, ReadWords, Reverse, WriteWords,
     },
-    bit_array_to_chunks_truncated, BitArray, CoderError, DefaultEncoderError,
-    DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack, UnwrapInfallible,
+    bit_array_to_chunks_truncated, generic_static_asserts, BitArray, CoderError,
+    DefaultEncoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos, PosSeek, Seek, Stack,
+    UnwrapInfallible,
 };
 
 /// Entropy coder for both encoding and decoding on a stack.
@@ -137,17 +138,18 @@ where
 /// many typical use cases.
 pub type DefaultAnsCoder<Backend = Vec<u32>> = AnsCoder<u32, u64, Backend>;
 
-/// Type alias for an [`AnsCoder`] for use with a [`LookupDecoderModel`]
+/// Type alias for an [`AnsCoder`] for use with a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`]
 ///
 /// This encoder has a smaller word size and internal state than [`AnsCoder`]. It is
-/// optimized for use with a [`LookupDecoderModel`].
+/// optimized for use with a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`].
 ///
 /// # Examples
 ///
-/// See [`SmallContiguousLookupDecoderModel`].
+/// See [`ContiguousLookupDecoderModel`].
 ///
-/// [`LookupDecoderModel`]: super::model::LookupDecoderModel
-/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
 pub type SmallAnsCoder<Backend = Vec<u16>> = AnsCoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> Debug for AnsCoder<Word, State, Backend>
@@ -256,7 +258,10 @@ where
     Backend: Default,
 {
     fn default() -> Self {
-        assert!(State::BITS >= 2 * Word::BITS);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
 
         Self {
             state: State::zero(),
@@ -307,7 +312,10 @@ where
     where
         Backend: ReadWords<Word, Stack>,
     {
-        assert!(State::BITS >= 2 * Word::BITS);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
 
         let state = match Self::read_initial_state(|| compressed.read()) {
             Ok(state) => state,
@@ -441,7 +449,7 @@ where
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let model = DefaultContiguousCategoricalEntropyModel
-    ///     ::from_floating_point_probabilities(&probabilities).unwrap();
+    ///     ::from_floating_point_probabilities_fast(&probabilities, None).unwrap();
     /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Inspect the compressed data.
@@ -766,7 +774,7 @@ where
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let model = DefaultContiguousCategoricalEntropyModel
-    ///     ::from_floating_point_probabilities(&probabilities).unwrap();
+    ///     ::from_floating_point_probabilities_fast(&probabilities, None).unwrap();
     /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Get the compressed data, consuming the ANS coder:
@@ -937,7 +945,12 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        assert!(State::BITS >= Word::BITS + PRECISION);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
+            NON_ZERO_PRECISION: PRECISION > 0;
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
 
         let (left_sided_cumulative, probability) = model
             .left_cumulative_and_probability(symbol)
@@ -1001,7 +1014,12 @@ where
         M::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<M::Probability>,
     {
-        assert!(State::BITS >= Word::BITS + PRECISION);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
+            NON_ZERO_PRECISION: PRECISION > 0;
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
 
         let quantile = (self.state % (State::one() << PRECISION)).as_().as_();
         let (symbol, left_sided_cumulative, probability) = model.quantile_function(quantile);
@@ -1324,8 +1342,8 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities(
-                &categorical_probabilities,
+            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities_fast::<f64>(
+                &categorical_probabilities,None
             )
             .unwrap();
         let mut symbols_categorical = Vec::with_capacity(AMT);

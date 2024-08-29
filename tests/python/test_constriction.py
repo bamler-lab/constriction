@@ -101,36 +101,28 @@ def test_chain_gaussian():
 
 def test_chain_independence():
     data = np.array([0x80d1_4131, 0xdda9_7c6c,
-                    0x5017_a640, 0x0117_0a3d], np.uint32)
+                    0x5017_a640, 0x0117_0a3e], np.uint32)
     probabilities = np.array([
         [0.1, 0.7, 0.1, 0.1],
         [0.2, 0.2, 0.1, 0.5],
         [0.2, 0.1, 0.4, 0.3],
     ])
-    model = constriction.stream.model.Categorical()
+    model = constriction.stream.model.Categorical(perfect=False)
 
     ansCoder = constriction.stream.stack.AnsCoder(data, True)
-    assert ansCoder.decode(model, probabilities[0, None, :]) == [0]
-    assert ansCoder.decode(model, probabilities[1, None, :]) == [0]
-    assert ansCoder.decode(model, probabilities[2, None, :]) == [1]
+    assert np.all(ansCoder.decode(model, probabilities) == [0, 0, 2])
 
     probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
     ansCoder = constriction.stream.stack.AnsCoder(data, True)
-    assert ansCoder.decode(model, probabilities[0, None, :]) == [1]
-    assert ansCoder.decode(model, probabilities[1, None, :]) == [0]
-    assert ansCoder.decode(model, probabilities[2, None, :]) == [3]
+    assert np.all(ansCoder.decode(model, probabilities) == [1, 0, 0])
 
     probabilities[0, :] = np.array([0.1, 0.7, 0.1, 0.1])
     chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
-    assert chainCoder.decode(model, probabilities[0, None, :]) == [0]
-    assert chainCoder.decode(model, probabilities[1, None, :]) == [3]
-    assert chainCoder.decode(model, probabilities[2, None, :]) == [3]
+    assert np.all(chainCoder.decode(model, probabilities) == [0, 3, 3])
 
     probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
     chainCoder = constriction.stream.chain.ChainCoder(data, False, True)
-    assert chainCoder.decode(model, probabilities[0, None, :]) == [1]
-    assert chainCoder.decode(model, probabilities[1, None, :]) == [3]
-    assert chainCoder.decode(model, probabilities[2, None, :]) == [3]
+    assert np.all(chainCoder.decode(model, probabilities) == [1, 3, 3])
 
 
 def test_custom_model():

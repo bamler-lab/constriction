@@ -94,8 +94,10 @@ def test_module_example3():
     means = np.array([2.3,  6.1, -8.5, 4.1, 1.3], dtype=np.float64)
     stds = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float64)
     entropy_model1 = constriction.stream.model.QuantizedGaussian(-50, 50)
-    entropy_model2 = constriction.stream.model.Categorical(np.array(
-        [0.2, 0.5, 0.3], dtype=np.float64))  # Probabilities of the symbols 0,1,2.
+    entropy_model2 = constriction.stream.model.Categorical(
+        np.array([0.2, 0.5, 0.3], dtype=np.float64), # Probabilities of the symbols 0,1,2.
+        perfect=False
+    ) 
 
     # Simply encode both parts in sequence with their respective models:
     encoder = constriction.stream.queue.RangeEncoder()
@@ -155,35 +157,35 @@ def test_chain1():
 def test_chain2():
     # Some sample binary data and sample probabilities for our entropy models
     data = np.array(
-        [0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+        [0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3e], np.uint32)
     probabilities = np.array(
         [[0.1, 0.7, 0.1, 0.1],  # (<-- probabilities for first decoded symbol)
          [0.2, 0.2, 0.1, 0.5],  # (<-- probabilities for second decoded symbol)
          [0.2, 0.1, 0.4, 0.3]])  # (<-- probabilities for third decoded symbol)
-    model_family = constriction.stream.model.Categorical()
+    model_family = constriction.stream.model.Categorical(perfect=False)
 
-    # Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 1]`:
+    # Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 2]`:
     ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
     assert np.all(ansCoder.decode(model_family, probabilities)
-                  == np.array([0, 0, 1], dtype=np.int32))
+                  == np.array([0, 0, 2], dtype=np.int32))
 
     # Even if we change only the first entropy model (slightly), *all* decoded
     # symbols can change:
     probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
     ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
     assert np.all(ansCoder.decode(model_family, probabilities)
-                  == np.array([1, 0, 3], dtype=np.int32))
+                  == np.array([1, 0, 0], dtype=np.int32))
 
 
 def test_chain3():
     # Same compressed data and original entropy models as in our first example
     data = np.array(
-        [0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+        [0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3e], np.uint32)
     probabilities = np.array(
         [[0.1, 0.7, 0.1, 0.1],
          [0.2, 0.2, 0.1, 0.5],
          [0.2, 0.1, 0.4, 0.3]])
-    model_family = constriction.stream.model.Categorical()
+    model_family = constriction.stream.model.Categorical(perfect=False)
 
     # Decode with the original entropy models, this time using a `ChainCoder`:
     chainCoder = constriction.stream.chain.ChainCoder(data, seal=True)
@@ -202,7 +204,7 @@ def test_stack1():
     # Define the two parts of the message and their respective entropy models:
     message_part1 = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
     probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
-    model_part1 = constriction.stream.model.Categorical(probabilities_part1)
+    model_part1 = constriction.stream.model.Categorical(probabilities_part1, perfect=False)
     # `model_part1` is a categorical distribution over the (implied) alphabet
     # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
     # we will use it below to encode each of the 7 symbols in `message_part1`.
@@ -285,10 +287,10 @@ def test_ans_decode1():
     # Define a concrete categorical entropy model over the (implied)
     # alphabet {0, 1, 2}:
     probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
 
     # Decode a single symbol from some example compressed data:
-    compressed = np.array([636697421, 6848946], dtype=np.uint32)
+    compressed = np.array([2514924296, 114], dtype=np.uint32)
     coder = constriction.stream.stack.AnsCoder(compressed)
     symbol = coder.decode(model)
     assert symbol == 2
@@ -297,11 +299,11 @@ def test_ans_decode1():
 def test_ans_decode2():
     # Use the same concrete entropy model as in the previous example:
     probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
 
     # Decode 9 symbols from some example compressed data, using the
     # same (fixed) entropy model defined above for all symbols:
-    compressed = np.array([636697421, 6848946], dtype=np.uint32)
+    compressed = np.array([1441153686, 108], dtype=np.uint32)
     coder = constriction.stream.stack.AnsCoder(compressed)
     symbols = coder.decode(model, 9)
     assert np.all(symbols == np.array(
@@ -330,7 +332,7 @@ def test_ans_decode4():
         [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first decoded symbol)
          [0.3, 0.2, 0.2, 0.2, 0.1]],  # (for second decoded symbol)
         dtype=np.float64)
-    model_family = constriction.stream.model.Categorical()
+    model_family = constriction.stream.model.Categorical(perfect=False)
 
     # Decode 2 symbols:
     compressed = np.array([2142112014, 31], dtype=np.uint32)
@@ -343,7 +345,7 @@ def test_ans_encode_reverse1():
     # Define a concrete categorical entropy model over the (implied)
     # alphabet {0, 1, 2}:
     probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
 
     # Encode a single symbol with this entropy model:
     coder = constriction.stream.stack.AnsCoder()
@@ -353,7 +355,7 @@ def test_ans_encode_reverse1():
 def test_ans_encode_reverse2():
     # Use the same concrete entropy model as in the previous example:
     probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
 
     # Encode an example message using the above `model` for all symbols:
     symbols = np.array([0, 2, 1, 2, 0, 2, 0, 2, 1], dtype=np.int32)
@@ -387,19 +389,19 @@ def test_ans_encode_reverse4():
         [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for symbols[0])
          [0.3, 0.2, 0.2, 0.2, 0.1]],  # (for symbols[1])
         dtype=np.float64)
-    model_family = constriction.stream.model.Categorical()
+    model_family = constriction.stream.model.Categorical(perfect=False)
 
     # Encode 2 symbols (needs `len(symbols) == probabilities.shape[0]`):
     symbols = np.array([3, 1], dtype=np.int32)
     coder = constriction.stream.stack.AnsCoder()
     coder.encode_reverse(symbols, model_family, probabilities)
     assert np.all(coder.get_compressed() == np.array(
-        [45298483], dtype=np.uint32))
+        [45298481], dtype=np.uint32))
 
 
 def test_ans_seek():
     probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
     message_part1 = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
     message_part2 = np.array([2, 2, 0, 1, 3], dtype=np.int32)
 
@@ -426,7 +428,7 @@ def test_range_coding_mod():
     # Define the two parts of the message and their respective entropy models:
     message_part1 = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
     probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
-    model_part1 = constriction.stream.model.Categorical(probabilities_part1)
+    model_part1 = constriction.stream.model.Categorical(probabilities_part1, perfect=False)
     # `model_part1` is a categorical distribution over the (implied) alphabet
     # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
     # we will use it below to encode each of the 7 symbols in `message_part1`.
@@ -531,7 +533,7 @@ def test_range_coder_encode1():
     # Define a concrete categorical entropy model over the (implied)
     # alphabet {0, 1, 2}:
     probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
 
     # Encode a single symbol with this entropy model:
     encoder = constriction.stream.queue.RangeEncoder()
@@ -542,7 +544,7 @@ def test_range_coder_encode1():
 def test_range_coder_encode2():
     # Use the same concrete entropy model as in the previous example:
     probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
 
     # Encode an example message using the above `model` for all symbols:
     symbols = np.array([0, 2, 1, 2, 0, 2, 0, 2, 1], dtype=np.int32)
@@ -576,21 +578,21 @@ def test_range_coder_encode4():
         [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first encoded symbol)
          [0.3, 0.2, 0.2, 0.2, 0.1]],  # (for second encoded symbol)
         dtype=np.float64)
-    model_family = constriction.stream.model.Categorical()
+    model_family = constriction.stream.model.Categorical(perfect=False)
 
     # Encode 2 symbols (needs `len(symbols) == probabilities.shape[0]`):
     symbols = np.array([3, 1], dtype=np.int32)
     encoder = constriction.stream.queue.RangeEncoder()
     encoder.encode(symbols, model_family, probabilities)
     assert np.all(encoder.get_compressed() ==
-                  np.array([2705829535], dtype=np.uint32))
+                  np.array([2705829254], dtype=np.uint32))
 
 
 def test_range_coding_decode1():
     # Define a concrete categorical entropy model over the (implied)
     # alphabet {0, 1, 2}:
     probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
 
     # Decode a single symbol from some example compressed data:
     compressed = np.array([3089773345, 1894195597], dtype=np.uint32)
@@ -602,7 +604,7 @@ def test_range_coding_decode1():
 def test_range_coding_decode2():
     # Use the same concrete entropy model as in the previous example:
     probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
 
     # Decode 9 symbols from some example compressed data, using the
     # same (fixed) entropy model defined above for all symbols:
@@ -615,7 +617,7 @@ def test_range_coding_decode2():
 
 def test_range_coding_seek():
     probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
     message_part1 = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
     message_part2 = np.array([2, 2, 0, 1, 3], dtype=np.int32)
 
@@ -659,7 +661,7 @@ def test_range_coding_decode4():
         [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first decoded symbol)
          [0.3, 0.2, 0.2, 0.2, 0.1]],  # (for second decoded symbol)
         dtype=np.float64)
-    model_family = constriction.stream.model.Categorical()
+    model_family = constriction.stream.model.Categorical(perfect=False)
 
     # Decode 2 symbols:
     compressed = np.array([2705829535], dtype=np.uint32)
@@ -762,7 +764,7 @@ def test_categorical1():
     # Define a categorical distribution over the (implied) alphabet {0,1,2,3}
     # with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3:
     probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
-    model = constriction.stream.model.Categorical(probabilities)
+    model = constriction.stream.model.Categorical(probabilities, perfect=False)
 
     # Encode and decode an example message:
     symbols = np.array([0, 3, 2, 3, 2, 0, 2, 1], dtype=np.int32)
@@ -775,9 +777,9 @@ def test_categorical1():
     assert np.all(reconstructed == symbols)  # (verify correctness)
 
 
-def categorical2():
+def test_categorical2():
     # Define 3 categorical distributions, each over the alphabet {0,1,2,3,4}:
-    model_family = constriction.stream.model.Categorical()  # note empty `()`
+    model_family = constriction.stream.model.Categorical(perfect=False)
     probabilities = np.array(
         [[0.3, 0.1, 0.1, 0.3, 0.2],  # (for symbols[0])
          [0.1, 0.4, 0.2, 0.1, 0.2],  # (for symbols[1])
@@ -788,7 +790,7 @@ def categorical2():
     coder = constriction.stream.stack.AnsCoder()  # (RangeEncoder also works)
     coder.encode_reverse(symbols, model_family, probabilities)
     assert np.all(coder.get_compressed() == np.array(
-        [152672664], dtype=np.uint32))
+        [104018741], dtype=np.uint32))
 
     reconstructed = coder.decode(model_family, probabilities)
     assert np.all(reconstructed == symbols)  # (verify correctness)

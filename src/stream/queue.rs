@@ -48,8 +48,8 @@ use super::{
 };
 use crate::{
     backends::{AsReadWords, BoundedReadWords, Cursor, IntoReadWords, ReadWords, WriteWords},
-    BitArray, CoderError, DefaultEncoderError, DefaultEncoderFrontendError, NonZeroBitArray, Pos,
-    PosSeek, Queue, Seek, UnwrapInfallible,
+    generic_static_asserts, BitArray, CoderError, DefaultEncoderError, DefaultEncoderFrontendError,
+    NonZeroBitArray, Pos, PosSeek, Queue, Seek, UnwrapInfallible,
 };
 
 /// Type of the internal state used by [`RangeEncoder<Word, State>`] and
@@ -151,12 +151,12 @@ pub type DefaultRangeEncoder<Backend = Vec<u32>> = RangeEncoder<u32, u64, Backen
 ///
 /// This encoder has a smaller word size and internal state than [`DefaultRangeEncoder`].
 /// This allows you to use lookup models when decoding data that was encoded with this
-/// coder, see [`SmallRangeDecoder`], as well as [`SmallContiguousLookupDecoderModel`] and
-/// [`SmallNonContiguousLookupDecoderModel`].
+/// coder, see [`SmallRangeDecoder`], as well as [`ContiguousLookupDecoderModel`] and
+/// [`NonContiguousLookupDecoderModel`].
 ///
-/// [lookup models]: super::model::lookup
-/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
-/// [`SmallNonContiguousLookupDecoderModel`]: super::model::SmallNonContiguousLookupDecoderModel
+/// [lookup models]: crate::stream::model::lookup
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
 pub type SmallRangeEncoder<Backend = Vec<u16>> = RangeEncoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> Code for RangeEncoder<Word, State, Backend>
@@ -219,8 +219,11 @@ where
 {
     /// Creates an empty encoder for range coding.
     pub fn new() -> Self {
-        assert!(State::BITS >= 2 * Word::BITS);
-        assert_eq!(State::BITS % Word::BITS, 0);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+            STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
+        );
 
         Self {
             bulk: Vec::new(),
@@ -263,8 +266,11 @@ where
     ///
     /// [`AnsCoder`]: super::stack::AnsCoder
     pub fn with_backend(backend: Backend) -> Self {
-        assert!(State::BITS >= 2 * Word::BITS);
-        assert_eq!(State::BITS % Word::BITS, 0);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+            STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
+        );
 
         Self {
             bulk: backend,
@@ -428,8 +434,12 @@ where
         state: RangeCoderState<Word, State>,
         situation: EncoderSituation<Word>,
     ) -> Self {
-        assert!(State::BITS >= 2 * Word::BITS);
-        assert_eq!(State::BITS % Word::BITS, 0);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+            STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
+        );
+
         // The invariants for `state` are already enforced statically.
 
         Self {
@@ -541,6 +551,14 @@ where
         D::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<D::Probability>,
     {
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
+            NON_ZERO_PRECISION: PRECISION > 0;
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+            STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
+        );
+
         // We maintain the following invariant (*):
         //   range >= State::one() << (State::BITS - Word::BITS)
 
@@ -645,19 +663,19 @@ pub type DefaultRangeDecoder<Backend = Cursor<u32, Vec<u32>>> = RangeDecoder<u32
 ///
 /// This encoder has a smaller word size and internal state than [`DefaultRangeDecoder`]. It
 /// is optimized for use with lookup entropy models, in particular with a
-/// [`SmallContiguousLookupDecoderModel`] or a [`SmallNonContiguousLookupDecoderModel`].
+/// [`ContiguousLookupDecoderModel`] or a [`NonContiguousLookupDecoderModel`].
 ///
 /// # Examples
 ///
-/// See [`SmallContiguousLookupDecoderModel`] and [`SmallNonContiguousLookupDecoderModel`].
+/// See [`ContiguousLookupDecoderModel`] and [`NonContiguousLookupDecoderModel`].
 ///
 /// # See also
 ///
 /// - [`SmallRangeEncoder`]
 ///
-/// [lookup models]: super::model::SmallContiguousLookupDecoderModel
-/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
-/// [`SmallNonContiguousLookupDecoderModel`]: super::model::SmallNonContiguousLookupDecoderModel
+/// [lookup models]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
 pub type SmallRangeDecoder<Backend> = RangeDecoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> RangeDecoder<Word, State, Backend>
@@ -670,8 +688,11 @@ where
     where
         Buf: IntoReadWords<Word, Queue, IntoReadWords = Backend>,
     {
-        assert!(State::BITS >= 2 * Word::BITS);
-        assert_eq!(State::BITS % Word::BITS, 0);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+            STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
+        );
 
         let mut bulk = compressed.into_read_words();
         let point = Self::read_point(&mut bulk)?;
@@ -684,8 +705,11 @@ where
     }
 
     pub fn with_backend(backend: Backend) -> Result<Self, Backend::ReadError> {
-        assert!(State::BITS >= 2 * Word::BITS);
-        assert_eq!(State::BITS % Word::BITS, 0);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+            STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
+        );
 
         let mut bulk = backend;
         let point = Self::read_point(&mut bulk)?;
@@ -701,8 +725,11 @@ where
     where
         Buf: AsReadWords<'a, Word, Queue, AsReadWords = Backend>,
     {
-        assert!(State::BITS >= 2 * Word::BITS);
-        assert_eq!(State::BITS % Word::BITS, 0);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+            STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
+        );
 
         let mut bulk = compressed.as_read_words();
         let point = Self::read_point(&mut bulk)?;
@@ -727,8 +754,12 @@ where
         state: RangeCoderState<Word, State>,
         point: State,
     ) -> Result<Self, Backend> {
-        assert!(State::BITS >= 2 * Word::BITS);
-        assert_eq!(State::BITS % Word::BITS, 0);
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+            STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
+        );
+
         // The invariants for `state` are already enforced statically.
 
         if point.wrapping_sub(&state.lower) >= state.range.get() {
@@ -891,6 +922,14 @@ where
         D::Probability: Into<Self::Word>,
         Self::Word: AsPrimitive<D::Probability>,
     {
+        generic_static_asserts!(
+            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
+            NON_ZERO_PRECISION: PRECISION > 0;
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+            STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
+        );
+
         // We maintain the following invariant (*):
         //   point (-) lower < range
         // where (-) denotes wrapping subtraction (in `Self::State`).
@@ -1190,8 +1229,8 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities(
-                &categorical_probabilities,
+            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities_fast::<f64>(
+                &categorical_probabilities,None
             )
             .unwrap();
         let mut symbols_categorical = Vec::with_capacity(AMT);

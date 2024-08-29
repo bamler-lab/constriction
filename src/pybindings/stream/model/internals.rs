@@ -1,16 +1,18 @@
-use core::{cell::RefCell, marker::PhantomData, num::NonZeroU32};
+use core::{cell::RefCell, iter::Sum, marker::PhantomData, num::NonZeroU32};
 use std::prelude::v1::*;
 
 use alloc::{borrow::Cow, vec};
-use numpy::PyReadonlyArray1;
+use num_traits::{float::FloatCore, AsPrimitive};
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use probability::distribution::{Distribution, Inverse};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
-    pybindings::{PyReadonlyFloatArray1, PyReadonlyFloatArray2},
+    pybindings::{PyReadonlyFloatArray, PyReadonlyFloatArray1, PyReadonlyFloatArray2},
     stream::model::{
-        DecoderModel, DefaultContiguousCategoricalEntropyModel, EncoderModel, EntropyModel,
-        LeakyQuantizer, UniformModel,
+        DecoderModel, DefaultContiguousCategoricalEntropyModel,
+        DefaultLazyContiguousCategoricalEntropyModel, EncoderModel, EntropyModel, LeakyQuantizer,
+        UniformModel,
     },
 };
 
@@ -90,7 +92,7 @@ pub trait Model: Send + Sync {
         _py: Python<'_>,
         _callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
-        Err(pyo3::exceptions::PyAttributeError::new_err(
+        Err(pyo3::exceptions::PyValueError::new_err(
             "No model parameters specified.",
         ))
     }
@@ -102,13 +104,13 @@ pub trait Model: Send + Sync {
         _reverse: bool,
         _callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
-        Err(pyo3::exceptions::PyAttributeError::new_err(
+        Err(pyo3::exceptions::PyValueError::new_err(
             "Model parameters were specified but the model is already fully parameterized.",
         ))
     }
 
     fn len(&self, _param0: &PyAny) -> PyResult<usize> {
-        Err(pyo3::exceptions::PyAttributeError::new_err(
+        Err(pyo3::exceptions::PyValueError::new_err(
             "Model parameters were specified but the model is already fully parameterized.",
         ))
     }
@@ -191,7 +193,7 @@ macro_rules! impl_model_for_parameterizable_model {
                 callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
             ) -> PyResult<()> {
                 if params.len() != $expected_len {
-                    return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                    return Err(pyo3::exceptions::PyValueError::new_err(alloc::format!(
                         "Wrong number of model parameters: expected {}, got {}.",
                         $expected_len,
                         params.len()
@@ -213,7 +215,7 @@ macro_rules! impl_model_for_parameterizable_model {
                     let $ps = $ps.as_array();
 
                     if $ps.len() != len {
-                        return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+                        return Err(pyo3::exceptions::PyValueError::new_err(alloc::format!(
                             "Model parameters have unequal shape",
                         )));
                     }
@@ -308,7 +310,7 @@ impl Model for UnspecializedPythonModel {
 
         for param in &params[1..] {
             if param.len() != len {
-                return Err(pyo3::exceptions::PyAttributeError::new_err(
+                return Err(pyo3::exceptions::PyValueError::new_err(
                     "Model parameters have unequal lengths.",
                 ));
             }
@@ -388,7 +390,90 @@ impl<'py, 'p> Inverse for SpecializedPythonDistribution<'py, 'p> {
     }
 }
 
-pub struct UnparameterizedCategoricalDistribution;
+pub struct UnparameterizedCategoricalDistribution {
+    perfect: bool,
+}
+
+impl UnparameterizedCategoricalDistribution {
+    pub fn new(perfect: bool) -> Self {
+        Self { perfect }
+    }
+}
+
+#[inline(always)]
+fn parameterize_categorical_with_model_builder<'a, F, M>(
+    probabilities: impl Iterator<Item = &'a [F]>,
+    build_model: impl Fn(&'a [F]) -> Result<M, ()>,
+    callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
+) -> PyResult<()>
+where
+    F: FloatCore + Sum<F> + AsPrimitive<u32>,
+    u32: AsPrimitive<F>,
+    M: DefaultEntropyModel + 'a,
+{
+    for probabilities in probabilities {
+        let model = build_model(probabilities).map_err(|()| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Probability distribution not normalizable (the array of probabilities\n\
+                might be empty, contain negative values or NaNs, or sum to infinity).",
+            )
+        })?;
+        callback(&model)?;
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn parameterize_categorical_with_float_type<'a, F>(
+    probabilities: impl Iterator<Item = &'a [F]>,
+    perfect: bool,
+    callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
+) -> PyResult<()>
+where
+    F: FloatCore + Sum<F> + AsPrimitive<u32> + Into<f64>,
+    u32: AsPrimitive<F>,
+    usize: AsPrimitive<F>,
+{
+    if perfect {
+        parameterize_categorical_with_model_builder(
+            probabilities,
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect,
+            callback,
+        )
+    } else {
+        parameterize_categorical_with_model_builder(
+            probabilities,
+            |probabilities| {
+                DefaultLazyContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                    probabilities,
+                    None,
+                )
+            },
+            callback,
+        )
+    }
+}
+
+#[inline(always)]
+fn parameterize_categorical<F>(
+    probabilities: PyReadonlyArray2<'_, F>,
+    reverse: bool,
+    perfect: bool,
+    callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
+) -> PyResult<()>
+where
+    F: FloatCore + Sum<F> + AsPrimitive<u32> + Into<f64> + numpy::Element,
+    u32: AsPrimitive<F>,
+    usize: AsPrimitive<F>,
+{
+    let range = probabilities.shape()[1];
+    let probabilities = probabilities.as_slice()?.chunks_exact(range);
+    if reverse {
+        parameterize_categorical_with_float_type(probabilities.rev(), perfect, callback)
+    } else {
+        parameterize_categorical_with_float_type(probabilities, perfect, callback)
+    }
+}
 
 impl Model for UnparameterizedCategoricalDistribution {
     fn parameterize(
@@ -399,7 +484,7 @@ impl Model for UnparameterizedCategoricalDistribution {
         callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
         if params.len() != 1 {
-            return Err(pyo3::exceptions::PyAttributeError::new_err(alloc::format!(
+            return Err(pyo3::exceptions::PyValueError::new_err(alloc::format!(
                 "Wrong number of model parameters: expected 1, got {}. To use a\n\
                 categorical distribution, either provide a rank-1 numpy array of probabilities\n\
                 to the constructor of the model and no model parameters to the entropy coder's
@@ -412,41 +497,15 @@ impl Model for UnparameterizedCategoricalDistribution {
         }
 
         let probabilities = params[0].extract::<PyReadonlyFloatArray2<'_>>()?;
-        let probabilities = probabilities.cast_f64()?;
-        let range = probabilities.shape()[1];
-        let probabilities = probabilities.as_slice()?;
 
-        if reverse {
-            for probabilities in probabilities.chunks_exact(range).rev() {
-                let model =
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-                        probabilities,
-                    )
-                    .map_err(|()| {
-                        pyo3::exceptions::PyValueError::new_err(
-                        "Probability distribution not normalizable (the array of probabilities\n\
-                        might be empty, contain negative values or NaNs, or sum to infinity).",
-                    )
-                    })?;
-                callback(&model)?;
+        match probabilities {
+            PyReadonlyFloatArray::F32(probabilities) => {
+                parameterize_categorical(probabilities, reverse, self.perfect, callback)
             }
-        } else {
-            for probabilities in probabilities.chunks_exact(range) {
-                let model =
-                    DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-                        probabilities,
-                    )
-                    .map_err(|()| {
-                        pyo3::exceptions::PyValueError::new_err(
-                        "Probability distribution not normalizable (the array of probabilities\n\
-                        might be empty, contain negative values or NaNs, or sum to infinity).",
-                    )
-                    })?;
-                callback(&model)?;
+            PyReadonlyFloatArray::F64(probabilities) => {
+                parameterize_categorical(probabilities, reverse, self.perfect, callback)
             }
         }
-
-        Ok(())
     }
 
     fn len(&self, param0: &PyAny) -> PyResult<usize> {
@@ -468,10 +527,29 @@ impl DefaultEntropyModel for DefaultContiguousCategoricalEntropyModel {
     }
 }
 
+impl<F, Cdf> DefaultEntropyModel for DefaultLazyContiguousCategoricalEntropyModel<F, Cdf>
+where
+    F: FloatCore + Sum<F> + AsPrimitive<u32>,
+    u32: AsPrimitive<F>,
+    Cdf: AsRef<[F]>,
+{
+    #[inline]
+    fn left_cumulative_and_probability(&self, symbol: i32) -> Option<(u32, NonZeroU32)> {
+        EncoderModel::left_cumulative_and_probability(self, symbol as usize)
+    }
+
+    #[inline]
+    fn quantile_function(&self, quantile: u32) -> (i32, u32, NonZeroU32) {
+        let (symbol, left_cumulative, probability) =
+            DecoderModel::quantile_function(self, quantile);
+        (symbol as i32, left_cumulative, probability)
+    }
+}
+
 impl DefaultEntropyModel for UniformModel<u32, 24> {
     #[inline]
     fn left_cumulative_and_probability(&self, symbol: i32) -> Option<(u32, NonZeroU32)> {
-        EncoderModel::left_cumulative_and_probability(self, symbol as u32)
+        EncoderModel::left_cumulative_and_probability(self, symbol as usize)
     }
 
     #[inline]

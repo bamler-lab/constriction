@@ -362,6 +362,7 @@ impl<FrontendError, BackendError> From<BackendError> for CoderError<FrontendErro
 
 impl<FrontendError> CoderError<FrontendError, Infallible> {
     fn into_frontend_error(self) -> FrontendError {
+        #[allow(unreachable_patterns)]
         match self {
             CoderError::Frontend(frontend_error) => frontend_error,
             CoderError::Backend(infallible) => match infallible {},
@@ -459,7 +460,7 @@ pub trait Pos: PosSeek {
 /// let mut ans = DefaultAnsCoder::new();
 /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
 /// let entropy_model = DefaultContiguousCategoricalEntropyModel
-///     ::from_floating_point_probabilities(&probabilities).unwrap();
+///     ::from_floating_point_probabilities_fast(&probabilities, None).unwrap();
 ///
 /// // Encode some symbols in two chunks and take a snapshot after each chunk.
 /// let symbols1 = vec![8, 2, 0, 7];
@@ -640,15 +641,6 @@ pub unsafe trait BitArray:
     }
 }
 
-#[inline(always)]
-fn wrapping_pow2<T: BitArray>(exponent: usize) -> T {
-    if exponent >= T::BITS {
-        T::zero()
-    } else {
-        T::one() << exponent
-    }
-}
-
 /// A trait for bit strings like [`BitArray`] but with guaranteed nonzero values
 ///
 /// # Safety
@@ -666,21 +658,6 @@ pub unsafe trait NonZeroBitArray: Copy + Display + Debug + Eq + Hash + 'static {
     unsafe fn new_unchecked(n: Self::Base) -> Self;
 
     fn get(self) -> Self::Base;
-}
-
-/// Iterates from most significant to least significant bits in chunks but skips any
-/// initial zero chunks.
-fn bit_array_to_chunks_truncated<Data, Chunk>(
-    data: Data,
-) -> impl ExactSizeIterator<Item = Chunk> + DoubleEndedIterator
-where
-    Data: BitArray + AsPrimitive<Chunk>,
-    Chunk: BitArray,
-{
-    (0..(Data::BITS - data.leading_zeros() as usize))
-        .step_by(Chunk::BITS)
-        .rev()
-        .map(move |shift| (data >> shift).as_())
 }
 
 macro_rules! unsafe_impl_bit_array {
@@ -737,6 +714,30 @@ unsafe_impl_bit_array!(
 #[cfg(feature = "std")]
 unsafe_impl_bit_array!((u128, core::num::NonZeroU128),);
 
+/// Iterates from most significant to least significant bits in chunks but skips any
+/// initial zero chunks.
+fn bit_array_to_chunks_truncated<Data, Chunk>(
+    data: Data,
+) -> impl ExactSizeIterator<Item = Chunk> + DoubleEndedIterator
+where
+    Data: BitArray + AsPrimitive<Chunk>,
+    Chunk: BitArray,
+{
+    (0..(Data::BITS - data.leading_zeros() as usize))
+        .step_by(Chunk::BITS)
+        .rev()
+        .map(move |shift| (data >> shift).as_())
+}
+
+#[inline(always)]
+fn wrapping_pow2<T: BitArray>(exponent: usize) -> T {
+    if exponent >= T::BITS {
+        T::zero()
+    } else {
+        T::one() << exponent
+    }
+}
+
 pub trait UnwrapInfallible<T> {
     fn unwrap_infallible(self) -> T;
 }
@@ -744,6 +745,7 @@ pub trait UnwrapInfallible<T> {
 impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
     #[inline(always)]
     fn unwrap_infallible(self) -> T {
+        #[allow(unreachable_patterns)]
         match self {
             Ok(x) => x,
             Err(infallible) => match infallible {},
@@ -753,8 +755,10 @@ impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
 
 impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
     fn unwrap_infallible(self) -> T {
+        #[allow(unreachable_patterns)]
         match self {
             Ok(x) => x,
+            #[allow(unreachable_patterns)]
             Err(infallible) => match infallible {
                 CoderError::Backend(infallible) => match infallible {},
                 CoderError::Frontend(infallible) => match infallible {},
@@ -762,3 +766,31 @@ impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
         }
     }
 }
+
+/// Helper macro to express assertions that are tested at compile time
+/// despite using properties of generic parameters of an outer function.
+///
+/// See discussion at <https://morestina.net/blog/1940>.
+macro_rules! generic_static_asserts {
+    (($($l:lifetime,)* $($($t:ident$(: $bound:path)?),+)? $(; $(const $c:ident:$ct:ty),+)?); $($label:ident: $test:expr);+$(;)?) => {
+        #[allow(path_statements, clippy::no_effect)]
+        {
+            {
+                struct Check<$($l,)* $($($t,)+)? $($(const $c:$ct,)+)?>($($($t,)+)?);
+                impl<$($l,)* $($($t$(:$bound)?,)+)? $($(const $c:$ct,)+)?> Check<$($l,)* $($($t,)+)? $($($c,)+)?> {
+                    $(
+                        const $label: () = assert!($test);
+                    )+
+                }
+                generic_static_asserts!{@nested Check::<$($l,)* $($($t,)+)? $($($c,)+)?>, $($label: $test;)+}
+            }
+        }
+    };
+    (@nested $t:ty, $($label:ident: $test:expr;)+) => {
+        $(
+            <$t>::$label;
+        )+
+    }
+}
+
+pub(crate) use generic_static_asserts;
