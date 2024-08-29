@@ -15,6 +15,9 @@ use crate::{
     CoderError, DefaultEncoderError, DefaultEncoderFrontendError, NonNanFloat, UnwrapInfallible,
 };
 
+#[deprecated(since = "0.4.0", note = "Please use `constriction::NanError` instead.")]
+pub use crate::NanError;
+
 #[derive(Debug, Clone)]
 pub struct EncoderHuffmanTree {
     /// A `Vec` of size `num_symbols * 2 - 1`, where the first `num_symbol` items
@@ -271,9 +274,6 @@ impl DecoderCodebook for DecoderHuffmanTree {
         Ok(node_index)
     }
 }
-
-#[deprecated(since = "0.3.3", note = "Please use `constriction::NanError` instead.")]
-pub use crate::NanError;
 
 #[cfg(test)]
 mod tests {
