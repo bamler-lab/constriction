@@ -92,7 +92,7 @@ pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
 ///   [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the same
 ///   entropy model, in which case the explicitly tabulated representation of a categorical
 ///   entropy model could improve runtime performance).
-/// - If you want to encode only very few symbols with a given probability model, then use a
+/// - If you want to encode only a few symbols with a given probability model, then use a
 ///   [`LazyContiguousCategoricalEntropyModel`], which will be faster. This is relevant,
 ///   e.g., in autoregressive models, where each individual model is often used for only
 ///   exactly one symbol.
@@ -735,7 +735,7 @@ mod tests {
     }
 
     #[test]
-    fn nontrivial_optimal_weights() {
+    fn nontrivial_optimal_weights_f64() {
         let hist = [
             1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
             896675, 922197, 930672, 916665, 0, 0, 0, 0, 0, 723031, 650522, 572300, 494702, 418703,
@@ -745,22 +745,93 @@ mod tests {
 
         let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
 
-        let fast =
+        {
+            let fast =
             ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_fast(
                 &probabilities,
                 None
             )
             .unwrap();
-        let kl_fast = verify_iterable_entropy_model(&fast, &hist, 1e-6);
+            let kl_fast = verify_iterable_entropy_model(&fast, &hist, 1e-6);
 
-        let perfect =
+            let perfect =
             ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_perfect(
                 &probabilities,
             )
             .unwrap();
-        let kl_perfect = verify_iterable_entropy_model(&perfect, &hist, 1e-6);
+            let kl_perfect = verify_iterable_entropy_model(&perfect, &hist, 1e-6);
 
-        assert!(kl_perfect < kl_fast);
+            assert!(kl_perfect < kl_fast);
+        }
+
+        {
+            let fast =
+                DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                    &probabilities,
+                    None,
+                )
+                .unwrap();
+            let kl_fast = verify_iterable_entropy_model(&fast, &hist, 1e-6);
+
+            let perfect =
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                &probabilities,
+            )
+            .unwrap();
+            let kl_perfect = verify_iterable_entropy_model(&perfect, &hist, 1e-6);
+
+            assert!(kl_perfect < kl_fast);
+        }
+    }
+
+    #[test]
+    fn nontrivial_optimal_weights_f32() {
+        let hist = [
+            1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
+            896675, 922197, 930672, 916665, 0, 0, 0, 0, 0, 723031, 650522, 572300, 494702, 418703,
+            347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540, 39258, 27988, 54269,
+        ];
+        assert_ne!(hist.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
+
+        let probabilities = hist.iter().map(|&x| x as f32).collect::<Vec<_>>();
+
+        {
+            let fast =
+            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_fast(
+                &probabilities,
+                None
+            )
+            .unwrap();
+            let kl_fast = verify_iterable_entropy_model(&fast, &hist, 1e-6);
+
+            let perfect =
+            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities_perfect(
+                &probabilities,
+            )
+            .unwrap();
+            let kl_perfect = verify_iterable_entropy_model(&perfect, &hist, 1e-6);
+
+            assert!(kl_perfect < kl_fast);
+        }
+
+        {
+            let fast =
+                DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_fast(
+                    &probabilities,
+                    None,
+                )
+                .unwrap();
+            let kl_fast = verify_iterable_entropy_model(&fast, &hist, 1e-6);
+
+            let perfect =
+            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                &probabilities,
+            )
+            .unwrap();
+            let kl_perfect = verify_iterable_entropy_model(&perfect, &hist, 1e-6);
+
+            assert!(kl_perfect < kl_fast);
+        }
     }
 
     /// Regression test for convergence of `optimize_leaky_categorical`.

@@ -34,7 +34,7 @@
 //! /// Shorthand for decoding a sequence of symbols with categorical entropy models.
 //! fn decode_categoricals<Decoder: Decode<24, Word = u32>>(
 //!     decoder: &mut Decoder,
-//!     probabilities: &[[f64; 4]],
+//!     probabilities: &[[f32; 4]],
 //! ) -> Vec<usize> {
 //!     let entropy_models = probabilities
 //!         .iter()
@@ -53,7 +53,7 @@
 //!     [0.2, 0.1, 0.4, 0.3], // Probabilities for the entropy model of the third decoded symbol.
 //! ];
 //!
-//! // Decoding the binary data with an `AnsCoder` results in the symbols `[0, 0, 1]`.
+//! // Decoding the binary data with an `AnsCoder` results in the symbols `[0, 0, 2]`.
 //! let mut ans_coder = DefaultAnsCoder::from_binary(data.clone()).unwrap();
 //! let symbols = decode_categoricals(&mut ans_coder, &probabilities);
 //! assert_eq!(symbols, [0, 0, 2]);

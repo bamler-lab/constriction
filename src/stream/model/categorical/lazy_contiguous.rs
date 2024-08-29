@@ -20,7 +20,7 @@ pub type DefaultLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
 ///
 /// Note that, unlike the other type aliases with the `Small...` prefix, creating a lookup table for
 /// a *lazy* categorical model is rarely useful. Lazy models are optimized for applications where a
-/// model gets used only very few times (e.g., as a part of an autoregressive model) whereas lookup
+/// model gets used only a few times (e.g., as a part of an autoregressive model) whereas lookup
 /// tables are useful if you use the same model lots of times.
 ///
 /// See:
@@ -44,16 +44,19 @@ pub type SmallLazyContiguousCategoricalEntropyModel<F = f32, Pmf = Vec<F>> =
 ///
 /// # When Should I Use This Type of Entropy Model?
 ///
-/// - Use this type if you want to encode or decode only very few (or even just a single)
+/// - Use this type if you want to encode or decode only a few (or even just a single)
 ///   symbol with the same categorical distribution.
 /// - Use [`ContiguousCategoricalEntropyModel`], [`NonContiguousCategoricalEncoderModel`],
 ///   or [`NonContiguousCategoricalDecoderModel`] if you want to encode several symbols with
 ///   the same categorical distribution. These models precalculate the fixed-point
-///   approximation of the entire cumulative distribution function at model construction.
+///   approximation of the entire cumulative distribution function at model construction, so
+///   that the calculation doesn't have to be done at every encoding/decoding step.
 /// - Use [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] (together
 ///   with a small `Probability` data type, see [discussion of presets]) for decoding a
 ///   *very* large number of i.i.d. symbols if runtime is more important to you than
-///   near-optimal bit rate.
+///   near-optimal bit rate. These models create a lookup table that maps all `2^PRECISION`
+///   possible quantiles to the corresponding symbol, thus eliminating the need for a binary
+///   search over the CDF at decoding time.
 ///
 /// # Computational Efficiency
 ///

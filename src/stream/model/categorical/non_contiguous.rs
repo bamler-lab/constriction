@@ -97,7 +97,7 @@ pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbo
 ///   zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
 ///   computational efficiency and it is easier to use since it supports both encoding and
 ///   decoding with a single type.
-/// - If you want to decode only very few symbols with a given probability model, then use a
+/// - If you want to decode only a few symbols with a given probability model, then use a
 ///   [`LazyContiguousCategoricalEntropyModel`], which will be faster (use an array to map
 ///   the decoded symbols from the contiguous range `0..N` to whatever noncontiguous
 ///   alphabet you have). This use case occurs, e.g., in autoregressive models, where each
@@ -756,7 +756,7 @@ where
 ///   zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
 ///   computational efficiency and it is easier to use since it supports both encoding and
 ///   decoding with a single type.
-/// - If you want to encode only very few symbols with a given probability model, then use a
+/// - If you want to encode only a few symbols with a given probability model, then use a
 ///   [`LazyContiguousCategoricalEntropyModel`], which will be faster (use `HashMap` to
 ///   first map from your noncontiguous support to indices in a contiguous range `0..N`,
 ///   where `N` is the size of your support). This use case occurs, e.g., in autoregressive
