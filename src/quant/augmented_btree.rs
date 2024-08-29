@@ -1967,8 +1967,12 @@ mod bounded_vec {
         pub fn both_as_mut(&mut self) -> (&mut [T1], &mut [T2]) {
             unsafe {
                 (
-                    core::mem::transmute(self.buf1.get_unchecked_mut(..self.len)),
-                    core::mem::transmute(self.buf2.get_unchecked_mut(..self.len)),
+                    core::mem::transmute::<&mut [MaybeUninit<T1>], &mut [T1]>(
+                        self.buf1.get_unchecked_mut(..self.len),
+                    ),
+                    core::mem::transmute::<&mut [MaybeUninit<T2>], &mut [T2]>(
+                        self.buf2.get_unchecked_mut(..self.len),
+                    ),
                 )
             }
         }
@@ -2209,8 +2213,12 @@ mod bounded_vec {
         pub fn get_all_mut(&mut self) -> BoundedPairOfVecsViewMut<'_, T1, T2, CAP> {
             unsafe {
                 BoundedPairOfVecsViewMut(
-                    core::mem::transmute(self.buf1.get_unchecked_mut(..self.len)),
-                    core::mem::transmute(self.buf2.get_unchecked_mut(..self.len)),
+                    core::mem::transmute::<&mut [MaybeUninit<T1>], &mut [T1]>(
+                        self.buf1.get_unchecked_mut(..self.len),
+                    ),
+                    core::mem::transmute::<&mut [MaybeUninit<T2>], &mut [T2]>(
+                        self.buf2.get_unchecked_mut(..self.len),
+                    ),
                 )
             }
         }
