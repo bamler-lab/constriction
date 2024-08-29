@@ -117,8 +117,10 @@ use pyo3::{prelude::*, wrap_pymodule};
 /// means   = np.array([2.3,  6.1, -8.5, 4.1, 1.3], dtype=np.float64)
 /// stds    = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float64)
 /// entropy_model1 = constriction.stream.model.QuantizedGaussian(-50, 50)
-/// entropy_model2 = constriction.stream.model.Categorical(np.array(
-///     [0.2, 0.5, 0.3], dtype=np.float64))  # Probabilities of the symbols 0,1,2.
+/// entropy_model2 = constriction.stream.model.Categorical(
+///     np.array([0.2, 0.5, 0.3], dtype=np.float32), # Probabilities of the symbols 0,1,2.
+///     perfect=False
+/// )
 ///
 /// # Simply encode both parts in sequence with their respective models:
 /// encoder = constriction.stream.queue.RangeEncoder()
@@ -343,13 +345,6 @@ impl<'py, D: ndarray::Dimension> PyReadonlyFloatArray<'py, D> {
         match self {
             PyReadonlyFloatArray::F32(x) => Ok(Cow::Owned(x.cast::<f64>(false)?.readonly())),
             PyReadonlyFloatArray::F64(x) => Ok(Cow::Borrowed(x)),
-        }
-    }
-
-    fn cast_f32(&'py self) -> PyResult<Cow<'py, PyReadonlyArray<'py, f32, D>>> {
-        match self {
-            PyReadonlyFloatArray::F32(x) => Ok(Cow::Borrowed(x)),
-            PyReadonlyFloatArray::F64(x) => Ok(Cow::Owned(x.cast::<f32>(false)?.readonly())),
         }
     }
 

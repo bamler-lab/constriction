@@ -190,7 +190,7 @@ impl RangeEncoder {
     /// # Define a concrete categorical entropy model over the (implied)
     /// # alphabet {0, 1, 2}:
     /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    /// model = constriction.stream.model.Categorical(probabilities)
+    /// model = constriction.stream.model.Categorical(probabilities, perfect=False)
     ///
     /// # Encode a single symbol with this entropy model:
     /// encoder = constriction.stream.queue.RangeEncoder()
@@ -208,7 +208,7 @@ impl RangeEncoder {
     /// ```python
     /// # Use the same concrete entropy model as in the previous example:
     /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    /// model = constriction.stream.model.Categorical(probabilities)
+    /// model = constriction.stream.model.Categorical(probabilities, perfect=False)
     ///
     /// # Encode an example message using the above `model` for all symbols:
     /// symbols = np.array([0, 2, 1, 2, 0, 2, 0, 2, 1], dtype=np.int32)
@@ -256,13 +256,13 @@ impl RangeEncoder {
     ///     [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first encoded symbol)
     ///      [0.3, 0.2, 0.2, 0.2, 0.1]], # (for second encoded symbol)
     ///     dtype=np.float64)
-    /// model_family = constriction.stream.model.Categorical()
+    /// model_family = constriction.stream.model.Categorical(perfect=False)
     ///
     /// # Encode 2 symbols (needs `len(symbols) == probabilities.shape[0]`):
     /// symbols = np.array([3, 1], dtype=np.int32)
     /// encoder = constriction.stream.queue.RangeEncoder()
     /// encoder.encode(symbols, model_family, probabilities)
-    /// print(encoder.get_compressed()) # (prints: [2705829535])
+    /// print(encoder.get_compressed()) # (prints: [2705829254])
     /// ```
     #[pyo3(signature = (symbols, model, *params), text_signature = "(self, symbols, model, *optional_model_params)")]
     pub fn encode(
@@ -372,7 +372,7 @@ impl RangeDecoder {
     ///
     /// ```python
     /// probabilities = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
-    /// model         = constriction.stream.model.Categorical(probabilities)
+    /// model         = constriction.stream.model.Categorical(probabilities, perfect=False)
     /// message_part1 = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
     /// message_part2 = np.array([2, 2, 0, 1, 3], dtype=np.int32)
     ///
@@ -432,7 +432,7 @@ impl RangeDecoder {
     /// # Define a concrete categorical entropy model over the (implied)
     /// # alphabet {0, 1, 2}:
     /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    /// model = constriction.stream.model.Categorical(probabilities)
+    /// model = constriction.stream.model.Categorical(probabilities, perfect=False)
     ///
     /// # Decode a single symbol from some example compressed data:
     /// compressed = np.array([3089773345, 1894195597], dtype=np.uint32)
@@ -453,7 +453,7 @@ impl RangeDecoder {
     /// ```python
     /// # Use the same concrete entropy model as in the previous example:
     /// probabilities = np.array([0.1, 0.6, 0.3], dtype=np.float64)
-    /// model = constriction.stream.model.Categorical(probabilities)
+    /// model = constriction.stream.model.Categorical(probabilities, perfect=False)
     ///
     /// # Decode 9 symbols from some example compressed data, using the
     /// # same (fixed) entropy model defined above for all symbols:
@@ -503,7 +503,7 @@ impl RangeDecoder {
     ///     [[0.1, 0.2, 0.3, 0.1, 0.3],  # (for first decoded symbol)
     ///      [0.3, 0.2, 0.2, 0.2, 0.1]], # (for second decoded symbol)
     ///     dtype=np.float64)
-    /// model_family = constriction.stream.model.Categorical()
+    /// model_family = constriction.stream.model.Categorical(perfect=False)
     ///
     /// # Decode 2 symbols:
     /// compressed = np.array([2705829535], dtype=np.uint32)

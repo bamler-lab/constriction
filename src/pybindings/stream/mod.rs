@@ -127,7 +127,7 @@ fn init_model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// # Define the two parts of the message and their respective entropy models:
 /// message_part1       = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
 /// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
-/// model_part1       = constriction.stream.model.Categorical(probabilities_part1)
+/// model_part1       = constriction.stream.model.Categorical(probabilities_part1, perfect=False)
 /// # `model_part1` is a categorical distribution over the (implied) alphabet
 /// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
 /// # we will use it below to encode each of the 7 symbols in `message_part1`.
@@ -227,7 +227,7 @@ fn init_queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// # Define the two parts of the message and their respective entropy models:
 /// message_part1       = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
 /// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float64)
-/// model_part1       = constriction.stream.model.Categorical(probabilities_part1)
+/// model_part1       = constriction.stream.model.Categorical(probabilities_part1, perfect=False)
 /// # `model_part1` is a categorical distribution over the (implied) alphabet
 /// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
 /// # we will use it below to encode each of the 7 symbols in `message_part1`.
@@ -387,22 +387,22 @@ fn init_stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// ```python
 /// # Some sample binary data and sample probabilities for our entropy models
-/// data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+/// data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3e], np.uint32)
 /// probabilities = np.array(
 ///     [[0.1, 0.7, 0.1, 0.1],  # (<-- probabilities for first decoded symbol)
 ///      [0.2, 0.2, 0.1, 0.5],  # (<-- probabilities for second decoded symbol)
 ///      [0.2, 0.1, 0.4, 0.3]]) # (<-- probabilities for third decoded symbol)
-/// model_family = constriction.stream.model.Categorical()
+/// model_family = constriction.stream.model.Categorical(perfect=False)
 ///
-/// # Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 1]`:
+/// # Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 2]`:
 /// ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
-/// print(ansCoder.decode(model_family, probabilities)) # (prints: [0, 0, 1])
+/// print(ansCoder.decode(model_family, probabilities)) # (prints: [0, 0, 2])
 ///
 /// # Even if we change only the first entropy model (slightly), *all* decoded
 /// # symbols can change:
 /// probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
 /// ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
-/// print(ansCoder.decode(model_family, probabilities)) # (prints: [1, 0, 3])
+/// print(ansCoder.decode(model_family, probabilities)) # (prints: [1, 0, 0])
 /// ```
 ///
 /// In the above example, it's no surprise that changing the first entropy model made the
@@ -428,12 +428,12 @@ fn init_stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 /// ```python
 /// # Same compressed data and original entropy models as in our first example
-/// data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+/// data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3e], np.uint32)
 /// probabilities = np.array(
 ///     [[0.1, 0.7, 0.1, 0.1],  # (<-- probabilities for first decoded symbol)
 ///      [0.2, 0.2, 0.1, 0.5],  # (<-- probabilities for second decoded symbol)
 ///      [0.2, 0.1, 0.4, 0.3]]) # (<-- probabilities for third decoded symbol)
-/// model_family = constriction.stream.model.Categorical()
+/// model_family = constriction.stream.model.Categorical(perfect=False)
 ///
 /// # Decode with the original entropy models, this time using a `ChainCoder`:
 /// chainCoder = constriction.stream.chain.ChainCoder(data, seal=True)
