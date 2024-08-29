@@ -8,16 +8,13 @@
 use num_traits::float::FloatCore;
 
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
-use core::{
-    borrow::Borrow,
-    cmp::Reverse,
-    convert::Infallible,
-    fmt::{Debug, Display},
-    ops::Add,
-};
+use core::{borrow::Borrow, cmp::Reverse, convert::Infallible, fmt::Debug, ops::Add};
 
 use super::{Codebook, DecoderCodebook, EncoderCodebook, SymbolCodeError};
 use crate::{CoderError, DefaultEncoderError, DefaultEncoderFrontendError, UnwrapInfallible};
+
+#[deprecated(since = "0.4.0", note = "Please use `constriction::NanError` instead.")]
+pub use crate::NanError;
 
 #[derive(Debug, Clone)]
 pub struct EncoderHuffmanTree {
@@ -284,7 +281,7 @@ struct NonNanFloatCore<F: FloatCore> {
 impl<F: FloatCore> NonNanFloatCore<F> {
     fn new(x: F) -> Result<Self, NanError> {
         if x.is_nan() {
-            Err(NanError::NaN)
+            Err(NanError)
         } else {
             Ok(Self { inner: x })
         }
@@ -317,22 +314,6 @@ impl<F: FloatCore> Add for NonNanFloatCore<F> {
         }
     }
 }
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum NanError {
-    NaN,
-}
-
-impl Display for NanError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::NaN => write!(f, "NaN Encountered."),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for NanError {}
 
 #[cfg(test)]
 mod tests {

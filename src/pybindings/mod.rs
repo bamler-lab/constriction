@@ -7,6 +7,8 @@ use alloc::borrow::Cow;
 use numpy::PyReadonlyArray;
 use pyo3::{prelude::*, wrap_pymodule};
 
+use crate::NanError;
+
 /// ## Entropy Coders for Research and Production
 ///
 /// The `constriction` library provides a set of composable entropy coding algorithms with a
@@ -304,7 +306,7 @@ fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// print(f"(in binary: {[bin(word) for word in compressed]}")
 ///
 /// # Decode the message (we could explicitly construct a decoder:
-/// # `decoder = constritcion.symbol.StackCoder(compressed)`
+/// # `decoder = constriction.symbol.StackCoder(compressed)`
 /// # but we can also also reuse our existing `coder` for decoding):
 /// decoded = []
 /// decoder_codebook = constriction.symbol.huffman.DecoderHuffmanTree(probabils)
@@ -367,5 +369,13 @@ impl<'py, D: ndarray::Dimension> PyReadonlyFloatArray<'py, D> {
             PyReadonlyFloatArray::F32(x) => x.get(index).map(|&x| x as f64),
             PyReadonlyFloatArray::F64(x) => x.get(index).copied(),
         }
+    }
+}
+
+impl From<NanError> for PyErr {
+    fn from(_err: NanError) -> Self {
+        pyo3::exceptions::PyFloatingPointError::new_err(
+            "Floating point value is not a number (NaN).",
+        )
     }
 }

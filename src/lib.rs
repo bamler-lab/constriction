@@ -767,6 +767,18 @@ impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct NanError;
+
+impl Display for NanError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "NaN encountered.")
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for NanError {}
+
 /// Helper macro to express assertions that are tested at compile time
 /// despite using properties of generic parameters of an outer function.
 ///
