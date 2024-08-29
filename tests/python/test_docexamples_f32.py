@@ -777,7 +777,7 @@ def test_categorical1():
     assert np.all(reconstructed == symbols)  # (verify correctness)
 
 
-def categorical2():
+def test_categorical2():
     # Define 3 categorical distributions, each over the alphabet {0,1,2,3,4}:
     model_family = constriction.stream.model.Categorical(perfect=False)
     probabilities = np.array(
@@ -790,7 +790,7 @@ def categorical2():
     coder = constriction.stream.stack.AnsCoder()  # (RangeEncoder also works)
     coder.encode_reverse(symbols, model_family, probabilities)
     assert np.all(coder.get_compressed() == np.array(
-        [152672664], dtype=np.uint32))
+        [104018743], dtype=np.uint32))
 
     reconstructed = coder.decode(model_family, probabilities)
     assert np.all(reconstructed == symbols)  # (verify correctness)

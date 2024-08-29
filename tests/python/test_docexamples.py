@@ -777,7 +777,7 @@ def test_categorical1():
     assert np.all(reconstructed == symbols)  # (verify correctness)
 
 
-def categorical2():
+def test_categorical2():
     # Define 3 categorical distributions, each over the alphabet {0,1,2,3,4}:
     model_family = constriction.stream.model.Categorical(perfect=False)
     probabilities = np.array(
