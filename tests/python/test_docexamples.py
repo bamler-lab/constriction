@@ -95,7 +95,7 @@ def test_module_example3():
     stds = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float64)
     entropy_model1 = constriction.stream.model.QuantizedGaussian(-50, 50)
     entropy_model2 = constriction.stream.model.Categorical(
-        np.array([0.2, 0.5, 0.3], dtype=np.float32), # Probabilities of the symbols 0,1,2.
+        np.array([0.2, 0.5, 0.3], dtype=np.float64), # Probabilities of the symbols 0,1,2.
         perfect=False
     ) 
 
