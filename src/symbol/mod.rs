@@ -167,7 +167,7 @@ pub struct SymbolCoder<Word: BitArray, S: Semantics, B = Vec<Word>> {
     ///   the backend (in case of a write backend) and/or if reading the next bit would
     ///   require obtaining a new word from the backend (in case of a read backend); This
     ///   includes the case of an empty `QueueEncoder`. In all of these cases, `current_word`
-    ///  as to be zero.
+    ///   as to be zero.
     /// - otherwise, `mask_last_written` has a single set bit which marks the position in
     ///   `current_word` where the next bit should be written if any.
     mask_last_written: Word,

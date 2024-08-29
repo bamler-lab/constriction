@@ -1023,7 +1023,7 @@ impl<B: Seek> Seek for Reverse<B> {
 /// );
 /// // Encoding *a few* more symbols works ...
 /// cursor_coder.encode_iid_symbols_reverse(65..75, &model).unwrap();
-/// // ... but at some point we'll run out of buffer space.
+/// // ... but at some point we'll run out of buffer space:
 /// assert_eq!(
 ///     cursor_coder.encode_iid_symbols_reverse(50..65, &model),
 ///     Err(CoderError::Backend(constriction::backends::BoundedWriteError::OutOfSpace))

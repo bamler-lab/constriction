@@ -151,12 +151,12 @@ pub type DefaultRangeEncoder<Backend = Vec<u32>> = RangeEncoder<u32, u64, Backen
 ///
 /// This encoder has a smaller word size and internal state than [`DefaultRangeEncoder`].
 /// This allows you to use lookup models when decoding data that was encoded with this
-/// coder, see [`SmallRangeDecoder`], as well as [`SmallContiguousLookupDecoderModel`] and
-/// [`SmallNonContiguousLookupDecoderModel`].
+/// coder, see [`SmallRangeDecoder`], as well as [`ContiguousLookupDecoderModel`] and
+/// [`NonContiguousLookupDecoderModel`].
 ///
-/// [lookup models]: super::model::lookup
-/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
-/// [`SmallNonContiguousLookupDecoderModel`]: super::model::SmallNonContiguousLookupDecoderModel
+/// [lookup models]: crate::stream::model::lookup
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
 pub type SmallRangeEncoder<Backend = Vec<u16>> = RangeEncoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> Code for RangeEncoder<Word, State, Backend>
@@ -663,19 +663,19 @@ pub type DefaultRangeDecoder<Backend = Cursor<u32, Vec<u32>>> = RangeDecoder<u32
 ///
 /// This encoder has a smaller word size and internal state than [`DefaultRangeDecoder`]. It
 /// is optimized for use with lookup entropy models, in particular with a
-/// [`SmallContiguousLookupDecoderModel`] or a [`SmallNonContiguousLookupDecoderModel`].
+/// [`ContiguousLookupDecoderModel`] or a [`NonContiguousLookupDecoderModel`].
 ///
 /// # Examples
 ///
-/// See [`SmallContiguousLookupDecoderModel`] and [`SmallNonContiguousLookupDecoderModel`].
+/// See [`ContiguousLookupDecoderModel`] and [`NonContiguousLookupDecoderModel`].
 ///
 /// # See also
 ///
 /// - [`SmallRangeEncoder`]
 ///
-/// [lookup models]: super::model::SmallContiguousLookupDecoderModel
-/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
-/// [`SmallNonContiguousLookupDecoderModel`]: super::model::SmallNonContiguousLookupDecoderModel
+/// [lookup models]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
 pub type SmallRangeDecoder<Backend> = RangeDecoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> RangeDecoder<Word, State, Backend>
@@ -1229,8 +1229,8 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities(
-                &categorical_probabilities,
+            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities_fast::<f64>(
+                &categorical_probabilities,None
             )
             .unwrap();
         let mut symbols_categorical = Vec::with_capacity(AMT);

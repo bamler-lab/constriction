@@ -138,17 +138,18 @@ where
 /// many typical use cases.
 pub type DefaultAnsCoder<Backend = Vec<u32>> = AnsCoder<u32, u64, Backend>;
 
-/// Type alias for an [`AnsCoder`] for use with a [`LookupDecoderModel`]
+/// Type alias for an [`AnsCoder`] for use with a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`]
 ///
 /// This encoder has a smaller word size and internal state than [`AnsCoder`]. It is
-/// optimized for use with a [`LookupDecoderModel`].
+/// optimized for use with a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`].
 ///
 /// # Examples
 ///
-/// See [`SmallContiguousLookupDecoderModel`].
+/// See [`ContiguousLookupDecoderModel`].
 ///
-/// [`LookupDecoderModel`]: super::model::LookupDecoderModel
-/// [`SmallContiguousLookupDecoderModel`]: super::model::SmallContiguousLookupDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
+/// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
+/// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
 pub type SmallAnsCoder<Backend = Vec<u16>> = AnsCoder<u16, u32, Backend>;
 
 impl<Word, State, Backend> Debug for AnsCoder<Word, State, Backend>
@@ -448,7 +449,7 @@ where
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let model = DefaultContiguousCategoricalEntropyModel
-    ///     ::from_floating_point_probabilities(&probabilities).unwrap();
+    ///     ::from_floating_point_probabilities_fast(&probabilities, None).unwrap();
     /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Inspect the compressed data.
@@ -773,7 +774,7 @@ where
     /// let symbols = vec![8, 2, 0, 7];
     /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
     /// let model = DefaultContiguousCategoricalEntropyModel
-    ///     ::from_floating_point_probabilities(&probabilities).unwrap();
+    ///     ::from_floating_point_probabilities_fast(&probabilities, None).unwrap();
     /// ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
     ///
     /// // Get the compressed data, consuming the ANS coder:
@@ -846,7 +847,7 @@ where
     pub fn into_binary(mut self) -> Result<Backend, Option<Backend::WriteError>> {
         let valid_bits = (State::BITS - 1).wrapping_sub(self.state.leading_zeros() as usize);
 
-        if valid_bits % Word::BITS != 0 || valid_bits == usize::max_value() {
+        if valid_bits % Word::BITS != 0 || valid_bits == usize::MAX {
             Err(None)
         } else {
             let truncated_state = self.state ^ (State::one() << valid_bits);
@@ -1341,8 +1342,8 @@ mod tests {
         ];
         let categorical_probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
         let categorical =
-            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities(
-                &categorical_probabilities,
+            ContiguousCategoricalEntropyModel::<Probability, _, PRECISION>::from_floating_point_probabilities_fast::<f64>(
+                &categorical_probabilities,None
             )
             .unwrap();
         let mut symbols_categorical = Vec::with_capacity(AMT);

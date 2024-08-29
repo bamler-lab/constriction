@@ -31,11 +31,11 @@ fn alloc_error_handler(layout: core::alloc::Layout) -> ! {
 pub extern "C" fn _start() -> ! {
     use constriction::stream::{Decode, Encode};
 
-    let model = constriction::stream::model::UniformModel::<u32, 24>::new(10);
+    let model = constriction::stream::model::DefaultUniformModel::new(10);
 
     let mut encoder = constriction::stream::stack::DefaultAnsCoder::new();
-    encoder.encode_symbol(3u32, model).unwrap();
-    encoder.encode_symbol(5u32, model).unwrap();
+    encoder.encode_symbol(3usize, model).unwrap();
+    encoder.encode_symbol(5usize, model).unwrap();
     let compressed = core::hint::black_box(encoder.into_compressed().unwrap());
 
     let mut decoder =

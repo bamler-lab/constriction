@@ -92,7 +92,7 @@
 //! to your `Cargo.toml`:
 //!
 //! ```toml
-//! probability = "0.17"
+//! probability = "0.20"
 //! ```
 //!
 //! Now, let's encode (i.e., compress) some symbols. We'll use an Asymmetric Numeral Systems
@@ -365,6 +365,7 @@ impl<FrontendError, BackendError> From<BackendError> for CoderError<FrontendErro
 
 impl<FrontendError> CoderError<FrontendError, Infallible> {
     fn into_frontend_error(self) -> FrontendError {
+        #[allow(unreachable_patterns)]
         match self {
             CoderError::Frontend(frontend_error) => frontend_error,
             CoderError::Backend(infallible) => match infallible {},
@@ -462,7 +463,7 @@ pub trait Pos: PosSeek {
 /// let mut ans = DefaultAnsCoder::new();
 /// let probabilities = vec![0.03, 0.07, 0.1, 0.1, 0.2, 0.2, 0.1, 0.15, 0.05];
 /// let entropy_model = DefaultContiguousCategoricalEntropyModel
-///     ::from_floating_point_probabilities(&probabilities).unwrap();
+///     ::from_floating_point_probabilities_fast(&probabilities, None).unwrap();
 ///
 /// // Encode some symbols in two chunks and take a snapshot after each chunk.
 /// let symbols1 = vec![8, 2, 0, 7];
@@ -747,6 +748,7 @@ pub trait UnwrapInfallible<T> {
 impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
     #[inline(always)]
     fn unwrap_infallible(self) -> T {
+        #[allow(unreachable_patterns)]
         match self {
             Ok(x) => x,
             Err(infallible) => match infallible {},
@@ -756,8 +758,10 @@ impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
 
 impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
     fn unwrap_infallible(self) -> T {
+        #[allow(unreachable_patterns)]
         match self {
             Ok(x) => x,
+            #[allow(unreachable_patterns)]
             Err(infallible) => match infallible {
                 CoderError::Backend(infallible) => match infallible {},
                 CoderError::Frontend(infallible) => match infallible {},
@@ -1007,13 +1011,15 @@ macro_rules! generic_static_asserts {
     (($($l:lifetime,)* $($($t:ident$(: $bound:path)?),+)? $(; $(const $c:ident:$ct:ty),+)?); $($label:ident: $test:expr);+$(;)?) => {
         #[allow(path_statements, clippy::no_effect)]
         {
-            struct Check<$($l,)* $($($t,)+)? $($(const $c:$ct,)+)?>($($($t,)+)?);
-            impl<$($l,)* $($($t$(:$bound)?,)+)? $($(const $c:$ct,)+)?> Check<$($l,)* $($($t,)+)? $($($c,)+)?> {
-                $(
-                    const $label: () = assert!($test);
-                )+
+            {
+                struct Check<$($l,)* $($($t,)+)? $($(const $c:$ct,)+)?>($($($t,)+)?);
+                impl<$($l,)* $($($t$(:$bound)?,)+)? $($(const $c:$ct,)+)?> Check<$($l,)* $($($t,)+)? $($($c,)+)?> {
+                    $(
+                        const $label: () = assert!($test);
+                    )+
+                }
+                generic_static_asserts!{@nested Check::<$($l,)* $($($t,)+)? $($($c,)+)?>, $($label: $test;)+}
             }
-            generic_static_asserts!{@nested Check::<$($l,)* $($($t,)+)? $($($c,)+)?>, $($label: $test;)+}
         }
     };
     (@nested $t:ty, $($label:ident: $test:expr;)+) => {

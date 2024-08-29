@@ -41,14 +41,14 @@
 //!   *decoding* of i.i.d. data; these types build up a lookup table with `2^PRECISION`
 //!   entries (one entry per
 //!   possible *quantile*) and are therefore only recommended to be used with relatively
-//!   small `PRECISION`. See [`SmallContiguousLookupDecoderModel`] and
-//!   [`SmallNonContiguousLookupDecoderModel`].
+//!   small `PRECISION`. See [`ContiguousLookupDecoderModel`] and
+//!   [`NonContiguousLookupDecoderModel`].
 //!
 //! # Examples
 //!
 //! See [`LeakyQuantizer`](LeakyQuantizer#examples), [`ContiguousCategoricalEntropyModel`],
 //! [`NonContiguousCategoricalEncoderModel`]. [`NonContiguousCategoricalDecoderModel`], and
-//! [`LookupDecoderModel`].
+//! [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`].
 //!
 //! TODO: direct links to "Examples" sections.
 //!
@@ -116,23 +116,6 @@
 //! [`Binomial`]: probability::distribution::Binomial
 //! [`Gaussian`]: probability::distribution::Gaussian
 
-#[cfg(feature = "std")]
-use std::collections::{
-    hash_map::Entry::{Occupied, Vacant},
-    HashMap,
-};
-
-#[cfg(not(feature = "std"))]
-use hashbrown::hash_map::{
-    Entry::{Occupied, Vacant},
-    HashMap,
-};
-
-use alloc::{boxed::Box, vec::Vec};
-use core::{borrow::Borrow, fmt::Debug, hash::Hash, marker::PhantomData, ops::RangeInclusive};
-use libm::log1p;
-use num_traits::{float::FloatCore, AsPrimitive, One, PrimInt, WrappingAdd, WrappingSub, Zero};
-
 /// Re-export of [`probability::distribution::Distribution`].
 ///
 /// Most users will never have to interact with this trait directly. When a method requires
@@ -165,7 +148,17 @@ pub use probability::distribution::Distribution;
 /// [`probability`]: https://docs.rs/probability/latest/probability/
 pub use probability::distribution::Inverse;
 
-use crate::{generic_static_asserts, wrapping_pow2, BitArray, NonZeroBitArray};
+mod categorical;
+mod quantize;
+mod uniform;
+
+use core::{borrow::Borrow, hash::Hash};
+
+use alloc::{boxed::Box, vec::Vec};
+
+use num_traits::{float::FloatCore, AsPrimitive, One, Zero};
+
+use crate::{BitArray, NonZeroBitArray};
 
 /// Base trait for probabilistic models of a data source.
 ///
@@ -206,7 +199,8 @@ use crate::{generic_static_asserts, wrapping_pow2, BitArray, NonZeroBitArray};
 ///   e.g., [`Encode::encode_iid_symbols`](super::Encode::encode_iid_symbols)). This will
 ///   allow users to call your function either with a reference to an entropy model (all
 ///   shared references implement `Copy`), or with some cheaply copyable entropy model such
-///   as a view to a lookup model (see [`LookupDecoderModel::as_view`]).
+///   as a view to a lookup model (see [`ContiguousLookupDecoderModel::as_view`] or
+///   [`NonContiguousLookupDecoderModel::as_view`]).
 ///
 /// # See Also
 ///
@@ -274,232 +268,6 @@ pub trait EntropyModel<const PRECISION: usize> {
     /// interpretations of the integer `p = 0` always turned out to be easy to disambiguate
     /// statically.
     type Probability: BitArray;
-}
-
-/// A trait for [`EntropyModel`]s that can be serialized into a common format.
-///
-/// The method [`symbol_table`] iterates over all symbols with nonzero probability under the
-/// entropy. The iteration occurs in uniquely defined order of increasing left-sided
-/// cumulative probability distribution of the symbols. All `EntropyModel`s for which such
-/// iteration can be implemented efficiently should implement this trait. `EntropyModel`s
-/// for which such iteration would require extra work (e.g., sorting symbols by left-sided
-/// cumulative distribution) should *not* implement this trait so that callers can assume
-/// that calling `symbol_table` is cheap.
-///
-/// The main advantage of implementing this trait is that it provides default
-/// implementations of conversions to various other `EncoderModel`s and `DecoderModel`s, see
-/// [`to_generic_encoder_model`], [`to_generic_decoder_model`], and
-/// [`to_generic_lookup_decoder_model`].
-///
-/// [`symbol_table`]: Self::symbol_table
-/// [`to_generic_encoder_model`]: Self::to_generic_encoder_model
-/// [`to_generic_decoder_model`]: Self::to_generic_decoder_model
-/// [`to_generic_lookup_decoder_model`]: Self::to_generic_lookup_decoder_model
-pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISION> {
-    /// The type of the iterator returned by [`symbol_table`](Self::symbol_table).
-    ///
-    /// Each item is a tuple `(symbol, left_sided_cumulative, probability)`.
-    type Iter: Iterator<
-        Item = (
-            Self::Symbol,
-            Self::Probability,
-            <Self::Probability as BitArray>::NonZero,
-        ),
-    >;
-
-    /// Iterates over all symbols in the unique order that is consistent with the cumulative
-    /// distribution.
-    ///
-    /// The iterator iterates in order of increasing cumulative.
-    ///
-    /// This method may be used, e.g., to export the model into a serializable format. It is
-    /// also used internally by constructors that create a different but equivalent
-    /// representation of the same entropy model (e.g., to construct a
-    /// [`LookupDecoderModel`] from some `EncoderModel`).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use constriction::stream::model::{
-    ///     IterableEntropyModel, SmallNonContiguousCategoricalDecoderModel
-    /// };
-    ///
-    /// let symbols = vec!['a', 'b', 'x', 'y'];
-    /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
-    /// let model = SmallNonContiguousCategoricalDecoderModel
-    ///     ::from_symbols_and_floating_point_probabilities(&symbols, &probabilities).unwrap();
-    ///
-    /// // Print a table representation of this entropy model (e.g., for debugging).
-    /// dbg!(model.symbol_table().collect::<Vec<_>>());
-    ///
-    /// // Create a lookup model. This method is provided by the trait `IterableEntropyModel`.
-    /// let lookup_decoder_model = model.to_generic_lookup_decoder_model();
-    /// ```
-    ///
-    /// # See also
-    ///
-    /// - [`floating_point_symbol_table`](Self::floating_point_symbol_table)
-    fn symbol_table(&'m self) -> Self::Iter;
-
-    /// Similar to [`symbol_table`], but yields both cumulatives and probabilities in
-    /// floating point representation.
-    ///
-    /// The conversion to floats is guaranteed to be lossless due to the trait bound `F:
-    /// From<Self::Probability>`.
-    ///
-    /// [`symbol_table`]: Self::symbol_table
-    fn floating_point_symbol_table<F>(
-        &'m self,
-    ) -> FloatingPointSymbolTable<F, Self::Iter, PRECISION>
-    where
-        F: From<Self::Probability>,
-    {
-        FloatingPointSymbolTable {
-            inner: self.symbol_table(),
-            phantom: PhantomData,
-        }
-    }
-
-    /// Returns the entropy in units of bits (i.e., base 2).
-    ///
-    /// The entropy is the theoretical lower bound on the *expected* bit rate in any
-    /// lossless entropy coder.
-    ///
-    /// Note that calling this method on a [`LeakilyQuantizedDistribution`] will return the
-    /// entropy *after quantization*, not the differential entropy of the underlying
-    /// continuous probability distribution.
-    fn entropy_base2<F>(&'m self) -> F
-    where
-        F: num_traits::Float + core::iter::Sum,
-        Self::Probability: Into<F>,
-    {
-        let entropy_scaled = self
-            .symbol_table()
-            .map(|(_, _, probability)| {
-                let probability = probability.get().into();
-                probability * probability.log2() // probability is guaranteed to be nonzero.
-            })
-            .sum::<F>();
-
-        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
-        F::from(PRECISION).unwrap() - entropy_scaled / whole
-    }
-
-    /// Creates an [`EncoderModel`] from this `EntropyModel`
-    ///
-    /// This is a fallback method that should only be used if no more specialized
-    /// conversions are available. It generates a [`NonContiguousCategoricalEncoderModel`]
-    /// with the same probabilities and left-sided cumulatives as `self`. Note that a
-    /// `NonContiguousCategoricalEncoderModel` is very generic and therefore not
-    /// particularly optimized. Thus, before calling this method first check:
-    /// - if the original `Self` type already implements `EncoderModel` (some types
-    ///   implement *both* `EncoderModel` and `DecoderModel`); or
-    /// - if the `Self` type has some inherent method with a name like `to_encoder_model`;
-    ///   if it does, that method probably returns an implementation of `EncoderModel` that
-    ///   is better optimized for your use case.
-    #[inline(always)]
-    fn to_generic_encoder_model(
-        &'m self,
-    ) -> NonContiguousCategoricalEncoderModel<Self::Symbol, Self::Probability, PRECISION>
-    where
-        Self::Symbol: Hash + Eq,
-    {
-        self.into()
-    }
-
-    /// Creates a [`DecoderModel`] from this `EntropyModel`
-    ///
-    /// This is a fallback method that should only be used if no more specialized
-    /// conversions are available. It generates a [`NonContiguousCategoricalDecoderModel`]
-    /// with the same probabilities and left-sided cumulatives as `self`. Note that a
-    /// `NonContiguousCategoricalEncoderModel` is very generic and therefore not
-    /// particularly optimized. Thus, before calling this method first check:
-    /// - if the original `Self` type already implements `DecoderModel` (some types
-    ///   implement *both* `EncoderModel` and `DecoderModel`); or
-    /// - if the `Self` type has some inherent method with a name like `to_decoder_model`;
-    ///   if it does, that method probably returns an implementation of `DecoderModel` that
-    ///   is better optimized for your use case.
-    #[inline(always)]
-    fn to_generic_decoder_model(
-        &'m self,
-    ) -> NonContiguousCategoricalDecoderModel<
-        Self::Symbol,
-        Self::Probability,
-        Vec<(Self::Probability, Self::Symbol)>,
-        PRECISION,
-    >
-    where
-        Self::Symbol: Clone,
-    {
-        self.into()
-    }
-
-    /// Creates a [`DecoderModel`] from this `EntropyModel`
-    ///
-    /// This is a fallback method that should only be used if no more specialized
-    /// conversions are available. It generates a [`LookupDecoderModel`] that makes no
-    /// assumption about contiguity of the support. Thus, before calling this method first
-    /// check if the `Self` type has some inherent method with a name like
-    /// `to_lookup_decoder_model`. If it does, that method probably returns a
-    /// `LookupDecoderModel` that is better optimized for your use case.
-    #[inline(always)]
-    fn to_generic_lookup_decoder_model(
-        &'m self,
-    ) -> LookupDecoderModel<
-        Self::Symbol,
-        Self::Probability,
-        NonContiguousSymbolTable<Vec<(Self::Probability, Self::Symbol)>>,
-        Box<[Self::Probability]>,
-        PRECISION,
-    >
-    where
-        Self::Probability: Into<usize>,
-        usize: AsPrimitive<Self::Probability>,
-        Self::Symbol: Copy + Default,
-    {
-        self.into()
-    }
-}
-
-/// The iterator returned by [`IterableEntropyModel::floating_point_symbol_table`].
-#[derive(Debug)]
-pub struct FloatingPointSymbolTable<F, I, const PRECISION: usize> {
-    inner: I,
-    phantom: PhantomData<F>,
-}
-
-impl<F, Symbol, Probability, I, const PRECISION: usize> Iterator
-    for FloatingPointSymbolTable<F, I, PRECISION>
-where
-    F: FloatCore,
-    Probability: BitArray + Into<F>,
-    I: Iterator<Item = (Symbol, Probability, <Probability as BitArray>::NonZero)>,
-{
-    type Item = (Symbol, F, F);
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        let (symbol, cumulative, prob) = self.inner.next()?;
-
-        // This gets compiled into a constant, and the divisions by `whole` get compiled
-        // into floating point multiplications rather than (slower) divisions.
-        let whole = (F::one() + F::one()) * (Probability::one() << (PRECISION - 1)).into();
-        Some((symbol, cumulative.into() / whole, prob.get().into() / whole))
-    }
-
-    #[inline(always)]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl<F, Symbol, Probability, I, const PRECISION: usize> ExactSizeIterator
-    for FloatingPointSymbolTable<F, I, PRECISION>
-where
-    F: FloatCore,
-    Probability: BitArray + Into<F>,
-    I: ExactSizeIterator<Item = (Symbol, Probability, <Probability as BitArray>::NonZero)>,
-{
 }
 
 /// A trait for [`EntropyModel`]s that can be used for encoding (compressing) data.
@@ -586,7 +354,7 @@ pub trait EncoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     /// let probabilities = vec![1u32 << 21, 1 << 23, 1 << 22, 1 << 21];
     /// let model = DefaultNonContiguousCategoricalEncoderModel // "Default" uses `PRECISION = 24`
     ///     ::from_symbols_and_nonzero_fixed_point_probabilities(
-    ///         symbols.iter().copied(), &probabilities, false)
+    ///         symbols.iter().copied(), probabilities.iter().copied(), false)
     ///     .unwrap();
     ///
     /// assert_eq!(model.floating_point_probability::<f64>('a'), 0.125);
@@ -696,6 +464,362 @@ pub trait DecoderModel<const PRECISION: usize>: EntropyModel<PRECISION> {
     );
 }
 
+/// A trait for [`EntropyModel`]s that can be serialized into a common format.
+///
+/// The method [`symbol_table`] iterates over all symbols with nonzero probability under the
+/// entropy. The iteration occurs in uniquely defined order of increasing left-sided
+/// cumulative probability distribution of the symbols. All `EntropyModel`s for which such
+/// iteration can be implemented efficiently should implement this trait. `EntropyModel`s
+/// for which such iteration would require extra work (e.g., sorting symbols by left-sided
+/// cumulative distribution) should *not* implement this trait so that callers can assume
+/// that calling `symbol_table` is cheap.
+///
+/// The main advantage of implementing this trait is that it provides default
+/// implementations of conversions to various other `EncoderModel`s and `DecoderModel`s, see
+/// [`to_generic_encoder_model`], [`to_generic_decoder_model`], and
+/// [`to_generic_lookup_decoder_model`].
+///
+/// [`symbol_table`]: Self::symbol_table
+/// [`to_generic_encoder_model`]: Self::to_generic_encoder_model
+/// [`to_generic_decoder_model`]: Self::to_generic_decoder_model
+/// [`to_generic_lookup_decoder_model`]: Self::to_generic_lookup_decoder_model
+pub trait IterableEntropyModel<'m, const PRECISION: usize>: EntropyModel<PRECISION> {
+    /// Iterates over all symbols in the unique order that is consistent with the cumulative
+    /// distribution.
+    ///
+    /// The iterator iterates in order of increasing cumulative.
+    ///
+    /// This method may be used, e.g., to export the model into a serializable format. It is
+    /// also used internally by constructors that create a different but equivalent
+    /// representation of the same entropy model (e.g., to construct a
+    /// [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] from some `EncoderModel`).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use constriction::stream::model::{
+    ///     IterableEntropyModel, SmallNonContiguousCategoricalDecoderModel
+    /// };
+    ///
+    /// let symbols = vec!['a', 'b', 'x', 'y'];
+    /// let probabilities = vec![0.125, 0.5, 0.25, 0.125]; // Can all be represented without rounding.
+    /// let model = SmallNonContiguousCategoricalDecoderModel
+    ///     ::from_symbols_and_floating_point_probabilities_fast(
+    ///         symbols.iter().cloned(),
+    ///         &probabilities,
+    ///         None
+    ///     ).unwrap();
+    ///
+    /// // Print a table representation of this entropy model (e.g., for debugging).
+    /// dbg!(model.symbol_table().collect::<Vec<_>>());
+    ///
+    /// // Create a lookup model. This method is provided by the trait `IterableEntropyModel`.
+    /// let lookup_decoder_model = model.to_generic_lookup_decoder_model();
+    /// ```
+    ///
+    /// # See also
+    ///
+    /// - [`floating_point_symbol_table`](Self::floating_point_symbol_table)
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    >;
+
+    /// Similar to [`symbol_table`], but yields both cumulatives and probabilities in
+    /// floating point representation.
+    ///
+    /// The conversion to floats is guaranteed to be lossless due to the trait bound `F:
+    /// From<Self::Probability>`.
+    ///
+    /// [`symbol_table`]: Self::symbol_table
+    ///
+    /// TODO: test
+    fn floating_point_symbol_table<F>(&'m self) -> impl Iterator<Item = (Self::Symbol, F, F)>
+    where
+        F: FloatCore + From<Self::Probability> + 'm,
+        Self::Probability: Into<F>,
+    {
+        // This gets compiled into a constant, and the divisions by `whole` get compiled
+        // into floating point multiplications rather than (slower) divisions.
+        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
+
+        self.symbol_table()
+            .map(move |(symbol, cumulative, probability)| {
+                (
+                    symbol,
+                    cumulative.into() / whole,
+                    probability.get().into() / whole,
+                )
+            })
+    }
+
+    /// Returns the entropy in units of bits (i.e., base 2).
+    ///
+    /// The entropy is the expected amortized bit rate per symbol of an optimal lossless
+    /// entropy coder, assuming that the data is indeed distributed according to the model.
+    ///
+    /// Note that calling this method on a [`LeakilyQuantizedDistribution`] will return the
+    /// entropy *after quantization*, not the differential entropy of the underlying
+    /// continuous probability distribution.
+    ///
+    /// # See also
+    ///
+    /// - [`cross_entropy_base2`](Self::cross_entropy_base2)
+    /// - [`reverse_cross_entropy_base2`](Self::reverse_cross_entropy_base2)
+    /// - [`kl_divergence_base2`](Self::kl_divergence_base2)
+    /// - [`reverse_kl_divergence_base2`](Self::reverse_kl_divergence_base2)
+    fn entropy_base2<F>(&'m self) -> F
+    where
+        F: num_traits::Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let scaled_shifted = self
+            .symbol_table()
+            .map(|(_, _, probability)| {
+                let probability = probability.get().into();
+                probability * probability.log2() // probability is guaranteed to be nonzero.
+            })
+            .sum::<F>();
+
+        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
+        F::from(PRECISION).unwrap() - scaled_shifted / whole
+    }
+
+    /// Returns the cross entropy between argument `p` and this model in units of bits
+    /// (i.e., base 2).
+    ///
+    /// This is the expected amortized bit rate per symbol that an optimal coder will
+    /// achieve when using this model on a data source that draws symbols from the provided
+    /// probability distribution `p`.
+    ///
+    /// The cross entropy is defined as `H(p, self) = - sum_i p[i] * log2(self[i])` where
+    /// `p` is provided as an argument and `self[i]` denotes the corresponding probabilities
+    /// of the model. Note that `self[i]` is never zero for models in the `constriction`
+    /// library, so the logarithm in the (forward) cross entropy can never be infinite.
+    ///
+    /// The argument `p` must yield a sequence of probabilities (nonnegative values that sum
+    /// to 1) with the correct length and order to be compatible with the model.
+    ///
+    /// # See also
+    ///
+    /// - [`entropy_base2`](Self::entropy_base2)
+    /// - [`reverse_cross_entropy_base2`](Self::reverse_cross_entropy_base2)
+    /// - [`kl_divergence_base2`](Self::kl_divergence_base2)
+    /// - [`reverse_kl_divergence_base2`](Self::reverse_kl_divergence_base2)
+    fn cross_entropy_base2<F>(&'m self, p: impl IntoIterator<Item = F>) -> F
+    where
+        F: num_traits::Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let shift = F::from(PRECISION).unwrap();
+        self.symbol_table()
+            .zip(p)
+            .map(|((_, _, probability), p)| {
+                let probability = probability.get().into();
+                // Perform the shift for each item individually so that the result is
+                // reasonable even if `p` is not normalized.
+                p * (shift - probability.log2()) // probability is guaranteed to be nonzero.
+            })
+            .sum::<F>()
+    }
+
+    /// Returns the cross entropy between this model and argument `p` in units of bits
+    /// (i.e., base 2).
+    ///
+    /// This method is provided mostly for completeness. You're more likely to want to
+    /// calculate [`cross_entropy_base2`](Self::cross_entropy_base2).
+    ///
+    /// The reverse cross entropy is defined as `H(self, p) = - sum_i self[i] * log2(p[i])`
+    /// where `p` is provided as an argument and `self[i]` denotes the corresponding
+    /// probabilities of the model.
+    ///
+    /// The argument `p` must yield a sequence of *nonzero* probabilities (that sum to 1)
+    /// with the correct length and order to be compatible with the model.
+    ///
+    /// # See also
+    ///
+    /// - [`cross_entropy_base2`](Self::cross_entropy_base2)
+    /// - [`entropy_base2`](Self::entropy_base2)
+    /// - [`reverse_kl_divergence_base2`](Self::reverse_kl_divergence_base2)
+    /// - [`kl_divergence_base2`](Self::kl_divergence_base2)
+    fn reverse_cross_entropy_base2<F>(&'m self, p: impl IntoIterator<Item = F>) -> F
+    where
+        F: num_traits::Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let scaled = self
+            .symbol_table()
+            .zip(p)
+            .map(|((_, _, probability), p)| {
+                let probability = probability.get().into();
+                probability * p.log2()
+            })
+            .sum::<F>();
+
+        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
+        -scaled / whole
+    }
+
+    /// Returns Kullback-Leibler divergence `D_KL(p || self)`
+    ///
+    /// This is the expected *overhead* (due to model quantization) in bit rate per symbol
+    /// that an optimal coder will incur when using this model on a data source that draws
+    /// symbols from the provided probability distribution `p` (which this model is supposed
+    /// to approximate).
+    ///
+    /// The KL-divergence is defined as `D_KL(p || self) = - sum_i p[i] * log2(self[i] /
+    /// p[i])`, where `p` is provided as an argument and `self[i]` denotes the corresponding
+    /// probabilities of the model. Any term in the sum where `p[i]` is *exactly* zero does
+    /// not contribute (regardless of whether or not `self[i]` would also be zero).
+    ///
+    /// The argument `p` must yield a sequence of probabilities (nonnegative values that sum
+    /// to 1) with the correct length and order to be compatible with the model.
+    ///
+    /// # See also
+    ///
+    /// - [`reverse_kl_divergence_base2`](Self::reverse_kl_divergence_base2)
+    /// - [`entropy_base2`](Self::entropy_base2)
+    /// - [`cross_entropy_base2`](Self::cross_entropy_base2)
+    /// - [`reverse_cross_entropy_base2`](Self::reverse_cross_entropy_base2)
+    fn kl_divergence_base2<F>(&'m self, p: impl IntoIterator<Item = F>) -> F
+    where
+        F: num_traits::Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let shifted = self
+            .symbol_table()
+            .zip(p)
+            .map(|((_, _, probability), p)| {
+                if p == F::zero() {
+                    F::zero()
+                } else {
+                    let probability = probability.get().into();
+                    p * (p.log2() - probability.log2())
+                }
+            })
+            .sum::<F>();
+
+        shifted + F::from(PRECISION).unwrap() // assumes that `p` is normalized
+    }
+
+    /// Returns reverse Kullback-Leibler divergence, i.e., `D_KL(self || p)`
+    ///
+    /// This method is provided mostly for completeness. You're more likely to want to
+    /// calculate [`kl_divergence_base2`](Self::kl_divergence_base2).
+    ///
+    /// The reverse KL-divergence is defined as `D_KL(self || p) = - sum_i self[i] *
+    /// log2(p[i] / self[i])` where `p`
+    /// is provided as an argument and `self[i]` denotes the corresponding probabilities of
+    /// the model.
+    ///
+    /// The argument `p` must yield a sequence of *nonzero* probabilities (that sum to 1)
+    /// with the correct length and order to be compatible with the model.
+    ///
+    /// # See also
+    ///
+    /// - [`kl_divergence_base2`](Self::kl_divergence_base2)
+    /// - [`entropy_base2`](Self::entropy_base2)
+    /// - [`cross_entropy_base2`](Self::cross_entropy_base2)
+    /// - [`reverse_cross_entropy_base2`](Self::reverse_cross_entropy_base2)
+    fn reverse_kl_divergence_base2<F>(&'m self, p: impl IntoIterator<Item = F>) -> F
+    where
+        F: num_traits::Float + core::iter::Sum,
+        Self::Probability: Into<F>,
+    {
+        let scaled_shifted = self
+            .symbol_table()
+            .zip(p)
+            .map(|((_, _, probability), p)| {
+                let probability = probability.get().into();
+                probability * (probability.log2() - p.log2())
+            })
+            .sum::<F>();
+
+        let whole = (F::one() + F::one()) * (Self::Probability::one() << (PRECISION - 1)).into();
+        scaled_shifted / whole - F::from(PRECISION).unwrap()
+    }
+
+    /// Creates an [`EncoderModel`] from this `EntropyModel`
+    ///
+    /// This is a fallback method that should only be used if no more specialized
+    /// conversions are available. It generates a [`NonContiguousCategoricalEncoderModel`]
+    /// with the same probabilities and left-sided cumulatives as `self`. Note that a
+    /// `NonContiguousCategoricalEncoderModel` is very generic and therefore not
+    /// particularly optimized. Thus, before calling this method first check:
+    /// - if the original `Self` type already implements `EncoderModel` (some types
+    ///   implement *both* `EncoderModel` and `DecoderModel`); or
+    /// - if the `Self` type has some inherent method with a name like `to_encoder_model`;
+    ///   if it does, that method probably returns an implementation of `EncoderModel` that
+    ///   is better optimized for your use case.
+    #[inline(always)]
+    fn to_generic_encoder_model(
+        &'m self,
+    ) -> NonContiguousCategoricalEncoderModel<Self::Symbol, Self::Probability, PRECISION>
+    where
+        Self::Symbol: Hash + Eq,
+    {
+        self.into()
+    }
+
+    /// Creates a [`DecoderModel`] from this `EntropyModel`
+    ///
+    /// This is a fallback method that should only be used if no more specialized
+    /// conversions are available. It generates a [`NonContiguousCategoricalDecoderModel`]
+    /// with the same probabilities and left-sided cumulatives as `self`. Note that a
+    /// `NonContiguousCategoricalEncoderModel` is very generic and therefore not
+    /// particularly optimized. Thus, before calling this method first check:
+    /// - if the original `Self` type already implements `DecoderModel` (some types
+    ///   implement *both* `EncoderModel` and `DecoderModel`); or
+    /// - if the `Self` type has some inherent method with a name like `to_decoder_model`;
+    ///   if it does, that method probably returns an implementation of `DecoderModel` that
+    ///   is better optimized for your use case.
+    #[inline(always)]
+    fn to_generic_decoder_model(
+        &'m self,
+    ) -> NonContiguousCategoricalDecoderModel<
+        Self::Symbol,
+        Self::Probability,
+        Vec<(Self::Probability, Self::Symbol)>,
+        PRECISION,
+    >
+    where
+        Self::Symbol: Clone,
+    {
+        self.into()
+    }
+
+    /// Creates a [`DecoderModel`] from this `EntropyModel`
+    ///
+    /// This is a fallback method that should only be used if no more specialized
+    /// conversions are available. It generates a [`ContiguousLookupDecoderModel`] or [`NonContiguousLookupDecoderModel`] that makes no
+    /// assumption about contiguity of the support. Thus, before calling this method first
+    /// check if the `Self` type has some inherent method with a name like
+    /// `to_lookup_decoder_model`. If it does, that method probably returns a
+    /// `LookupDecoderModel` that is better optimized for your use case.
+    #[inline(always)]
+    fn to_generic_lookup_decoder_model(
+        &'m self,
+    ) -> NonContiguousLookupDecoderModel<
+        Self::Symbol,
+        Self::Probability,
+        Vec<(Self::Probability, Self::Symbol)>,
+        Box<[Self::Probability]>,
+        PRECISION,
+    >
+    where
+        Self::Probability: Into<usize>,
+        usize: AsPrimitive<Self::Probability>,
+        Self::Symbol: Clone + Default,
+    {
+        self.into()
+    }
+}
+
 impl<M, const PRECISION: usize> EntropyModel<PRECISION> for &M
 where
     M: EntropyModel<PRECISION> + ?Sized,
@@ -704,13 +828,49 @@ where
     type Symbol = M::Symbol;
 }
 
+impl<M, const PRECISION: usize> EncoderModel<PRECISION> for &M
+where
+    M: EncoderModel<PRECISION> + ?Sized,
+{
+    #[inline(always)]
+    fn left_cumulative_and_probability(
+        &self,
+        symbol: impl Borrow<Self::Symbol>,
+    ) -> Option<(Self::Probability, <Self::Probability as BitArray>::NonZero)> {
+        (*self).left_cumulative_and_probability(symbol)
+    }
+}
+
+impl<M, const PRECISION: usize> DecoderModel<PRECISION> for &M
+where
+    M: DecoderModel<PRECISION> + ?Sized,
+{
+    #[inline(always)]
+    fn quantile_function(
+        &self,
+        quantile: Self::Probability,
+    ) -> (
+        Self::Symbol,
+        Self::Probability,
+        <Self::Probability as BitArray>::NonZero,
+    ) {
+        (*self).quantile_function(quantile)
+    }
+}
+
 impl<'m, M, const PRECISION: usize> IterableEntropyModel<'m, PRECISION> for &'m M
 where
     M: IterableEntropyModel<'m, PRECISION>,
 {
-    type Iter = M::Iter;
-
-    fn symbol_table(&'m self) -> Self::Iter {
+    fn symbol_table(
+        &'m self,
+    ) -> impl Iterator<
+        Item = (
+            Self::Symbol,
+            Self::Probability,
+            <Self::Probability as BitArray>::NonZero,
+        ),
+    > {
         (*self).symbol_table()
     }
 
@@ -748,3316 +908,33 @@ where
     }
 }
 
-impl<M, const PRECISION: usize> EncoderModel<PRECISION> for &M
-where
-    M: EncoderModel<PRECISION> + ?Sized,
-{
-    #[inline(always)]
-    fn left_cumulative_and_probability(
-        &self,
-        symbol: impl Borrow<Self::Symbol>,
-    ) -> Option<(Self::Probability, <Self::Probability as BitArray>::NonZero)> {
-        (*self).left_cumulative_and_probability(symbol)
-    }
-}
-
-impl<M, const PRECISION: usize> DecoderModel<PRECISION> for &M
-where
-    M: DecoderModel<PRECISION> + ?Sized,
-{
-    #[inline(always)]
-    fn quantile_function(
-        &self,
-        quantile: Self::Probability,
-    ) -> (
-        Self::Symbol,
-        Self::Probability,
-        <Self::Probability as BitArray>::NonZero,
-    ) {
-        (*self).quantile_function(quantile)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct UniformModel<Probability: BitArray, const PRECISION: usize> {
-    probability_per_bin: Probability::NonZero,
-    last_symbol: Probability,
-}
-
-impl<Probability: BitArray, const PRECISION: usize> UniformModel<Probability, PRECISION> {
-    pub fn new(range: Probability) -> Self {
-        assert!(range > Probability::one()); // We don't support degenerate probability distributions (i.e. range=1).
-        let range = unsafe { range.into_nonzero_unchecked() }; // For performance hint.
-        let last_symbol = range.get() - Probability::one();
-
-        if PRECISION == Probability::BITS {
-            let probability_per_bin =
-                (Probability::zero().wrapping_sub(&range.get()) / range.get()) + Probability::one();
-            unsafe {
-                Self {
-                    probability_per_bin: probability_per_bin.into_nonzero_unchecked(),
-                    last_symbol,
-                }
-            }
-        } else {
-            let probability_per_bin = (Probability::one() << PRECISION) / range.get();
-            let probability_per_bin = probability_per_bin
-                .into_nonzero()
-                .expect("Range of Uniform model must not exceed 1 << PRECISION.");
-            Self {
-                probability_per_bin,
-                last_symbol,
-            }
-        }
-    }
-}
-
-impl<Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
-    for UniformModel<Probability, PRECISION>
-{
-    type Symbol = Probability;
-    type Probability = Probability;
-}
-
-impl<'m, Probability: BitArray, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
-    for UniformModel<Probability, PRECISION>
-where
-    Probability: AsPrimitive<usize>,
-{
-    type Iter = UniformModelIter<'m, Probability, PRECISION>;
-
-    fn symbol_table(&'m self) -> Self::Iter {
-        UniformModelIter {
-            model: self,
-            symbol: Probability::zero(),
-            terminated: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct UniformModelIter<'m, Probability: BitArray, const PRECISION: usize> {
-    model: &'m UniformModel<Probability, PRECISION>,
-    symbol: Probability,
-    terminated: bool,
-}
-
-impl<'m, Probability: BitArray, const PRECISION: usize> Iterator
-    for UniformModelIter<'m, Probability, PRECISION>
-where
-    Probability: AsPrimitive<usize>,
-{
-    type Item = (Probability, Probability, Probability::NonZero);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.terminated {
-            None
-        } else {
-            let left_cumulative = self.symbol * self.model.probability_per_bin.get();
-
-            if self.symbol != self.model.last_symbol {
-                let symbol = self.symbol;
-                self.symbol = symbol.wrapping_add(&Probability::one());
-                // Most common case.
-                Some((symbol, left_cumulative, self.model.probability_per_bin))
-            } else {
-                // Less common but possible case.
-                self.terminated = true;
-                self.symbol = self.symbol.wrapping_add(&Probability::one());
-                let probability =
-                    wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&left_cumulative);
-                let probability = unsafe { probability.into_nonzero_unchecked() };
-                Some((self.model.last_symbol, left_cumulative, probability))
-            }
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.model.last_symbol.as_() + 1 - self.symbol.as_();
-        (len, Some(len))
-    }
-}
-
-impl<'m, Probability: BitArray, const PRECISION: usize> ExactSizeIterator
-    for UniformModelIter<'m, Probability, PRECISION>
-where
-    Probability: AsPrimitive<usize>,
-{
-}
-
-impl<Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
-    for UniformModel<Probability, PRECISION>
-{
-    fn left_cumulative_and_probability(
-        &self,
-        symbol: impl Borrow<Self::Symbol>,
-    ) -> Option<(Self::Probability, <Self::Probability as BitArray>::NonZero)> {
-        let symbol = *symbol.borrow();
-        let left_cumulative = symbol.wrapping_mul(&self.probability_per_bin.get());
-
-        #[allow(clippy::comparison_chain)]
-        if symbol < self.last_symbol {
-            // Most common case.
-            Some((left_cumulative, self.probability_per_bin))
-        } else if symbol == self.last_symbol {
-            // Less common but possible case.
-            let probability =
-                wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&left_cumulative);
-            let probability = unsafe { probability.into_nonzero_unchecked() };
-            Some((left_cumulative, probability))
-        } else {
-            // Least common case.
-            None
-        }
-    }
-}
-
-impl<Probability: BitArray, const PRECISION: usize> DecoderModel<PRECISION>
-    for UniformModel<Probability, PRECISION>
-{
-    fn quantile_function(
-        &self,
-        quantile: Self::Probability,
-    ) -> (
-        Self::Symbol,
-        Self::Probability,
-        <Self::Probability as BitArray>::NonZero,
-    ) {
-        let symbol_guess = quantile / self.probability_per_bin.get(); // Might be 1 too large for last symbol.
-        let remainder = quantile % self.probability_per_bin.get();
-        if symbol_guess < self.last_symbol {
-            (symbol_guess, quantile - remainder, self.probability_per_bin)
-        } else {
-            let left_cumulative = self.last_symbol * self.probability_per_bin.get();
-            let prob = wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&left_cumulative);
-            let prob = unsafe {
-                // SAFETY: prob can't be zero because we have a `quantile` that is contained in its interval.
-                prob.into_nonzero_unchecked()
-            };
-            (self.last_symbol, left_cumulative, prob)
-        }
-    }
-}
-
-/// Quantizes probability distributions and represents them in fixed-point precision.
-///
-/// You will usually want to use this type through one of its type aliases,
-/// [`DefaultLeakyQuantizer`] or [`SmallLeakyQuantizer`], see [discussion of
-/// presets](super#presets).
-///
-/// # Examples
-///
-/// ## Quantizing Continuous Distributions
-///
-/// ```
-/// use constriction::{
-///     stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder, Encode, Decode},
-///     UnwrapInfallible,
-/// };
-///
-/// // Create a quantizer that supports integer symbols from -5 to 20 (inclusively),
-/// // using the "default" preset for `Probability` and `PRECISION`.
-/// let quantizer = DefaultLeakyQuantizer::new(-5..=20);
-///
-/// // Quantize a normal distribution with mean 8.3 and standard deviation 4.1.
-/// let continuous_distribution1 = probability::distribution::Gaussian::new(8.3, 4.1);
-/// let entropy_model1 = quantizer.quantize(continuous_distribution1);
-///
-/// // You can reuse the same quantizer for more than one distribution, and the distributions don't
-/// // even have to be of the same type (e.g., one can be a `Gaussian` and another a `Laplace`).
-/// let continuous_distribution2 = probability::distribution::Laplace::new(-1.4, 2.7);
-/// let entropy_model2 = quantizer.quantize(continuous_distribution2);
-///
-/// // Use the entropy models with an entropy coder.
-/// let mut ans_coder = DefaultAnsCoder::new();
-/// ans_coder.encode_symbol(4, entropy_model1).unwrap();
-/// ans_coder.encode_symbol(-3, entropy_model2).unwrap();
-///
-/// // Decode symbols (in reverse order, since the `AnsCoder` is a stack) and verify correctness.
-/// assert_eq!(ans_coder.decode_symbol(entropy_model2).unwrap_infallible(), -3);
-/// assert_eq!(ans_coder.decode_symbol(entropy_model1).unwrap_infallible(), 4);
-/// assert!(ans_coder.is_empty());
-/// ```
-///
-/// ## Quantizing a Discrete Distribution (That Has an Analytic Expression)
-///
-/// If you pass a discrete probability distribution to the method [`quantize`] then it no
-/// longer needs to perform any quantization in the data space, but it will still perform
-/// steps 2 and 3 in the list below, i.e., it will still convert to a "leaky" fixed-point
-/// approximation that can be used by any of `constrictions`'s stream codes. In the
-/// following example, we'll quantize a [`Binomial`](probability::distribution::Binomial)
-/// distribution (as discussed [below](#dont-quantize-categorical-distributions-though), you
-/// should *not* quantize a [`Categorical`](probability::distribution::Categorical)
-/// distribution since there are more efficient specialized types for this use case).
-///
-/// ```
-/// use constriction::stream::{
-///     model::DefaultLeakyQuantizer, queue::DefaultRangeEncoder, Encode, Decode
-/// };
-///
-/// let distribution = probability::distribution::Binomial::new(1000, 0.1); // arguments: `n, p`
-/// let quantizer = DefaultLeakyQuantizer::new(0..=1000); // natural support is `0..=n`
-/// let entropy_model = quantizer.quantize(distribution);
-///
-/// // Let's use a Range Coder this time, just for fun (we could as well use an ANS Coder again).
-/// let mut range_encoder = DefaultRangeEncoder::new();
-///
-/// // Encode a "typical" symbol from the distribution (i.e., one with non-negligible probability).
-/// range_encoder.encode_symbol(107, entropy_model).unwrap();
-///
-/// // Due to the "leakiness" of the quantizer, the following still works despite the fact that
-/// // the symbol `1000` has a ridiculously low probability under the binomial distribution.
-/// range_encoder.encode_symbol(1000, entropy_model).unwrap();
-///
-/// // Decode symbols (in forward order, since range coding operates as a queue) and verify.
-/// let mut range_decoder = range_encoder.into_decoder().unwrap();
-/// assert_eq!(range_decoder.decode_symbol(entropy_model).unwrap(), 107);
-/// assert_eq!(range_decoder.decode_symbol(entropy_model).unwrap(), 1000);
-/// assert!(range_decoder.maybe_exhausted());
-/// ```
-///
-/// # Detailed Description
-///
-/// A `LeakyQuantizer` is a builder of [`LeakilyQuantizedDistribution`]s. It takes an
-/// arbitrary probability distribution that implements the [`Distribution`] trait from the
-/// crate [`probability`] and turns it into a [`LeakilyQuantizedDistribution`] by performing
-/// the following three steps:
-///
-/// 1. **quantization**: lossless entropy coding can only be performed over *discrete* data.
-///    Any continuous (real-valued) data has to be approximated by some discrete set of
-///    points. If you provide a continuous distributions (i.e., a probability density
-///    function) to this builder, then it will quantize the data space by rounding values to
-///    the nearest integer. This step is optional, see
-///    [below](#continuous-vs-discrete-probability-distributions).
-/// 2. **approximation with fixed-point arithmetic**: an entropy model that is used for
-///    compressing and decompressing has to be *exactly* invertible, so that its
-///    [`EncoderModel`] implementation is compatible with its [`DecoderModel`]
-///    implementation. The `LeakilyQuantizedDistribution`s that are built by this builder
-///    represent probabilities and quantiles in fixed-point arithmetic with `PRECISION`
-///    bits. This allows them to avoid rounding errors when inverting the model, so that
-///    they can implement both `EncoderModel` and `DecoderModel` in such a way that one is
-///    the *exact* inverse of the other.
-/// 3. **introducing leakiness**: naively approximating a probability distribution with
-///    fixed point arithmetic could lead to problems: it could round some very small
-///    probabilities to zero. This would have the undesirable effect that the corresponding
-///    symbol then could no longer be encoded. This builder ensures that the
-///    `LeakilyQuantizedDistribution`s that it creates assign a nonzero probability to all
-///    symbols within a user-defined range, so that these symbols can always be encoded,
-///    even if their probabilities under the *original* probability distribution are very
-///    low (or even zero).
-///
-/// # Continuous vs. Discrete Probability Distributions
-///
-/// The method [`quantize`] accepts both continuous probability distributions (i.e.,
-/// probability density functions, such as [`Gaussian`]) and discrete distributions that are
-/// defined only on (some) integers (i.e., probability mass functions, such as
-/// [`Binomial`]). The resulting [`LeakilyQuantizedDistribution`] will always be a discrete
-/// probability distribution. If the original probability distribution is continuous, then
-/// the quantizer implicitly creates bins of size one by rounding to the nearest integer
-/// (i.e., the bins range from `i - 0.5` to `i + 0.5` for each integer `i`). If the original
-/// probability distribution is discrete then no rounding in the symbol space occurs, but
-/// the quantizer still performs steps 2 and 3 above, i.e., it still rounds probabilities
-/// and quantiles to fixed-point arithmetic in a way that ensures that all probabilities
-/// within a user-defined range are nonzero.
-///
-/// ## Don't Quantize *Categorical* Distributions, Though.
-///
-/// Although you can use a `LeakyQuantizer` for *discrete* probability distributions, you
-/// should *not* use it for probability distributions of the type
-/// [`probability::distribution::Categorical`]. While this will technically work, it will
-/// lead to poor computational performance (and also to *slightly* suboptimal compression
-/// efficiency). If you're dealing with categorical distributions, use one of the dedicated
-/// types [`ContiguousCategoricalEntropyModel`], [`NonContiguousCategoricalEncoderModel`],
-/// [`NonContiguousCategoricalDecoderModel`], or [`LookupDecoderModel`] instead.
-///
-/// By contrast, *do* use a `LeakyQuantizer` if the underlying probability [`Distribution`]
-/// can be described by some analytic function (e.g., the function `f(x) ∝ e^{-(x-\mu)^2/2}`
-/// describing the bell curve of a Gaussian distribution, or the function `f_n(k) = (n
-/// choose k) p^k (1-p)^{n-k}` describing the probability mass function of a binomial
-/// distribution). For such parameterized distributions, both the cumulative distribution
-/// function and its inverse can often be expressed as, or at least approximated by, some
-/// analytic expression that can be evaluated in constant time, independent of the number of
-/// possible symbols.
-///
-/// # Computational Efficiency
-///
-/// Two things should be noted about computational efficiency:
-///
-/// - **quantization is lazy:** both the constructor of a `LeakyQuantizer` and the method
-///   [`quantize`] perform only a small constant amount of work, independent of the
-///   `PRECISION` and the number of symbols on which the resulting entropy model will be
-///   defined. The actual quantization is done once the resulting
-///   [`LeakilyQuantizedDistribution`] is used for encoding and/or decoding, and it is only
-///   done for the involved symbols.
-/// - **quantization for decoding is more expensive than for encoding:** using a
-///   `LeakilyQuantizedDistribution` as an [`EncoderModel`] only requires evaluating the
-///   cumulative distribution function (CDF) of the underlying continuous probability
-///   distribution a constant number of times (twice, to be precise). By contrast, using it
-///   as a [`DecoderModel`] requires numerical inversion of the cumulative distribution
-///   function. This numerical inversion starts by calling [`Inverse::inverse`] from the
-///   crate [`probability`] on the underlying continuous probability distribution. But the
-///   result of this method call then has to be refined by repeatedly probing the CDF in
-///   order to deal with inevitable rounding errors in the implementation of
-///   `Inverse::inverse`. The number of required iterations will depend on how accurate the
-///   implementation of `Inverse::inverse` is.
-///
-/// The laziness means that it is relatively cheap to use a different
-/// `LeakilyQuantizedDistribution` for each symbol of the message, which is a common
-/// thing to do in machine-learning based compression methods. By contrast, if you want to
-/// use the *same* entropy model for many symbols then a `LeakilyQuantizedDistribution` can
-/// become unnecessarily expensive, especially for decoding, because you might end up
-/// calculating the inverse CDF in the same region over and over again. If this is the case,
-/// consider tabularizing the `LeakilyQuantizedDistribution` that you obtain from the method
-/// [`quantize`] by calling [`to_generic_encoder_model`] or [`to_generic_decoder_model`] on
-/// it (or, if you use a low `PRECISION`, you may even consider calling
-/// [`to_generic_lookup_decoder_model`]). You'll have to bring the trait
-/// [`IterableEntropyModel`] into scope to call these conversion methods (`use
-/// constriction::stream::model::IterableEntropyModel`).
-///
-/// # Requirements for Correctness
-///
-/// The original distribution that you pass to the method [`quantize`] can only be an
-/// approximation of a true (normalized) probability distribution because it represents
-/// probabilities with finite (floating point) precision. Despite the possibility of
-/// rounding errors in the underlying (floating point) distribution, a `LeakyQuantizer` is
-/// guaranteed to generate a valid entropy model with exactly compatible implementations of
-/// [`EncoderModel`] and [`DecoderModel`] as long as both of the following requirements are
-/// met:
-///
-/// - The cumulative distribution function (CDF) [`Distribution::distribution`] is defined
-///   on all mid points between integers that lie within the range that is provided as
-///   argument `support` to the `new` method; it is monotonically nondecreasing, and its
-///   values do not exceed the closed interval `[0.0, 1.0]`. It is OK if the CDF does not
-///   cover the entire interval from `0.0` to `1.0` (e.g., due to rounding errors or
-///   clipping); any remaining probability mass on the tails is added to the probability
-///   of the symbols at the respective ends of the `support`.
-/// - The quantile function or inverse CDF [`Inverse::inverse`] evaluates to a finite
-///   non-NaN value everywhere on the open interval `(0.0, 1.0)`, and it is monotonically
-///   nondecreasing on this interval. It does not have to be defined at the boundaries `0.0`
-///   or `1.0` (more precisely, it only has to be defined on the closed interval
-///   `[epsilon, 1.0 - epsilon]` where `epsilon := 2.0^{-(PRECISION+1)}` and `^` denotes
-///   mathematical exponentiation). Further, the implementation of `Inverse::inverse` does
-///   not actually have to be the inverse of `Distribution::distribution` because it is only
-///   used as an initial hint where to start a search for the true inverse. It is OK if
-///   `Inverse::inverse` is just some approximation of the true inverse CDF. Any deviations
-///   between `Inverse::inverse` and the true inverse CDF will negatively impact runtime
-///   performance but will otherwise have no observable effect.
-///
-/// [`quantize`]: Self::quantize
-/// [`Gaussian`]: probability::distribution::Gaussian
-/// [`Binomial`]: probability::distribution::Binomial
-/// [`to_generic_encoder_model`]: IterableEntropyModel::to_generic_encoder_model
-/// [`to_generic_decoder_model`]: IterableEntropyModel::to_generic_decoder_model
-/// [`to_generic_lookup_decoder_model`]: IterableEntropyModel::to_generic_lookup_decoder_model
-/// [`IterableEntropyModel`]: IterableEntropyModel
-#[derive(Debug, Clone, Copy)]
-pub struct LeakyQuantizer<F, Symbol, Probability, const PRECISION: usize> {
-    min_symbol_inclusive: Symbol,
-    max_symbol_inclusive: Symbol,
-    free_weight: F,
-    phantom: PhantomData<Probability>,
-}
-
-/// Type alias for a typical [`LeakyQuantizer`].
-///
-/// See:
-/// - [`LeakyQuantizer`]
-/// - [discussion of presets](super#presets)
-pub type DefaultLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u32, 24>;
-
-/// Type alias for a [`LeakyQuantizer`] optimized for compatibility with lookup decoder
-/// models.
-///
-/// See:
-/// - [`LeakyQuantizer`]
-/// - [discussion of presets](super#presets)
-pub type SmallLeakyQuantizer<F, Symbol> = LeakyQuantizer<F, Symbol, u16, 12>;
-
-impl<F, Symbol, Probability, const PRECISION: usize>
-    LeakyQuantizer<F, Symbol, Probability, PRECISION>
-where
-    Probability: BitArray + Into<F>,
-    Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
-    F: FloatCore,
-{
-    /// Constructs a `LeakyQuantizer` with a finite support.
-    ///
-    /// The `support` is an inclusive range (which can be expressed with the `..=` notation,
-    /// as in `-100..=100`). All [`LeakilyQuantizedDistribution`]s generated by this
-    /// `LeakyQuantizer` are then guaranteed to assign a nonzero probability to all symbols
-    /// within the `support`, and a zero probability to all symbols outside of the
-    /// `support`. Having a known support is often a useful property of entropy models
-    /// because it ensures that all symbols within the `support` can indeed be encoded, even
-    /// if their probability under the underlying probability distribution is extremely
-    /// small.
-    ///
-    /// This method takes `support` as a `RangeInclusive` because we want to support, e.g.,
-    /// probability distributions over the `Symbol` type `u8` with full support `0..=255`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if either of the following conditions is met:
-    ///
-    /// - `support` is empty; or
-    /// - `support` contains only a single value (we do not support degenerate probability
-    ///   distributions that put all probability mass on a single symbol); or
-    /// - `support` is larger than `1 << PRECISION` (because in this case, assigning any
-    ///   representable nonzero probability to all elements of `support` would exceed our
-    ///   probability budge).
-    ///
-    /// [`quantize`]: #method.quantize
-    pub fn new(support: RangeInclusive<Symbol>) -> Self {
-        generic_static_asserts!(
-            (Probability: BitArray; const PRECISION: usize);
-            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
-            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
-        );
-
-        // We don't support degenerate probability distributions (i.e., distributions that
-        // place all probability mass on a single symbol).
-        assert!(support.end() > support.start());
-
-        let support_size_minus_one = support.end().wrapping_sub(support.start()).as_();
-        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-        let free_weight = max_probability
-            .checked_sub(&support_size_minus_one)
-            .expect("The support is too large to assign a nonzero probability to each element.")
-            .into();
-
-        LeakyQuantizer {
-            min_symbol_inclusive: *support.start(),
-            max_symbol_inclusive: *support.end(),
-            free_weight,
-            phantom: PhantomData,
-        }
-    }
-
-    /// Quantizes the given probability distribution and returns an [`EntropyModel`].
-    ///
-    /// See [struct documentation](Self) for details and code examples.
-    ///
-    /// Note that this method takes `self` only by reference, i.e., you can reuse
-    /// the same `Quantizer` to quantize arbitrarily many distributions.
-    #[inline]
-    pub fn quantize<D: Distribution>(
-        self,
-        distribution: D,
-    ) -> LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION> {
-        LeakilyQuantizedDistribution {
-            inner: distribution,
-            quantizer: self,
-        }
-    }
-
-    /// Returns the exact range of symbols that have nonzero probability.
-    ///
-    /// The returned inclusive range is the same as the one that was passed in to the
-    /// constructor [`new`](Self::new). All entropy models created by the method
-    /// [`quantize`](Self::quantize) will assign a nonzero probability to all elements in
-    /// the `support`, and they will assign a zero probability to all elements outside of
-    /// the `support`. The support contains at least two and at most `1 << PRECISION`
-    /// elements.
-    #[inline]
-    pub fn support(&self) -> RangeInclusive<Symbol> {
-        self.min_symbol_inclusive..=self.max_symbol_inclusive
-    }
-}
-
-/// An [`EntropyModel`] that approximates a parameterized probability [`Distribution`].
-///
-/// A `LeakilyQuantizedDistribution` can be created with a [`LeakyQuantizer`]. It can be
-/// used for encoding and decoding with any of the stream codes provided by the
-/// `constriction` crate (it can only be used for decoding if the underlying
-/// [`Distribution`] implements the the trait [`Inverse`] from the [`probability`] crate).
-///
-/// # When Should I Use This Type of Entropy Model?
-///
-/// Use a `LeakilyQuantizedDistribution` when you have a probabilistic model that is defined
-/// through some analytic expression (e.g., a mathematical formula for the probability
-/// density function of a continuous probability distribution, or a mathematical formula for
-/// the probability mass functions of some discrete probability distribution). Examples of
-/// probabilistic models that lend themselves to being quantized are continuous
-/// distributions such as [`Gaussian`], [`Laplace`], or [`Exponential`], as well as discrete
-/// distributions with some analytic expression, such as [`Binomial`].
-///
-/// Do *not* use a `LeakilyQuantizedDistribution` if your probabilistic model can only be
-/// presented as an explicit probability table. While you could, in principle, apply a
-/// [`LeakyQuantizer`] to such a [`Categorical`] distribution, you will get better
-/// computational performance (and also *slightly* better compression effectiveness) if you
-/// instead use one of the dedicated types [`ContiguousCategoricalEntropyModel`],
-/// [`NonContiguousCategoricalEncoderModel`], [`NonContiguousCategoricalDecoderModel`], or
-/// [`LookupDecoderModel`].
-///
-/// # Examples
-///
-/// See [examples for `LeakyQuantizer`](LeakyQuantizer#examples).
-///
-/// # Computational Efficiency
-///
-/// See [discussion for `LeakyQuantizer`](LeakyQuantizer#computational-efficiency).
-///
-/// [`Gaussian`]: probability::distribution::Gaussian
-/// [`Laplace`]: probability::distribution::Laplace
-/// [`Exponential`]: probability::distribution::Exponential
-/// [`Binomial`]: probability::distribution::Binomial
-/// [`Categorical`]: probability::distribution::Categorical
-#[derive(Debug, Clone, Copy)]
-pub struct LeakilyQuantizedDistribution<F, Symbol, Probability, D, const PRECISION: usize> {
-    inner: D,
-    quantizer: LeakyQuantizer<F, Symbol, Probability, PRECISION>,
-}
-
-impl<F, Symbol, Probability, D, const PRECISION: usize>
-    LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION>
-where
-    Probability: BitArray + Into<F>,
-    Symbol: PrimInt + AsPrimitive<Probability> + WrappingSub + WrappingAdd,
-    F: FloatCore,
-{
-    /// Returns the quantizer that was used to create this entropy model.
-    ///
-    /// You may want to reuse this quantizer to quantize further probability distributions.
-    #[inline]
-    pub fn quantizer(self) -> LeakyQuantizer<F, Symbol, Probability, PRECISION> {
-        self.quantizer
-    }
-
-    /// Returns a reference to the underlying (floating-point) probability [`Distribution`].
-    ///
-    /// Returns the floating-point probability distribution which this
-    /// `LeakilyQuantizedDistribution` approximates in fixed-point arithmetic.
-    ///
-    /// # See also
-    ///
-    /// - [`inner_mut`](Self::inner_mut)
-    /// - [`into_inner`](Self::into_inner)
-    ///
-    /// [`Distribution`]: probability::distribution::Distribution
-    #[inline]
-    pub fn inner(&self) -> &D {
-        &self.inner
-    }
-
-    /// Returns a mutable reference to the underlying (floating-point) probability
-    /// [`Distribution`].
-    ///
-    /// You can use this method to mutate parameters of the underlying [`Distribution`]
-    /// after it was already quantized. This is safe and cheap since quantization is done
-    /// lazily anyway. Note that you can't mutate the [`support`](Self::support) since it is a
-    /// property of the [`LeakyQuantizer`], not of the `Distribution`. If you want to modify
-    /// the `support` then you have to create a new `LeakyQuantizer` with a different support.
-    ///
-    /// # See also
-    ///
-    /// - [`inner`](Self::inner)
-    /// - [`into_inner`](Self::into_inner)
-    ///
-    /// [`Distribution`]: probability::distribution::Distribution
-    #[inline]
-    pub fn inner_mut(&mut self) -> &mut D {
-        &mut self.inner
-    }
-
-    /// Consumes the entropy model and returns the underlying (floating-point) probability
-    /// [`Distribution`].
-    ///
-    /// Returns the floating-point probability distribution which this
-    /// `LeakilyQuantizedDistribution` approximates in fixed-point arithmetic.
-    ///
-    /// # See also
-    ///
-    /// - [`inner`](Self::inner)
-    /// - [`inner_mut`](Self::inner_mut)
-    ///
-    /// [`Distribution`]: probability::distribution::Distribution
-    #[inline]
-    pub fn into_inner(self) -> D {
-        self.inner
-    }
-
-    /// Returns the exact range of symbols that have nonzero probability.
-    ///
-    /// See [`LeakyQuantizer::support`].
-    #[inline]
-    pub fn support(&self) -> RangeInclusive<Symbol> {
-        self.quantizer.support()
-    }
-}
-
-#[inline(always)]
-fn slack<Probability, Symbol>(symbol: Symbol, min_symbol_inclusive: Symbol) -> Probability
-where
-    Probability: BitArray,
-    Symbol: AsPrimitive<Probability> + WrappingSub,
-{
-    // This whole `mask` business is only relevant if `Symbol` is a signed type smaller than
-    // `Probability`, which should be very uncommon. In all other cases, this whole stuff
-    // will be optimized away.
-    let mask = wrapping_pow2::<Probability>(8 * core::mem::size_of::<Symbol>())
-        .wrapping_sub(&Probability::one());
-    symbol.wrapping_sub(&min_symbol_inclusive).as_() & mask
-}
-
-impl<F, Symbol, Probability, D, const PRECISION: usize> EntropyModel<PRECISION>
-    for LeakilyQuantizedDistribution<F, Symbol, Probability, D, PRECISION>
-where
-    Probability: BitArray,
-{
-    type Probability = Probability;
-    type Symbol = Symbol;
-}
-
-impl<Symbol, Probability, D, const PRECISION: usize> EncoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
-where
-    f64: AsPrimitive<Probability>,
-    Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub,
-    Probability: BitArray + Into<f64>,
-    D: Distribution,
-    D::Value: AsPrimitive<Symbol>,
-{
-    /// Performs (one direction of) the quantization.
-    ///
-    /// # Panics
-    ///
-    /// Panics if it detects some invalidity in the underlying probability distribution.
-    /// This means that there is a bug in the implementation of [`Distribution`] for the
-    /// distribution `D`: the cumulative distribution function is either not monotonically
-    /// nondecreasing, returns NaN, or its values exceed the interval `[0.0, 1.0]` at some
-    /// point.
-    ///
-    /// More precisely, this method panics if the quantization procedure leads to a zero
-    /// probability despite the added leakiness (and despite the fact that the constructor
-    /// checks that `min_symbol_inclusive < max_symbol_inclusive`, i.e., that there are at
-    /// least two symbols with nonzero probability and therefore the probability of a single
-    /// symbol should not be able to overflow).
-    ///
-    /// See [requirements for correctness](LeakyQuantizer#requirements-for-correctness).
-    ///
-    /// [`Distribution`]: probability::distribution::Distribution
-    fn left_cumulative_and_probability(
-        &self,
-        symbol: impl Borrow<Symbol>,
-    ) -> Option<(Probability, Probability::NonZero)> {
-        let min_symbol_inclusive = self.quantizer.min_symbol_inclusive;
-        let max_symbol_inclusive = self.quantizer.max_symbol_inclusive;
-        let free_weight = self.quantizer.free_weight;
-
-        if symbol.borrow() < &min_symbol_inclusive || symbol.borrow() > &max_symbol_inclusive {
-            return None;
-        };
-        let slack = slack(*symbol.borrow(), min_symbol_inclusive);
-
-        // Round both cumulatives *independently* to fixed point precision.
-        let left_sided_cumulative = if symbol.borrow() == &min_symbol_inclusive {
-            // Corner case: make sure that the probabilities add up to one. The generic
-            // calculation in the `else` branch may lead to a lower total probability
-            // because we're cutting off the left tail of the distribution.
-            Probability::zero()
-        } else {
-            let non_leaky: Probability =
-                (free_weight * self.inner.distribution((*symbol.borrow()).into() - 0.5)).as_();
-            non_leaky + slack
-        };
-
-        let right_sided_cumulative = if symbol.borrow() == &max_symbol_inclusive {
-            // Corner case: make sure that the probabilities add up to one. The generic
-            // calculation in the `else` branch may lead to a lower total probability
-            // because we're cutting off the right tail of the distribution and we're
-            // rounding down.
-            wrapping_pow2(PRECISION)
-        } else {
-            let non_leaky: Probability =
-                (free_weight * self.inner.distribution((*symbol.borrow()).into() + 0.5)).as_();
-            non_leaky + slack + Probability::one()
-        };
-
-        let probability = right_sided_cumulative
-            .wrapping_sub(&left_sided_cumulative)
-            .into_nonzero()
-            .expect("Invalid underlying continuous probability distribution.");
-
-        Some((left_sided_cumulative, probability))
-    }
-}
-
-impl<Symbol, Probability, D, const PRECISION: usize> DecoderModel<PRECISION>
-    for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
-where
-    f64: AsPrimitive<Probability>,
-    Symbol: PrimInt + AsPrimitive<Probability> + Into<f64> + WrappingSub + WrappingAdd,
-    Probability: BitArray + Into<f64>,
-    D: Inverse,
-    D::Value: AsPrimitive<Symbol>,
-{
-    fn quantile_function(
-        &self,
-        quantile: Probability,
-    ) -> (Self::Symbol, Probability, Probability::NonZero) {
-        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-        // This check should usually compile away in inlined and verifiably correct usages
-        // of this method.
-        assert!(quantile <= max_probability);
-
-        let inverse_denominator = 1.0 / (max_probability.into() + 1.0);
-
-        let min_symbol_inclusive = self.quantizer.min_symbol_inclusive;
-        let max_symbol_inclusive = self.quantizer.max_symbol_inclusive;
-        let free_weight = self.quantizer.free_weight;
-
-        // Make an initial guess for the inverse of the leaky CDF.
-        let mut symbol: Self::Symbol = self
-            .inner
-            .inverse((quantile.into() + 0.5) * inverse_denominator)
-            .as_();
-
-        let mut left_sided_cumulative = if symbol <= min_symbol_inclusive {
-            // Corner case: we're in the left cut off tail of the distribution.
-            symbol = min_symbol_inclusive;
-            Probability::zero()
-        } else {
-            if symbol > max_symbol_inclusive {
-                // Corner case: we're in the right cut off tail of the distribution.
-                symbol = max_symbol_inclusive;
-            }
-
-            let non_leaky: Probability =
-                (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
-            non_leaky + slack(symbol, min_symbol_inclusive)
-        };
-
-        // SAFETY: We have to ensure that all paths lead to a state where
-        // `right_sided_cumulative != left_sided_cumulative`.
-        let mut step = Self::Symbol::one(); // `step` will always be a power of 2.
-        let right_sided_cumulative = if left_sided_cumulative > quantile {
-            // Our initial guess for `symbol` was too high. Reduce it until we're good.
-            symbol = symbol - step;
-            let mut found_lower_bound = false;
-
-            loop {
-                let old_left_sided_cumulative = left_sided_cumulative;
-
-                if symbol == min_symbol_inclusive {
-                    left_sided_cumulative = Probability::zero();
-                    if step <= Symbol::one() {
-                        // This can only be reached from a downward search, so `old_left_sided_cumulative`
-                        // is the right sided cumulative since the step size is one.
-                        // SAFETY: `old_left_sided_cumulative > quantile >= 0 = left_sided_cumulative`
-                        break old_left_sided_cumulative;
-                    }
-                } else {
-                    let non_leaky: Probability =
-                        (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
-                    left_sided_cumulative = non_leaky + slack(symbol, min_symbol_inclusive);
-                }
-
-                if left_sided_cumulative <= quantile {
-                    found_lower_bound = true;
-                    // We found a lower bound, so we're either done or we have to do a binary
-                    // search now.
-                    if step <= Symbol::one() {
-                        let right_sided_cumulative = if symbol == max_symbol_inclusive {
-                            wrapping_pow2(PRECISION)
-                        } else {
-                            let non_leaky: Probability =
-                                (free_weight * self.inner.distribution(symbol.into() + 0.5)).as_();
-                            (non_leaky + slack(symbol, min_symbol_inclusive))
-                                .wrapping_add(&Probability::one())
-                        };
-                        // SAFETY: `old_left_sided_cumulative > quantile >= left_sided_cumulative`
-                        break right_sided_cumulative;
-                    } else {
-                        step = step >> 1;
-                        // The following addition can't overflow because we're in the binary search phase.
-                        symbol = symbol + step;
-                    }
-                } else if found_lower_bound {
-                    // We're in the binary search phase, so all following guesses will be within bounds.
-                    if step > Symbol::one() {
-                        step = step >> 1
-                    }
-                    symbol = symbol - step;
-                } else {
-                    // We're still in the downward search phase with exponentially increasing step size.
-                    if step << 1 != Symbol::zero() {
-                        step = step << 1;
-                    }
-
-                    // Find a smaller `symbol` that is still `>= min_symbol_inclusive`.
-                    symbol = loop {
-                        let new_symbol = symbol.wrapping_sub(&step);
-                        if new_symbol >= min_symbol_inclusive && new_symbol <= symbol {
-                            break new_symbol;
-                        }
-                        // The following cannot set `step` to zero because this would mean that
-                        // `step == 1` and thus either the above `if` branch would have been
-                        // chosen, or `symbol == min_symbol_inclusive` (which would imply
-                        // `left_sided_cumulative <= quantile`), or `symbol` would be the
-                        // lowest representable symbol (which would also require
-                        // `symbol == min_symbol_inclusive`).
-                        step = step >> 1;
-                    };
-                }
-            }
-        } else {
-            // Our initial guess for `symbol` was either exactly right or too low.
-            // Check validity of the right sided cumulative. If it isn't valid,
-            // keep increasing `symbol` until it is.
-            let mut found_upper_bound = false;
-
-            loop {
-                let right_sided_cumulative = if symbol == max_symbol_inclusive {
-                    let right_sided_cumulative = wrapping_pow2(PRECISION);
-                    if step <= Symbol::one() {
-                        let non_leaky: Probability =
-                            (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
-                        left_sided_cumulative = non_leaky + slack(symbol, min_symbol_inclusive);
-
-                        // SAFETY: we have to manually check here.
-                        if right_sided_cumulative == left_sided_cumulative {
-                            panic!("Invalid underlying probability distribution.");
-                        }
-
-                        break right_sided_cumulative;
-                    } else {
-                        right_sided_cumulative
-                    }
-                } else {
-                    let non_leaky: Probability =
-                        (free_weight * self.inner.distribution(symbol.into() + 0.5)).as_();
-                    (non_leaky + slack(symbol, min_symbol_inclusive))
-                        .wrapping_add(&Probability::one())
-                };
-
-                if right_sided_cumulative > quantile
-                    || right_sided_cumulative == Probability::zero()
-                {
-                    found_upper_bound = true;
-                    // We found an upper bound, so we're either done or we have to do a binary
-                    // search now.
-                    if step <= Symbol::one() {
-                        left_sided_cumulative = if symbol == min_symbol_inclusive {
-                            Probability::zero()
-                        } else {
-                            let non_leaky: Probability =
-                                (free_weight * self.inner.distribution(symbol.into() - 0.5)).as_();
-                            non_leaky + slack(symbol, min_symbol_inclusive)
-                        };
-
-                        if left_sided_cumulative <= quantile || symbol == min_symbol_inclusive {
-                            // SAFETY: we have `left_sided_cumulative <= quantile < right_sided_sided_cumulative`
-                            break right_sided_cumulative;
-                        }
-                    } else {
-                        step = step >> 1;
-                    }
-                    // The following subtraction can't overflow because we're in the binary search phase.
-                    symbol = symbol - step;
-                } else if found_upper_bound {
-                    // We're in the binary search phase, so all following guesses will be within bounds.
-                    if step > Symbol::one() {
-                        step = step >> 1
-                    }
-                    symbol = symbol + step;
-                } else {
-                    // We're still in the upward search phase with exponentially increasing step size.
-                    if step << 1 != Symbol::zero() {
-                        step = step << 1;
-                    }
-
-                    symbol = loop {
-                        let new_symbol = symbol.wrapping_add(&step);
-                        if new_symbol <= max_symbol_inclusive && new_symbol >= symbol {
-                            break new_symbol;
-                        }
-                        // The following cannot set `step` to zero because this would mean that
-                        // `step == 1` and thus either the above `if` branch would have been
-                        // chosen, or `symbol == max_symbol_inclusive` (which would imply
-                        // `right_sided_cumulative > quantile || right_sided_cumulative == 0`),
-                        // or `symbol` would be the largest representable symbol (which would
-                        // also require `symbol == max_symbol_inclusive`).
-                        step = step >> 1;
-                    };
-                }
-            }
-        };
-
-        let probability = unsafe {
-            // SAFETY: see above "SAFETY" comments on all paths that lead here.
-            right_sided_cumulative
-                .wrapping_sub(&left_sided_cumulative)
-                .into_nonzero_unchecked()
-        };
-        (symbol, left_sided_cumulative, probability)
-    }
-}
-
-impl<'m, 'q: 'm, Symbol, Probability, D, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
-    for LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>
-where
-    f64: AsPrimitive<Probability>,
-    Symbol: PrimInt + AsPrimitive<Probability> + AsPrimitive<usize> + Into<f64> + WrappingSub,
-    Probability: BitArray + Into<f64>,
-    D: Distribution + 'm,
-    D::Value: AsPrimitive<Symbol>,
-{
-    type Iter = LeakilyQuantizedDistributionIter<Symbol, Probability, &'m Self, PRECISION>;
-
-    fn symbol_table(&'m self) -> Self::Iter {
-        LeakilyQuantizedDistributionIter {
-            model: self,
-            symbol: Some(self.quantizer.min_symbol_inclusive),
-            left_sided_cumulative: Probability::zero(),
-        }
-    }
-}
-
-/// Iterator over the [`symbol_table`] of a [`LeakilyQuantizedDistribution`].
-///
-/// This type will become private once anonymous return types are allowed in trait methods.
-/// Do not use it outside of the `constriction` library.
-///
-/// [`symbol_table`]: IterableEntropyModel::symbol_table
-#[derive(Debug)]
-pub struct LeakilyQuantizedDistributionIter<Symbol, Probability, M, const PRECISION: usize> {
-    model: M,
-    symbol: Option<Symbol>,
-    left_sided_cumulative: Probability,
-}
-
-impl<'m, Symbol, Probability, D, const PRECISION: usize> Iterator
-    for LeakilyQuantizedDistributionIter<
-        Symbol,
-        Probability,
-        &'m LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>,
-        PRECISION,
-    >
-where
-    f64: AsPrimitive<Probability>,
-    Symbol: PrimInt + AsPrimitive<Probability> + AsPrimitive<usize> + Into<f64> + WrappingSub,
-    Probability: BitArray + Into<f64>,
-    D: Distribution,
-    D::Value: AsPrimitive<Symbol>,
-{
-    type Item = (Symbol, Probability, Probability::NonZero);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let symbol = self.symbol?;
-
-        let right_sided_cumulative = if symbol == self.model.quantizer.max_symbol_inclusive {
-            self.symbol = None;
-            wrapping_pow2(PRECISION)
-        } else {
-            let next_symbol = symbol + Symbol::one();
-            self.symbol = Some(next_symbol);
-            let non_leaky: Probability = (self.model.quantizer.free_weight
-                * self.model.inner.distribution((symbol).into() - 0.5))
-            .as_();
-            non_leaky + slack(next_symbol, self.model.quantizer.min_symbol_inclusive)
-        };
-
-        let probability = unsafe {
-            // SAFETY: probabilities of
-            right_sided_cumulative
-                .wrapping_sub(&self.left_sided_cumulative)
-                .into_nonzero_unchecked()
-        };
-
-        let left_sided_cumulative = self.left_sided_cumulative;
-        self.left_sided_cumulative = right_sided_cumulative;
-
-        Some((symbol, left_sided_cumulative, probability))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        if let Some(symbol) = self.symbol {
-            let len = slack::<usize, _>(symbol, self.model.quantizer.max_symbol_inclusive)
-                .saturating_add(1);
-            (len, None)
-        } else {
-            (0, Some(0))
-        }
-    }
-}
-
-/// A trait for internal representations of various forms of categorical entropy models.
-///
-/// This trait will become private once anonymous return types are allowed in trait methods.
-/// Do not use it outside of the `constriction` library.
-pub trait SymbolTable<Symbol, Probability: BitArray> {
-    fn left_cumulative(&self, index: usize) -> Option<Probability>;
-
-    fn support_size(&self) -> usize;
-
-    /// # Safety
-    ///
-    /// Argument `index` must be strictly smaller than `1 << PRECISION` (for `PRECISION !=
-    /// Probability::BITS`).
-    unsafe fn left_cumulative_unchecked(&self, index: usize) -> Probability;
-
-    /// # Safety
-    ///
-    /// Argument `symbol` must be in the support of the model.
-    unsafe fn symbol_unchecked(&self, index: usize) -> Symbol;
-
-    /// Bisects the symbol table to find the bin that contains `quantile`.
-    fn quantile_function<const PRECISION: usize>(
-        &self,
-        quantile: Probability,
-    ) -> (Symbol, Probability, Probability::NonZero) {
-        generic_static_asserts!(
-            (Probability: BitArray; const PRECISION: usize);
-            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
-            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
-        );
-
-        let max_probability = Probability::max_value() >> (Probability::BITS - PRECISION);
-        assert!(quantile <= max_probability);
-
-        let mut left = 0; // Smallest possible index.
-        let mut right = self.support_size(); // One above largest possible index.
-
-        // Bisect the symbol table to find the last entry whose left-sided cumulative is
-        // `<= quantile`, exploiting the following facts:
-        // - `self.as_ref.len() >= 2` (therefore, `left < right` initially)
-        // - `cdf[0] == 0` (where `cdf[n] = self.left_cumulative_unchecked(n).0`)
-        // - `quantile <= max_probability` (if this is violated then the method is still
-        //   memory safe but will return the last bin; thus, memory safety doesn't hinge on
-        //   `PRECISION` being correct).
-        // - `cdf[self.as_ref().len() - 1] == max_probability.wrapping_add(1)`
-        // - `cdf` is monotonically increasing except that it may wrap around only at the
-        //   last entry (this happens iff `PRECISION == Probability::BITS`).
-        //
-        // The loop maintains the following two invariants:
-        // (1) `0 <= left <= mid < right < self.as_ref().len()`
-        // (2) `cdf[left] <= cdf[mid]`
-        // (3) `cdf[mid] <= cdf[right]` unless `right == cdf.len() - 1`
-        while left + 1 != right {
-            let mid = (left + right) / 2;
-
-            // SAFETY: safe by invariant (1)
-            let pivot = unsafe { self.left_cumulative_unchecked(mid) };
-            if pivot <= quantile {
-                // Since `mid < right` and wrapping can occur only at the last entry,
-                // `pivot` has not yet wrapped around
-                left = mid;
-            } else {
-                right = mid;
-            }
-        }
-
-        // SAFETY: invariant `0 <= left < right < self.as_ref().len()` still holds.
-        let cdf = unsafe { self.left_cumulative_unchecked(left) };
-        let symbol = unsafe { self.symbol_unchecked(left) };
-        let next_cdf = unsafe { self.left_cumulative_unchecked(right) };
-
-        let probability = unsafe {
-            // SAFETY: The constructor ensures that all probabilities within bounds are
-            // nonzero. (TODO)
-            next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
-        };
-
-        (symbol, cdf, probability)
-    }
-}
-
-/// Internal representation of [`ContiguousCategoricalEntropyModel`].
-///
-/// This type will become private once anonymous return types are allowed in trait methods.
-/// Do not use it outside of the `constriction` library.
-#[derive(Debug, Clone, Copy)]
-pub struct ContiguousSymbolTable<Table>(Table);
-
-/// Internal representation of [`NonContiguousCategoricalEncoderModel`] and
-/// [`NonContiguousCategoricalDecoderModel`].
-///
-/// This type will become private once anonymous return types are allowed in trait methods.
-/// Do not use it outside of the `constriction` library.
-#[derive(Debug, Clone, Copy)]
-pub struct NonContiguousSymbolTable<Table>(Table);
-
-impl<Symbol, Probability, Table> SymbolTable<Symbol, Probability> for ContiguousSymbolTable<Table>
-where
-    Probability: BitArray,
-    Table: AsRef<[Probability]>,
-    Symbol: BitArray + Into<usize>,
-    usize: AsPrimitive<Symbol>,
-{
-    #[inline(always)]
-    fn left_cumulative(&self, index: usize) -> Option<Probability> {
-        self.0.as_ref().get(index).copied()
-    }
-
-    #[inline(always)]
-    unsafe fn left_cumulative_unchecked(&self, index: usize) -> Probability {
-        *self.0.as_ref().get_unchecked(index)
-    }
-
-    #[inline(always)]
-    unsafe fn symbol_unchecked(&self, index: usize) -> Symbol {
-        index.as_()
-    }
-
-    #[inline(always)]
-    fn support_size(&self) -> usize {
-        self.0.as_ref().len() - 1
-    }
-}
-
-impl<Symbol, Probability, Table> SymbolTable<Symbol, Probability>
-    for NonContiguousSymbolTable<Table>
-where
-    Probability: BitArray,
-    Symbol: Clone,
-    Table: AsRef<[(Probability, Symbol)]>,
-{
-    #[inline(always)]
-    fn left_cumulative(&self, index: usize) -> Option<Probability> {
-        self.0
-            .as_ref()
-            .get(index)
-            .map(|(probability, _)| *probability)
-    }
-
-    #[inline(always)]
-    unsafe fn left_cumulative_unchecked(&self, index: usize) -> Probability {
-        self.0.as_ref().get_unchecked(index).0
-    }
-
-    #[inline(always)]
-    unsafe fn symbol_unchecked(&self, index: usize) -> Symbol {
-        self.0.as_ref().get_unchecked(index).1.clone()
-    }
-
-    #[inline(always)]
-    fn support_size(&self) -> usize {
-        self.0.as_ref().len() - 1
-    }
-}
-
-/// Iterator over the [`symbol_table`] of various categorical distributions.
-///
-/// This type will become private once anonymous return types are allowed in trait methods.
-///
-/// [`symbol_table`]: IterableEntropyModel::symbol_table
-#[derive(Debug)]
-pub struct SymbolTableIter<Symbol, Probability, Table> {
-    table: Table,
-    index: usize,
-    phantom: PhantomData<(Symbol, Probability)>,
-}
-
-impl<Symbol, Probability, Table> SymbolTableIter<Symbol, Probability, Table> {
-    fn new(table: Table) -> Self {
-        Self {
-            table,
-            index: 0,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<Symbol, Probability, Table> Iterator for SymbolTableIter<Symbol, Probability, Table>
-where
-    Probability: BitArray,
-    Table: SymbolTable<Symbol, Probability>,
-{
-    type Item = (Symbol, Probability, Probability::NonZero);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let old_index = self.index;
-        if old_index == self.table.support_size() {
-            None
-        } else {
-            let new_index = old_index + 1;
-            self.index = new_index;
-            unsafe {
-                // SAFETY: TODO
-                let left_cumulative = self.table.left_cumulative_unchecked(old_index);
-                let symbol = self.table.symbol_unchecked(old_index);
-                let right_cumulative = self.table.left_cumulative_unchecked(new_index);
-                let probability = right_cumulative
-                    .wrapping_sub(&left_cumulative)
-                    .into_nonzero_unchecked();
-                Some((symbol, left_cumulative, probability))
-            }
-        }
-    }
-
-    #[inline(always)]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.table.support_size() - self.index;
-        (len, Some(len))
-    }
-}
-
-/// An entropy model for a categorical probability distribution over a contiguous range of
-/// integers starting at zero.
-///
-/// You will usually want to use this type through one of its type aliases,
-/// [`DefaultContiguousCategoricalEntropyModel`] or
-/// [`SmallContiguousCategoricalEntropyModel`], see [discussion of presets](super#presets).
-///
-/// This entropy model implements both [`EncoderModel`] and [`DecoderModel`], which means
-/// that it can be used for both encoding and decoding with any of the stream coders
-/// provided by the `constriction` crate.
-///
-/// # Example
-///
-/// ```
-/// use constriction::{
-///     stream::{stack::DefaultAnsCoder, model::DefaultContiguousCategoricalEntropyModel, Decode},
-///     UnwrapInfallible,
-/// };
-///
-/// // Create a `ContiguousCategoricalEntropyModel` that approximates floating point probabilities.
-/// let probabilities = [0.3, 0.0, 0.4, 0.1, 0.2]; // Note that `probabilities[1] == 0.0`.
-/// let model = DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(
-///     &probabilities
-/// ).unwrap();
-/// assert_eq!(model.support_size(), 5); // `model` supports the symbols `0..5usize`.
-///
-/// // Use `model` for entropy coding.
-/// let message = vec![2, 0, 3, 1, 2, 4, 3, 2, 0];
-/// let mut ans_coder = DefaultAnsCoder::new();
-///
-/// // We could pass `model` by reference but passing `model.as_view()` is slightly more efficient.
-/// ans_coder.encode_iid_symbols_reverse(message.iter().cloned(), model.as_view()).unwrap();
-/// // Note that `message` contains the symbol `1`, and that `probabilities[1] == 0.0`. However, we
-/// // can still encode the symbol because the `ContiguousCategoricalEntropyModel` is "leaky", i.e.,
-/// // it assigns a nonzero probability to all symbols in the range `0..model.support_size()`.
-///
-/// // Decode the encoded message and verify correctness.
-/// let decoded = ans_coder
-///     .decode_iid_symbols(9, model.as_view())
-///     .collect::<Result<Vec<_>, _>>()
-///     .unwrap_infallible();
-/// assert_eq!(decoded, message);
-/// assert!(ans_coder.is_empty());
-///
-/// // The `model` assigns zero probability to any symbols that are not in the support
-/// // `0..model.support_size()`, so trying to encode a message that contains such a symbol fails.
-/// assert!(ans_coder.encode_iid_symbols_reverse(&[2, 0, 5, 1], model.as_view()).is_err())
-/// // ERROR: symbol `5` is not in the support of `model`.
-/// ```
-///
-/// # When Should I Use This Type of Entropy Model?
-///
-/// Use a `ContiguousCategoricalEntropyModel` for probabilistic models that can *only* be
-/// represented as an explicit probability table, and not by some more compact analytic
-/// expression. If you have a probability model that can be expressed by some analytical
-/// expression (e.g., a [`Binomial`](probability::distribution::Binomial) distribution),
-/// then use [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the
-/// same entropy model, in which case the explicitly tabulated representation of a
-/// categorical entropy model could improve runtime performance).
-///
-/// Further, a `ContiguousCategoricalEntropyModel` can only represent probability
-/// distribution whose support (i.e., the set of symbols to which the model assigns a
-/// non-zero probability) is a contiguous range of integers starting at zero. If the support
-/// of your probability distribution has a more complicated structure (or if the `Symbol`
-/// type is not an integer type), then you can use a
-/// [`NonContiguousCategoricalEncoderModel`] or a [`NonContiguousCategoricalDecoderModel`],
-/// which are strictly more general than a `ContiguousCategoricalEntropyModel` but which
-/// have a larger memory footprint and slightly worse runtime performance.
-///
-/// If you want to *decode* lots of symbols with the same entropy model, and if reducing the
-/// `PRECISION` to a moderate value is acceptable to you, then you may want to consider
-/// using a [`LookupDecoderModel`] instead for even better runtime performance (at the cost
-/// of a larger memory footprint and worse compression efficiency due to lower `PRECISION`).
-///
-/// # Computational Efficiency
-///
-/// For a probability distribution with a support of `N` symbols, a
-/// `ContiguousCategoricalEntropyModel` has the following asymptotic costs:
-///
-/// - creation:
-///   - runtime cost: `Θ(N)` when creating from fixed point probabilities, `Θ(N log(N))`
-///     when creating from floating point probabilities;
-///   - memory footprint: `Θ(N)`;
-///   - both are cheaper by a constant factor than for a
-///     [`NonContiguousCategoricalEncoderModel`] or a
-///     [`NonContiguousCategoricalDecoderModel`].
-/// - encoding a symbol (calling [`EncoderModel::left_cumulative_and_probability`]):
-///   - runtime cost: `Θ(1)` (cheaper than for [`NonContiguousCategoricalEncoderModel`]
-///     since it compiles to a simiple array lookup rather than a `HashMap` lookup)
-///   - memory footprint: no heap allocations, constant stack space.
-/// - decoding a symbol (calling [`DecoderModel::quantile_function`]):
-///   - runtime cost: `Θ(log(N))` (both expected and worst-case; probably slightly cheaper
-///     than for [`NonContiguousCategoricalDecoderModel`] due to better memory locality)
-///   - memory footprint: no heap allocations, constant stack space.
-///
-/// [`EntropyModel`]: trait.EntropyModel.html
-/// [`Encode`]: crate::Encode
-/// [`Decode`]: crate::Decode
-/// [`HashMap`]: std::hash::HashMap
-#[derive(Debug, Clone, Copy)]
-pub struct ContiguousCategoricalEntropyModel<Probability, Table, const PRECISION: usize> {
-    /// Invariants:
-    /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
-    ///   this may be relaxed in the future)
-    /// - `cdf[0] == 0`
-    /// - `cdf` is monotonically increasing except that it may wrap around only at
-    ///   the very last entry (this happens iff `PRECISION == Probability::BITS`).
-    ///   Thus, all probabilities within range are guaranteed to be nonzero.
-    cdf: ContiguousSymbolTable<Table>,
-
-    phantom: PhantomData<Probability>,
-}
-
-/// An entropy model for a categorical probability distribution over arbitrary symbols, for
-/// decoding only.
-///
-/// You will usually want to use this type through one of its type aliases,
-/// [`DefaultNonContiguousCategoricalDecoderModel`] or
-/// [`SmallNonContiguousCategoricalDecoderModel`], see [discussion of
-/// presets](super#presets).
-///
-/// This type implements the trait [`DecoderModel`] but not the trait [`EncoderModel`].
-/// Thus, you can use a `NonContiguousCategoricalDecoderModel` for *decoding* with any of
-/// the stream decoders provided by the `constriction` crate, but not for encoding. If you
-/// want to encode data, use a [`NonContiguousCategoricalEncoderModel`] instead. You can
-/// convert a `NonContiguousCategoricalDecoderModel` to a
-/// `NonContiguousCategoricalEncoderModel` by calling
-/// [`to_generic_encoder_model`](IterableEntropyModel::to_generic_encoder_model) on it
-/// (you'll have to bring the trait [`IterableEntropyModel`] into scope to do so: `use
-/// constriction::stream::model::IterableEntropyModel`).
-///
-/// # Example
-///
-/// See [example for
-/// `NonContiguousCategoricalEncoderModel`](NonContiguousCategoricalEncoderModel#example).
-///
-/// # When Should I Use This Type of Entropy Model?
-///
-/// Use a `NonContiguousCategoricalDecoderModel` for probabilistic models that can *only* be
-/// represented as an explicit probability table, and not by some more compact analytic
-/// expression. If you have a probability model that can be expressed by some analytical
-/// expression (e.g., a [`Binomial`](probability::distribution::Binomial) distribution),
-/// then use [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the
-/// same entropy model, in which case the explicitly tabulated representation of a
-/// categorical entropy model could improve runtime performance).
-///
-/// Further, if the *support* of your probabilistic model (i.e., the set of symbols to which
-/// the model assigns a non-zero probability) is a contiguous range of integers starting at
-/// zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
-/// computational efficiency and it is easier to use since it supports both encoding and
-/// decoding with a single type.
-///
-/// If you want to *decode* lots of symbols with the same entropy model, and if reducing the
-/// `PRECISION` to a moderate value is acceptable to you, then you may want to consider
-/// using a [`LookupDecoderModel`] instead for even better runtime performance (at the cost
-/// of a larger memory footprint and worse compression efficiency due to lower `PRECISION`).
-///
-/// # Computational Efficiency
-///
-/// For a probability distribution with a support of `N` symbols, a
-/// `NonContiguousCategoricalDecoderModel` has the following asymptotic costs:
-///
-/// - creation:
-///   - runtime cost: `Θ(N)` when creating from fixed point probabilities, `Θ(N log(N))`
-///     when creating from floating point probabilities;
-///   - memory footprint: `Θ(N)`;
-///   - both are more expensive by a constant factor than for a
-///     [`ContiguousCategoricalEntropyModel`].
-/// - encoding a symbol: not supported; use a [`NonContiguousCategoricalEncoderModel`].
-/// - decoding a symbol (calling [`DecoderModel::quantile_function`]):
-///   - runtime cost: `Θ(log(N))` (both expected and worst-case)
-///   - memory footprint: no heap allocations, constant stack space.
-///
-/// [`EntropyModel`]: trait.EntropyModel.html
-/// [`Encode`]: crate::Encode
-/// [`Decode`]: crate::Decode
-/// [`HashMap`]: std::hash::HashMap
-#[derive(Debug, Clone, Copy)]
-pub struct NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, const PRECISION: usize>
-{
-    /// Invariants:
-    /// - `cdf.len() >= 2` (actually, we currently even guarantee `cdf.len() >= 3` but
-    ///   this may be relaxed in the future)
-    /// - `cdf[0] == 0`
-    /// - `cdf` is monotonically increasing except that it may wrap around only at
-    ///   the very last entry (this happens iff `PRECISION == Probability::BITS`).
-    ///   Thus, all probabilities within range are guaranteed to be nonzero.
-    cdf: NonContiguousSymbolTable<Table>,
-
-    phantom: PhantomData<(Symbol, Probability)>,
-}
-
-/// Type alias for a typical [`ContiguousCategoricalEntropyModel`].
-///
-/// See:
-/// - [`ContiguousCategoricalEntropyModel`]
-/// - [discussion of presets](super#presets)
-pub type DefaultContiguousCategoricalEntropyModel<Table = Vec<u32>> =
-    ContiguousCategoricalEntropyModel<u32, Table, 24>;
-
-/// Type alias for a [`ContiguousCategoricalEntropyModel`] optimized for compatibility with
-/// lookup decoder models.
-///
-/// See:
-/// - [`ContiguousCategoricalEntropyModel`]
-/// - [discussion of presets](super#presets)
-pub type SmallContiguousCategoricalEntropyModel<Table = Vec<u16>> =
-    ContiguousCategoricalEntropyModel<u16, Table, 12>;
-
-/// Type alias for a typical [`NonContiguousCategoricalDecoderModel`].
-///
-/// See:
-/// - [`NonContiguousCategoricalDecoderModel`]
-/// - [discussion of presets](super#presets)
-pub type DefaultNonContiguousCategoricalDecoderModel<Symbol, Table = Vec<(u32, Symbol)>> =
-    NonContiguousCategoricalDecoderModel<Symbol, u32, Table, 24>;
-
-/// Type alias for a [`NonContiguousCategoricalDecoderModel`] optimized for compatibility
-/// with lookup decoder models.
-///
-/// See:
-/// - [`NonContiguousCategoricalDecoderModel`]
-/// - [discussion of presets](super#presets)
-pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Table = Vec<(u16, Symbol)>> =
-    NonContiguousCategoricalDecoderModel<Symbol, u16, Table, 12>;
-
-impl<Probability: BitArray, const PRECISION: usize>
-    ContiguousCategoricalEntropyModel<Probability, Vec<Probability>, PRECISION>
-{
-    /// Constructs a leaky distribution whose PMF approximates given probabilities.
-    ///
-    /// The returned distribution will be defined for symbols of type `usize` from
-    /// the range `0..probabilities.len()`.
-    ///
-    /// The argument `probabilities` is a slice of floating point values (`F` is
-    /// typically `f64` or `f32`). All entries must be nonnegative and at least one
-    /// entry has to be nonzero. The entries do not necessarily need to add up to
-    /// one (the resulting distribution will automatically get normalized and an
-    /// overall scaling of all entries of `probabilities` does not affect the
-    /// result, up to effects due to rounding errors).
-    ///
-    /// The probability mass function of the returned distribution will approximate
-    /// the provided probabilities as well as possible, subject to the following
-    /// constraints:
-    /// - probabilities are represented in fixed point arithmetic, where the const
-    ///   generic parameter `PRECISION` controls the number of bits of precision.
-    ///   This typically introduces rounding errors;
-    /// - despite the possibility of rounding errors, the returned probability
-    ///   distribution will be exactly normalized; and
-    /// - each symbol in the support `0..probabilities.len()` gets assigned a strictly
-    ///   nonzero probability, even if the provided probability for the symbol is zero or
-    ///   below the threshold that can be resolved in fixed point arithmetic with
-    ///   `PRECISION` bits. We refer to this property as the resulting distribution being
-    ///   "leaky". The leakiness guarantees that all symbols within the support can be
-    ///   encoded when this distribution is used as an entropy model.
-    ///
-    /// More precisely, the resulting probability distribution minimizes the cross
-    /// entropy from the provided (floating point) to the resulting (fixed point)
-    /// probabilities subject to the above three constraints.
-    ///
-    /// # Error Handling
-    ///
-    /// Returns an error if the provided probability distribution cannot be
-    /// normalized, either because `probabilities` is of length zero, or because one
-    /// of its entries is negative with a nonzero magnitude, or because the sum of
-    /// its elements is zero, infinite, or NaN.
-    ///
-    /// Also returns an error if the probability distribution is degenerate, i.e.,
-    /// if `probabilities` has only a single element, because degenerate probability
-    /// distributions currently cannot be represented.
-    ///
-    /// TODO: should also return an error if support is too large to support leaky
-    /// distribution
-    #[allow(clippy::result_unit_err)]
-    pub fn from_floating_point_probabilities<F>(probabilities: &[F]) -> Result<Self, ()>
-    where
-        F: FloatCore + core::iter::Sum<F> + Into<f64>,
-        Probability: Into<f64> + AsPrimitive<usize>,
-        f64: AsPrimitive<Probability>,
-        usize: AsPrimitive<Probability>,
-    {
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_nonzero_fixed_point_probabilities(
-            slots.into_iter().map(|slot| slot.weight),
-            false,
-        )
-    }
-
-    /// Constructs a distribution with a PMF given in fixed point arithmetic.
-    ///
-    /// This is a low level method that allows, e.g,. reconstructing a probability
-    /// distribution previously exported with [`symbol_table`]. The more common way to
-    /// construct a `LeakyCategorical` distribution is via
-    /// [`from_floating_point_probabilities`].
-    ///
-    /// The items of `probabilities` have to be nonzero and smaller than `1 << PRECISION`,
-    /// where `PRECISION` is a const generic parameter on the
-    /// `ContiguousCategoricalEntropyModel`.
-    ///
-    /// If `infer_last_probability` is `false` then the items yielded by `probabilities`
-    /// have to (logically) sum up to `1 << PRECISION`. If `infer_last_probability` is
-    /// `true` then they must sum up to a value strictly smaller than `1 << PRECISION`, and
-    /// the method will add an additional symbol at the end that takes the remaining
-    /// probability mass.
-    ///
-    /// # Examples
-    ///
-    /// If `infer_last_probability` is `false`, the provided probabilities have to sum up to
-    /// `1 << PRECISION`:
-    ///
-    /// ```
-    /// use constriction::stream::model::{
-    ///     DefaultContiguousCategoricalEntropyModel, IterableEntropyModel
-    /// };
-    ///
-    /// let probabilities = vec![1u32 << 21, 1 << 22, 1 << 22, 1 << 22, 1 << 21];
-    /// // `probabilities` sums up to `1 << PRECISION` as required:
-    /// assert_eq!(probabilities.iter().sum::<u32>(), 1 << 24);
-    ///
-    /// let model = DefaultContiguousCategoricalEntropyModel
-    ///     ::from_nonzero_fixed_point_probabilities(&probabilities, false).unwrap();
-    /// let symbol_table = model.floating_point_symbol_table::<f64>().collect::<Vec<_>>();
-    /// assert_eq!(
-    ///     symbol_table,
-    ///     vec![
-    ///         (0, 0.0, 0.125),
-    ///         (1, 0.125, 0.25),
-    ///         (2, 0.375, 0.25),
-    ///         (3, 0.625, 0.25),
-    ///         (4, 0.875, 0.125),
-    ///     ]
-    /// );
-    /// ```
-    ///
-    /// If `PRECISION` is set to the maximum value supported by the type `Probability`, then
-    /// the provided probabilities still have to *logically* sum up to `1 << PRECISION`
-    /// (i.e., the summation has to wrap around exactly once):
-    ///
-    /// ```
-    /// use constriction::stream::model::{
-    ///     ContiguousCategoricalEntropyModel, IterableEntropyModel
-    /// };
-    ///
-    /// let probabilities = vec![1u32 << 29, 1 << 30, 1 << 30, 1 << 30, 1 << 29];
-    /// // `probabilities` sums up to `1 << 32` (logically), i.e., it wraps around once.
-    /// assert_eq!(probabilities.iter().fold(0u32, |accum, &x| accum.wrapping_add(x)), 0);
-    ///
-    /// let model = ContiguousCategoricalEntropyModel::<u32, Vec<u32>, 32>
-    ///     ::from_nonzero_fixed_point_probabilities(&probabilities, false).unwrap();
-    /// let symbol_table = model.floating_point_symbol_table::<f64>().collect::<Vec<_>>();
-    /// assert_eq!(
-    ///     symbol_table,
-    ///     vec![
-    ///         (0, 0.0, 0.125),
-    ///         (1, 0.125, 0.25),
-    ///         (2, 0.375, 0.25),
-    ///         (3, 0.625, 0.25),
-    ///         (4, 0.875, 0.125)
-    ///     ]
-    /// );
-    /// ```
-    ///
-    /// Wrapping around twice fails:
-    ///
-    /// ```
-    /// use constriction::stream::model::ContiguousCategoricalEntropyModel;
-    /// let probabilities = vec![1u32 << 30, 1 << 31, 1 << 31, 1 << 31, 1 << 30];
-    /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
-    /// assert!(
-    ///     ContiguousCategoricalEntropyModel::<u32, Vec<u32>, 32>
-    ///         ::from_nonzero_fixed_point_probabilities(&probabilities, false).is_err()
-    /// );
-    /// ```
-    ///
-    /// So does providing probabilities that just don't sum up to `1 << FREQUENCY`:
-    ///
-    /// ```
-    /// use constriction::stream::model::ContiguousCategoricalEntropyModel;
-    /// let probabilities = vec![1u32 << 21, 5 << 8, 1 << 22, 1 << 21];
-    /// // `probabilities` sums up to `1 << 33` (logically), i.e., it would wrap around twice.
-    /// assert!(
-    ///     ContiguousCategoricalEntropyModel::<u32, Vec<u32>, 32>
-    ///         ::from_nonzero_fixed_point_probabilities(&probabilities, false).is_err()
-    /// );
-    /// ```
-    ///
-    /// [`symbol_table`]: IterableEntropyModel::symbol_table
-    /// [`fixed_point_probabilities`]: #method.fixed_point_probabilities
-    /// [`from_floating_point_probabilities`]: #method.from_floating_point_probabilities
-    #[allow(clippy::result_unit_err)]
-    pub fn from_nonzero_fixed_point_probabilities<I>(
-        probabilities: I,
-        infer_last_probability: bool,
-    ) -> Result<Self, ()>
-    where
-        I: IntoIterator,
-        I::Item: Borrow<Probability>,
-    {
-        let probabilities = probabilities.into_iter();
-        let mut cdf =
-            Vec::with_capacity(probabilities.size_hint().0 + 1 + infer_last_probability as usize);
-        accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
-            core::iter::repeat(()),
-            probabilities,
-            |(), left_sided_cumulative, _| {
-                cdf.push(left_sided_cumulative);
-                Ok(())
-            },
-            infer_last_probability,
-        )?;
-        cdf.push(wrapping_pow2(PRECISION));
-
-        Ok(Self {
-            cdf: ContiguousSymbolTable(cdf),
-            phantom: PhantomData,
-        })
-    }
-}
-
-impl<Symbol, Probability: BitArray, const PRECISION: usize>
-    NonContiguousCategoricalDecoderModel<Symbol, Probability, Vec<(Probability, Symbol)>, PRECISION>
-where
-    Symbol: Clone,
-{
-    /// Constructs a leaky distribution over the provided `symbols` whose PMF approximates
-    /// given `probabilities`.
-    ///
-    /// The argument `probabilities` is a slice of floating point values (`F` is
-    /// typically `f64` or `f32`). All entries must be nonnegative and at least one
-    /// entry has to be nonzero. The entries do not necessarily need to add up to
-    /// one (the resulting distribution will automatically get normalized and an
-    /// overall scaling of all entries of `probabilities` does not affect the
-    /// result, up to effects due to rounding errors).
-    ///
-    /// The probability mass function of the returned distribution will approximate
-    /// the provided probabilities as well as possible, subject to the following
-    /// constraints:
-    /// - probabilities are represented in fixed point arithmetic, where the const
-    ///   generic parameter `PRECISION` controls the number of bits of precision.
-    ///   This typically introduces rounding errors;
-    /// - despite the possibility of rounding errors, the returned probability
-    ///   distribution will be exactly normalized; and
-    /// - each symbol gets assigned a strictly nonzero probability, even if the provided
-    ///   probability for the symbol is zero or below the threshold that can be resolved in
-    ///   fixed point arithmetic with `PRECISION` bits. We refer to this property as the
-    ///   resulting distribution being "leaky". The leakiness guarantees that a decoder can
-    ///   in principle decode any of the provided symbols (if given appropriate compressed
-    ///   data).
-    ///
-    /// More precisely, the resulting probability distribution minimizes the cross
-    /// entropy from the provided (floating point) to the resulting (fixed point)
-    /// probabilities subject to the above three constraints.
-    ///
-    /// # Error Handling
-    ///
-    /// Returns an error if `symbols.len() != probabilities.len()`.
-    ///
-    /// Also returns an error if the provided probability distribution cannot be normalized,
-    /// either because `probabilities` is of length zero, or because one of its entries is
-    /// negative with a nonzero magnitude, or because the sum of its elements is zero,
-    /// infinite, or NaN.
-    ///
-    /// Also returns an error if the probability distribution is degenerate, i.e.,
-    /// if `probabilities` has only a single element, because degenerate probability
-    /// distributions currently cannot be represented.
-    ///
-    /// TODO: should also return an error if support is too large to support leaky
-    /// distribution
-    #[allow(clippy::result_unit_err)]
-    pub fn from_symbols_and_floating_point_probabilities<F>(
-        symbols: &[Symbol],
-        probabilities: &[F],
-    ) -> Result<Self, ()>
-    where
-        F: FloatCore + core::iter::Sum<F> + Into<f64>,
-        Probability: Into<f64> + AsPrimitive<usize>,
-        f64: AsPrimitive<Probability>,
-        usize: AsPrimitive<Probability>,
-    {
-        if symbols.len() != probabilities.len() {
-            return Err(());
-        };
-
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_symbols_and_nonzero_fixed_point_probabilities(
-            symbols.iter().cloned(),
-            slots.into_iter().map(|slot| slot.weight),
-            false,
-        )
-    }
-
-    /// Constructs a distribution with a PMF given in fixed point arithmetic.
-    ///
-    /// This is a low level method that allows, e.g,. reconstructing a probability
-    /// distribution previously exported with [`symbol_table`]. The more common way to
-    /// construct a `NonContiguousCategoricalDecoderModel` distribution is via
-    /// [`from_symbols_and_floating_point_probabilities`].
-    ///
-    /// The items of `probabilities` have to be nonzero and smaller than `1 << PRECISION`,
-    /// where `PRECISION` is a const generic parameter on the
-    /// `NonContiguousCategoricalDecoderModel`.
-    ///
-    /// If `infer_last_probability` is `false` then `probabilities` must yield the same
-    /// number of items as `symbols` does and the items yielded by `probabilities` have to
-    /// to (logically) sum up to `1 << PRECISION`. If `infer_last_probability` is `true`
-    /// then `probabilities` must yield one fewer item than `symbols`, they items must sum
-    /// up to a value strictly smaller than `1 << PRECISION`, and the method will assign the
-    /// (nonzero) remaining probability to the last symbol.
-    ///
-    /// # Example
-    ///
-    /// Creating a `NonContiguousCategoricalDecoderModel` with inferred probability of the
-    /// last symbol:
-    ///
-    /// ```
-    /// use constriction::stream::model::{
-    ///     DefaultNonContiguousCategoricalDecoderModel, IterableEntropyModel
-    /// };
-    ///
-    /// let partial_probabilities = vec![1u32 << 21, 1 << 22, 1 << 22, 1 << 22];
-    /// // `partial_probabilities` sums up to strictly less than `1 << PRECISION` as required:
-    /// assert!(partial_probabilities.iter().sum::<u32>() < 1 << 24);
-    ///
-    /// let symbols = "abcde"; // Has one more entry than `probabilities`
-    ///
-    /// let model = DefaultNonContiguousCategoricalDecoderModel
-    ///     ::from_symbols_and_nonzero_fixed_point_probabilities(
-    ///         symbols.chars(), &partial_probabilities, true).unwrap();
-    /// let symbol_table = model.floating_point_symbol_table::<f64>().collect::<Vec<_>>();
-    /// assert_eq!(
-    ///     symbol_table,
-    ///     vec![
-    ///         ('a', 0.0, 0.125),
-    ///         ('b', 0.125, 0.25),
-    ///         ('c', 0.375, 0.25),
-    ///         ('d', 0.625, 0.25),
-    ///         ('e', 0.875, 0.125), // Inferred last probability.
-    ///     ]
-    /// );
-    /// ```
-    ///
-    /// For more related examples, see
-    /// [`ContiguousCategoricalEntropyModel::from_nonzero_fixed_point_probabilities`].
-    ///
-    /// [`symbol_table`]: IterableEntropyModel::symbol_table
-    /// [`fixed_point_probabilities`]: Self::fixed_point_probabilities
-    /// [`from_symbols_and_floating_point_probabilities`]:
-    ///     Self::from_symbols_and_floating_point_probabilities
-    #[allow(clippy::result_unit_err)]
-    pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
-        symbols: S,
-        probabilities: P,
-        infer_last_probability: bool,
-    ) -> Result<Self, ()>
-    where
-        S: IntoIterator<Item = Symbol>,
-        P: IntoIterator,
-        P::Item: Borrow<Probability>,
-    {
-        let symbols = symbols.into_iter();
-        let mut cdf = Vec::with_capacity(symbols.size_hint().0 + 1);
-        let mut symbols = accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
-            symbols,
-            probabilities.into_iter(),
-            |symbol, left_sided_cumulative, _| {
-                cdf.push((left_sided_cumulative, symbol));
-                Ok(())
-            },
-            infer_last_probability,
-        )?;
-        cdf.push((
-            wrapping_pow2(PRECISION),
-            cdf.last().expect("`symbols` is not empty").1.clone(),
-        ));
-
-        if symbols.next().is_some() {
-            Err(())
-        } else {
-            Ok(Self {
-                cdf: NonContiguousSymbolTable(cdf),
-                phantom: PhantomData,
-            })
-        }
-    }
-
-    /// Creates a `NonContiguousCategoricalDecoderModel` from any entropy model that
-    /// implements [`IterableEntropyModel`].
-    ///
-    /// Calling `NonContiguousCategoricalDecoderModel::from_iterable_entropy_model(&model)`
-    /// is equivalent to calling `model.to_generic_decoder_model()`, where the latter
-    /// requires bringing [`IterableEntropyModel`] into scope.
-    ///
-    /// TODO: test
-    pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
-    where
-        M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
-    {
-        let symbol_table = model.symbol_table();
-        let mut cdf = Vec::with_capacity(symbol_table.size_hint().0);
-        for (symbol, left_sided_cumulative, _) in symbol_table {
-            cdf.push((left_sided_cumulative, symbol));
-        }
-        cdf.push((
-            wrapping_pow2(PRECISION),
-            cdf.last().expect("`symbol_table` is not empty").1.clone(),
-        ));
-
-        Self {
-            cdf: NonContiguousSymbolTable(cdf),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<Probability, Table, const PRECISION: usize>
-    ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
-where
-    Probability: BitArray,
-    Table: AsRef<[Probability]>,
-{
-    /// Returns the number of symbols supported by the model.
-    ///
-    /// The distribution is defined on the contiguous range of symbols from zero
-    /// (inclusively) to `support_size()` (exclusively). All symbols within this range are
-    /// guaranteed to have a nonzero probability, while all symbols outside of this range
-    /// have a zero probability.
-    #[inline(always)]
-    pub fn support_size(&self) -> usize {
-        SymbolTable::<usize, Probability>::support_size(&self.cdf)
-    }
-
-    /// Makes a very cheap shallow copy of the model that can be used much like a shared
-    /// reference.
-    ///
-    /// The returned `ContiguousCategoricalEntropyModel` implements `Copy`, which is a
-    /// requirement for some methods, such as [`Encode::encode_iid_symbols`] or
-    /// [`Decode::decode_iid_symbols`]. These methods could also accept a shared reference
-    /// to a `ContiguousCategoricalEntropyModel` (since all references to entropy models are
-    /// also entropy models, and all shared references implement `Copy`), but passing a
-    /// *view* instead may be slightly more efficient because it avoids one level of
-    /// dereferencing.
-    ///
-    /// [`Encode::encode_iid_symbols`]: super::Encode::encode_iid_symbols
-    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
-    #[inline]
-    pub fn as_view(
-        &self,
-    ) -> ContiguousCategoricalEntropyModel<Probability, &[Probability], PRECISION> {
-        ContiguousCategoricalEntropyModel {
-            cdf: ContiguousSymbolTable(self.cdf.0.as_ref()),
-            phantom: PhantomData,
-        }
-    }
-
-    /// Creates a [`LookupDecoderModel`] for efficient decoding of i.i.d. data
-    ///
-    /// While a `ContiguousCategoricalEntropyModel` can already be used for decoding (since
-    /// it implements [`DecoderModel`]), you may prefer converting it to a
-    /// `LookupDecoderModel` first for improved efficiency. Logically, the two will be
-    /// equivalent.
-    ///
-    /// # Warning
-    ///
-    /// You should only call this method if both of the following conditions are satisfied:
-    ///
-    /// - `PRECISION` is relatively small (typically `PRECISION == 12`, as in the "Small"
-    ///   [preset]) because the memory footprint of a `LookupDecoderModel` grows
-    ///   exponentially in `PRECISION`; and
-    /// - you're about to decode a relatively large number of symbols with the resulting
-    ///   model; the conversion to a `LookupDecoderModel` bears a significant runtime and
-    ///   memory overhead, so if you're going to use the resulting model only for a single
-    ///   or a handful of symbols then you'll end up paying more than you gain.
-    ///
-    /// [preset]: super#presets
-    #[inline(always)]
-    pub fn to_lookup_decoder_model(
-        &self,
-    ) -> LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<Vec<Probability>>,
-        Box<[Probability]>,
-        PRECISION,
-    >
-    where
-        Probability: Into<usize>,
-        usize: AsPrimitive<Probability>,
-    {
-        self.into()
-    }
-}
-
-impl<Symbol, Probability, Table, const PRECISION: usize>
-    NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, PRECISION>
-where
-    Symbol: Clone,
-    Probability: BitArray,
-    Table: AsRef<[(Probability, Symbol)]>,
-{
-    /// Returns the number of symbols supported by the model, i.e., the number of symbols to
-    /// which the model assigns a nonzero probability.
-    #[inline(always)]
-    pub fn support_size(&self) -> usize {
-        self.cdf.support_size()
-    }
-
-    /// Makes a very cheap shallow copy of the model that can be used much like a shared
-    /// reference.
-    ///
-    /// The returned `NonContiguousCategoricalDecoderModel` implements `Copy`, which is a
-    /// requirement for some methods, such as [`Decode::decode_iid_symbols`]. These methods
-    /// could also accept a shared reference to a `NonContiguousCategoricalDecoderModel`
-    /// (since all references to entropy models are also entropy models, and all shared
-    /// references implement `Copy`), but passing a *view* instead may be slightly more
-    /// efficient because it avoids one level of dereferencing.
-    ///
-    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
-    #[inline]
-    pub fn as_view(
-        &self,
-    ) -> NonContiguousCategoricalDecoderModel<
-        Symbol,
-        Probability,
-        &[(Probability, Symbol)],
-        PRECISION,
-    > {
-        NonContiguousCategoricalDecoderModel {
-            cdf: NonContiguousSymbolTable(self.cdf.0.as_ref()),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<Probability, Table, const PRECISION: usize> EntropyModel<PRECISION>
-    for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
-where
-    Probability: BitArray,
-{
-    type Symbol = usize;
-    type Probability = Probability;
-}
-
-impl<Symbol, Probability, Table, const PRECISION: usize> EntropyModel<PRECISION>
-    for NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, PRECISION>
-where
-    Probability: BitArray,
-{
-    type Symbol = Symbol;
-    type Probability = Probability;
-}
-
-impl<'m, Probability, Table, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
-    for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
-where
-    Probability: BitArray,
-    Table: AsRef<[Probability]>,
-{
-    type Iter = SymbolTableIter<usize, Probability, ContiguousSymbolTable<&'m [Probability]>>;
-
-    #[inline(always)]
-    fn symbol_table(&'m self) -> Self::Iter {
-        SymbolTableIter::new(self.as_view().cdf)
-    }
-}
-
-impl<'m, Symbol, Probability, Table, const PRECISION: usize> IterableEntropyModel<'m, PRECISION>
-    for NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, PRECISION>
-where
-    Symbol: Clone + 'm,
-    Probability: BitArray,
-    Table: AsRef<[(Probability, Symbol)]>,
-{
-    type Iter =
-        SymbolTableIter<Symbol, Probability, NonContiguousSymbolTable<&'m [(Probability, Symbol)]>>;
-
-    #[inline(always)]
-    fn symbol_table(&'m self) -> Self::Iter {
-        SymbolTableIter::new(self.as_view().cdf)
-    }
-}
-
-impl<Probability, Table, const PRECISION: usize> DecoderModel<PRECISION>
-    for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
-where
-    Probability: BitArray,
-    Table: AsRef<[Probability]>,
-{
-    #[inline(always)]
-    fn quantile_function(
-        &self,
-        quantile: Self::Probability,
-    ) -> (usize, Probability, Probability::NonZero) {
-        self.cdf.quantile_function::<PRECISION>(quantile)
-    }
-}
-
-impl<Symbol, Probability, Table, const PRECISION: usize> DecoderModel<PRECISION>
-    for NonContiguousCategoricalDecoderModel<Symbol, Probability, Table, PRECISION>
-where
-    Symbol: Clone,
-    Probability: BitArray,
-    Table: AsRef<[(Probability, Symbol)]>,
-{
-    #[inline(always)]
-    fn quantile_function(
-        &self,
-        quantile: Self::Probability,
-    ) -> (Symbol, Probability, Probability::NonZero) {
-        self.cdf.quantile_function::<PRECISION>(quantile)
-    }
-}
-
-/// `EncoderModel` is only implemented for *contiguous* generic categorical models. To
-/// decode encode symbols from a non-contiguous support, use an
-/// `NonContiguousCategoricalEncoderModel`.
-impl<Probability, Table, const PRECISION: usize> EncoderModel<PRECISION>
-    for ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>
-where
-    Probability: BitArray,
-    Table: AsRef<[Probability]>,
-{
-    fn left_cumulative_and_probability(
-        &self,
-        symbol: impl Borrow<usize>,
-    ) -> Option<(Probability, Probability::NonZero)> {
-        let index = *symbol.borrow();
-
-        let (cdf, next_cdf) = unsafe {
-            // SAFETY: we perform a single check if index is within bounds (we compare
-            // `index >= len - 1` here and not `index + 1 >= len` because the latter could
-            // overflow/wrap but `len` is guaranteed to be nonzero; once the check passes,
-            // we know that `index + 1` doesn't wrap because `cdf.len()` can't be
-            // `usize::max_value()` since that would mean that there's no space left even
-            // for the call stack).
-            if index >= self.support_size() {
-                return None;
-            }
-            (
-                SymbolTable::<usize, Probability>::left_cumulative_unchecked(&self.cdf, index),
-                SymbolTable::<usize, Probability>::left_cumulative_unchecked(&self.cdf, index + 1),
-            )
-        };
-
-        let probability = unsafe {
-            // SAFETY: The constructors ensure that all probabilities within bounds are nonzero.
-            next_cdf.wrapping_sub(&cdf).into_nonzero_unchecked()
-        };
-
-        Some((cdf, probability))
-    }
-}
-
-impl<'m, Symbol, Probability, M, const PRECISION: usize> From<&'m M>
-    for NonContiguousCategoricalDecoderModel<
-        Symbol,
-        Probability,
-        Vec<(Probability, Symbol)>,
-        PRECISION,
-    >
-where
-    Symbol: Clone,
-    Probability: BitArray,
-    M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
-{
-    #[inline(always)]
-    fn from(model: &'m M) -> Self {
-        Self::from_iterable_entropy_model(model)
-    }
-}
-
-/// An entropy model for a categorical probability distribution over arbitrary symbols, for
-/// encoding only.
-///
-/// You will usually want to use this type through one of its type aliases,
-/// [`DefaultNonContiguousCategoricalEncoderModel`] or
-/// [`SmallNonContiguousCategoricalEncoderModel`], see [discussion of
-/// presets](super#presets).
-///
-/// This type implements the trait [`EncoderModel`] but not the trait [`DecoderModel`].
-/// Thus, you can use a `NonContiguousCategoricalEncoderModel` for *encoding* with any of
-/// the stream encoders provided by the `constriction` crate, but not for decoding. If you
-/// want to decode data, use a [`NonContiguousCategoricalDecoderModel`] instead.
-///
-/// # Example
-///
-/// ```
-/// use constriction::{
-///     stream::{stack::DefaultAnsCoder, Decode},
-///     stream::model::DefaultNonContiguousCategoricalEncoderModel,
-///     stream::model::DefaultNonContiguousCategoricalDecoderModel,
-///     UnwrapInfallible,
-/// };
-///
-/// // Create a `ContiguousCategoricalEntropyModel` that approximates floating point probabilities.
-/// let alphabet = ['M', 'i', 's', 'p', '!'];
-/// let probabilities = [0.09, 0.36, 0.36, 0.18, 0.0];
-/// let encoder_model = DefaultNonContiguousCategoricalEncoderModel
-///     ::from_symbols_and_floating_point_probabilities(alphabet.iter().cloned(), &probabilities)
-///     .unwrap();
-/// assert_eq!(encoder_model.support_size(), 5); // `encoder_model` supports 4 symbols.
-///
-/// // Use `encoder_model` for entropy coding.
-/// let message = "Mississippi!";
-/// let mut ans_coder = DefaultAnsCoder::new();
-/// ans_coder.encode_iid_symbols_reverse(message.chars(), &encoder_model).unwrap();
-/// // Note that `message` contains the symbol '!', which has zero probability under our
-/// // floating-point model. However, we can still encode the symbol because the
-/// // `NonContiguousCategoricalEntropyModel` is "leaky", i.e., it assigns a nonzero
-/// // probability to all symbols that we provided to the constructor.
-///
-/// // Create a matching `decoder_model`, decode the encoded message, and verify correctness.
-/// let decoder_model = DefaultNonContiguousCategoricalDecoderModel
-///     ::from_symbols_and_floating_point_probabilities(&alphabet, &probabilities)
-///     .unwrap();
-///
-/// // We could pass `decoder_model` by reference (like we did for `encoder_model` above) but
-/// // passing `decoder_model.as_view()` is slightly more efficient.
-/// let decoded = ans_coder
-///     .decode_iid_symbols(12, decoder_model.as_view())
-///     .collect::<Result<String, _>>()
-///     .unwrap_infallible();
-/// assert_eq!(decoded, message);
-/// assert!(ans_coder.is_empty());
-///
-/// // The `encoder_model` assigns zero probability to any symbols that were not provided to its
-/// // constructor, so trying to encode a message that contains such a symbol will fail.
-/// assert!(ans_coder.encode_iid_symbols_reverse("Mix".chars(), &encoder_model).is_err())
-/// // ERROR: symbol 'x' is not in the support of `encoder_model`.
-/// ```
-///
-/// # When Should I Use This Type of Entropy Model?
-///
-/// Use a `NonContiguousCategoricalEncoderModel` for probabilistic models that can *only* be
-/// represented as an explicit probability table, and not by some more compact analytic
-/// expression. If you have a probability model that can be expressed by some analytical
-/// expression (e.g., a [`Binomial`](probability::distribution::Binomial) distribution),
-/// then use [`LeakyQuantizer`] instead (unless you want to encode lots of symbols with the
-/// same entropy model, in which case the explicitly tabulated representation of a
-/// categorical entropy model could improve runtime performance).
-///
-/// Further, if the *support* of your probabilistic model (i.e., the set of symbols to which
-/// the model assigns a non-zero probability) is a contiguous range of integers starting at
-/// zero, then it is better to use a [`ContiguousCategoricalEntropyModel`]. It has better
-/// computational efficiency and it is easier to use since it supports both encoding and
-/// decoding with a single type.
-///
-/// # Computational Efficiency
-///
-/// For a probability distribution with a support of `N` symbols, a
-/// `NonContiguousCategoricalEncoderModel` has the following asymptotic costs:
-///
-/// - creation:
-///   - runtime cost: `Θ(N)` when creating from fixed point probabilities, `Θ(N log(N))`
-///     when creating from floating point probabilities;
-///   - memory footprint: `Θ(N)`;
-///   - both are more expensive by a constant factor than for a
-///     [`ContiguousCategoricalEntropyModel`].
-/// - encoding a symbol (calling [`EncoderModel::left_cumulative_and_probability`]):
-///   - expected runtime cost: `Θ(1)` (worst case can be more expensive, uses a `HashMap`
-///     under the hood).
-///   - memory footprint: no heap allocations, constant stack space.
-/// - decoding a symbol: not supported; use a [`NonContiguousCategoricalDecoderModel`].
-///
-/// [`EntropyModel`]: trait.EntropyModel.html
-/// [`Encode`]: crate::Encode
-/// [`Decode`]: crate::Decode
-/// [`HashMap`]: std::hash::HashMap
-#[derive(Debug, Clone)]
-pub struct NonContiguousCategoricalEncoderModel<Symbol, Probability, const PRECISION: usize>
-where
-    Symbol: Hash,
-    Probability: BitArray,
-{
-    table: HashMap<Symbol, (Probability, Probability::NonZero)>,
-}
-
-/// Type alias for a typical [`NonContiguousCategoricalEncoderModel`].
-///
-/// See:
-/// - [`NonContiguousCategoricalEncoderModel`]
-/// - [discussion of presets](super#presets)
-pub type DefaultNonContiguousCategoricalEncoderModel<Symbol> =
-    NonContiguousCategoricalEncoderModel<Symbol, u32, 24>;
-
-/// Type alias for a [`NonContiguousCategoricalEncoderModel`] optimized for compatibility
-/// with lookup decoder models.
-///
-/// See:
-/// - [`NonContiguousCategoricalEncoderModel`]
-/// - [discussion of presets](super#presets)
-pub type SmallNonContiguousCategoricalEncoderModel<Symbol> =
-    NonContiguousCategoricalEncoderModel<Symbol, u16, 12>;
-
-impl<Symbol, Probability, const PRECISION: usize>
-    NonContiguousCategoricalEncoderModel<Symbol, Probability, PRECISION>
-where
-    Symbol: Hash + Eq,
-    Probability: BitArray,
-{
-    /// Constructs a leaky distribution over the provided `symbols` whose PMF approximates
-    /// given `probabilities`.
-    ///
-    /// This method operates logically identically to
-    /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities`]
-    /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
-    #[allow(clippy::result_unit_err)]
-    pub fn from_symbols_and_floating_point_probabilities<F>(
-        symbols: impl IntoIterator<Item = Symbol>,
-        probabilities: &[F],
-    ) -> Result<Self, ()>
-    where
-        F: FloatCore + core::iter::Sum<F> + Into<f64>,
-        Probability: Into<f64> + AsPrimitive<usize>,
-        f64: AsPrimitive<Probability>,
-        usize: AsPrimitive<Probability>,
-    {
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_symbols_and_nonzero_fixed_point_probabilities(
-            symbols,
-            slots.into_iter().map(|slot| slot.weight),
-            false,
-        )
-    }
-
-    /// Constructs a distribution with a PMF given in fixed point arithmetic.
-    ///
-    /// This method operates logically identically to
-    /// [`NonContiguousCategoricalDecoderModel::from_symbols_and_nonzero_fixed_point_probabilities`]
-    /// except that it constructs an [`EncoderModel`] rather than a [`DecoderModel`].
-    #[allow(clippy::result_unit_err)]
-    pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
-        symbols: S,
-        probabilities: P,
-        infer_last_probability: bool,
-    ) -> Result<Self, ()>
-    where
-        S: IntoIterator<Item = Symbol>,
-        P: IntoIterator,
-        P::Item: Borrow<Probability>,
-    {
-        let symbols = symbols.into_iter();
-        let mut table = HashMap::with_capacity(symbols.size_hint().0 + 1);
-        let mut symbols = accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
-            symbols,
-            probabilities.into_iter(),
-            |symbol, left_sided_cumulative, probability| match table.entry(symbol) {
-                Occupied(_) => Err(()),
-                Vacant(slot) => {
-                    let probability = probability.into_nonzero().ok_or(())?;
-                    slot.insert((left_sided_cumulative, probability));
-                    Ok(())
-                }
-            },
-            infer_last_probability,
-        )?;
-
-        if symbols.next().is_some() {
-            Err(())
-        } else {
-            Ok(Self { table })
-        }
-    }
-
-    /// Creates a `NonContiguousCategoricalEncoderModel` from any entropy model that
-    /// implements [`IterableEntropyModel`].
-    ///
-    /// Calling `NonContiguousCategoricalEncoderModel::from_iterable_entropy_model(&model)`
-    /// is equivalent to calling `model.to_generic_encoder_model()`, where the latter
-    /// requires bringing [`IterableEntropyModel`] into scope.
-    ///
-    /// TODO: test
-    pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
-    where
-        M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
-    {
-        let table = model
-            .symbol_table()
-            .map(|(symbol, left_sided_cumulative, probability)| {
-                (symbol, (left_sided_cumulative, probability))
-            })
-            .collect::<HashMap<_, _>>();
-        Self { table }
-    }
-
-    /// Returns the number of symbols in the support of the model.
-    ///
-    /// The support of the model is the set of all symbols that have nonzero probability.
-    pub fn support_size(&self) -> usize {
-        self.table.len()
-    }
-
-    /// Returns the entropy in units of bits (i.e., base 2).
-    ///
-    /// Similar to [`IterableEntropyModel::entropy_base2`], except that
-    /// - this type doesn't implement `IterableEntropyModel` because it doesn't store
-    ///   entries in a stable expected order;
-    /// - because the order in which entries are stored will generally be different on each
-    ///   program execution, rounding errors will be slightly different across multiple
-    ///   program executions.
-    pub fn entropy_base2<F>(&self) -> F
-    where
-        F: num_traits::Float + core::iter::Sum,
-        Probability: Into<F>,
-    {
-        let entropy_scaled = self
-            .table
-            .values()
-            .map(|&(_, probability)| {
-                let probability = probability.get().into();
-                probability * probability.log2() // probability is guaranteed to be nonzero.
-            })
-            .sum::<F>();
-
-        let whole = (F::one() + F::one()) * (Probability::one() << (PRECISION - 1)).into();
-        F::from(PRECISION).unwrap() - entropy_scaled / whole
-    }
-}
-
-impl<'m, Symbol, Probability, M, const PRECISION: usize> From<&'m M>
-    for NonContiguousCategoricalEncoderModel<Symbol, Probability, PRECISION>
-where
-    Symbol: Hash + Eq,
-    Probability: BitArray,
-    M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
-{
-    #[inline(always)]
-    fn from(model: &'m M) -> Self {
-        Self::from_iterable_entropy_model(model)
-    }
-}
-
-impl<Symbol, Probability: BitArray, const PRECISION: usize> EntropyModel<PRECISION>
-    for NonContiguousCategoricalEncoderModel<Symbol, Probability, PRECISION>
-where
-    Symbol: Hash,
-    Probability: BitArray,
-{
-    type Probability = Probability;
-    type Symbol = Symbol;
-}
-
-impl<Symbol, Probability: BitArray, const PRECISION: usize> EncoderModel<PRECISION>
-    for NonContiguousCategoricalEncoderModel<Symbol, Probability, PRECISION>
-where
-    Symbol: Hash + Eq,
-    Probability: BitArray,
-{
-    #[inline(always)]
-    fn left_cumulative_and_probability(
-        &self,
-        symbol: impl Borrow<Self::Symbol>,
-    ) -> Option<(Self::Probability, Probability::NonZero)> {
-        self.table.get(symbol.borrow()).cloned()
-    }
-}
-
-struct Slot<Probability> {
-    original_index: usize,
-    prob: f64,
-    weight: Probability,
-    win: f64,
-    loss: f64,
-}
-
-/// Note: does not check if `symbols` is exhausted (this is so that you one can provide an
-/// infinite iterator for `symbols` to optimize out the bounds check on it).
-fn accumulate_nonzero_probabilities<Symbol, Probability, S, P, Op, const PRECISION: usize>(
-    mut symbols: S,
-    probabilities: P,
-    mut operation: Op,
-    infer_last_probability: bool,
-) -> Result<S, ()>
-where
-    Probability: BitArray,
-    S: Iterator<Item = Symbol>,
-    P: Iterator,
-    P::Item: Borrow<Probability>,
-    Op: FnMut(Symbol, Probability, Probability) -> Result<(), ()>,
-{
-    generic_static_asserts!(
-        (Probability: BitArray; const PRECISION: usize);
-        PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
-        PRECISION_MUST_BE_NONZERO: PRECISION > 0;
-    );
-
-    // We accumulate all validity checks into single branches at the end in order to
-    // keep the loop itself branchless.
-    let mut laps_or_zeros = 0usize;
-    let mut accum = Probability::zero();
-
-    for probability in probabilities {
-        let old_accum = accum;
-        accum = accum.wrapping_add(probability.borrow());
-        laps_or_zeros += (accum <= old_accum) as usize;
-        let symbol = symbols.next().ok_or(())?;
-        operation(symbol, old_accum, *probability.borrow())?;
-    }
-
-    let total = wrapping_pow2::<Probability>(PRECISION);
-
-    if infer_last_probability {
-        if accum >= total || laps_or_zeros != 0 {
-            return Err(());
-        }
-        let symbol = symbols.next().ok_or(())?;
-        let probability = total.wrapping_sub(&accum);
-        operation(symbol, accum, probability)?;
-    } else if accum != total || laps_or_zeros != (PRECISION == Probability::BITS) as usize {
-        return Err(());
-    }
-
-    Ok(symbols)
-}
-
-fn optimize_leaky_categorical<Probability, F, const PRECISION: usize>(
-    probabilities: &[F],
-) -> Result<Vec<Slot<Probability>>, ()>
-where
-    F: FloatCore + core::iter::Sum<F> + Into<f64>,
-    Probability: BitArray + Into<f64> + AsPrimitive<usize>,
-    f64: AsPrimitive<Probability>,
-    usize: AsPrimitive<Probability>,
-{
-    generic_static_asserts!(
-        (Probability: BitArray; const PRECISION: usize);
-        PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
-        PRECISION_MUST_BE_NONZERO: PRECISION > 0;
-    );
-
-    if probabilities.len() < 2 || probabilities.len() > Probability::max_value().as_() {
-        return Err(());
-    }
-
-    // Start by assigning each symbol weight 1 and then distributing no more than
-    // the remaining weight approximately evenly across all symbols.
-    let mut remaining_free_weight =
-        wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&probabilities.len().as_());
-    let normalization = probabilities.iter().map(|&x| x.into()).sum::<f64>();
-    if !normalization.is_normal() || !normalization.is_sign_positive() {
-        return Err(());
-    }
-    let scale = remaining_free_weight.into() / normalization;
-
-    let mut slots = probabilities
-        .iter()
-        .enumerate()
-        .map(|(original_index, &prob)| {
-            if prob < F::zero() {
-                return Err(());
-            }
-            let prob: f64 = prob.into();
-            let current_free_weight = (prob * scale).as_();
-            remaining_free_weight = remaining_free_weight - current_free_weight;
-            let weight = current_free_weight + Probability::one();
-
-            // How much the cross entropy would decrease when increasing the weight by one.
-            let win = prob * log1p(1.0f64 / weight.into());
-
-            // How much the cross entropy would increase when decreasing the weight by one.
-            let loss = if weight == Probability::one() {
-                f64::infinity()
-            } else {
-                -prob * log1p(-1.0f64 / weight.into())
-            };
-
-            Ok(Slot {
-                original_index,
-                prob,
-                weight,
-                win,
-                loss,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Distribute remaining weight evenly among symbols with highest wins.
-    while remaining_free_weight != Probability::zero() {
-        // We can't use `sort_unstable_by` here because we want the result to be reproducible
-        // even across updates of the standard library.
-        slots.sort_by(|a, b| b.win.partial_cmp(&a.win).unwrap());
-        let batch_size = core::cmp::min(remaining_free_weight.as_(), slots.len());
-        for slot in &mut slots[..batch_size] {
-            slot.weight = slot.weight + Probability::one(); // Cannot end up in `max_weight` because win would otherwise be -infinity.
-            slot.win = slot.prob * log1p(1.0f64 / slot.weight.into());
-            slot.loss = -slot.prob * log1p(-1.0f64 / slot.weight.into());
-        }
-        remaining_free_weight = remaining_free_weight - batch_size.as_();
-    }
-
-    loop {
-        // Find slot where increasing its weight by one would incur the biggest win.
-        let (buyer_index, &Slot { win: buyer_win, .. }) = slots
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.win.partial_cmp(&b.win).unwrap())
-            .unwrap();
-        // Find slot where decreasing its weight by one would incur the smallest loss.
-        let (seller_index, seller) = slots
-            .iter_mut()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| a.loss.partial_cmp(&b.loss).unwrap())
-            .unwrap();
-
-        if buyer_index == seller_index {
-            // This can only happen due to rounding errors. In this case, we can't expect
-            // to be able to improve further.
-            break;
-        }
-
-        if buyer_win <= seller.loss {
-            // We've found the optimal solution.
-            break;
-        }
-
-        // Setting `seller.win = -infinity` and `buyer.loss = infinity` below ensures that the
-        // iteration converges even in the presence of rounding errors because each weight can
-        // only be continuously increased or continuously decreased, and the range of allowed
-        // weights is bounded from both above and below. See unit test `categorical_converges`.
-        seller.weight = seller.weight - Probability::one();
-        seller.win = f64::neg_infinity(); // Once a weight gets reduced it may never be increased again.
-        seller.loss = if seller.weight == Probability::one() {
-            f64::infinity()
-        } else {
-            -seller.prob * log1p(-1.0f64 / seller.weight.into())
-        };
-
-        let buyer = &mut slots[buyer_index];
-        buyer.weight = buyer.weight + Probability::one();
-        buyer.loss = f64::infinity(); // Once a weight gets increased it may never be decreased again.
-        buyer.win = buyer.prob * log1p(1.0f64 / buyer.weight.into());
-    }
-
-    slots.sort_unstable_by_key(|slot| slot.original_index);
-    Ok(slots)
-}
-
-// LOOKUP TABLE ENTROPY MODELS (FOR FAST DECODING) ================================================
-
-/// A tabularized [`DecoderModel`] that is optimized for fast decoding of i.i.d. symbols
-///
-/// You will usually want to use this type through one of the type aliases
-/// [`SmallContiguousLookupDecoderModel`] or [`SmallNonContiguousLookupDecoderModel`]. See
-/// these types for extended documentation and examples.
-#[derive(Debug, Clone, Copy)]
-pub struct LookupDecoderModel<Symbol, Probability, SymbolTable, LookupTable, const PRECISION: usize>
-where
-    Probability: BitArray,
-{
-    /// Satisfies invariant:
-    /// `lookup_table.as_ref().len() == 1 << PRECISION`
-    lookup_table: LookupTable,
-
-    /// Satisfies invariant:
-    /// `left_sided_cumulative_and_symbol.as_ref().len()
-    /// == *lookup_table.as_ref().iter().max() as usize + 2`
-    cdf: SymbolTable,
-
-    phantom: PhantomData<(Probability, Symbol)>,
-}
-
-/// Type alias for a [`LookupDecoderModel`] over arbitrary symbols.
-///
-/// # Examples
-///
-/// TODO
-///
-/// # See also
-///
-/// - [`SmallNonContiguousLookupDecoderModel`]
-pub type SmallNonContiguousLookupDecoderModel<
-    Symbol,
-    SymbolTable = Vec<(u16, Symbol)>,
-    LookupTable = Box<[u16]>,
-> = LookupDecoderModel<Symbol, u16, NonContiguousSymbolTable<SymbolTable>, LookupTable, 12>;
-
-/// Type alias for a [`LookupDecoderModel`] over symbols `{0, 1, ..., n-1}` with sane settings.
-///
-/// This array lookup table can be used with a [`SmallAnsCoder`] or a [`SmallRangeDecoder`]
-/// (as well as with a [`DefaultAnsCoder`] or a [`DefaultRangeDecoder`], since you can
-/// always use a "bigger" coder on a "smaller" model).
-///
-/// # Example
-///
-/// Decoding a sequence of symbols with a [`SmallAnsCoder`], a [`DefaultAnsCoder`], a
-/// [`SmallRangeDecoder`], and a [`DefaultRangeDecoder`], all using the same
-/// `SmallContiguousLookupDecoderModel`.
-///
-/// ```
-/// use constriction::stream::{
-///     model::SmallContiguousLookupDecoderModel,
-///     stack::{SmallAnsCoder, DefaultAnsCoder},
-///     queue::{SmallRangeDecoder, DefaultRangeDecoder},
-///     Decode, Code,
-/// };
-///
-/// // Create a `SmallContiguousLookupDecoderModel` from a probability distribution that's already
-/// // available in fixed point representation (e.g., because it was deserialized from a file).
-/// // Alternatively, we could use `from_floating_point_probabilities_contiguous`.
-/// let probabilities = [1489, 745, 1489, 373];
-/// let decoder_model = SmallContiguousLookupDecoderModel
-///     ::from_nonzero_fixed_point_probabilities_contiguous(&probabilities, false).unwrap();
-///
-/// let expected = [2, 1, 3, 0, 0, 2, 0, 2, 1, 0, 2];
-///
-/// let mut small_ans_coder = SmallAnsCoder::from_compressed(vec![0xDA86, 0x2949]).unwrap();
-/// let reconstructed = small_ans_coder
-///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
-/// assert!(small_ans_coder.is_empty());
-/// assert_eq!(reconstructed, expected);
-///
-/// let mut default_ans_decoder = DefaultAnsCoder::from_compressed(vec![0x2949DA86]).unwrap();
-/// let reconstructed = default_ans_decoder
-///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
-/// assert!(default_ans_decoder.is_empty());
-/// assert_eq!(reconstructed, expected);
-///
-/// let mut small_range_decoder = SmallRangeDecoder::from_compressed(vec![0xBCF8, 0x3ECA]).unwrap();
-/// let reconstructed = small_range_decoder
-///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
-/// assert!(small_range_decoder.maybe_exhausted());
-/// assert_eq!(reconstructed, expected);
-///
-/// let mut default_range_decoder = DefaultRangeDecoder::from_compressed(vec![0xBCF8733B]).unwrap();
-/// let reconstructed = default_range_decoder
-///     .decode_iid_symbols(11, &decoder_model).collect::<Result<Vec<_>, _>>().unwrap();
-/// assert!(default_range_decoder.maybe_exhausted());
-/// assert_eq!(reconstructed, expected);
-/// ```
-///
-/// # See also
-///
-/// - [`SmallNonContiguousLookupDecoderModel`]
-///
-/// [`SmallAnsCoder`]: super::stack::SmallAnsCoder
-/// [`SmallRangeDecoder`]: super::queue::SmallRangeDecoder
-/// [`DefaultAnsCoder`]: super::stack::DefaultAnsCoder
-/// [`DefaultRangeDecoder`]: super::queue::DefaultRangeDecoder
-pub type SmallContiguousLookupDecoderModel<SymbolTable = Vec<u16>, LookupTable = Box<[u16]>> =
-    LookupDecoderModel<usize, u16, ContiguousSymbolTable<SymbolTable>, LookupTable, 12>;
-
-impl<Symbol, Probability, const PRECISION: usize>
-    LookupDecoderModel<
-        Symbol,
-        Probability,
-        NonContiguousSymbolTable<Vec<(Probability, Symbol)>>,
-        Box<[Probability]>,
-        PRECISION,
-    >
-where
-    Probability: BitArray + Into<usize>,
-    usize: AsPrimitive<Probability>,
-    Symbol: Copy + Default,
-{
-    /// Create a `LookupDecoderModel` over arbitrary symbols.
-    ///
-    /// TODO: example
-    #[allow(clippy::result_unit_err)]
-    pub fn from_symbols_and_floating_point_probabilities<F>(
-        symbols: &[Symbol],
-        probabilities: &[F],
-    ) -> Result<Self, ()>
-    where
-        F: FloatCore + core::iter::Sum<F> + Into<f64>,
-        Probability: Into<f64> + AsPrimitive<usize>,
-        f64: AsPrimitive<Probability>,
-        usize: AsPrimitive<Probability>,
-    {
-        if symbols.len() != probabilities.len() {
-            return Err(());
-        };
-
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_symbols_and_nonzero_fixed_point_probabilities(
-            symbols.iter().cloned(),
-            slots.into_iter().map(|slot| slot.weight),
-            false,
-        )
-    }
-
-    /// Create a `LookupDecoderModel` over arbitrary symbols.
-    ///
-    /// TODO: example
-    #[allow(clippy::result_unit_err)]
-    pub fn from_symbols_and_nonzero_fixed_point_probabilities<S, P>(
-        symbols: S,
-        probabilities: P,
-        infer_last_probability: bool,
-    ) -> Result<Self, ()>
-    where
-        S: IntoIterator<Item = Symbol>,
-        P: IntoIterator,
-        P::Item: Borrow<Probability>,
-    {
-        generic_static_asserts!(
-            (Probability: BitArray; const PRECISION: usize);
-            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
-            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
-            USIZE_MUST_STRICTLY_SUPPORT_PRECISION: PRECISION < <usize as BitArray>::BITS;
-        );
-
-        let mut lookup_table = Vec::with_capacity(1 << PRECISION);
-        let symbols = symbols.into_iter();
-        let mut cdf =
-            Vec::with_capacity(symbols.size_hint().0 + 1 + infer_last_probability as usize);
-        let mut symbols = accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
-            symbols,
-            probabilities.into_iter(),
-            |symbol, _, probability| {
-                let index = cdf.len().as_();
-                cdf.push((lookup_table.len().as_(), symbol));
-                lookup_table.resize(lookup_table.len() + probability.into(), index);
-                Ok(())
-            },
-            infer_last_probability,
-        )?;
-
-        cdf.push((wrapping_pow2(PRECISION), Symbol::default()));
-
-        if symbols.next().is_some() {
-            Err(())
-        } else {
-            Ok(Self {
-                lookup_table: lookup_table.into_boxed_slice(),
-                cdf: NonContiguousSymbolTable(cdf),
-                phantom: PhantomData,
-            })
-        }
-    }
-
-    /// TODO: test
-    pub fn from_iterable_entropy_model<'m, M>(model: &'m M) -> Self
-    where
-        M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
-    {
-        generic_static_asserts!(
-            (Probability: BitArray; const PRECISION: usize);
-            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
-            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
-            USIZE_MUST_STRICTLY_SUPPORT_PRECISION: PRECISION < <usize as BitArray>::BITS;
-        );
-
-        let mut lookup_table = Vec::with_capacity(1 << PRECISION);
-        let symbol_table = model.symbol_table();
-        let mut cdf = Vec::with_capacity(symbol_table.size_hint().0 + 1);
-        for (symbol, left_sided_cumulative, probability) in symbol_table {
-            let index = cdf.len().as_();
-            debug_assert_eq!(left_sided_cumulative, lookup_table.len().as_());
-            cdf.push((lookup_table.len().as_(), symbol));
-            lookup_table.resize(lookup_table.len() + probability.get().into(), index);
-        }
-        cdf.push((wrapping_pow2(PRECISION), Symbol::default()));
-
-        Self {
-            lookup_table: lookup_table.into_boxed_slice(),
-            cdf: NonContiguousSymbolTable(cdf),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<Symbol, Probability, const PRECISION: usize>
-    LookupDecoderModel<
-        Symbol,
-        Probability,
-        ContiguousSymbolTable<Vec<Probability>>,
-        Box<[Probability]>,
-        PRECISION,
-    >
-where
-    Probability: BitArray + Into<usize>,
-    usize: AsPrimitive<Probability>,
-    Symbol: Copy + Default,
-{
-    /// Create a `LookupDecoderModel` over a contiguous range of symbols.
-    ///
-    /// TODO: example
-    #[allow(clippy::result_unit_err)]
-    pub fn from_floating_point_probabilities_contiguous<F>(probabilities: &[F]) -> Result<Self, ()>
-    where
-        F: FloatCore + core::iter::Sum<F> + Into<f64>,
-        Probability: Into<f64> + AsPrimitive<usize>,
-        f64: AsPrimitive<Probability>,
-        usize: AsPrimitive<Probability>,
-    {
-        let slots = optimize_leaky_categorical::<_, _, PRECISION>(probabilities)?;
-        Self::from_nonzero_fixed_point_probabilities_contiguous(
-            slots.into_iter().map(|slot| slot.weight),
-            false,
-        )
-    }
-
-    /// Create a `LookupDecoderModel` over a contiguous range of symbols using fixed point arighmetic.
-    ///
-    /// # Example
-    ///
-    /// See [`SmallContiguousLookupDecoderModel`].
-    #[allow(clippy::result_unit_err)]
-    pub fn from_nonzero_fixed_point_probabilities_contiguous<I>(
-        probabilities: I,
-        infer_last_probability: bool,
-    ) -> Result<Self, ()>
-    where
-        I: IntoIterator,
-        I::Item: Borrow<Probability>,
-    {
-        generic_static_asserts!(
-            (Probability: BitArray; const PRECISION: usize);
-            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
-            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
-            USIZE_MUST_STRICTLY_SUPPORT_PRECISION: PRECISION < <usize as BitArray>::BITS;
-        );
-
-        let mut lookup_table = Vec::with_capacity(1 << PRECISION);
-        let probabilities = probabilities.into_iter();
-        let mut cdf =
-            Vec::with_capacity(probabilities.size_hint().0 + 1 + infer_last_probability as usize);
-        accumulate_nonzero_probabilities::<_, _, _, _, _, PRECISION>(
-            core::iter::repeat(()),
-            probabilities,
-            |(), _, probability| {
-                let index = cdf.len().as_();
-                cdf.push(lookup_table.len().as_());
-                lookup_table.resize(lookup_table.len() + probability.into(), index);
-                Ok(())
-            },
-            infer_last_probability,
-        )?;
-        cdf.push(wrapping_pow2(PRECISION));
-
-        Ok(Self {
-            lookup_table: lookup_table.into_boxed_slice(),
-            cdf: ContiguousSymbolTable(cdf),
-            phantom: PhantomData,
-        })
-    }
-}
-
-impl<Probability, Table, LookupTable, const PRECISION: usize>
-    LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<Table>,
-        LookupTable,
-        PRECISION,
-    >
-where
-    Probability: BitArray + Into<usize>,
-    usize: AsPrimitive<Probability>,
-    Table: AsRef<[Probability]>,
-    LookupTable: AsRef<[Probability]>,
-{
-    /// Makes a very cheap shallow copy of the model that can be used much like a shared
-    /// reference.
-    ///
-    /// The returned `LookupDecoderModel` implements `Copy`, which is a requirement for some
-    /// methods, such as [`Decode::decode_iid_symbols`]. These methods could also accept a
-    /// shared reference to a `NonContiguousCategoricalDecoderModel` (since all references
-    /// to entropy models are also entropy models, and all shared references implement
-    /// `Copy`), but passing a *view* instead may be slightly more efficient because it
-    /// avoids one level of dereferencing.
-    ///
-    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
-    pub fn as_view(
-        &self,
-    ) -> LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<&[Probability]>,
-        &[Probability],
-        PRECISION,
-    > {
-        LookupDecoderModel {
-            lookup_table: self.lookup_table.as_ref(),
-            cdf: ContiguousSymbolTable(self.cdf.0.as_ref()),
-            phantom: PhantomData,
-        }
-    }
-
-    /// TODO: documentation
-    pub fn as_contiguous_categorical(
-        &self,
-    ) -> ContiguousCategoricalEntropyModel<Probability, &[Probability], PRECISION> {
-        ContiguousCategoricalEntropyModel {
-            cdf: ContiguousSymbolTable(self.cdf.0.as_ref()),
-            phantom: PhantomData,
-        }
-    }
-
-    /// TODO: documentation
-    pub fn into_contiguous_categorical(
-        self,
-    ) -> ContiguousCategoricalEntropyModel<Probability, Table, PRECISION> {
-        ContiguousCategoricalEntropyModel {
-            cdf: self.cdf,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<Symbol, Probability, Table, LookupTable, const PRECISION: usize>
-    LookupDecoderModel<Symbol, Probability, NonContiguousSymbolTable<Table>, LookupTable, PRECISION>
-where
-    Probability: BitArray + Into<usize>,
-    usize: AsPrimitive<Probability>,
-    Table: AsRef<[(Probability, Symbol)]>,
-    LookupTable: AsRef<[Probability]>,
-{
-    /// Makes a very cheap shallow copy of the model that can be used much like a shared
-    /// reference.
-    ///
-    /// The returned `LookupDecoderModel` implements `Copy`, which is a requirement for some
-    /// methods, such as [`Decode::decode_iid_symbols`]. These methods could also accept a
-    /// shared reference to a `NonContiguousCategoricalDecoderModel` (since all references
-    /// to entropy models are also entropy models, and all shared references implement
-    /// `Copy`), but passing a *view* instead may be slightly more efficient because it
-    /// avoids one level of dereferencing.
-    ///
-    /// [`Decode::decode_iid_symbols`]: super::Decode::decode_iid_symbols
-    pub fn as_view(
-        &self,
-    ) -> LookupDecoderModel<
-        Symbol,
-        Probability,
-        NonContiguousSymbolTable<&[(Probability, Symbol)]>,
-        &[Probability],
-        PRECISION,
-    > {
-        LookupDecoderModel {
-            lookup_table: self.lookup_table.as_ref(),
-            cdf: NonContiguousSymbolTable(self.cdf.0.as_ref()),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<Symbol, Probability, Table, LookupTable, const PRECISION: usize> EntropyModel<PRECISION>
-    for LookupDecoderModel<Symbol, Probability, Table, LookupTable, PRECISION>
-where
-    Probability: BitArray + Into<usize>,
-{
-    type Symbol = Symbol;
-    type Probability = Probability;
-}
-
-impl<Symbol, Probability, Table, LookupTable, const PRECISION: usize> DecoderModel<PRECISION>
-    for LookupDecoderModel<Symbol, Probability, Table, LookupTable, PRECISION>
-where
-    Probability: BitArray + Into<usize>,
-    Table: SymbolTable<Symbol, Probability>,
-    LookupTable: AsRef<[Probability]>,
-    Symbol: Clone,
-{
-    #[inline(always)]
-    fn quantile_function(
-        &self,
-        quantile: Probability,
-    ) -> (Symbol, Probability, Probability::NonZero) {
-        generic_static_asserts!(
-            (Probability: BitArray; const PRECISION: usize);
-            PROBABILITY_MUST_SUPPORT_PRECISION: PRECISION <= Probability::BITS;
-            PRECISION_MUST_BE_NONZERO: PRECISION > 0;
-        );
-
-        if Probability::BITS != PRECISION {
-            // It would be nice if we could avoid this but we currently don't statically enforce
-            // `quantile` to fit into `PRECISION` bits.
-            assert!(quantile < Probability::one() << PRECISION);
-        }
-
-        let (left_sided_cumulative, symbol, next_cumulative) = unsafe {
-            // SAFETY:
-            // - `quantile_to_index` has length `1 << PRECISION` and we verified that
-            //   `quantile` fits into `PRECISION` bits above.
-            // - `left_sided_cumulative_and_symbol` has length
-            //   `*quantile_to_index.as_ref().iter().max() as usize + 2`, so we can always
-            //   access it at `index + 1` for `index` coming from `quantile_to_index`.
-            let index = *self.lookup_table.as_ref().get_unchecked(quantile.into());
-            let index = index.into();
-
-            (
-                self.cdf.left_cumulative_unchecked(index),
-                self.cdf.symbol_unchecked(index),
-                self.cdf.left_cumulative_unchecked(index + 1),
-            )
-        };
-
-        let probability = unsafe {
-            // SAFETY: The constructors ensure that `cdf` is strictly increasing (in
-            // wrapping arithmetic) except at indices that can't be reached from
-            // `quantile_to_index`).
-            next_cumulative
-                .wrapping_sub(&left_sided_cumulative)
-                .into_nonzero_unchecked()
-        };
-
-        (symbol, left_sided_cumulative, probability)
-    }
-}
-
-impl<'m, Symbol, Probability, M, const PRECISION: usize> From<&'m M>
-    for LookupDecoderModel<
-        Symbol,
-        Probability,
-        NonContiguousSymbolTable<Vec<(Probability, Symbol)>>,
-        Box<[Probability]>,
-        PRECISION,
-    >
-where
-    Probability: BitArray + Into<usize>,
-    Symbol: Copy + Default,
-    usize: AsPrimitive<Probability>,
-    M: IterableEntropyModel<'m, PRECISION, Symbol = Symbol, Probability = Probability> + ?Sized,
-{
-    #[inline(always)]
-    fn from(model: &'m M) -> Self {
-        Self::from_iterable_entropy_model(model)
-    }
-}
-
-impl<'m, Probability, Table, const PRECISION: usize>
-    From<&'m ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>>
-    for LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<Vec<Probability>>,
-        Box<[Probability]>,
-        PRECISION,
-    >
-where
-    Probability: BitArray + Into<usize>,
-    usize: AsPrimitive<Probability>,
-    Table: AsRef<[Probability]>,
-{
-    fn from(model: &'m ContiguousCategoricalEntropyModel<Probability, Table, PRECISION>) -> Self {
-        let cdf = model.cdf.0.as_ref().to_vec();
-        let mut lookup_table = Vec::with_capacity(1 << PRECISION);
-        for (symbol, &cumulative) in model.cdf.0.as_ref()[1..model.cdf.0.as_ref().len() - 1]
-            .iter()
-            .enumerate()
-        {
-            lookup_table.resize(cumulative.into(), symbol.as_());
-        }
-        lookup_table.resize(1 << PRECISION, (model.cdf.0.as_ref().len() - 2).as_());
-
-        Self {
-            lookup_table: lookup_table.into_boxed_slice(),
-            cdf: ContiguousSymbolTable(cdf),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<'m, Probability, Table, LookupTable, const PRECISION: usize>
-    IterableEntropyModel<'m, PRECISION>
-    for LookupDecoderModel<
-        Probability,
-        Probability,
-        ContiguousSymbolTable<Table>,
-        LookupTable,
-        PRECISION,
-    >
-where
-    Probability: BitArray + Into<usize>,
-    usize: AsPrimitive<Probability>,
-    Table: AsRef<[Probability]>,
-    LookupTable: AsRef<[Probability]>,
-{
-    type Iter = SymbolTableIter<Probability, Probability, ContiguousSymbolTable<&'m [Probability]>>;
-
-    #[inline(always)]
-    fn symbol_table(&'m self) -> Self::Iter {
-        SymbolTableIter::new(self.as_view().cdf)
-    }
-}
-
-impl<'m, Symbol, Probability, Table, LookupTable, const PRECISION: usize>
-    IterableEntropyModel<'m, PRECISION>
-    for LookupDecoderModel<
-        Symbol,
-        Probability,
-        NonContiguousSymbolTable<Table>,
-        LookupTable,
-        PRECISION,
-    >
-where
-    Symbol: Clone + 'm,
-    Probability: BitArray + Into<usize>,
-    usize: AsPrimitive<Probability>,
-    Table: AsRef<[(Probability, Symbol)]>,
-    LookupTable: AsRef<[Probability]>,
-{
-    type Iter =
-        SymbolTableIter<Symbol, Probability, NonContiguousSymbolTable<&'m [(Probability, Symbol)]>>;
-
-    #[inline(always)]
-    fn symbol_table(&'m self) -> Self::Iter {
-        SymbolTableIter::new(self.as_view().cdf)
-    }
-}
+pub use categorical::{
+    contiguous::{
+        ContiguousCategoricalEntropyModel, DefaultContiguousCategoricalEntropyModel,
+        SmallContiguousCategoricalEntropyModel,
+    },
+    lazy_contiguous::{
+        DefaultLazyContiguousCategoricalEntropyModel, LazyContiguousCategoricalEntropyModel,
+        SmallLazyContiguousCategoricalEntropyModel,
+    },
+    lookup_contiguous::{ContiguousLookupDecoderModel, SmallContiguousLookupDecoderModel},
+    lookup_noncontiguous::{NonContiguousLookupDecoderModel, SmallNonContiguousLookupDecoderModel},
+    non_contiguous::{
+        DefaultNonContiguousCategoricalDecoderModel, DefaultNonContiguousCategoricalEncoderModel,
+        NonContiguousCategoricalDecoderModel, NonContiguousCategoricalEncoderModel,
+        SmallNonContiguousCategoricalDecoderModel, SmallNonContiguousCategoricalEncoderModel,
+    },
+};
+pub use quantize::{
+    DefaultLeakyQuantizer, LeakilyQuantizedDistribution, LeakyQuantizer, SmallLeakyQuantizer,
+};
+pub use uniform::{DefaultUniformModel, SmallUniformModel, UniformModel};
 
 #[cfg(test)]
 mod tests {
+    use probability::prelude::*;
+
     use super::*;
-
-    use super::super::{stack::DefaultAnsCoder, Decode};
-
-    use alloc::{string::String, vec};
-    use probability::distribution::{Binomial, Cauchy, Gaussian, Laplace};
-
-    #[test]
-    fn split_almost_delta_distribution() {
-        fn inner(distribution: impl Distribution<Value = f64>) {
-            let quantizer = DefaultLeakyQuantizer::new(-10..=10);
-            let model = quantizer.quantize(distribution);
-            let (left_cdf, left_prob) = model.left_cumulative_and_probability(2).unwrap();
-            let (right_cdf, right_prob) = model.left_cumulative_and_probability(3).unwrap();
-
-            assert_eq!(
-                left_prob.get(),
-                right_prob.get() - 1,
-                "Peak not split evenly."
-            );
-            assert_eq!(
-                (1u32 << 24) - left_prob.get() - right_prob.get(),
-                19,
-                "Peak has wrong probability mass."
-            );
-            assert_eq!(left_cdf + left_prob.get(), right_cdf);
-            // More thorough generic consistency checks of the CDF are done in `test_quantized_*()`.
-        }
-
-        inner(Gaussian::new(2.5, 1e-40));
-        inner(Cauchy::new(2.5, 1e-40));
-        inner(Laplace::new(2.5, 1e-40));
-    }
-
-    #[test]
-    fn leakily_quantized_normal() {
-        #[cfg(not(miri))]
-        let (support, std_devs, means) = (
-            -127..=127,
-            [1e-40, 0.0001, 0.1, 3.5, 123.45, 1234.56],
-            [
-                -300.6, -127.5, -100.2, -4.5, 0.0, 50.3, 127.5, 180.2, 2000.0,
-            ],
-        );
-
-        // We use different settings when testing on miri so that the test time stays reasonable.
-        #[cfg(miri)]
-        let (support, std_devs, means) = (
-            -20..=20,
-            [1e-40, 0.0001, 3.5, 1234.56],
-            [-300.6, -20.5, -5.2, 8.5, 20.5, 2000.0],
-        );
-
-        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
-        for &std_dev in &std_devs {
-            for &mean in &means {
-                let distribution = Gaussian::new(mean, std_dev);
-                test_entropy_model(
-                    &quantizer.quantize(distribution),
-                    *support.start()..*support.end() + 1,
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn leakily_quantized_cauchy() {
-        #[cfg(not(miri))]
-        let (support, gammas, means) = (
-            -127..=127,
-            [1e-40, 0.0001, 0.1, 3.5, 123.45, 1234.56],
-            [
-                -300.6, -127.5, -100.2, -4.5, 0.0, 50.3, 127.5, 180.2, 2000.0,
-            ],
-        );
-
-        // We use different settings when testing on miri so that the test time stays reasonable.
-        #[cfg(miri)]
-        let (support, gammas, means) = (
-            -20..=20,
-            [1e-40, 0.0001, 3.5, 1234.56],
-            [-300.6, -20.5, -5.2, 8.5, 20.5, 2000.0],
-        );
-        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
-        for &gamma in &gammas {
-            for &mean in &means {
-                let distribution = Cauchy::new(mean, gamma);
-                test_entropy_model(
-                    &quantizer.quantize(distribution),
-                    *support.start()..*support.end() + 1,
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn leakily_quantized_laplace() {
-        #[cfg(not(miri))]
-        let (support, bs, means) = (
-            -127..=127,
-            [1e-40, 0.0001, 0.1, 3.5, 123.45, 1234.56],
-            [
-                -300.6, -127.5, -100.2, -4.5, 0.0, 50.3, 127.5, 180.2, 2000.0,
-            ],
-        );
-
-        // We use different settings when testing on miri so that the test time stays reasonable.
-        #[cfg(miri)]
-        let (support, bs, means) = (
-            -20..=20,
-            [1e-40, 0.0001, 3.5, 1234.56],
-            [-300.6, -20.5, -5.2, 8.5, 20.5, 2000.0],
-        );
-        let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(support.clone());
-        for &b in &bs {
-            for &mean in &means {
-                let distribution = Laplace::new(mean, b);
-                test_entropy_model(
-                    &quantizer.quantize(distribution),
-                    *support.start()..*support.end() + 1,
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn leakily_quantized_binomial() {
-        #[cfg(not(miri))]
-        let (ns, ps) = (
-            [1, 2, 10, 100, 1000, 10_000],
-            [1e-30, 1e-20, 1e-10, 0.1, 0.4, 0.9],
-        );
-
-        // We use different settings when testing on miri so that the test time stays reasonable.
-        #[cfg(miri)]
-        let (ns, ps) = ([1, 2, 100], [1e-30, 0.1, 0.4]);
-
-        for &n in &ns {
-            for &p in &ps {
-                if n < 1000 || p >= 0.1 {
-                    // In the excluded situations, `<Binomial as Inverse>::inverse` currently doesn't terminate.
-                    // TODO: file issue to `probability` repo.
-                    let quantizer = LeakyQuantizer::<_, _, u32, 24>::new(0..=n as u32);
-                    let distribution = Binomial::new(n, p);
-                    test_entropy_model(&quantizer.quantize(distribution), 0..(n as u32 + 1));
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn uniform() {
-        for range in [2, 3, 4, 5, 6, 7, 8, 9, 62, 63, 64, 254, 255, 256] {
-            test_entropy_model(&UniformModel::<u32, 24>::new(range as u32), 0..range as u32);
-            test_entropy_model(&UniformModel::<u32, 32>::new(range as u32), 0..range as u32);
-            test_entropy_model(&UniformModel::<u16, 12>::new(range as u16), 0..range as u16);
-            test_entropy_model(&UniformModel::<u16, 16>::new(range as u16), 0..range as u16);
-            if range < 255 {
-                test_entropy_model(&UniformModel::<u8, 8>::new(range as u8), 0..range as u8);
-            }
-            if range <= 64 {
-                test_entropy_model(&UniformModel::<u8, 6>::new(range as u8), 0..range as u8);
-            }
-        }
-    }
 
     #[test]
     fn entropy() {
@@ -4080,151 +957,7 @@ mod tests {
         }
     }
 
-    /// Test that `optimal_weights` reproduces the same distribution when fed with an
-    /// already quantized model.
-    #[test]
-    fn trivial_optimal_weights() {
-        let hist = [
-            56319u32, 134860032, 47755520, 60775168, 75699200, 92529920, 111023616, 130420736,
-            150257408, 169970176, 188869632, 424260864, 229548800, 236082432, 238252287, 234666240,
-            1, 1, 227725568, 216746240, 202127104, 185095936, 166533632, 146508800, 126643712,
-            107187968, 88985600, 72576000, 57896448, 45617664, 34893056, 26408448, 19666688,
-            14218240, 10050048, 7164928, 13892864,
-        ];
-        assert_eq!(hist.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
-
-        let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let categorical =
-            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities(
-                &probabilities,
-            )
-            .unwrap();
-        let weights: Vec<_> = categorical
-            .symbol_table()
-            .map(|(_, _, probability)| probability.get())
-            .collect();
-
-        assert_eq!(&weights[..], &hist[..]);
-    }
-
-    #[test]
-    fn nontrivial_optimal_weights() {
-        let hist = [
-            1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
-            896675, 922197, 930672, 916665, 0, 0, 0, 0, 0, 723031, 650522, 572300, 494702, 418703,
-            347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540, 39258, 27988, 54269,
-        ];
-        assert_ne!(hist.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
-
-        let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let categorical =
-            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities(
-                &probabilities,
-            )
-            .unwrap();
-        let weights: Vec<_> = categorical
-            .symbol_table()
-            .map(|(_, _, probability)| probability.get())
-            .collect();
-
-        assert_eq!(weights.len(), hist.len());
-        assert_eq!(weights.iter().map(|&x| x as u64).sum::<u64>(), 1 << 32);
-        for &w in &weights {
-            assert!(w > 0);
-        }
-
-        let mut weights_and_hist = weights
-            .iter()
-            .cloned()
-            .zip(hist.iter().cloned())
-            .collect::<Vec<_>>();
-
-        // Check that sorting by weight is compatible with sorting by hist.
-        weights_and_hist.sort_unstable();
-        // TODO: replace the following with
-        // `assert!(weights_and_hist.iter().map(|&(_, x)| x).is_sorted())`
-        // when `is_sorted` becomes stable.
-        let mut previous = 0;
-        for (_, hist) in weights_and_hist {
-            assert!(hist >= previous);
-            previous = hist;
-        }
-    }
-
-    /// Regression test for convergence of `optimize_leaky_categorical`.
-    #[test]
-    fn categorical_converges() {
-        // Two example probability distributions that lead to an infinite loop in constriction 0.2.6
-        // (see <https://github.com/bamler-lab/constriction/issues/20>).
-        let example1 = [0.15, 0.69, 0.15];
-        let example2 = [
-            1.34673042e-04,
-            6.52306480e-04,
-            3.14999325e-03,
-            1.49921896e-02,
-            6.67127371e-02,
-            2.26679876e-01,
-            3.75356406e-01,
-            2.26679876e-01,
-            6.67127594e-02,
-            1.49922138e-02,
-            3.14990873e-03,
-            6.52299321e-04,
-            1.34715927e-04,
-        ];
-
-        let categorical =
-            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&example1)
-                .unwrap();
-        let prob0 = categorical.left_cumulative_and_probability(0).unwrap().1;
-        let prob2 = categorical.left_cumulative_and_probability(2).unwrap().1;
-        assert!((-1..=1).contains(&(prob0.get() as i64 - prob2.get() as i64)));
-
-        let _ =
-            DefaultContiguousCategoricalEntropyModel::from_floating_point_probabilities(&example2)
-                .unwrap();
-        // Nothing to test here. As long as the above line didn't cause an infinite loop we're good.
-    }
-
-    #[test]
-    fn contiguous_categorical() {
-        let hist = [
-            1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
-            896675, 922197, 930672, 916665, 0, 0, 0, 0, 0, 723031, 650522, 572300, 494702, 418703,
-            347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540, 39258, 27988, 54269,
-        ];
-        let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-
-        let model =
-            ContiguousCategoricalEntropyModel::<u32, _, 32>::from_floating_point_probabilities(
-                &probabilities,
-            )
-            .unwrap();
-        test_entropy_model(&model, 0..probabilities.len());
-    }
-
-    #[test]
-    fn non_contiguous_categorical() {
-        let hist = [
-            1u32, 186545, 237403, 295700, 361445, 433686, 509456, 586943, 663946, 737772, 1657269,
-            896675, 922197, 930672, 916665, 0, 0, 0, 0, 0, 723031, 650522, 572300, 494702, 418703,
-            347600, 1, 283500, 226158, 178194, 136301, 103158, 76823, 55540, 39258, 27988, 54269,
-        ];
-        let probabilities = hist.iter().map(|&x| x as f64).collect::<Vec<_>>();
-        let symbols = "QWERTYUIOPASDFGHJKLZXCVBNM 1234567890"
-            .chars()
-            .collect::<Vec<_>>();
-
-        let model =
-            NonContiguousCategoricalDecoderModel::<_,u32, _, 32>::from_symbols_and_floating_point_probabilities(
-                &symbols,
-                &probabilities,
-            )
-            .unwrap();
-        test_iterable_entropy_model(&model, symbols.iter().cloned());
-    }
-
-    fn test_entropy_model<'m, D, const PRECISION: usize>(
+    pub(super) fn test_entropy_model<'m, D, const PRECISION: usize>(
         model: &'m D,
         support: impl Clone + Iterator<Item = D::Symbol>,
     ) where
@@ -4255,14 +988,14 @@ mod tests {
         test_iterable_entropy_model(model, support);
     }
 
-    fn test_iterable_entropy_model<'m, D, const PRECISION: usize>(
-        model: &'m D,
-        support: impl Clone + Iterator<Item = D::Symbol>,
+    pub(super) fn test_iterable_entropy_model<'m, M, const PRECISION: usize>(
+        model: &'m M,
+        support: impl Clone + Iterator<Item = M::Symbol>,
     ) where
-        D: IterableEntropyModel<'m, PRECISION> + 'm,
-        D::Symbol: Copy + core::fmt::Debug + PartialEq,
-        D::Probability: Into<u64>,
-        u64: AsPrimitive<D::Probability>,
+        M: IterableEntropyModel<'m, PRECISION> + 'm,
+        M::Symbol: Copy + core::fmt::Debug + PartialEq,
+        M::Probability: Into<u64>,
+        u64: AsPrimitive<M::Probability>,
     {
         let mut expected_cumulative = 0u64;
         let mut count = 0;
@@ -4278,125 +1011,58 @@ mod tests {
         assert_eq!(expected_cumulative, 1 << PRECISION);
     }
 
-    #[test]
-    fn lookup_contiguous() {
-        let probabilities = vec![3u8, 18, 1, 42];
-        let model =
-            ContiguousCategoricalEntropyModel::<_, _, 6>::from_nonzero_fixed_point_probabilities(
-                probabilities,
-                false,
-            )
-            .unwrap();
-        let lookup_decoder_model = LookupDecoderModel::from_iterable_entropy_model(&model);
+    /// Verifies that the model is close to a provided probability mass function (in
+    /// KL-divergence).
+    pub(super) fn verify_iterable_entropy_model<'m, M, P, const PRECISION: usize>(
+        model: &'m M,
+        hist: &[P],
+        tol: f64,
+    ) -> f64
+    where
+        M: IterableEntropyModel<'m, PRECISION> + 'm,
+        M::Probability: BitArray + Into<u64> + Into<f64>,
+        P: num_traits::Zero + Into<f64> + Copy + PartialOrd,
+    {
+        let weights: Vec<_> = model
+            .symbol_table()
+            .map(|(_, _, probability)| probability.get())
+            .collect();
 
-        // Verify that `decode(encode(x)) == x` and that `lookup_decode(encode(x)) == x`.
-        for symbol in 0..4 {
-            let (left_cumulative, probability) =
-                model.left_cumulative_and_probability(symbol).unwrap();
-            for quantile in left_cumulative..left_cumulative + probability.get() {
-                assert_eq!(
-                    model.quantile_function(quantile),
-                    (symbol, left_cumulative, probability)
-                );
-                assert_eq!(
-                    lookup_decoder_model.quantile_function(quantile),
-                    (symbol, left_cumulative, probability)
-                );
-            }
+        assert_eq!(weights.len(), hist.len());
+        assert_eq!(
+            weights.iter().map(|&x| Into::<u64>::into(x)).sum::<u64>(),
+            1 << PRECISION
+        );
+        for &w in &weights {
+            assert!(w > M::Probability::zero());
         }
 
-        // Verify that `encode(decode(x)) == x` and that `encode(lookup_decode(x)) == x`.
-        for quantile in 0..1 << 6 {
-            let (symbol, left_cumulative, probability) = model.quantile_function(quantile);
-            assert_eq!(
-                lookup_decoder_model.quantile_function(quantile),
-                (symbol, left_cumulative, probability)
-            );
-            assert_eq!(
-                model.left_cumulative_and_probability(symbol).unwrap(),
-                (left_cumulative, probability)
-            );
+        let mut weights_and_hist = weights
+            .iter()
+            .cloned()
+            .zip(hist.iter().cloned())
+            .collect::<Vec<_>>();
+
+        // Check that sorting by weight is compatible with sorting by hist.
+        weights_and_hist.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        // TODO: replace the following with
+        // `assert!(weights_and_hist.iter().map(|&(_, x)| x).is_sorted())`
+        // when `is_sorted` becomes stable.
+        let mut previous = P::zero();
+        for (_, hist) in weights_and_hist {
+            assert!(hist >= previous);
+            previous = hist;
         }
 
-        // Test encoding and decoding a few symbols.
-        let symbols = vec![0, 3, 2, 3, 1, 3, 2, 0, 3];
-        let mut ans = DefaultAnsCoder::new();
-        ans.encode_iid_symbols_reverse(&symbols, &model).unwrap();
-        assert!(!ans.is_empty());
+        let normalization = hist.iter().map(|&x| x.into()).sum::<f64>();
+        let normalized_hist = hist
+            .iter()
+            .map(|&x| Into::<f64>::into(x) / normalization)
+            .collect::<Vec<_>>();
 
-        let mut ans2 = ans.clone();
-        let decoded = ans
-            .decode_iid_symbols(9, &model)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(decoded, symbols);
-        assert!(ans.is_empty());
+        let kl = model.kl_divergence_base2::<f64>(normalized_hist);
+        assert!(kl < tol);
 
-        let decoded = ans2
-            .decode_iid_symbols(9, &lookup_decoder_model)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(decoded, symbols);
-        assert!(ans2.is_empty());
-    }
-
-    #[test]
-    fn lookup_noncontiguous() {
-        let symbols = "axcy";
-        let probabilities = [3u8, 18, 1, 42];
-        let encoder_model = NonContiguousCategoricalEncoderModel::<_, u8, 6>::from_symbols_and_nonzero_fixed_point_probabilities(
-            symbols.chars(),probabilities.iter(),false
-        )
-        .unwrap();
-        let decoder_model = NonContiguousCategoricalDecoderModel::<_, _,_, 6>::from_symbols_and_nonzero_fixed_point_probabilities(
-            symbols.chars(),probabilities.iter(),false
-        )
-        .unwrap();
-        let lookup_decoder_model = LookupDecoderModel::from_iterable_entropy_model(&decoder_model);
-
-        // Verify that `decode(encode(x)) == x` and that `lookup_decode(encode(x)) == x`.
-        for symbol in symbols.chars() {
-            let (left_cumulative, probability) = encoder_model
-                .left_cumulative_and_probability(symbol)
-                .unwrap();
-            for quantile in left_cumulative..left_cumulative + probability.get() {
-                assert_eq!(
-                    decoder_model.quantile_function(quantile),
-                    (symbol, left_cumulative, probability)
-                );
-                assert_eq!(
-                    lookup_decoder_model.quantile_function(quantile),
-                    (symbol, left_cumulative, probability)
-                );
-            }
-        }
-
-        // Verify that `encode(decode(x)) == x` and that `encode(lookup_decode(x)) == x`.
-        for quantile in 0..1 << 6 {
-            let (symbol, left_cumulative, probability) = decoder_model.quantile_function(quantile);
-            assert_eq!(
-                lookup_decoder_model.quantile_function(quantile),
-                (symbol, left_cumulative, probability)
-            );
-            assert_eq!(
-                encoder_model
-                    .left_cumulative_and_probability(symbol)
-                    .unwrap(),
-                (left_cumulative, probability)
-            );
-        }
-
-        // Test encoding and decoding a few symbols.
-        let symbols = "axcxcyaac";
-        let mut ans = DefaultAnsCoder::new();
-        ans.encode_iid_symbols_reverse(symbols.chars(), &encoder_model)
-            .unwrap();
-        assert!(!ans.is_empty());
-        let decoded = ans
-            .decode_iid_symbols(9, &decoder_model)
-            .collect::<Result<String, _>>()
-            .unwrap();
-        assert_eq!(decoded, symbols);
-        assert!(ans.is_empty());
+        kl
     }
 }
