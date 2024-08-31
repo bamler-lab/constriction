@@ -35,11 +35,11 @@ num-traits = {version = "0.2.15", default-features = false, features = ["libm"]}
 smallvec = "1.6.1"
 
 libm = "0.2.6"
-probability = {version = "0.20"}
+probability = "0.20"
 
-ndarray = {version = "0.15", optional = true}
-numpy = {version = "0.20", optional = true}
-pyo3 = {version = "0.20", features = ["extension-module"], optional = true}
+ndarray = {version = "0.16", optional = true}
+numpy = {version = "0.21", optional = true}
+pyo3 = {version = "0.21", features = ["extension-module"], optional = true}
 
 [dev-dependencies]
 byteorder = "1.4.2"
