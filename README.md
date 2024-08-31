@@ -68,7 +68,7 @@ unnecessarily limit what you can achieve with `constriction`.
 Install `constriction` for Python:
 
 ```bash
-pip install constriction~=0.3.5
+pip install constriction~=0.4.0
 ```
 
 Then go ahead and encode and decode some data:
@@ -105,7 +105,7 @@ Add this line to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-constriction = "0.3.5"
+constriction = "0.4.0"
 probability = "0.20" # Not strictly required but used in many code examples.
 ```
 
@@ -114,7 +114,7 @@ features (and you can't use the `probability` crate):
 
 ```toml
 [dependencies]
-constriction = {version = "0.3.5", default-features = false} # for `no_std` mode
+constriction = {version = "0.4.0", default-features = false} # for `no_std` mode
 ```
 
 Then go ahead and encode and decode some data:

@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0 OR BSL-1.0"
 name = "constriction"
 readme = "README-rust.md"
 repository = "https://github.com/bamler-lab/constriction/"
-version = "0.3.5"
+version = "0.4.0"
 rust-version = "1.75" # for feature `return_position_impl_trait_in_traits`
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -27,7 +27,7 @@ std = []
 # access to this library from python. This feature is turned off by default
 # because it causes problems with `cargo test` on Mac OS. To turn it on, run:
 #   cargo build --release --features pybindings
-pybindings = ["ndarray", "numpy", "pyo3"]
+pybindings = ["numpy", "pyo3"]
 
 [dependencies]
 hashbrown = "0.14.0"
@@ -35,11 +35,10 @@ num-traits = {version = "0.2.15", default-features = false, features = ["libm"]}
 smallvec = "1.6.1"
 
 libm = "0.2.6"
-probability = {version = "0.20"}
+probability = "0.20"
 
-ndarray = {version = "0.15", optional = true}
-numpy = {version = "0.20", optional = true}
-pyo3 = {version = "0.20", features = ["extension-module"], optional = true}
+numpy = {version = "0.21", optional = true}
+pyo3 = {version = "0.21", features = ["extension-module"], optional = true}
 
 [dev-dependencies]
 byteorder = "1.4.2"
@@ -51,3 +50,4 @@ rand_xoshiro = "0.6"
 [[bench]]
 harness = false
 name = "lookup"
+test = true

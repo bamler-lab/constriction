@@ -30,7 +30,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-constriction = "0.3.5"
+constriction = "0.4.0"
 probability = "0.20.3" # Not strictly required but used in many examples.
 ```
 

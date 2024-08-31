@@ -7,7 +7,7 @@ use crate::{
     symbol::huffman,
 };
 
-pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<EncoderHuffmanTree>()?;
     module.add_class::<DecoderHuffmanTree>()?;
     Ok(())

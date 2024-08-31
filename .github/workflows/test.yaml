@@ -60,12 +60,12 @@ jobs:
       - name: Test in development mode
         env:
           RUSTFLAGS: "-D warnings"
-        run: cargo test --all-targets
+        run: cargo test
 
       - name: Test in release mode
         env:
           RUSTFLAGS: "-D warnings"
-        run: cargo test --release --all-targets
+        run: cargo test --release
 
   miri-test:
     name: no_std and miri
@@ -129,7 +129,7 @@ jobs:
         env:
           RUSTFLAGS: "-Zrandomize-layout"
           MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-disable-isolation"
-        run: cargo +${{ steps.rust-version.outputs.rustc }} miri test --no-fail-fast --all-targets
+        run: cargo +${{ steps.rust-version.outputs.rustc }} miri test --no-fail-fast
 
   python-test:
     runs-on: ${{ matrix.os }}
@@ -173,16 +173,55 @@ jobs:
       - name: Build Python package
         run: poetry run maturin develop --release --features pybindings
 
-      - name: pytest
+      - name: pytest with numpy version 1.x
         shell: bash
         run: |
-          poetry run pytest tests/python | tee pytest.out
+          poetry run python -m pip install numpy~=1.16
+          INSTALLED_NUMPY_VERSION=$(poetry run python -c 'import numpy; print(numpy.__version__)')
+          echo "Installed numpy version: $INSTALLED_NUMPY_VERSION"
+          if [ "x${INSTALLED_NUMPY_VERSION:0:2}y" == "x1.y" ]; then
+            echo "Numpy version matches expectation."
+          else
+            echo "ERROR: wrong numpy version."
+            exit 1
+          fi
+          poetry run pytest tests/python | tee pytest-numpy1.out
           exit ${PIPESTATUS[0]}
 
       - name: Verify that pytest used correct python version
         shell: bash
         run: |
-          USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
+          USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest-numpy1.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
+          echo "Expected python version: ${{ matrix.python-version }}"
+          echo "Found python version:    $USED_PYTHON_VERSION"
+          if [ "x${{ matrix.python-version }}y" == "x${USED_PYTHON_VERSION}y" ]; then
+            echo "Versions match."
+          else
+            echo "ERROR: versions don't match."
+            exit 1
+          fi
+
+      - name: pytest with numpy version 2.x
+        if: matrix.python-version != '3.8' && matrix.python-version != '3.9'
+        shell: bash
+        run: |
+          poetry run python -m pip install numpy~=2.1
+          INSTALLED_NUMPY_VERSION=$(poetry run python -c 'import numpy; print(numpy.__version__)')
+          echo "Installed numpy version: $INSTALLED_NUMPY_VERSION"
+          if [ "x${INSTALLED_NUMPY_VERSION:0:2}y" == "x2.y" ]; then
+            echo "Numpy version matches expectation."
+          else
+            echo "ERROR: wrong numpy version."
+            exit 1
+          fi
+          poetry run pytest tests/python | tee pytest-numpy2.out
+          exit ${PIPESTATUS[0]}
+
+      - name: Verify that pytest used correct python version
+        if: matrix.python-version != '3.8' && matrix.python-version != '3.9'
+        shell: bash
+        run: |
+          USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest-numpy2.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
           echo "Expected python version: ${{ matrix.python-version }}"
           echo "Found python version:    $USED_PYTHON_VERSION"
           if [ "x${{ matrix.python-version }}y" == "x${USED_PYTHON_VERSION}y" ]; then
