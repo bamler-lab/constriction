@@ -134,13 +134,13 @@ jobs:
       - name: Build Python package
         run: poetry run maturin develop --release --features pybindings
 
-      - name: pytest with numpy version 1.26
+      - name: pytest with numpy version 1.x
         shell: bash
         run: |
-          poetry run python -m pip install numpy~=1.26
+          poetry run python -m pip install numpy~=1.16
           INSTALLED_NUMPY_VERSION=$(poetry run python -c 'import numpy; print(numpy.__version__)')
           echo "Installed numpy version: $INSTALLED_NUMPY_VERSION"
-          if [ "x${INSTALLED_NUMPY_VERSION:0:5}y" == "x1.26.y" ]; then
+          if [ "x${INSTALLED_NUMPY_VERSION:0:2}y" == "x1.y" ]; then
             echo "Numpy version matches expectation."
           else
             echo "ERROR: wrong numpy version."
@@ -163,6 +163,7 @@ jobs:
           fi
 
       - name: pytest with numpy version 2.x
+        if: matrix.python-version != '3.8' && matrix.python-version != '3.9'
         shell: bash
         run: |
           poetry run python -m pip install numpy~=2.1
@@ -178,6 +179,7 @@ jobs:
           exit ${PIPESTATUS[0]}
 
       - name: Verify that pytest used correct python version
+        if: matrix.python-version != '3.8' && matrix.python-version != '3.9'
         shell: bash
         run: |
           USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest-numpy2.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
