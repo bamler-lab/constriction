@@ -1,6 +1,6 @@
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
 
 use super::model::internals::EncoderDecoderModel;
 
-pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<ChainCoder>()?;
     Ok(())
 }
@@ -80,12 +80,13 @@ impl ChainCoder {
     /// arrays that you may want to concatenate.
     ///
     /// See [above usage instructions](#usage-for-bits-back-coding) for further explanation.
+    #[allow(clippy::type_complexity)]
     #[pyo3(text_signature = "(self, unseal=False)")]
     pub fn get_data<'p>(
         &self,
         unseal: Option<bool>,
         py: Python<'p>,
-    ) -> PyResult<(&'p PyArray1<u32>, &'p PyArray1<u32>)> {
+    ) -> PyResult<(Bound<'p, PyArray1<u32>>, Bound<'p, PyArray1<u32>>)> {
         let cloned = self.inner.clone();
         let data = if unseal == Some(true) {
             cloned.into_binary()
@@ -98,8 +99,8 @@ impl ChainCoder {
             )
         })?;
 
-        let remainders = PyArray1::from_vec(py, remainders);
-        let compressed = PyArray1::from_vec(py, compressed);
+        let remainders = PyArray1::from_vec_bound(py, remainders);
+        let compressed = PyArray1::from_vec_bound(py, compressed);
         Ok((remainders, compressed))
     }
 
@@ -107,14 +108,15 @@ impl ChainCoder {
     /// that you may want to concatenate.
     ///
     /// See [above usage instructions](#usage-for-bits-back-coding) for further explanation.
+    #[allow(clippy::type_complexity)]
     #[pyo3(text_signature = "(self)")]
     pub fn get_remainders<'p>(
         &self,
         py: Python<'p>,
-    ) -> PyResult<(&'p PyArray1<u32>, &'p PyArray1<u32>)> {
+    ) -> PyResult<(Bound<'p, PyArray1<u32>>, Bound<'p, PyArray1<u32>>)> {
         let (compressed, remainders) = self.inner.clone().into_remainders().unwrap_infallible();
-        let remainders = PyArray1::from_vec(py, remainders);
-        let compressed = PyArray1::from_vec(py, compressed);
+        let remainders = PyArray1::from_vec_bound(py, remainders);
+        let compressed = PyArray1::from_vec_bound(py, compressed);
         Ok((compressed, remainders))
     }
 
@@ -130,9 +132,9 @@ impl ChainCoder {
     pub fn encode_reverse(
         &mut self,
         py: Python<'_>,
-        symbols: &PyAny,
+        symbols: &Bound<'_, PyAny>,
         model: &Model,
-        params: &PyTuple,
+        params: &Bound<'_, PyTuple>,
     ) -> PyResult<()> {
         if let Ok(symbol) = symbols.extract::<i32>() {
             if !params.is_empty() {
@@ -165,7 +167,11 @@ impl ChainCoder {
                 Ok(())
             })?;
         } else {
-            if symbols.len() != model.0.len(&params[0])? {
+            if symbols.len()
+                != model
+                    .0
+                    .len(&params.iter().next().expect("len checked above"))?
+            {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "`symbols` argument has wrong length.",
                 ));
@@ -196,7 +202,7 @@ impl ChainCoder {
         &mut self,
         py: Python<'_>,
         model: &Model,
-        params: &PyTuple,
+        params: &Bound<'_, PyTuple>,
     ) -> PyResult<PyObject> {
         match params.len() {
             0 => {
@@ -211,7 +217,9 @@ impl ChainCoder {
                 return Ok(symbol.to_object(py));
             }
             1 => {
-                if let Ok(amt) = usize::extract(params.as_slice()[0]) {
+                if let Ok(amt) =
+                    usize::extract_bound(&params.iter().next().expect("len checked above"))
+                {
                     let mut symbols = Vec::with_capacity(amt);
                     model.0.as_parameterized(py, &mut |model| {
                         for symbol in self
@@ -223,13 +231,17 @@ impl ChainCoder {
                         }
                         Ok(())
                     })?;
-                    return Ok(PyArray1::from_iter(py, symbols).to_object(py));
+                    return Ok(PyArray1::from_iter_bound(py, symbols).to_object(py));
                 }
             }
             _ => {} // Fall through to code below.
         };
 
-        let mut symbols = Vec::with_capacity(model.0.len(&params[0])?);
+        let mut symbols = Vec::with_capacity(
+            model
+                .0
+                .len(&params.iter().next().expect("len checked above"))?,
+        );
         model.0.parameterize(py, params, false, &mut |model| {
             let symbol = self
                 .inner
@@ -239,7 +251,7 @@ impl ChainCoder {
             Ok(())
         })?;
 
-        Ok(PyArray1::from_vec(py, symbols).to_object(py))
+        Ok(PyArray1::from_vec_bound(py, symbols).to_object(py))
     }
 
     /// Creates a deep copy of the coder and returns it.

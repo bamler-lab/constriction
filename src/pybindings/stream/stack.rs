@@ -1,6 +1,6 @@
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
 
 use super::model::{internals::EncoderDecoderModel, Model};
 
-pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<AnsCoder>()?;
     Ok(())
 }
@@ -325,15 +325,15 @@ impl AnsCoder {
         &mut self,
         py: Python<'p>,
         unseal: Option<bool>,
-    ) -> PyResult<&'p PyArray1<u32>> {
+    ) -> PyResult<Bound<'p, PyArray1<u32>>> {
         if unseal == Some(true) {
             let binary = self.inner.get_binary().map_err(|_|
                 pyo3::exceptions::PyAssertionError::new_err(
                     "Cannot unseal compressed data because it doesn't fit into integer number of words. Did you create the encoder with `seal=True` and restore its original state?",
                 ))?;
-            Ok(PyArray1::from_slice(py, &binary))
+            Ok(PyArray1::from_slice_bound(py, &binary))
         } else {
-            Ok(PyArray1::from_slice(
+            Ok(PyArray1::from_slice_bound(
                 py,
                 &self.inner.get_compressed().unwrap_infallible(),
             ))
@@ -442,9 +442,9 @@ impl AnsCoder {
     pub fn encode_reverse(
         &mut self,
         py: Python<'_>,
-        symbols: &PyAny,
+        symbols: &Bound<'_, PyAny>,
         model: &Model,
-        params: &PyTuple,
+        params: &Bound<'_, PyTuple>,
     ) -> PyResult<()> {
         if let Ok(symbol) = symbols.extract::<i32>() {
             if !params.is_empty() {
@@ -477,7 +477,11 @@ impl AnsCoder {
                 Ok(())
             })?;
         } else {
-            if symbols.len() != model.0.len(&params[0])? {
+            if symbols.len()
+                != model
+                    .0
+                    .len(&params.iter().next().expect("len checked above"))?
+            {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "`symbols` argument has wrong length.",
                 ));
@@ -594,7 +598,7 @@ impl AnsCoder {
         &mut self,
         py: Python<'_>,
         model: &Model,
-        params: &PyTuple,
+        params: &Bound<'_, PyTuple>,
     ) -> PyResult<PyObject> {
         match params.len() {
             0 => {
@@ -609,7 +613,9 @@ impl AnsCoder {
                 return Ok(symbol.to_object(py));
             }
             1 => {
-                if let Ok(amt) = usize::extract(params.as_slice()[0]) {
+                if let Ok(amt) =
+                    usize::extract_bound(&params.iter().next().expect("len checked above"))
+                {
                     let mut symbols = Vec::with_capacity(amt);
                     model.0.as_parameterized(py, &mut |model| {
                         for symbol in self
@@ -620,13 +626,17 @@ impl AnsCoder {
                         }
                         Ok(())
                     })?;
-                    return Ok(PyArray1::from_iter(py, symbols).to_object(py));
+                    return Ok(PyArray1::from_iter_bound(py, symbols).to_object(py));
                 }
             }
             _ => {} // Fall through to code below.
         };
 
-        let mut symbols = Vec::with_capacity(model.0.len(&params[0])?);
+        let mut symbols = Vec::with_capacity(
+            model
+                .0
+                .len(&params.iter().next().expect("len checked above"))?,
+        );
         model.0.parameterize(py, params, false, &mut |model| {
             let symbol = self
                 .inner
@@ -636,7 +646,7 @@ impl AnsCoder {
             Ok(())
         })?;
 
-        Ok(PyArray1::from_vec(py, symbols).to_object(py))
+        Ok(PyArray1::from_vec_bound(py, symbols).to_object(py))
     }
 
     /// Creates a deep copy of the coder and returns it.

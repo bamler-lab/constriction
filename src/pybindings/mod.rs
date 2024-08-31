@@ -4,7 +4,7 @@ pub mod symbol;
 use std::prelude::v1::*;
 
 use alloc::borrow::Cow;
-use numpy::PyReadonlyArray;
+use numpy::{ndarray, PyArrayMethods, PyReadonlyArray, PyUntypedArrayMethods};
 use pyo3::{prelude::*, wrap_pymodule};
 
 use crate::NanError;
@@ -177,7 +177,7 @@ use crate::NanError;
 /// [entropy models](stream/model.html).
 #[pymodule]
 #[pyo3(name = "constriction")]
-fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(init_stream))?;
     module.add_wrapped(wrap_pymodule!(init_symbol))?;
     Ok(())
@@ -223,7 +223,7 @@ fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 #[pymodule]
 #[pyo3(name = "stream")]
-fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_stream(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     stream::init_module(py, module)
 }
 
@@ -317,7 +317,7 @@ fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// ```
 #[pymodule]
 #[pyo3(name = "symbol")]
-fn init_symbol(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_symbol(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     symbol::init_module(py, module)
 }
 

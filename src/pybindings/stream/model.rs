@@ -20,7 +20,7 @@ use crate::{
 
 use self::internals::DefaultEntropyModel;
 
-pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Model>()?;
     module.add_class::<CustomModel>()?;
     module.add_class::<ScipyModel>()?;
@@ -425,7 +425,7 @@ impl Categorical {
         let (lazy, perfect) = match (lazy, perfect) {
             (None, None) => {
                 if !WARNED.swap(true, Ordering::AcqRel) {
-                    let _ = py.run(
+                    let _ = py.run_bound(
                         "print('WARNING: Neither argument `perfect` nor `lazy` were specified for `Categorical` entropy model.\\n\
                              \x20        In this case, `perfect` currently defaults to `True` for backward compatibility, but\\n\
                              \x20        this default will change to `perfect=False` in constriction version 0.5.\\n\
@@ -908,7 +908,7 @@ impl Bernoulli {
         static WARNED: AtomicBool = AtomicBool::new(false);
 
         if perfect.is_none() && !WARNED.swap(true, Ordering::AcqRel) {
-            let _ = py.run(
+            let _ = py.run_bound(
                 "print('WARNING: Argument `perfect` was not specified for `Bernoulli` distribution.\\n\
                      \x20        It currently defaults to `perfect=True` for backward compatibility, but this default\\n\
                      \x20        will change to `perfect=False` in constriction version 0.5. To suppress this warning,\\n\

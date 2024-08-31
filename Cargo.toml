@@ -27,7 +27,7 @@ std = []
 # access to this library from python. This feature is turned off by default
 # because it causes problems with `cargo test` on Mac OS. To turn it on, run:
 #   cargo build --release --features pybindings
-pybindings = ["ndarray", "numpy", "pyo3"]
+pybindings = ["numpy", "pyo3"]
 
 [dependencies]
 hashbrown = "0.14.0"
@@ -37,7 +37,6 @@ smallvec = "1.6.1"
 libm = "0.2.6"
 probability = "0.20"
 
-ndarray = {version = "0.16", optional = true}
 numpy = {version = "0.21", optional = true}
 pyo3 = {version = "0.21", features = ["extension-module"], optional = true}
 

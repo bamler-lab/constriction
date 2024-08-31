@@ -6,7 +6,7 @@ use core::{
 };
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
 use pyo3::{prelude::*, wrap_pymodule};
 
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(init_huffman))?;
     module.add_class::<StackCoder>()?;
     module.add_class::<QueueEncoder>()?;
@@ -44,7 +44,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// Proceedings of the IRE 40.9 (1952): 1098-1101.
 #[pymodule]
 #[pyo3(name = "huffman")]
-fn init_huffman(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_huffman(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     huffman::init_module(py, module)
 }
 
@@ -137,9 +137,15 @@ impl StackCoder {
     /// `compressed = np.fromfile("filename")`) and then reconstruct a coder (for decoding)
     /// py passing `compressed` to the constructor of `StackCoder`.
     #[pyo3(text_signature = "(self)")]
-    pub fn get_compressed_and_bitrate<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+    pub fn get_compressed_and_bitrate<'p>(
+        &mut self,
+        py: Python<'p>,
+    ) -> (Bound<'p, PyArray1<u32>>, usize) {
         let len = self.inner.len();
-        (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
+        (
+            PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
+            len,
+        )
     }
 
     /// Deprecated method. Please use `get_compressed_and_bitrate` instead.
@@ -147,10 +153,10 @@ impl StackCoder {
     /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
     /// 0.4.0 to avoid confusion about the return type.)
     #[pyo3(text_signature = "(self)")]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (Bound<'p, PyArray1<u32>>, usize) {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::AcqRel) {
-            let _ = py.run(
+            let _ = py.run_bound(
                 "print('WARNING: `StackCoder.get_compressed` has been renamed to\\n\
                      \x20        `StackCoder.get_compressed_and_bitrate` to avoid confusion.",
                 None,
@@ -221,9 +227,15 @@ impl QueueEncoder {
     /// `compressed.tofile("filename")`), read it back in at a later point (with
     /// `compressed = np.fromfile("filename")`) and then construct a `QueueDecoder` from.
     #[pyo3(text_signature = "(self)")]
-    pub fn get_compressed_and_bitrate<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+    pub fn get_compressed_and_bitrate<'p>(
+        &mut self,
+        py: Python<'p>,
+    ) -> (Bound<'p, PyArray1<u32>>, usize) {
         let len = self.inner.len();
-        (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
+        (
+            PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
+            len,
+        )
     }
 
     /// Deprecated method. Please use `get_compressed_and_bitrate` instead.
@@ -231,10 +243,10 @@ impl QueueEncoder {
     /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
     /// 0.4.0 to avoid confusion about the return type.)
     #[pyo3(text_signature = "(self)")]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (Bound<'p, PyArray1<u32>>, usize) {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::AcqRel) {
-            let _ = py.run(
+            let _ = py.run_bound(
                 "print('WARNING: `QueueEncoder.get_compressed` has been renamed to\\n\
                      \x20        `QueueEncoder.get_compressed_and_bitrate` to avoid confusion.",
                 None,
