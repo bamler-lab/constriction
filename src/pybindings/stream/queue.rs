@@ -338,7 +338,7 @@ impl RangeEncoder {
 /// The constructor expects a single argument `compressed`, which has to be a rank-1 numpy array
 /// with `dtype=np.uint32` that contains the compressed data (as returned by the method
 /// [`get_compressed`](#constriction.stream.queue.RangeEncoder.get_compressed) of a `RangeEncoder`).
-/// The provided compressed data gets *copied* in to an internal buffer of the `RangeDecoder`.
+/// The provided compressed data gets *copied* into an internal buffer of the `RangeDecoder`.
 ///
 /// To decode data with a `RangeDecoder`, call its method
 /// [`decode`](#constriction.stream.queue.RangeDecoder.decode) one or more times. Each decoding

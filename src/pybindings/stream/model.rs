@@ -272,6 +272,24 @@ impl ScipyModel {
 /// Allows you to define any probability distribution over the alphabet `{0, 1, ... n-1}` by
 /// explicitly providing the probability of each symbol in the alphabet.
 ///
+/// ## Model Parameters
+///
+/// - **probabilities** --- the probability table, as a numpy array. You can specify the
+///   probabilities either directly when constructing the model by passing a rank-1 numpy
+///   array with a float `dtype` and length `n` to the constructor; or you can call the
+///   constructor with no `probabilities` argument and instead provide a rank-2 tensor of
+///   shape `(m, n)` when encoding or decoding an array of `m` symbols, as in the second
+///   example below.
+///
+/// The probability table for each symbol must be normalizable (i.e., all probabilities must
+/// be nonnegative and finite), but the probabilities don't necessarily have to sum to one.
+/// They will automatically be rescaled to an exactly normalized distribution. Further,
+/// `constriction` guarantees to assign at least the smallest representable nonzero
+/// probability to all symbols from the range `{0, 1, ..., n-1}` (where `n` is the number of
+/// provided probabilities), even if the provided probability for some symbol is smaller
+/// than the smallest representable probability (including if it is exactly `0.0`). This
+/// ensures that all symbols from this range can in principle be encoded.
+///
 /// ## Fixed Arguments
 ///
 /// The following arguments have to be provided directly to the constructor of the model.
@@ -283,33 +301,36 @@ impl ScipyModel {
 ///   that setting `lazy=True` implies `perfect=False`, see below. If you explicitly set
 ///   `perfect=False` anyway then the value of `lazy` only affects run time but has no
 ///   effect on the compression semantics. Thus, encoder and decoder may set `lazy`
-///   differently as long as both set `perfect=False`. Ignored if `perfect=False` and
+///   differently as long as they both set `perfect=False`. Ignored if `perfect=False` and
 ///   `probabilities` is not given (in this case, lazy model construction is always used as
-///   it is always faster without changing semantics).
+///   it is always faster and doesn't change semantics if `perfect=False`).
 /// - **perfect** -- whether the constructor should accept a potentially long run time to
-///   find the best possible approximation of the provided probability distribution. If set
-///   to `False` (recommended in most cases) then the constructor will run faster but might
-///   find a *very slightly* worse approximation of the provided probability distribution,
-///   thus leading to marginally lower bit rates. Note that encoder and decoder have to use
-///   the same setting for `perfect`. Most new code should set `perfect=False` as the
-///   differences in bit rate are usually hardly noticeable. However, if neither `lazy` nor
-///   `perfect` are explicitly set to any value then `perfect` currently defaults to `True`
-///   for binary backward compatibility with `constriction` version <= 0.3.5, which
-///   supported only `perfect=True` (see discussion of defaults below).
+///   find the best possible approximation of the provided probability distribution (within
+///   the limitations of fixed-point precision required to make the model exactly
+///   invertible). If set to `False` (recommended in most cases and implied if `lazy=True`)
+///   then the constructor will run faster but might find a *very slightly* worse
+///   approximation of the provided probability distribution, thus leading to marginally
+///   lower bit rates. Note that encoder and decoder have to use the same setting for
+///   `perfect`. Most new code should set `perfect=False` as the differences in bit rate are
+///   usually hardly noticeable. However, if neither `lazy` nor `perfect` are explicitly set
+///   to any value, then `perfect` currently defaults to `True` for binary backward
+///   compatibility with `constriction` version <= 0.3.5, which supported only
+///   `perfect=True` (this default will change in the future, see discussion of defaults
+///   below).
 ///
-/// **Defaults:**
+/// ## Default values of fixed arguments
 ///
 /// - If neither `lazy` nor `perfect` are set, then `constriction` currently defaults to
 ///   `perfect=True` (and therefore `lazy=False`) to provide binary backward compatibility
 ///   with `constriction` version <= 0.3.5. If you don't need to exchange binary compressed
 ///   data with code that uses `constriction` version <= 0.3.5 then it is recommended to set
-///   `perfect=True` to improve runtime performance. **Warning:** this default will change
-///   in `constriction` version 0.5, which will default to `perfect=False`.
-/// - If either one of `lazy` or `perfect` is specified but the other isn't, then the
-///   unspecified argument defaults to `False` with the following exception:
+///   `perfect=False` to improve runtime performance.<br> **Warning:** this default will
+///   change in `constriction` version 0.5, which will default to `perfect=False`.
+/// - If one of `lazy` or `perfect` is specified but the other isn't, then the unspecified
+///   argument defaults to `False` with the following exception:
 /// - If `perfect=False` and `probabilities` is not specified (i.e., if you're constructing
 ///   a model *family*) then `lazy` is automatically always `True` since, in this case, lazy
-///   model construction is always faster without changing semantics.
+///   model construction is always faster and doesn't change semantics if `perfect=False`.
 ///
 /// ## Examples
 ///
@@ -351,23 +372,6 @@ impl ScipyModel {
 /// reconstructed = coder.decode(model_family, probabilities)
 /// assert np.all(reconstructed == symbols) # (verify correctness)
 /// ```
-///
-/// ## Model Parameters
-///
-/// - **probabilities** --- the probability table, as a numpy array. You can specify the
-///   probabilities either directly when constructing the model by passing a rank-1 numpy
-///   array with a float `dtype` and length `n` to the constructor; or you can call the
-///   constructor with no arguments and instead provide a rank-2 tensor of shape `(m, n)`
-///   when encoding or decoding an array of `m` symbols, as in the second example above.
-///
-/// The probability table for each symbol must be normalizable (i.e., all probabilities must
-/// be nonnegative and finite), but the probabilities don't necessarily have to sum to one.
-/// They will automatically be rescaled to an exactly normalized distribution. Further,
-/// `constriction` guarantees to assign at least the smallest representable nonzero
-/// probability to all symbols from the range `{0, 1, ..., n-1}` (where `n` is the number of
-/// provided probabilities), even if the provided probability for some symbol is smaller
-/// than the smallest representable probability (including if it is exactly `0.0`). This
-/// ensures that all symbols from this range can in principle be encoded.
 #[pyclass(extends=Model)]
 #[derive(Debug)]
 struct Categorical;
