@@ -2,18 +2,21 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
-<meta name="generator" content="pdoc 0.10.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1">
+<meta name="generator" content="pdoc3 0.11.1">
 <title>constriction.stream.chain API documentation</title>
-<meta name="description" content="Experimental entropy coding algorithm for advanced variants of bits-back coding …" />
-<link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
-<link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
-<link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/styles/github.min.css" crossorigin>
-<style>:root{--highlight-color:#fe9}.flex{display:flex !important}body{line-height:1.5em}#content{padding:20px}#sidebar{padding:30px;overflow:hidden}#sidebar > *:last-child{margin-bottom:2cm}.http-server-breadcrumbs{font-size:130%;margin:0 0 15px 0}#footer{font-size:.75em;padding:5px 30px;border-top:1px solid #ddd;text-align:right}#footer p{margin:0 0 0 1em;display:inline-block}#footer p:last-child{margin-right:30px}h1,h2,h3,h4,h5{font-weight:300}h1{font-size:2.5em;line-height:1.1em}h2{font-size:1.75em;margin:1em 0 .50em 0}h3{font-size:1.4em;margin:25px 0 10px 0}h4{margin:0;font-size:105%}h1:target,h2:target,h3:target,h4:target,h5:target,h6:target{background:var(--highlight-color);padding:.2em 0}a{color:#058;text-decoration:none;transition:color .3s ease-in-out}a:hover{color:#e82}.title code{font-weight:bold}h2[id^="header-"]{margin-top:2em}.ident{color:#900}pre code{background:#f8f8f8;font-size:.8em;line-height:1.4em}code{background:#f2f2f1;padding:1px 4px;overflow-wrap:break-word}h1 code{background:transparent}pre{background:#f8f8f8;border:0;border-top:1px solid #ccc;border-bottom:1px solid #ccc;margin:1em 0;padding:1ex}#http-server-module-list{display:flex;flex-flow:column}#http-server-module-list div{display:flex}#http-server-module-list dt{min-width:10%}#http-server-module-list p{margin-top:0}.toc ul,#index{list-style-type:none;margin:0;padding:0}#index code{background:transparent}#index h3{border-bottom:1px solid #ddd}#index ul{padding:0}#index h4{margin-top:.6em;font-weight:bold}@media (min-width:200ex){#index .two-column{column-count:2}}@media (min-width:300ex){#index .two-column{column-count:3}}dl{margin-bottom:2em}dl dl:last-child{margin-bottom:4em}dd{margin:0 0 1em 3em}#header-classes + dl > dd{margin-bottom:3em}dd dd{margin-left:2em}dd p{margin:10px 0}.name{background:#eee;font-weight:bold;font-size:.85em;padding:5px 10px;display:inline-block;min-width:40%}.name:hover{background:#e0e0e0}dt:target .name{background:var(--highlight-color)}.name > span:first-child{white-space:nowrap}.name.class > span:nth-child(2){margin-left:.4em}.inherited{color:#999;border-left:5px solid #eee;padding-left:1em}.inheritance em{font-style:normal;font-weight:bold}.desc h2{font-weight:400;font-size:1.25em}.desc h3{font-size:1em}.desc dt code{background:inherit}.source summary,.git-link-div{color:#666;text-align:right;font-weight:400;font-size:.8em;text-transform:uppercase}.source summary > *{white-space:nowrap;cursor:pointer}.git-link{color:inherit;margin-left:1em}.source pre{max-height:500px;overflow:auto;margin:0}.source pre code{font-size:12px;overflow:visible}.hlist{list-style:none}.hlist li{display:inline}.hlist li:after{content:',\2002'}.hlist li:last-child:after{content:none}.hlist .hlist{display:inline;padding-left:1em}img{max-width:100%}td{padding:0 .5em}.admonition{padding:.1em .5em;margin-bottom:1em}.admonition-title{font-weight:bold}.admonition.note,.admonition.info,.admonition.important{background:#aef}.admonition.todo,.admonition.versionadded,.admonition.tip,.admonition.hint{background:#dfd}.admonition.warning,.admonition.versionchanged,.admonition.deprecated{background:#fd4}.admonition.error,.admonition.danger,.admonition.caution{background:lightpink}</style>
-<style media="screen and (min-width: 700px)">@media screen and (min-width:700px){#sidebar{width:30%;height:100vh;overflow:auto;position:sticky;top:0}#content{width:70%;max-width:100ch;padding:3em 4em;border-left:1px solid #ddd}pre code{font-size:1em}.item .name{font-size:1em}main{display:flex;flex-direction:row-reverse;justify-content:flex-end}.toc ul ul,#index ul{padding-left:1.5em}.toc > ul > li{margin-top:.5em}}</style>
+<meta name="description" content="Experimental entropy coding algorithm for advanced variants of bits-back coding …">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/13.0.0/sanitize.min.css" integrity="sha512-y1dtMcuvtTMJc1yPgEqF0ZjQbhnc/bFhyvIyVNb9Zk5mIGtqVaAB1Ttl28su8AvFMOY0EwRbAe+HCLqj6W7/KA==" crossorigin>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/13.0.0/typography.min.css" integrity="sha512-Y1DYSb995BAfxobCkKepB1BqJJTPrOp3zPL74AWFugHHmmdcvO+C48WLrUOlhGMc0QG7AE3f7gmvvcrmX2fDoA==" crossorigin>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css" crossorigin>
+<style>:root{--highlight-color:#fe9}.flex{display:flex !important}body{line-height:1.5em}#content{padding:20px}#sidebar{padding:1.5em;overflow:hidden}#sidebar > *:last-child{margin-bottom:2cm}.http-server-breadcrumbs{font-size:130%;margin:0 0 15px 0}#footer{font-size:.75em;padding:5px 30px;border-top:1px solid #ddd;text-align:right}#footer p{margin:0 0 0 1em;display:inline-block}#footer p:last-child{margin-right:30px}h1,h2,h3,h4,h5{font-weight:300}h1{font-size:2.5em;line-height:1.1em}h2{font-size:1.75em;margin:2em 0 .50em 0}h3{font-size:1.4em;margin:1.6em 0 .7em 0}h4{margin:0;font-size:105%}h1:target,h2:target,h3:target,h4:target,h5:target,h6:target{background:var(--highlight-color);padding:.2em 0}a{color:#058;text-decoration:none;transition:color .2s ease-in-out}a:visited{color:#503}a:hover{color:#b62}.title code{font-weight:bold}h2[id^="header-"]{margin-top:2em}.ident{color:#900;font-weight:bold}pre code{font-size:.8em;line-height:1.4em;padding:1em;display:block}code{background:#f3f3f3;font-family:"DejaVu Sans Mono",monospace;padding:1px 4px;overflow-wrap:break-word}h1 code{background:transparent}pre{border-top:1px solid #ccc;border-bottom:1px solid #ccc;margin:1em 0}#http-server-module-list{display:flex;flex-flow:column}#http-server-module-list div{display:flex}#http-server-module-list dt{min-width:10%}#http-server-module-list p{margin-top:0}.toc ul,#index{list-style-type:none;margin:0;padding:0}#index code{background:transparent}#index h3{border-bottom:1px solid #ddd}#index ul{padding:0}#index h4{margin-top:.6em;font-weight:bold}@media (min-width:200ex){#index .two-column{column-count:2}}@media (min-width:300ex){#index .two-column{column-count:3}}dl{margin-bottom:2em}dl dl:last-child{margin-bottom:4em}dd{margin:0 0 1em 3em}#header-classes + dl > dd{margin-bottom:3em}dd dd{margin-left:2em}dd p{margin:10px 0}.name{background:#eee;font-size:.85em;padding:5px 10px;display:inline-block;min-width:40%}.name:hover{background:#e0e0e0}dt:target .name{background:var(--highlight-color)}.name > span:first-child{white-space:nowrap}.name.class > span:nth-child(2){margin-left:.4em}.inherited{color:#999;border-left:5px solid #eee;padding-left:1em}.inheritance em{font-style:normal;font-weight:bold}.desc h2{font-weight:400;font-size:1.25em}.desc h3{font-size:1em}.desc dt code{background:inherit}.source summary,.git-link-div{color:#666;text-align:right;font-weight:400;font-size:.8em;text-transform:uppercase}.source summary > *{white-space:nowrap;cursor:pointer}.git-link{color:inherit;margin-left:1em}.source pre{max-height:500px;overflow:auto;margin:0}.source pre code{font-size:12px;overflow:visible}.hlist{list-style:none}.hlist li{display:inline}.hlist li:after{content:',\2002'}.hlist li:last-child:after{content:none}.hlist .hlist{display:inline;padding-left:1em}img{max-width:100%}td{padding:0 .5em}.admonition{padding:.1em 1em;margin-bottom:1em}.admonition-title{font-weight:bold}.admonition.note,.admonition.info,.admonition.important{background:#aef}.admonition.todo,.admonition.versionadded,.admonition.tip,.admonition.hint{background:#dfd}.admonition.warning,.admonition.versionchanged,.admonition.deprecated{background:#fd4}.admonition.error,.admonition.danger,.admonition.caution{background:lightpink}</style>
+<style media="screen and (min-width: 700px)">@media screen and (min-width:700px){#sidebar{width:30%;height:100vh;overflow:auto;position:sticky;top:0}#content{width:70%;max-width:100ch;padding:3em 4em;border-left:1px solid #ddd}pre code{font-size:1em}.name{font-size:1em}main{display:flex;flex-direction:row-reverse;justify-content:flex-end}.toc ul ul,#index ul ul{padding-left:1em}.toc > ul > li{margin-top:.5em}}</style>
 <style media="print">@media print{#sidebar h1{page-break-before:always}.source{display:none}}@media print{*{background:transparent !important;color:#000 !important;box-shadow:none !important;text-shadow:none !important}a[href]:after{content:" (" attr(href) ")";font-size:90%}a[href][title]:after{content:none}abbr[title]:after{content:" (" attr(title) ")"}.ir a:after,a[href^="javascript:"]:after,a[href^="#"]:after{content:""}pre,blockquote{border:1px solid #999;page-break-inside:avoid}thead{display:table-header-group}tr,img{page-break-inside:avoid}img{max-width:100% !important}@page{margin:0.5cm}p,h2,h3{orphans:3;widows:3}h1,h2,h3,h4,h5,h6{page-break-after:avoid}}</style>
-<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/highlight.min.js" integrity="sha256-Uv3H6lx7dJmRfRvH8TH6kJD1TSK1aFcwgx+mdg3epi8=" crossorigin></script>
-<script>window.addEventListener('DOMContentLoaded', () => hljs.initHighlighting())</script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha512-D9gUyxqja7hBtkWpPWGt9wfbfaMGVt9gnyCvYa+jojwwPHLCzUm5i8rpk7vD7wNee9bA35eYIjobYPaQuKS1MQ==" crossorigin></script>
+<script>window.addEventListener('DOMContentLoaded', () => {
+hljs.configure({languages: ['bash', 'css', 'diff', 'graphql', 'ini', 'javascript', 'json', 'plaintext', 'python', 'python-repl', 'rust', 'shell', 'sql', 'typescript', 'xml', 'yaml']});
+hljs.highlightAll();
+})</script>
 </head>
 <body>
 <main>
@@ -31,47 +34,135 @@ into a sequence of symbols, any modification to the entropy model for one symbol
 not affect decoding for any other symbol (by contrast, when decoding with an <code>AnsCoder</code>
 or <code>RangeDecoder</code>, a change to the entropy model for one symbol can affect <em>all</em>
 subsequently decoded symbols too, see <a href="#motivation">Motivation</a> below).</p>
-<p>This property of treating symbols independently upon decoding can be useful for advanced
-compression methods that combine inference, quantization, and bits-back coding.</p>
+<p>Treating symbols independently upon encoding and decoding can be useful for advanced
+compression methods that combine inference, quantization, and bits-back coding. In
+treating symbols independently, a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> bears some resemblance with symbol codes.
+However, in contrast to symbol codes, a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> still amortizes compressed bits
+over symbols and therefore has better compression effectiveness than a symbol code; in a
+sense, it just delays amortization to the very end of its life cycle (see "<a href="#how-does-chaincoder-work">How Does
+<code>ChainCoder</code> Work?</a>" below).</p>
+<h2 id="usage-example">Usage Example</h2>
+<p>A <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> is meant to be used as a building block for advanced applications of the
+bits-back trick [1, 2]. One therefore typically starts on the encoder side by <em>decoding</em>
+some "side information" into a sequence of symbols. On the decoder side, one then
+recovers the side information by <em>(re-)encoding</em> these symbols. It is important to be
+aware that both the initialization of a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> and the way how we obtain its
+encapsulated data differ from the encoder and decoder side, as illustrated in the
+following example of a full round trip:</p>
+<pre><code class="language-python"># Parameters for a few example Gaussian entropy models:
+leaky_gaussian = constriction.stream.model.QuantizedGaussian(-100, 100)
+means = np.array([3.2, -14.3, 5.7])
+stds = np.array([6.4, 4.2, 3.9])
+
+def run_encoder_part(side_information):
+    # Construct a `ChainCoder` for *decoding*:
+    coder = constriction.stream.chain.ChainCoder(
+        side_information,    # Provided bit string.
+        is_remainders=False, # Bit string is *not* remaining data after decoding.
+        seal=True            # Bit string comes from an external source here.
+    )
+    # Decode side information into a sequence of symbols as usual in bits-back coding:
+    symbols = coder.decode(leaky_gaussian, means, stds)
+    # Obtain what's *remaining* on the coder after decoding the symbols:
+    remaining1, remaining2 = coder.get_remainders()
+    return symbols, np.concatenate([remaining1, remaining2])
+
+def run_decoder_part(symbols, remaining):
+    # Construct a `ChainCoder` for *encoding*:
+    coder = constriction.stream.chain.ChainCoder(
+        remaining,           # Provided bit string.
+        is_remainders=True,  # Bit string *is* remaining data after decoding.
+        seal=False           # Bit string comes from a `ChainCoder`, no need to seal it.
+    )
+    # Re-encode the symbols to recover the side information:
+    coder.encode_reverse(symbols, leaky_gaussian, means, stds)
+    # Obtain the reconstructed data
+    data1, data2 = coder.get_data(unseal=True)
+    return np.concatenate([data1, data2])
+
+np.random.seed(123)
+sample_side_information = np.random.randint(2**32, size=10, dtype=np.uint32)
+symbols, remaining = run_encoder_part(sample_side_information)
+recovered = run_decoder_part(symbols, remaining)
+assert np.all(recovered == sample_side_information)
+</code></pre>
+<p>Notice that:</p>
+<ul>
+<li>we construct the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> with argument <code>is_remainders=False</code> on the encoder side
+(which <em>decodes</em> symbols from the side information), and with argument
+<code>is_remainders=True</code> on the decoder side (which <em>re-encodes</em> the symbols to recover the
+side information); and</li>
+<li>we export the remaining bit string on the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> after decoding some symbols
+from it by calling <code>get_remainders</code>, and we export the recovered side information after
+re-encoding the symbols by calling <code>get_data</code>. Both methods return a pair of bit
+strings (more precisely, <code>uint32</code> arrays) where only the second item of the pair is
+strictly required to invert the process we just performed, but we may concatenate the
+two bit strings without loss of information.</li>
+</ul>
+<p>To understand why this asymmetry between encoder and decoder side is necessary, see
+section "<a href="#how-does-chaincoder-work">How Does <code>ChainCoder</code> Work?</a>" below.</p>
+<p>[A side remark concerning the <code>seal</code> and <code>unseal</code> arguments: when constructing a
+<code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> from some bit string that we obtained from either
+<code>ChainCoder.get_remaining()</code> or from <code>AnsCoder.get_compressed()</code> then we may set
+<code>seal=False</code> in the constructor since these methods guarantee that the last word of the
+bit string is nonzero. By contrast, when we construct a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> from some bit
+string that is outside of our control (and that may therefore end in a zero word), then
+we have to set <code>seal=True</code> in the constructor (and we then have to set <code>unseal=True</code>
+when we want to get that bit string back via <code>get_data</code>).]</p>
 <h2 id="motivation">Motivation</h2>
-<p>The following two examples illustrate how decoding differs between an <code>AnsCoder</code> and a
-<code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>. In the first example, we decode from the same bitstring <code>data</code> twice with
-an <code>AnsCoder</code>: a first time with an initial sequence of toy entropy models, and then a
-second time with a slightly different sequence of entropy models. Importantly, we change
-only the entropy model for the first decoded symbol (and the change is small). The
-entropy models for all other symbols remain exactly unmodified. We observe, however,
-that changing the first entropy model affects not only the first decoded symbol. It also
-has a ripple effect on subsequently decoded symbols.</p>
+<p>The following two examples illustrate how the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> provided in this module
+differs from an <code>AnsCoder</code> from the sister module <code>constriction.stream.stack</code>.</p>
+<h3 id="the-problem-with-anscoder">The Problem With <code>AnsCoder</code></h3>
+<p>We start with an <code>AnsCoder</code>, and we decode a fixed bitstring <code>data</code> two times, using
+slightly different sequences of entropy models each time. As expected, decoding the same
+data with different entropy models leads to different sequences of decoded symbols.
+Somewhat surprisingly, however, changes to entropy models can have a ripple effect: in
+the example below, the line marked with "&lt;&ndash; change first entropy model" changes <em>only</em>
+the entropy model for the first symbol. Nevertheless, this change of a single entropy
+model causes the coder to decode different symbols in more than just that one place.</p>
 <pre><code class="language-python"># Some sample binary data and sample probabilities for our entropy models
-data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3e], np.uint32)
 probabilities = np.array(
     [[0.1, 0.7, 0.1, 0.1],  # (&lt;-- probabilities for first decoded symbol)
      [0.2, 0.2, 0.1, 0.5],  # (&lt;-- probabilities for second decoded symbol)
      [0.2, 0.1, 0.4, 0.3]]) # (&lt;-- probabilities for third decoded symbol)
-model_family = constriction.stream.model.Categorical()
+model_family = constriction.stream.model.Categorical(perfect=False)
 
-# Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 1]`:
+# Decoding `data` with an `AnsCoder` results in the symbols `[0, 0, 2]`:
 ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
-print(ansCoder.decode(model_family, probabilities)) # (prints: [0, 0, 1])
+print(ansCoder.decode(model_family, probabilities)) # (prints: [0, 0, 2])
 
 # Even if we change only the first entropy model (slightly), *all* decoded
 # symbols can change:
 probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
 ansCoder = constriction.stream.stack.AnsCoder(data, seal=True)
-print(ansCoder.decode(model_family, probabilities)) # (prints: [1, 0, 3])
+print(ansCoder.decode(model_family, probabilities)) # (prints: [1, 0, 0])
 </code></pre>
-<p>It's no surprise that the first symbol changed since we changed its entropy model. But
-note that the third symbol changed too even though we hadn't changed its entropy model.
-Thus, in ANS (as in most codes), changes to entropy models have a
-<em>global</em> effect.</p>
-<p>Now let's try the same with a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>:</p>
+<p>In the above example, it's no surprise that changing the first entropy model made the
+first decoded symbol change (from "0" to "1"). But notice that the third symbol also
+changes (from "1" to "3") even though we didn't change its entropy model. This ripple
+effect is a result of the fact that the internal state of <code>ansCoder</code> after decoding the
+first symbol depends on <code>model1</code>. This is usually what we'd want from a good entropy
+coder that packs as much information into as few bits as possible. However, it can
+become a problem in certain advanced compression methods that combine bits-back coding
+with quantization and inference. For those applications, a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>, illustrated in
+the next example, may be more suitable.</p>
+<h3 id="the-solution-with-a-chaincoder">The Solution With a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code></h3>
+<p>In the following example, we replace the <code>AnsCoder</code> with a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>. This means,
+firstly and somewhat trivially, that we will decode the same bit string <code>data</code> into a
+different sequence of symbols than in the last example because <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> uses a
+different entropy coding algorithm than <code>AnsCoder</code>. The more profound difference to the
+example with the <code>AnsCoder</code> above is, however, that changes to a single entropy model no
+longer have a ripple effect: when we now change the entropy model for one of the
+symbols, this change affects only the corresponding symbol. All subsequently decoded
+symbols remain unchanged.</p>
 <pre><code class="language-python"># Same compressed data and original entropy models as in our first example
-data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3d], np.uint32)
+data = np.array([0x80d14131, 0xdda97c6c, 0x5017a640, 0x01170a3e], np.uint32)
 probabilities = np.array(
-    [[0.1, 0.7, 0.1, 0.1],
-     [0.2, 0.2, 0.1, 0.5],
-     [0.2, 0.1, 0.4, 0.3]])
-model_family = constriction.stream.model.Categorical()
+    [[0.1, 0.7, 0.1, 0.1],  # (&lt;-- probabilities for first decoded symbol)
+     [0.2, 0.2, 0.1, 0.5],  # (&lt;-- probabilities for second decoded symbol)
+     [0.2, 0.1, 0.4, 0.3]]) # (&lt;-- probabilities for third decoded symbol)
+model_family = constriction.stream.model.Categorical(perfect=False)
 
 # Decode with the original entropy models, this time using a `ChainCoder`:
 chainCoder = constriction.stream.chain.ChainCoder(data, seal=True)
@@ -83,67 +174,69 @@ probabilities[0, :] = np.array([0.09, 0.71, 0.1, 0.1])
 chainCoder = constriction.stream.chain.ChainCoder(data, seal=True)
 print(chainCoder.decode(model_family, probabilities)) # (prints: [1, 3, 3])
 </code></pre>
-<p>Notice that the only symbol that changed was the one whose entropy model we had changed.
+<p>Notice that the only symbol that changes is the one whose entropy model we changed.
 Thus, in a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>, changes to entropy models (and also to compressed bits) only
 have a <em>local</em> effect on the decompressed symbols.</p>
-<h2 id="how-does-this-work">How does this work?</h2>
-<p>A <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> is a variant on ANS. To understand how a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> works, one first
-has to understand how an <code>AnsCoder</code> works. When an <code>AnsCoder</code> decodes a symbol, it
-performs the following three steps:</p>
+<h2 id="how-does-chaincoder-work">How Does <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> Work?</h2>
+<p>The class <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> uses an experimental new entropy coding algorithm that is
+inspired by but different to Asymmetric Numeral Systems (ANS) [3] as used by the
+<code>AnsCoder</code> in the sister module <code>constriction.stream.stack</code>. This experimental new
+entropy coding algorithm was proposed in Ref. [4].</p>
+<p><strong>In ANS</strong>, decoding a single symbol can conceptually be divided into three steps:</p>
 <ol>
-<li>The <code>AnsCoder</code> consumes a fixed amount of bits (24 bits in <code><a title="constriction" href="../index.html">constriction</a></code>'s default
-configuration) from the end of its encapsulated compressed data; then</li>
-<li>the <code>AnsCoder</code> interprets these 24 bits as a number <code>xi</code> between 0.0 and 1.0 in fixed
-point representation, and it maps <code>xi</code> to a symbol using the entropy model's quantile
-function (aka percent point function); finally</li>
-<li>the <code>AnsCoder</code> uses the bits-back trick to write (24 - inf_content) bits worth of
-(amortized) bits back onto the encapsulated compressed data; these "returned" bits
-reflect the information contained in the precise position of the number <code>xi</code> within
-the whole range of numbers that the quantile function would map to the same symbol.</li>
+<li>We chop off a <em>fixed integer</em> number of bits (the <code>AnsCoder</code> uses 24 bits by default)
+from the end of the compressed bit string.</li>
+<li>We interpret the 24 bits obtained from Step 1 above as the fixed-point binary
+representation of a fractional number between zero and one and we map this number to
+a symbol via the quantile function of the entropy model (the quantile function is the
+inverse of the cumulative distribution function; it is sometimes also called the
+percent-point function).</li>
+<li>We put back some (typically non-integer amount of) information content to the
+compressed bit string by using the bits-back trick [1, 2]. These "returned" bits
+account for the difference between the 24 bits that we consumed in Step 1 above and
+the true information content of the symbol that we decoded in Step 2 above.</li>
 </ol>
-<p>A <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> breaks these three steps apart. It encapsulates <em>two</em> rather than just
-one bitstring buffers, referred to in the following as "compressed" and "remainders".
-When you call the constructor of <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> with argument <code>is_remainders=False</code> (which
-is the default) then the provided argument <code>data</code> is used to initialize the "compressed"
-buffer. When the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> decodes a symbol, it executes steps 1-3 from above, with
-the modification that step 1 reads from the "compressed" buffer while step 3 writes to
-the "remainders" buffer. Since step 1 is independent of the employed entropy model,
-changes to the entropy model have no effect on subsequently decoded symbols.</p>
-<p>Once you're done decoding a sequence of symbols, you can concatenate the two buffers to
-a single one.</p>
-<h2 id="usage-for-bits-back-coding">Usage for Bits-Back Coding</h2>
-<p>A typical usage cycle of a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> goes along the following steps:</p>
-<h3 id="when-compressing-data-using-the-bits-back-trick">When compressing data using the bits-back trick</h3>
-<ol>
-<li>Start with some array of (typically already compressed) binary data, which you want
-to piggy-back into the choice of latent variables in a latent variable entropy model.</li>
-<li>Create a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>, passing into the constructor the binary data and the arguments
-<code>is_remainders=False</code> and <code>seal=True</code> (you can set <code>seal=False</code> if you know that the
-data cannot end in a zero word, e.g., if it comes from
-<code>AnsCoder.get_compressed(unseal=False)</code>).</li>
-<li>Decode the latent variables from the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> as usual in bits-back coding.</li>
-<li>Export the remaining data on the <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> by calling its method
-<code>.get_remainders()</code>. The method returns two numpy arrays, which you may concatenate in
-order.</li>
-<li>You can now use this remaining binary data in an <code>AnsCoder</code> (it is guaranteed not to
-have a zero word at the end, so you can set <code>seal=False</code> in the constructor of
-<code>AnsCoder</code>), and you can encode a message on top of it using entropy models that are
-conditioned on the latent variables you just decoded.</li>
-</ol>
-<h3 id="when-decompressing-the-data">When decompressing the data</h3>
-<ol>
-<li>Recreate the binary data that you had after encoder step 4 above, and the latent
-variables that you decoded in encoder step 3 above, as usual in bits-back coding.</li>
-<li>Pass it to the constructor of <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code>, with additional arguments
-<code>is_remainders=True</code> (<code>seal</code> always has to be <code>False</code> when <code>is_remainders=True</code>
-because remainders data is guaranteed not to end in a zero word).</li>
-<li>Encode the latent variables back onto the new <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> (in reverse order), using
-the same entropy models as during decoding.</li>
-<li>Recover the original binary data from encoder step 1 above by calling
-<code>.get_data(unseal=True)</code> (if you set <code>seal=False</code> in encoder step 2 above, then set
-<code>unseal=False</code> now). The method returns two arrays, which you may concatenate in
-order.</li>
-</ol>
+<p>The ripple effect from a single changed entropy model that we observed in the <a href="#the-problem-with-anscoder">ANS
+example above</a> comes from Step 3 of the ANS algorithm since
+the information content that we put back (and therefore also the internal state of the
+coder after putting back the information) depends on the employed entropy model. By
+contrast, Step 1 is independent of the entropy model and Step 2 does not mutate the
+coder's internal state. To avoid a ripple effect when changing entropy models, a
+<code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> therefore effectively postpones Step 3 to a later point.</p>
+<p>In detail, a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> keeps track of not just one but two bit strings, which we
+call <code>compressed</code> and <code>remaining</code>. When we use a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> to <em>decode</em> a symbol then
+we chop off 24 bits from <code>compressed</code> (analogous to Step 1 of the above ANS algorithm)
+and we identify the decoded symbol (Step 2); different to Step 3 of the ANS algorithm,
+however, we then put back the variable-length superfluous
+information to the <em>separate</em>
+bit string <code>remaining</code>. Thus, if we were to change the entropy model, this change can
+only affect the decoded symbol and the contents of <code>remaining</code> after decoding the
+symbol, but it will not affect the contents of <code>compressed</code> after decoding the symbol.
+Thus, any subsequent symbols that we decode from the bit string <code>compressed</code> remain
+unaffected.</p>
+<p>If we want to use a <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> to <em>encode</em> data then we have to initialize <code>remaining</code>
+with some sufficiently long bit string (by setting <code>is_remaining=True</code> in the
+constructor, see <a href="#usage-example">usage example</a>. The methods <code>get_remaining</code> and
+<code>get_data</code> return both bit strings <code>compressed</code> and <code>remaining</code> in the appropriate order
+and with an appropriate finishing that allows the caller to concatenate them without a
+delimiter (see again <a href="#usage-example">usage example</a>).</p>
+<h2 id="etymology">Etymology</h2>
+<p>The name <code><a title="constriction.stream.chain.ChainCoder" href="#constriction.stream.chain.ChainCoder">ChainCoder</a></code> refers to the fact that the coder consumes and generates
+compressed bits in fixed-sized quanta (24 bits per symbol by default), reminiscent of
+how a chain (as opposed to, say, a rope) can only be shortened or extended by
+fixed-sized quanta (the chain links).</p>
+<h2 id="references">References</h2>
+<ul>
+<li>[1] Townsend, James, Tom Bird, and David Barber. "Practical lossless compression with
+latent variables using bits back coding." arXiv preprint arXiv:1901.04866 (2019).</li>
+<li>[2] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
+replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.</li>
+<li>[3] Wallace, Chris S. "Classification by minimum-message-length inference."
+International Conference on Computing and Information. Springer, Berlin, Heidelberg,
+1990.</li>
+<li>[4] Bamler, Robert. "Understanding Entropy Coding With Asymmetric Numeral Systems
+(ANS): a Statistician's Perspective." arXiv preprint arXiv:2201.01741 (2022).</li>
+</ul>
 </section>
 <section>
 </section>
@@ -159,7 +252,19 @@ order.</li>
 <span>(</span><span>self, compressed, is_remainders=False, seal=False)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>See <a href="#usage-for-bits-back-coding">above usage instructions</a> for explanation of
+<div class="desc"><p>See module level documentation.</p>
+<p>Constructor arguments:</p>
+<ul>
+<li><code>data</code> is a one-dimensional numpy array of dtype <code>np.uint32</code>.</li>
+<li><code>is_remaining</code> should be <code>False</code> if you intend to <em>decode</em> symbols from <code>data</code> and
+<code>True</code> if you intend to <em>encode</em> symbols.</li>
+<li><code>seal</code> must be <code>False</code> (the default) if <code>is_remainders==True</code>, and it should be <code>True</code>
+if <code>is_remainders==False</code> unless you can guarantee that the last word of <code>data</code> is
+nonzero (e.g., if you obtained <code>data</code> from either
+<code>np.concatenate(ChainCoder.get_remaining())</code> or from <code>AnsCoder.get_compressed()</code> then
+the last word, if existent, is guaranteed to be nonzero and you may set <code>seal=False</code>).</li>
+</ul>
+<p>See <a href="#usage-example">above usage example</a> for a more elaborate explanation of the
 constructor arguments.</p></div>
 <h3>Methods</h3>
 <dl>
@@ -217,16 +322,17 @@ that you may want to concatenate.</p>
 </section>
 </article>
 <nav id="sidebar">
-<h1>Index</h1>
 <div class="toc">
 <ul>
-<li><a href="#motivation">Motivation</a></li>
-<li><a href="#how-does-this-work">How does this work?</a></li>
-<li><a href="#usage-for-bits-back-coding">Usage for Bits-Back Coding</a><ul>
-<li><a href="#when-compressing-data-using-the-bits-back-trick">When compressing data using the bits-back trick</a></li>
-<li><a href="#when-decompressing-the-data">When decompressing the data</a></li>
+<li><a href="#usage-example">Usage Example</a></li>
+<li><a href="#motivation">Motivation</a><ul>
+<li><a href="#the-problem-with-anscoder">The Problem With AnsCoder</a></li>
+<li><a href="#the-solution-with-a-chaincoder">The Solution With a ChainCoder</a></li>
 </ul>
 </li>
+<li><a href="#how-does-chaincoder-work">How Does ChainCoder Work?</a></li>
+<li><a href="#etymology">Etymology</a></li>
+<li><a href="#references">References</a></li>
 </ul>
 </div>
 <ul id="index">
@@ -253,7 +359,7 @@ that you may want to concatenate.</p>
 </nav>
 </main>
 <footer id="footer">
-<p>Generated by <a href="https://pdoc3.github.io/pdoc" title="pdoc: Python API documentation generator"><cite>pdoc</cite> 0.10.0</a>.</p>
+<p>Generated by <a href="https://pdoc3.github.io/pdoc" title="pdoc: Python API documentation generator"><cite>pdoc</cite> 0.11.1</a>.</p>
 </footer>
 </body>
 </html>
