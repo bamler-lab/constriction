@@ -48,12 +48,11 @@ jobs:
       - name: Test in development mode
         env:
           RUSTFLAGS: "-D warnings"
-        run: cargo test --all-targets
-
+        run: cargo test
       - name: Test in release mode
         env:
           RUSTFLAGS: "-D warnings"
-        run: cargo test --release --all-targets
+        run: cargo test --release
 
   miri-test:
     name: no_std and miri
@@ -104,7 +103,7 @@ jobs:
         env:
           RUSTFLAGS: "-Zrandomize-layout"
           MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-disable-isolation"
-        run: cargo +${{ steps.rust-version.outputs.rustc }} miri test --no-fail-fast --all-targets
+        run: cargo +${{ steps.rust-version.outputs.rustc }} miri test --no-fail-fast
 
   python-test:
     runs-on: ${{ matrix.os }}

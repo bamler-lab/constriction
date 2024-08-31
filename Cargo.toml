@@ -50,3 +50,4 @@ rand_xoshiro = "0.6"
 [[bench]]
 harness = false
 name = "lookup"
+test = true
