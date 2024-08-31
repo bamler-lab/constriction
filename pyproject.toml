@@ -49,18 +49,18 @@ python = "^3.8,<3.13"
 
 [tool.poetry.dev-dependencies]
 autopep8 = "*"
-flake8 = "^3.5"
-maturin = "^0.13.2"
-pdoc3 = "^0.10.0"
-pylint = "^2.6"
-pytest = "^7.4"
+flake8 = {version = "^7.1.1", python = ">=3.9"}
+maturin = "^1.7.1"
+pdoc3 = {version = "^0.11.1", python = ">=3.9"}
+pylint = "^3.2.7"
+pytest = "^8.3.2"
 pytest-runner = "*"
 scipy = [
   {version = "^1.8", python = ">=3.8,<3.12"},
   {version = "^1.11.3", python = ">=3.12"},
 ]
 toml = "^0.10.2"
-twine = "^3.7.1"
+twine = "^5.1.1"
 wheel = "*"
 
 [build-system]
