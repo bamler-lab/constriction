@@ -264,11 +264,13 @@ jobs:
       - name: Install latest stable Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # We don't return an error here if `cargo publish` fails for the same reason why
+      # we use `--skip-existing` in `twine upload` below.
       - name: Publish on crates.io
         if: github.event_name == 'release'
         run: |
           cargo login ${{ secrets.CARGO }}
-          cargo publish
+          cargo publish || echo "Publishing failed."
 
   python-publish:
     needs: testall
@@ -391,13 +393,15 @@ jobs:
           python -m pip install poetry
           poetry install --no-root
 
-      - name: Publish wheels (unix)
+      # We use `--skip-existing` here so that we can run The release script again
+      # (possibly after fixing maturin issues) if it failed on just some files.
+      - name: Publish wheels
         if: github.event_name == 'release'
         shell: bash
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI }}
-        run: poetry run twine upload target/wheels/*.whl
+        run: poetry run twine upload --skip-existing target/wheels/*.whl
 
       - name: Add wheels to Github release
         if: github.event_name == 'release'
