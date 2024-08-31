@@ -13,7 +13,7 @@ classifiers = [
   "Intended Audience :: Science/Research",
 ]
 dependencies = [
-  "numpy~=1.16",
+  "numpy>=1.16,<3.0",
 ]
 license = {text = "various (see LICENSE.html)"}
 maintainers = [
