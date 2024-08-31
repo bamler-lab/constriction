@@ -1,6 +1,9 @@
 pub mod huffman;
 
-use core::convert::Infallible;
+use core::{
+    convert::Infallible,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use std::prelude::v1::*;
 
 use numpy::{PyArray1, PyReadonlyArray1};
@@ -134,9 +137,28 @@ impl StackCoder {
     /// `compressed = np.fromfile("filename")`) and then reconstruct a coder (for decoding)
     /// py passing `compressed` to the constructor of `StackCoder`.
     #[pyo3(text_signature = "(self)")]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+    pub fn get_compressed_and_bitrate<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
         let len = self.inner.len();
         (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
+    }
+
+    /// Deprecated method. Please use `get_compressed_and_bitrate` instead.
+    ///
+    /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
+    /// 0.4.0 to avoid confusion about the return type.)
+    #[pyo3(text_signature = "(self)")]
+    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::AcqRel) {
+            let _ = py.run(
+                "print('WARNING: `StackCoder.get_compressed` has been renamed to\\n\
+                     \x20        `StackCoder.get_compressed_and_bitrate` to avoid confusion.",
+                None,
+                None,
+            );
+        }
+
+        self.get_compressed_and_bitrate(py)
     }
 }
 
@@ -199,9 +221,28 @@ impl QueueEncoder {
     /// `compressed.tofile("filename")`), read it back in at a later point (with
     /// `compressed = np.fromfile("filename")`) and then construct a `QueueDecoder` from.
     #[pyo3(text_signature = "(self)")]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+    pub fn get_compressed_and_bitrate<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
         let len = self.inner.len();
         (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
+    }
+
+    /// Deprecated method. Please use `get_compressed_and_bitrate` instead.
+    ///
+    /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
+    /// 0.4.0 to avoid confusion about the return type.)
+    #[pyo3(text_signature = "(self)")]
+    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::AcqRel) {
+            let _ = py.run(
+                "print('WARNING: `QueueEncoder.get_compressed` has been renamed to\\n\
+                     \x20        `QueueEncoder.get_compressed_and_bitrate` to avoid confusion.",
+                None,
+                None,
+            );
+        }
+
+        self.get_compressed_and_bitrate(py)
     }
 
     /// Shortcut for `QueueDecoder(encoder.get_compressed())` where `encoder` is a
