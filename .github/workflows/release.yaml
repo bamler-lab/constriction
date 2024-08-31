@@ -343,7 +343,7 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-7.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe
+          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe
 
       - name: Cross-build wheels for Apple Silicon
         if: matrix.os == 'macos-latest'
