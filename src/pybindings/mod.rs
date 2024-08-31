@@ -116,8 +116,8 @@ use crate::NanError;
 ///
 /// # Same message as above, but a complex entropy model consisting of two parts:
 /// message = np.array([6,   10,   -4,   2,   5,    2, 1, 0, 2], dtype=np.int32)
-/// means   = np.array([2.3,  6.1, -8.5, 4.1, 1.3], dtype=np.float64)
-/// stds    = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float64)
+/// means   = np.array([2.3,  6.1, -8.5, 4.1, 1.3], dtype=np.float32)
+/// stds    = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float32)
 /// entropy_model1 = constriction.stream.model.QuantizedGaussian(-50, 50)
 /// entropy_model2 = constriction.stream.model.Categorical(
 ///     np.array([0.2, 0.5, 0.3], dtype=np.float32), # Probabilities of the symbols 0,1,2.
@@ -259,7 +259,7 @@ fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// import numpy as np
 ///
 /// # Define an entropy model over the (implied) alphabet {0, 1, 2, 3}:
-/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float64)
+/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float32)
 ///
 /// # Encode some example message, using the same model for each symbol here:
 /// message = [1, 3, 2, 3, 0, 1, 3, 0, 2, 1, 1, 3, 3, 1, 2, 0, 1, 3, 1]
@@ -291,7 +291,7 @@ fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// import numpy as np
 ///
 /// # Define an entropy model over the (implied) alphabet {0, 1, 2, 3}:
-/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float64)
+/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float32)
 ///
 /// # Encode some example message, using the same model for each symbol here:
 /// message = [1, 3, 2, 3, 0, 1, 3, 0, 2, 1, 1, 3, 3, 1, 2, 0, 1, 3, 1]
@@ -332,12 +332,12 @@ pub type PyReadonlyFloatArray2<'py> = PyReadonlyFloatArray<'py, numpy::Ix2>;
 
 impl<'py, D: ndarray::Dimension> FromPyObject<'py> for PyReadonlyFloatArray<'py, D> {
     fn extract(ob: &'py PyAny) -> PyResult<Self> {
-        if let Ok(x) = ob.extract::<PyReadonlyArray<'_, f32, D>>() {
-            Ok(PyReadonlyFloatArray::F32(x))
+        if let Ok(x) = ob.extract::<PyReadonlyArray<'_, f64, D>>() {
+            Ok(PyReadonlyFloatArray::F64(x))
         } else {
             // This should also return a well crafted error in case it fails.
-            ob.extract::<PyReadonlyArray<'_, f64, D>>()
-                .map(PyReadonlyFloatArray::F64)
+            ob.extract::<PyReadonlyArray<'_, f32, D>>()
+                .map(PyReadonlyFloatArray::F32)
         }
     }
 }

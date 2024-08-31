@@ -51,6 +51,7 @@ def test_module_example3():
     compressed = encoder.get_compressed()
     print(f"compressed representation: {compressed}")
     print(f"(in binary: {[bin(word) for word in compressed]})")
+    assert np.all(compressed == np.array([3176507206], dtype=np.uint32))
 
     decoder = constriction.stream.queue.RangeDecoder(compressed)
     decoded_part1 = decoder.decode(entropy_model1, means, stds)
