@@ -2480,6 +2480,14 @@ mod tests {
     }
 
     #[test]
+    fn send_and_sync() {
+        fn ensure_send_and_sync<T: Send + Sync>(_: T) {}
+
+        let tree = AugmentedBTree::<F32, u32, 8>::new();
+        ensure_send_and_sync(tree);
+    }
+
+    #[test]
     fn manual() {
         dbg!(manual_internal::<128>());
         dbg!(manual_internal::<10>());
