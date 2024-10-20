@@ -56,6 +56,16 @@ jobs:
           RUSTFLAGS: "-D warnings"
         run: cargo test --release
 
+      - name: "Install cargo-msrv"
+        uses: taiki-e/install-action@v2
+        if: matrix.os != 'windows-latest' # work around https://github.com/foresterre/cargo-msrv/issues/1036
+        with:
+          tool: cargo-msrv
+      
+      - name: "Verify minimum supported rust version (MSRV)"
+        if: matrix.os != 'windows-latest' # work around https://github.com/foresterre/cargo-msrv/issues/1036
+        run: cargo msrv verify -- cargo check --all-features
+
       - name: Test `no_std` compatibility
         shell: bash
         working-directory: ensure_no_std
