@@ -134,6 +134,7 @@ jobs:
         run: poetry run maturin develop --release --features pybindings
 
       - name: pytest with numpy version 1.x
+        if: matrix.python-version != '3.13'
         shell: bash
         run: |
           poetry run python -m pip install numpy~=1.16
@@ -149,6 +150,7 @@ jobs:
           exit ${PIPESTATUS[0]}
 
       - name: Verify that pytest used correct python version
+        if: matrix.python-version != '3.13'
         shell: bash
         run: |
           USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest-numpy1.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
