@@ -44,7 +44,7 @@ pub struct RangeEncoder {
 impl RangeEncoder {
     /// Constructs a new (empty) range encoder.
     #[new]
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn new() -> Self {
         let inner = crate::stream::queue::DefaultRangeEncoder::new();
         Self { inner }
@@ -54,7 +54,7 @@ impl RangeEncoder {
     ///
     /// This removes any existing compressed data on the coder. It is equivalent to replacing the
     /// coder with a new one but slightly more efficient.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn clear(&mut self) {
         self.inner.clear();
     }
@@ -74,7 +74,7 @@ impl RangeEncoder {
     /// ## Example
     ///
     /// See [`seek`](#constriction.stream.queue.RangeDecoder.seek).
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn pos(&mut self) -> (usize, (u64, u64)) {
         let (pos, state) = self.inner.pos();
         (pos, (state.lower(), state.range().get()))
@@ -84,7 +84,7 @@ impl RangeEncoder {
     ///
     /// Thus, the number returned by this method is the length of the array that you would get if
     /// you called [`get_compressed`](#constriction.stream.queue.RangeEncoder.get_compressed).
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn num_words(&self) -> usize {
         self.inner.num_words()
     }
@@ -93,7 +93,7 @@ impl RangeEncoder {
     ///
     /// This is 32 times the result of what [`num_words`](#constriction.stream.queue.RangeEncoder.num_words)
     /// would return.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn num_bits(&self) -> usize {
         self.inner.num_bits()
     }
@@ -103,7 +103,7 @@ impl RangeEncoder {
     /// The default initial state is the state returned by the constructor when
     /// called without arguments, or the state to which the coder is set when
     /// calling `clear`.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
@@ -145,7 +145,7 @@ impl RangeEncoder {
     /// decoder = constriction.stream.queue.RangeDecoder(compressed)
     /// # ... decode the message (skipped here) ...
     /// ```
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> Bound<'p, PyArray1<u32>> {
         PyArray1::from_slice_bound(py, &self.inner.get_compressed())
     }
@@ -168,7 +168,7 @@ impl RangeEncoder {
     ///
     /// Calling `get_decoder` is more efficient since it copies the compressed data only once
     /// whereas the longhand version copies the data twice.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn get_decoder(&mut self) -> RangeDecoder {
         let compressed = self.inner.get_compressed().to_vec();
         RangeDecoder::from_vec(compressed)
@@ -264,18 +264,18 @@ impl RangeEncoder {
     /// encoder.encode(symbols, model_family, probabilities)
     /// print(encoder.get_compressed()) # (prints: [2705829510])
     /// ```
-    #[pyo3(signature = (symbols, model, *params), text_signature = "(self, symbols, model, *optional_model_params)")]
+    #[pyo3(signature = (symbols, model, *optional_model_params))]
     pub fn encode(
         &mut self,
         py: Python<'_>,
         symbols: &Bound<'_, PyAny>,
         model: &Model,
-        params: &Bound<'_, PyTuple>,
+        optional_model_params: &Bound<'_, PyTuple>,
     ) -> PyResult<()> {
         // TODO: also allow encoding and decoding with model type instead of instance for
         // models that take no range.
         if let Ok(symbol) = symbols.extract::<i32>() {
-            if !params.is_empty() {
+            if !optional_model_params.is_empty() {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "To encode a single symbol, use a concrete model, i.e., pass the\n\
                     model parameters directly to the constructor of the model and not to the\n\
@@ -298,7 +298,7 @@ impl RangeEncoder {
         let symbols = symbols.extract::<PyReadonlyArray1<'_, i32>>()?;
         let symbols = symbols.as_array();
 
-        if params.is_empty() {
+        if optional_model_params.is_empty() {
             model.0.as_parameterized(py, &mut |model| {
                 self.inner
                     .encode_iid_symbols(symbols, EncoderDecoderModel(model))?;
@@ -306,21 +306,26 @@ impl RangeEncoder {
             })?;
         } else {
             if symbols.len()
-                != model
-                    .0
-                    .len(&params.iter().next().expect("len checked above"))?
+                != model.0.len(
+                    &optional_model_params
+                        .iter()
+                        .next()
+                        .expect("len checked above"),
+                )?
             {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "`symbols` argument has wrong length.",
                 ));
             }
             let mut symbol_iter = symbols.iter();
-            model.0.parameterize(py, params, false, &mut |model| {
-                let symbol = symbol_iter.next().expect("TODO");
-                self.inner
-                    .encode_symbol(*symbol, EncoderDecoderModel(model))?;
-                Ok(())
-            })?;
+            model
+                .0
+                .parameterize(py, optional_model_params, false, &mut |model| {
+                    let symbol = symbol_iter.next().expect("TODO");
+                    self.inner
+                        .encode_symbol(*symbol, EncoderDecoderModel(model))?;
+                    Ok(())
+                })?;
         }
 
         Ok(())
@@ -331,7 +336,7 @@ impl RangeEncoder {
     /// The returned copy will initially encapsulate the identical compressed data as the
     /// original coder, but the two coders can be used independently without influencing
     /// other.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn clone(&self) -> Self {
         Clone::clone(self)
     }
@@ -361,7 +366,7 @@ pub struct RangeDecoder {
 #[pymethods]
 impl RangeDecoder {
     #[new]
-    #[pyo3(text_signature = "(self, compressed)")]
+    #[pyo3(signature = (compressed))]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
         Ok(Self::from_vec(compressed.to_vec()?))
     }
@@ -397,7 +402,7 @@ impl RangeDecoder {
     /// decoded_part2 = decoder.decode(model, 5)
     /// assert np.all(decoded_part2 == message_part2)
     /// ```
-    #[pyo3(text_signature = "(self, position, state)")]
+    #[pyo3(signature = (position, state))]
     pub fn seek(&mut self, position: usize, state: (u64, u64)) -> PyResult<()> {
         let (lower, range) = state;
         let state = RangeCoderState::new(lower, range)
@@ -415,7 +420,7 @@ impl RangeDecoder {
     /// of-stream in all cases. If you need ot be able to decode variable-length messages then you
     /// can introduce an "end of stream" sentinel symbol, which you append to all messages before
     /// encoding them.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn maybe_exhausted(&self) -> bool {
         self.inner.maybe_exhausted()
     }
@@ -515,14 +520,14 @@ impl RangeDecoder {
     /// symbols = decoder.decode(model_family, probabilities)
     /// print(symbols) # (prints: [3, 1])
     /// ```
-    #[pyo3(signature = (model, *params), text_signature = "(self, model, *optional_amt_or_model_params)")]
+    #[pyo3(signature = (model, *optional_amt_or_model_params))]
     pub fn decode(
         &mut self,
         py: Python<'_>,
         model: &Model,
-        params: &Bound<'_, PyTuple>,
+        optional_amt_or_model_params: &Bound<'_, PyTuple>,
     ) -> PyResult<PyObject> {
-        match params.len() {
+        match optional_amt_or_model_params.len() {
             0 => {
                 let mut symbol = 0;
                 model.0.as_parameterized(py, &mut |model| {
@@ -532,9 +537,12 @@ impl RangeDecoder {
                 return Ok(symbol.to_object(py));
             }
             1 => {
-                if let Ok(amt) =
-                    usize::extract_bound(&params.iter().next().expect("len checked above"))
-                {
+                if let Ok(amt) = usize::extract_bound(
+                    &optional_amt_or_model_params
+                        .iter()
+                        .next()
+                        .expect("len checked above"),
+                ) {
                     let mut symbols = Vec::with_capacity(amt);
                     model.0.as_parameterized(py, &mut |model| {
                         for symbol in self
@@ -552,15 +560,20 @@ impl RangeDecoder {
         };
 
         let mut symbols = Vec::with_capacity(
-            model
-                .0
-                .len(&params.iter().next().expect("len checked above"))?,
+            model.0.len(
+                &optional_amt_or_model_params
+                    .iter()
+                    .next()
+                    .expect("len checked above"),
+            )?,
         );
-        model.0.parameterize(py, params, false, &mut |model| {
-            let symbol = self.inner.decode_symbol(EncoderDecoderModel(model))?;
-            symbols.push(symbol);
-            Ok(())
-        })?;
+        model
+            .0
+            .parameterize(py, optional_amt_or_model_params, false, &mut |model| {
+                let symbol = self.inner.decode_symbol(EncoderDecoderModel(model))?;
+                symbols.push(symbol);
+                Ok(())
+            })?;
 
         Ok(PyArray1::from_vec_bound(py, symbols).to_object(py))
     }
@@ -570,7 +583,7 @@ impl RangeDecoder {
     /// The returned copy will initially encapsulate the identical compressed data as the
     /// original coder, but the two coders can be used independently without influencing
     /// other.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn clone(&self) -> Self {
         Clone::clone(self)
     }

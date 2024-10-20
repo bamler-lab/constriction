@@ -164,7 +164,7 @@ impl AnsCoder {
     /// ## Example
     ///
     /// See [`seek`](#constriction.stream.stack.AnsCoder.seek).
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn pos(&mut self) -> (usize, u64) {
         self.inner.pos()
     }
@@ -206,7 +206,7 @@ impl AnsCoder {
     /// decoded_part2 = coder.decode(model, 5)
     /// assert np.all(decoded_part2 == message_part2)
     /// ```
-    #[pyo3(text_signature = "(self, position, state)")]
+    #[pyo3(signature = (position, state))]
     pub fn seek(&mut self, position: usize, state: u64) -> PyResult<()> {
         self.inner.seek((position, state)).map_err(|()| {
             pyo3::exceptions::PyValueError::new_err(
@@ -221,7 +221,7 @@ impl AnsCoder {
     ///
     /// This removes any existing compressed data on the encoder. It is equivalent to replacing the
     /// encoder with a new one but slightly more efficient.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn clear(&mut self) {
         self.inner.clear();
     }
@@ -231,7 +231,7 @@ impl AnsCoder {
     /// Thus, the number returned by this method is the length of the array that you would get if
     /// you called [`get_compressed`](#constriction.stream.queue.RangeEncoder.get_compressed)
     /// without arguments.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn num_words(&self) -> usize {
         self.inner.num_words()
     }
@@ -240,7 +240,7 @@ impl AnsCoder {
     ///
     /// This is 32 times the result of what [`num_words`](#constriction.stream.queue.RangeEncoder.num_words)
     /// would return.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn num_bits(&self) -> usize {
         self.inner.num_bits()
     }
@@ -248,7 +248,7 @@ impl AnsCoder {
     /// The current size of the compressed data, in bits, not rounded up to full words.
     ///
     /// This can be at most 32 smaller than `.num_bits()`.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn num_valid_bits(&self) -> usize {
         self.inner.num_valid_bits()
     }
@@ -258,7 +258,7 @@ impl AnsCoder {
     /// The default initial state is the state returned by the constructor when
     /// called without arguments, or the state to which the coder is set when
     /// calling `clear`.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
@@ -435,16 +435,16 @@ impl AnsCoder {
     /// coder.encode_reverse(symbols, model_family, probabilities)
     /// print(coder.get_compressed()) # (prints: [45298482])
     /// ```
-    #[pyo3(signature = (symbols, model, *params), text_signature = "(self, symbols, model, *optional_model_params)")]
+    #[pyo3(signature = (symbols, model, *optional_model_params))]
     pub fn encode_reverse(
         &mut self,
         py: Python<'_>,
         symbols: &Bound<'_, PyAny>,
         model: &Model,
-        params: &Bound<'_, PyTuple>,
+        optional_model_params: &Bound<'_, PyTuple>,
     ) -> PyResult<()> {
         if let Ok(symbol) = symbols.extract::<i32>() {
-            if !params.is_empty() {
+            if !optional_model_params.is_empty() {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "To encode a single symbol, use a concrete model, i.e., pass the\n\
                     model parameters directly to the constructor of the model and not to the\n\
@@ -467,7 +467,7 @@ impl AnsCoder {
         let symbols = symbols.extract::<PyReadonlyArray1<'_, i32>>()?;
         let symbols = symbols.as_array();
 
-        if params.is_empty() {
+        if optional_model_params.is_empty() {
             model.0.as_parameterized(py, &mut |model| {
                 self.inner
                     .encode_iid_symbols_reverse(symbols, EncoderDecoderModel(model))?;
@@ -475,21 +475,26 @@ impl AnsCoder {
             })?;
         } else {
             if symbols.len()
-                != model
-                    .0
-                    .len(&params.iter().next().expect("len checked above"))?
+                != model.0.len(
+                    &optional_model_params
+                        .iter()
+                        .next()
+                        .expect("len checked above"),
+                )?
             {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "`symbols` argument has wrong length.",
                 ));
             }
             let mut symbol_iter = symbols.iter().rev();
-            model.0.parameterize(py, params, true, &mut |model| {
-                let symbol = symbol_iter.next().expect("TODO");
-                self.inner
-                    .encode_symbol(*symbol, EncoderDecoderModel(model))?;
-                Ok(())
-            })?;
+            model
+                .0
+                .parameterize(py, optional_model_params, true, &mut |model| {
+                    let symbol = symbol_iter.next().expect("TODO");
+                    self.inner
+                        .encode_symbol(*symbol, EncoderDecoderModel(model))?;
+                    Ok(())
+                })?;
         }
 
         Ok(())
@@ -590,14 +595,14 @@ impl AnsCoder {
     /// symbols = coder.decode(model_family, probabilities)
     /// print(symbols) # (prints: [3, 1])
     /// ```
-    #[pyo3(signature = (model, *params), text_signature = "(self, model, *optional_amt_or_model_params)")]
+    #[pyo3(signature = (model, *optional_amt_or_model_params))]
     pub fn decode(
         &mut self,
         py: Python<'_>,
         model: &Model,
-        params: &Bound<'_, PyTuple>,
+        optional_amt_or_model_params: &Bound<'_, PyTuple>,
     ) -> PyResult<PyObject> {
-        match params.len() {
+        match optional_amt_or_model_params.len() {
             0 => {
                 let mut symbol = 0;
                 model.0.as_parameterized(py, &mut |model| {
@@ -610,9 +615,12 @@ impl AnsCoder {
                 return Ok(symbol.to_object(py));
             }
             1 => {
-                if let Ok(amt) =
-                    usize::extract_bound(&params.iter().next().expect("len checked above"))
-                {
+                if let Ok(amt) = usize::extract_bound(
+                    &optional_amt_or_model_params
+                        .iter()
+                        .next()
+                        .expect("len checked above"),
+                ) {
                     let mut symbols = Vec::with_capacity(amt);
                     model.0.as_parameterized(py, &mut |model| {
                         for symbol in self
@@ -630,18 +638,23 @@ impl AnsCoder {
         };
 
         let mut symbols = Vec::with_capacity(
-            model
-                .0
-                .len(&params.iter().next().expect("len checked above"))?,
+            model.0.len(
+                &optional_amt_or_model_params
+                    .iter()
+                    .next()
+                    .expect("len checked above"),
+            )?,
         );
-        model.0.parameterize(py, params, false, &mut |model| {
-            let symbol = self
-                .inner
-                .decode_symbol(EncoderDecoderModel(model))
-                .unwrap_infallible();
-            symbols.push(symbol);
-            Ok(())
-        })?;
+        model
+            .0
+            .parameterize(py, optional_amt_or_model_params, false, &mut |model| {
+                let symbol = self
+                    .inner
+                    .decode_symbol(EncoderDecoderModel(model))
+                    .unwrap_infallible();
+                symbols.push(symbol);
+                Ok(())
+            })?;
 
         Ok(PyArray1::from_vec_bound(py, symbols).to_object(py))
     }
@@ -651,7 +664,7 @@ impl AnsCoder {
     /// The returned copy will initially encapsulate the identical compressed data as the
     /// original coder, but the two coders can be used independently without influencing
     /// other.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn clone(&self) -> Self {
         Clone::clone(self)
     }

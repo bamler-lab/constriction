@@ -149,7 +149,7 @@ pub struct CustomModel;
 impl CustomModel {
     #[new]
     #[pyo3(
-        text_signature = "(self, cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)"
+        signature = (cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)
     )]
     pub fn new(
         cdf: PyObject,
@@ -250,16 +250,16 @@ pub struct ScipyModel;
 #[pymethods]
 impl ScipyModel {
     #[new]
-    #[pyo3(text_signature = "(self, scipy_model, min_symbol_inclusive, max_symbol_inclusive)")]
+    #[pyo3(signature = (scipy_model, min_symbol_inclusive, max_symbol_inclusive))]
     pub fn new(
         py: Python<'_>,
-        model: PyObject,
+        scipy_model: PyObject,
         min_symbol_inclusive: i32,
         max_symbol_inclusive: i32,
     ) -> PyResult<PyClassInitializer<Self>> {
         let custom_model = CustomModel::new(
-            model.getattr(py, "cdf")?,
-            model.getattr(py, "ppf")?,
+            scipy_model.getattr(py, "cdf")?,
+            scipy_model.getattr(py, "ppf")?,
             min_symbol_inclusive,
             max_symbol_inclusive,
         );

@@ -105,7 +105,7 @@ impl ChainCoder {
     ///
     /// See [above usage instructions](#usage-for-bits-back-coding) for further explanation.
     #[allow(clippy::type_complexity)]
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn get_remainders<'p>(
         &self,
         py: Python<'p>,
@@ -124,16 +124,16 @@ impl ChainCoder {
     /// buffer, regardless of the employed entropy model(s), and it consumes (24 bits - inf_content)
     /// per symbol from the internal "remainders" buffer (where "inf_content" is the information
     /// content of the encoded symbol under the employed entropy model).
-    #[pyo3(signature = (symbols, model, *params), text_signature = "(self, symbols, model, *optional_model_params)")]
+    #[pyo3(signature = (symbols, model, *optional_model_params))]
     pub fn encode_reverse(
         &mut self,
         py: Python<'_>,
         symbols: &Bound<'_, PyAny>,
         model: &Model,
-        params: &Bound<'_, PyTuple>,
+        optional_model_params: &Bound<'_, PyTuple>,
     ) -> PyResult<()> {
         if let Ok(symbol) = symbols.extract::<i32>() {
-            if !params.is_empty() {
+            if !optional_model_params.is_empty() {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "To encode a single symbol, use a concrete model, i.e., pass the\n\
                     model parameters directly to the constructor of the model and not to the\n\
@@ -156,7 +156,7 @@ impl ChainCoder {
         let symbols = symbols.extract::<PyReadonlyArray1<'_, i32>>()?;
         let symbols = symbols.as_array();
 
-        if params.is_empty() {
+        if optional_model_params.is_empty() {
             model.0.as_parameterized(py, &mut |model| {
                 self.inner
                     .encode_iid_symbols_reverse(symbols, EncoderDecoderModel(model))?;
@@ -164,21 +164,26 @@ impl ChainCoder {
             })?;
         } else {
             if symbols.len()
-                != model
-                    .0
-                    .len(&params.iter().next().expect("len checked above"))?
+                != model.0.len(
+                    &optional_model_params
+                        .iter()
+                        .next()
+                        .expect("len checked above"),
+                )?
             {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "`symbols` argument has wrong length.",
                 ));
             }
             let mut symbol_iter = symbols.iter().rev();
-            model.0.parameterize(py, params, true, &mut |model| {
-                let symbol = symbol_iter.next().expect("TODO");
-                self.inner
-                    .encode_symbol(*symbol, EncoderDecoderModel(model))?;
-                Ok(())
-            })?;
+            model
+                .0
+                .parameterize(py, optional_model_params, true, &mut |model| {
+                    let symbol = symbol_iter.next().expect("TODO");
+                    self.inner
+                        .encode_symbol(*symbol, EncoderDecoderModel(model))?;
+                    Ok(())
+                })?;
         }
 
         Ok(())
@@ -193,14 +198,14 @@ impl ChainCoder {
     /// bits - inf_content) per symbol to the internal "remainders" buffer (where
     /// "inf_content" is the information content of the decoded symbol under the employed
     /// entropy model).
-    #[pyo3(signature = (model, *params), text_signature = "(self, model, *optional_amt_or_model_params)")]
+    #[pyo3(signature = (model, *optional_amt_or_model_params))]
     pub fn decode(
         &mut self,
         py: Python<'_>,
         model: &Model,
-        params: &Bound<'_, PyTuple>,
+        optional_amt_or_model_params: &Bound<'_, PyTuple>,
     ) -> PyResult<PyObject> {
-        match params.len() {
+        match optional_amt_or_model_params.len() {
             0 => {
                 let mut symbol = 0;
                 model.0.as_parameterized(py, &mut |model| {
@@ -213,9 +218,12 @@ impl ChainCoder {
                 return Ok(symbol.to_object(py));
             }
             1 => {
-                if let Ok(amt) =
-                    usize::extract_bound(&params.iter().next().expect("len checked above"))
-                {
+                if let Ok(amt) = usize::extract_bound(
+                    &optional_amt_or_model_params
+                        .iter()
+                        .next()
+                        .expect("len checked above"),
+                ) {
                     let mut symbols = Vec::with_capacity(amt);
                     model.0.as_parameterized(py, &mut |model| {
                         for symbol in self
@@ -234,18 +242,23 @@ impl ChainCoder {
         };
 
         let mut symbols = Vec::with_capacity(
-            model
-                .0
-                .len(&params.iter().next().expect("len checked above"))?,
+            model.0.len(
+                &optional_amt_or_model_params
+                    .iter()
+                    .next()
+                    .expect("len checked above"),
+            )?,
         );
-        model.0.parameterize(py, params, false, &mut |model| {
-            let symbol = self
-                .inner
-                .decode_symbol(EncoderDecoderModel(model))
-                .expect("We use constant `PRECISION`.");
-            symbols.push(symbol);
-            Ok(())
-        })?;
+        model
+            .0
+            .parameterize(py, optional_amt_or_model_params, false, &mut |model| {
+                let symbol = self
+                    .inner
+                    .decode_symbol(EncoderDecoderModel(model))
+                    .expect("We use constant `PRECISION`.");
+                symbols.push(symbol);
+                Ok(())
+            })?;
 
         Ok(PyArray1::from_vec_bound(py, symbols).to_object(py))
     }
@@ -255,7 +268,7 @@ impl ChainCoder {
     /// The returned copy will initially encapsulate the identical compressed data and
     /// remainders as the original coder, but the two coders can be used independently
     /// without influencing other.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn clone(&self) -> Self {
         Clone::clone(self)
     }
