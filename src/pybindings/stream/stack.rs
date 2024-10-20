@@ -124,19 +124,16 @@ impl AnsCoder {
     ///   decoded and re-encoded some symbols, you can get back the original `compressed` data by
     ///   calling `.get_compressed(unseal=True)`.
     #[new]
-    #[pyo3(text_signature = "(self, [compressed], seal=False)")]
-    pub fn new(
-        compressed: Option<PyReadonlyArray1<'_, u32>>,
-        seal: Option<bool>,
-    ) -> PyResult<Self> {
-        if compressed.is_none() && seal.is_some() {
+    #[pyo3(signature = (compressed=None, seal=false))]
+    pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>, seal: bool) -> PyResult<Self> {
+        if compressed.is_none() && seal {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "Need compressed data to seal.",
             ));
         }
         let inner = if let Some(compressed) = compressed {
             let compressed = compressed.to_vec()?;
-            if seal == Some(true) {
+            if seal {
                 crate::stream::stack::AnsCoder::from_binary(compressed).unwrap_infallible()
             } else {
                 crate::stream::stack::AnsCoder::from_compressed(compressed).map_err(|_| {
@@ -320,13 +317,13 @@ impl AnsCoder {
     ///
     /// Note that calling `.get_compressed(unseal=True)` fails if the coder is not in a "sealed"
     /// state.
-    #[pyo3(text_signature = "(self, unseal=False)")]
+    #[pyo3(signature = (unseal=false))]
     pub fn get_compressed<'p>(
         &mut self,
         py: Python<'p>,
-        unseal: Option<bool>,
+        unseal: bool,
     ) -> PyResult<Bound<'p, PyArray1<u32>>> {
-        if unseal == Some(true) {
+        if unseal {
             let binary = self.inner.get_binary().map_err(|_|
                 pyo3::exceptions::PyAssertionError::new_err(
                     "Cannot unseal compressed data because it doesn't fit into integer number of words. Did you create the encoder with `seal=True` and restore its original state?",

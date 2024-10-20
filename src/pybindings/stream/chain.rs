@@ -43,15 +43,11 @@ pub struct ChainCoder {
 #[pymethods]
 impl ChainCoder {
     #[new]
-    #[pyo3(text_signature = "(self, compressed, is_remainders=False, seal=False)")]
-    pub fn new(
-        data: PyReadonlyArray1<'_, u32>,
-        is_remainders: Option<bool>,
-        seal: Option<bool>,
-    ) -> PyResult<Self> {
+    #[pyo3(signature = (data, is_remainders=false, seal=false))]
+    pub fn new(data: PyReadonlyArray1<'_, u32>, is_remainders: bool, seal: bool) -> PyResult<Self> {
         let data = data.to_vec()?;
-        let inner = if is_remainders == Some(true) {
-            if seal == Some(true) {
+        let inner = if is_remainders {
+            if seal {
                 return Err(pyo3::exceptions::PyAssertionError::new_err(
                     "Cannot seal remainders data.",
                 ));
@@ -62,7 +58,7 @@ impl ChainCoder {
                     )
                 })?
             }
-        } else if seal == Some(true) {
+        } else if seal {
             crate::stream::chain::ChainCoder::from_binary(data)
                 .map_err(|_| pyo3::exceptions::PyValueError::new_err("Too little data provided."))?
         } else {
@@ -81,14 +77,14 @@ impl ChainCoder {
     ///
     /// See [above usage instructions](#usage-for-bits-back-coding) for further explanation.
     #[allow(clippy::type_complexity)]
-    #[pyo3(text_signature = "(self, unseal=False)")]
+    #[pyo3(signature = (unseal=false))]
     pub fn get_data<'p>(
         &self,
-        unseal: Option<bool>,
+        unseal: bool,
         py: Python<'p>,
     ) -> PyResult<(Bound<'p, PyArray1<u32>>, Bound<'p, PyArray1<u32>>)> {
         let cloned = self.inner.clone();
-        let data = if unseal == Some(true) {
+        let data = if unseal {
             cloned.into_binary()
         } else {
             cloned.into_compressed()

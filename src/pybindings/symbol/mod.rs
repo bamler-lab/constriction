@@ -78,7 +78,7 @@ pub struct StackCoder {
 #[pymethods]
 impl StackCoder {
     #[new]
-    #[pyo3(text_signature = "(self, compressed)")]
+    #[pyo3(signature = (compressed=None))]
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = match compressed {
             None => DefaultStackCoder::new(),
