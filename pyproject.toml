@@ -9,6 +9,7 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: System :: Archiving :: Compression",
   "Intended Audience :: Science/Research",
 ]
@@ -43,9 +44,10 @@ version = "1.2.2"
 numpy = [
   {version = "^1.16", python = "<3.11"},
   {version = "^1.23.2", python = ">=3.11,<3.12"},
-  {version = "^1.26.1", python = ">=3.12"},
+  {version = "^1.26.1", python = ">=3.12,<3.13"},
+  {version = "^2.1.2", python = ">=3.13"},
 ]
-python = "^3.8,<3.13"
+python = "^3.8,<3.14"
 
 [tool.poetry.dev-dependencies]
 autopep8 = "*"
@@ -62,6 +64,11 @@ scipy = [
 toml = "^0.10.2"
 twine = "^5.1.1"
 wheel = "*"
+
+# Workaround for poetry bug 9293:
+docutils = [
+  {version = "^0.21.2", python = ">=3.9"},
+]
 
 [build-system]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
