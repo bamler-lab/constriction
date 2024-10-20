@@ -35,7 +35,7 @@ pub struct EncoderHuffmanTree {
 #[pymethods]
 impl EncoderHuffmanTree {
     #[new]
-    #[pyo3(text_signature = "(self, probabilities)")]
+    #[pyo3(signature = (probabilities))]
     pub fn new(probabilities: PyReadonlyFloatArray1<'_>) -> PyResult<Self> {
         let inner = match probabilities {
             PyReadonlyFloatArray::F32(probabilities) => {
@@ -76,7 +76,7 @@ pub struct DecoderHuffmanTree {
 #[pymethods]
 impl DecoderHuffmanTree {
     #[new]
-    #[pyo3(text_signature = "(self, probabilities)")]
+    #[pyo3(signature = (probabilities))]
     pub fn new(probabilities: PyReadonlyFloatArray1<'_>) -> PyResult<Self> {
         let inner = match probabilities {
             PyReadonlyFloatArray::F32(probabilities) => {

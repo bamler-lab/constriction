@@ -331,13 +331,12 @@ pub type PyReadonlyFloatArray1<'py> = PyReadonlyFloatArray<'py, numpy::Ix1>;
 pub type PyReadonlyFloatArray2<'py> = PyReadonlyFloatArray<'py, numpy::Ix2>;
 
 impl<'py, D: ndarray::Dimension> FromPyObject<'py> for PyReadonlyFloatArray<'py, D> {
-    fn extract(ob: &'py PyAny) -> PyResult<Self> {
-        if let Ok(x) = ob.extract::<PyReadonlyArray<'_, f64, D>>() {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(x) = PyReadonlyArray::<'py, f64, D>::extract_bound(ob) {
             Ok(PyReadonlyFloatArray::F64(x))
         } else {
             // This should also return a well crafted error in case it fails.
-            ob.extract::<PyReadonlyArray<'_, f32, D>>()
-                .map(PyReadonlyFloatArray::F32)
+            PyReadonlyArray::<'py, f32, D>::extract_bound(ob).map(PyReadonlyFloatArray::F32)
         }
     }
 }

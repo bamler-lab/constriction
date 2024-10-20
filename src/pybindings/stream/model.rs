@@ -149,7 +149,7 @@ pub struct CustomModel;
 impl CustomModel {
     #[new]
     #[pyo3(
-        text_signature = "(self, cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)"
+        signature = (cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)
     )]
     pub fn new(
         cdf: PyObject,
@@ -250,16 +250,16 @@ pub struct ScipyModel;
 #[pymethods]
 impl ScipyModel {
     #[new]
-    #[pyo3(text_signature = "(self, scipy_model, min_symbol_inclusive, max_symbol_inclusive)")]
+    #[pyo3(signature = (scipy_model, min_symbol_inclusive, max_symbol_inclusive))]
     pub fn new(
         py: Python<'_>,
-        model: PyObject,
+        scipy_model: PyObject,
         min_symbol_inclusive: i32,
         max_symbol_inclusive: i32,
     ) -> PyResult<PyClassInitializer<Self>> {
         let custom_model = CustomModel::new(
-            model.getattr(py, "cdf")?,
-            model.getattr(py, "ppf")?,
+            scipy_model.getattr(py, "cdf")?,
+            scipy_model.getattr(py, "ppf")?,
             min_symbol_inclusive,
             max_symbol_inclusive,
         );
@@ -413,7 +413,7 @@ where
 #[pymethods]
 impl Categorical {
     #[new]
-    #[pyo3(text_signature = "(self, probabilities=None, lazy=None, perfect=None)")]
+    #[pyo3(signature = (probabilities=None, lazy=None, perfect=None))]
     pub fn new(
         py: Python<'_>,
         probabilities: Option<PyReadonlyFloatArray1<'_>>,
@@ -499,7 +499,7 @@ struct Uniform;
 #[pymethods]
 impl Uniform {
     #[new]
-    #[pyo3(text_signature = "(self, size=None)")]
+    #[pyo3(signature = (size=None))]
     pub fn new(size: Option<i32>) -> PyResult<(Self, Model)> {
         let model = match size {
             None => {
@@ -579,7 +579,7 @@ fn quantized_gaussian(
 impl QuantizedGaussian {
     #[new]
     #[pyo3(
-        text_signature = "(self, min_symbol_inclusive, max_symbol_inclusive, mean=None, std=None)"
+        signature = (min_symbol_inclusive, max_symbol_inclusive, mean=None, std=None)
     )]
     pub fn new(
         min_symbol_inclusive: i32,
@@ -670,7 +670,7 @@ fn quantized_laplace(
 impl QuantizedLaplace {
     #[new]
     #[pyo3(
-        text_signature = "(self, min_symbol_inclusive, max_symbol_inclusive, mean=None, scale=None)"
+        signature = (min_symbol_inclusive, max_symbol_inclusive, mean=None, scale=None)
     )]
     pub fn new(
         min_symbol_inclusive: i32,
@@ -770,7 +770,7 @@ fn quantized_cauchy(
 impl QuantizedCauchy {
     #[new]
     #[pyo3(
-        text_signature = "(self, min_symbol_inclusive, max_symbol_inclusive, loc=None, scale=None)"
+        signature = (min_symbol_inclusive, max_symbol_inclusive, loc=None, scale=None)
     )]
     pub fn new(
         min_symbol_inclusive: i32,
@@ -843,7 +843,7 @@ struct Binomial;
 #[pymethods]
 impl Binomial {
     #[new]
-    #[pyo3(text_signature = "(self, n=None, p=None)")]
+    #[pyo3(signature = (n=None, p=None))]
     pub fn new(n: Option<i32>, p: Option<f64>) -> PyResult<(Self, Model)> {
         let model = match (n, p) {
             (None, None) => {
@@ -903,7 +903,7 @@ struct Bernoulli;
 #[pymethods]
 impl Bernoulli {
     #[new]
-    #[pyo3(text_signature = "(self, p=None, perfect)")]
+    #[pyo3(signature = (p=None, perfect=None))]
     pub fn new(py: Python<'_>, p: Option<f64>, perfect: Option<bool>) -> PyResult<(Self, Model)> {
         static WARNED: AtomicBool = AtomicBool::new(false);
 
