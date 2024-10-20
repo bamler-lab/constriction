@@ -110,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - name: Checkout
@@ -134,6 +134,7 @@ jobs:
         run: poetry run maturin develop --release --features pybindings
 
       - name: pytest with numpy version 1.x
+        if: matrix.python-version != '3.13'
         shell: bash
         run: |
           poetry run python -m pip install numpy~=1.16
@@ -149,6 +150,7 @@ jobs:
           exit ${PIPESTATUS[0]}
 
       - name: Verify that pytest used correct python version
+        if: matrix.python-version != '3.13'
         shell: bash
         run: |
           USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest-numpy1.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
@@ -205,10 +207,10 @@ jobs:
     steps:
       - uses: actions/checkout@v1
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install Python dependencies
         run: |
@@ -315,6 +317,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Python 3.13
+        id: setup-python-3-13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       - name: generate license file
         shell: bash
         run: |
@@ -331,21 +339,21 @@ jobs:
         with:
           command: build
           manylinux: 2014
-          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12
+          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
 
       - name: Build wheels (macos)
         if: matrix.os == 'macos-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12
+          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
 
       - name: Build wheels (windows)
         if: matrix.os == 'windows-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe
+          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-13.outputs.python-version }}\x64\python3.exe
 
       - name: Cross-build wheels for Apple Silicon
         if: matrix.os == 'macos-latest'
@@ -353,7 +361,7 @@ jobs:
         with:
           target: aarch64-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12
+          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
 
       - name: Build universal2 wheels
         if: matrix.os == 'macos-latest'
@@ -361,7 +369,7 @@ jobs:
         with:
           target: universal2-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12
+          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
 
       - name: List wheels
         shell: bash
