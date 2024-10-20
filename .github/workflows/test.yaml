@@ -29,6 +29,7 @@ jobs:
         id: install-rust
         with:
           components: rustfmt, clippy
+          targets: x86_64-unknown-none
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -67,8 +68,13 @@ jobs:
           RUSTFLAGS: "-D warnings"
         run: cargo test --release
 
+      - name: Test `no_std` compatibility
+        shell: bash
+        working-directory: ensure_no_std
+        run: cargo build
+
   miri-test:
-    name: no_std and miri
+    name: miri
     runs-on: ${{ matrix.os }}
     needs: rust-test
     strategy:
@@ -119,11 +125,6 @@ jobs:
         with:
           toolchain: ${{ steps.rust-version.outputs.rustc }}
           components: miri, rust-src
-
-      - name: Test `no_std` compatibility
-        shell: bash
-        working-directory: ensure_no_std
-        run: cargo +${{ steps.rust-version.outputs.rustc }} build
 
       - name: Run tests in miri
         env:
