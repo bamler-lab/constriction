@@ -62,13 +62,12 @@ scipy = [
   {version = "^1.11.3", python = ">=3.12"},
 ]
 toml = "^0.10.2"
-twine = "^5.1.1"
 wheel = "*"
 
-# Workaround for poetry bug 9293:
-docutils = [
-  {version = "^0.21.2", python = ">=3.9"},
-]
+# Poetry currently can't install twine for python 3.8 due to poetry bug 9293.
+# That's OK, we need twine only to upload already compiled packages to pypi,
+# and we run it on the latest stable python version for this task anyway.
+twine = {version = "^5.1.1", python = ">=3.9"}
 
 [build-system]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
