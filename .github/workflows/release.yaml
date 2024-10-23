@@ -353,13 +353,6 @@ jobs:
           manylinux: 2014
           args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
 
-      - name: Build wheels (macos)
-        if: matrix.os == 'macos-latest'
-        uses: messense/maturin-action@v1
-        with:
-          command: build
-          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
-
       - name: Build wheels (windows)
         if: matrix.os == 'windows-latest'
         uses: messense/maturin-action@v1
@@ -367,7 +360,15 @@ jobs:
           command: build
           args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-13.outputs.python-version }}\x64\python3.exe
 
-      - name: Cross-build wheels for Apple Silicon
+      - name: Build wheels for old Apple chips (macos)
+        if: matrix.os == 'macos-latest'
+        uses: messense/maturin-action@v1
+        with:
+          target: x86_64-apple-darwin
+          command: build
+          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
+
+      - name: Cross-build wheels for new Apple chips (macos)
         if: matrix.os == 'macos-latest'
         uses: messense/maturin-action@v1
         with:
@@ -375,7 +376,7 @@ jobs:
           command: build
           args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
 
-      - name: Build universal2 wheels
+      - name: Build universal2 wheels (macos)
         if: matrix.os == 'macos-latest'
         uses: messense/maturin-action@v1
         with:
