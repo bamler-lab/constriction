@@ -9,11 +9,12 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: System :: Archiving :: Compression",
   "Intended Audience :: Science/Research",
 ]
 dependencies = [
-  "numpy~=1.16",
+  "numpy>=1.16,<3.0",
 ]
 license = {text = "various (see LICENSE.html)"}
 maintainers = [
@@ -43,27 +44,32 @@ version = "1.2.2"
 numpy = [
   {version = "^1.16", python = "<3.11"},
   {version = "^1.23.2", python = ">=3.11,<3.12"},
-  {version = "^1.26.1", python = ">=3.12"},
+  {version = "^1.26.1", python = ">=3.12,<3.13"},
+  {version = "^2.1.2", python = ">=3.13"},
 ]
-python = "^3.8,<3.13"
+python = "^3.8,<3.14"
 
 [tool.poetry.dev-dependencies]
 autopep8 = "*"
-flake8 = "^3.5"
-maturin = "^0.13.2"
-pdoc3 = "^0.10.0"
-pylint = "^2.6"
-pytest = "^7.4"
+flake8 = {version = "^7.1.1", python = ">=3.9"}
+maturin = "^1.7.1"
+pdoc3 = {version = "^0.11.1", python = ">=3.9"}
+pylint = "^3.2.7"
+pytest = "^8.3.2"
 pytest-runner = "*"
 scipy = [
   {version = "^1.8", python = ">=3.8,<3.12"},
   {version = "^1.11.3", python = ">=3.12"},
 ]
 toml = "^0.10.2"
-twine = "^3.7.1"
 wheel = "*"
+
+# Poetry currently can't install twine for python 3.8 due to poetry bug 9293.
+# That's OK, we need twine only to upload already compiled packages to pypi,
+# and we run it on the latest stable python version for this task anyway.
+twine = {version = "^5.1.1", python = ">=3.9"}
 
 [build-system]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
 build-backend = "maturin"
-requires = ["maturin>=0.13,<0.14"]
+requires = ["maturin>=1.7.1,<2.0"]

@@ -108,6 +108,7 @@ def test_module_example3():
     compressed = encoder.get_compressed()
     print(f"compressed representation: {compressed}")
     print(f"(in binary: {[bin(word) for word in compressed]})")
+    assert np.all(compressed == np.array([3176507208], dtype=np.uint32))
 
     decoder = constriction.stream.queue.RangeDecoder(compressed)
     decoded_part1 = decoder.decode(entropy_model1, means, stds)
@@ -1007,6 +1008,8 @@ def test_huffman1():
     compressed, bitrate = encoder.get_compressed()
     print(compressed, bitrate)  # (prints: [3756389791, 61358], 48)
     print(f"(in binary: {[bin(word) for word in compressed]}")
+    assert np.all(compressed == np.array([3756389791, 61358], dtype=np.uint32))
+    assert bitrate == 48
 
     # Decode the message
     decoder = constriction.symbol.QueueDecoder(compressed)
@@ -1033,8 +1036,10 @@ def test_huffman2():
 
     # Obtain the compressed representation and the bitrate:
     compressed, bitrate = coder.get_compressed()
-    print(compressed, bitrate)  # (prints: [[2818274807, 129455] 48)
+    print(compressed, bitrate)  # (prints: [2818274807, 129455] 48)
     print(f"(in binary: {[bin(word) for word in compressed]}")
+    assert np.all(compressed == np.array([2818274807, 129455], dtype=np.uint32))
+    assert bitrate == 48
 
     # Decode the message (we could explicitly construct a decoder:
     # `decoder = constritcion.symbol.StackCoder(compressed)`

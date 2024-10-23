@@ -5,7 +5,7 @@ pub mod symbol;
 use std::prelude::v1::*;
 
 use alloc::borrow::Cow;
-use numpy::PyReadonlyArray;
+use numpy::{ndarray, PyArrayMethods, PyReadonlyArray, PyUntypedArrayMethods};
 use pyo3::{prelude::*, wrap_pymodule};
 
 use crate::NanError;
@@ -41,7 +41,7 @@ use crate::NanError;
 /// ### Installing `constriction` for Python
 ///
 /// ```bash
-/// pip install constriction~=0.3.5
+/// pip install constriction~=0.4.1
 /// ```
 ///
 /// ### Hello, World
@@ -117,8 +117,8 @@ use crate::NanError;
 ///
 /// # Same message as above, but a complex entropy model consisting of two parts:
 /// message = np.array([6,   10,   -4,   2,   5,    2, 1, 0, 2], dtype=np.int32)
-/// means   = np.array([2.3,  6.1, -8.5, 4.1, 1.3], dtype=np.float64)
-/// stds    = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float64)
+/// means   = np.array([2.3,  6.1, -8.5, 4.1, 1.3], dtype=np.float32)
+/// stds    = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float32)
 /// entropy_model1 = constriction.stream.model.QuantizedGaussian(-50, 50)
 /// entropy_model2 = constriction.stream.model.Categorical(
 ///     np.array([0.2, 0.5, 0.3], dtype=np.float32), # Probabilities of the symbols 0,1,2.
@@ -178,7 +178,7 @@ use crate::NanError;
 /// [entropy models](stream/model.html).
 #[pymodule]
 #[pyo3(name = "constriction")]
-fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(init_quant))?;
     module.add_wrapped(wrap_pymodule!(init_stream))?;
     module.add_wrapped(wrap_pymodule!(init_symbol))?;
@@ -279,7 +279,7 @@ fn init_quant(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 #[pymodule]
 #[pyo3(name = "stream")]
-fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_stream(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     stream::init_module(py, module)
 }
 
@@ -315,7 +315,7 @@ fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// import numpy as np
 ///
 /// # Define an entropy model over the (implied) alphabet {0, 1, 2, 3}:
-/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float64)
+/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float32)
 ///
 /// # Encode some example message, using the same model for each symbol here:
 /// message = [1, 3, 2, 3, 0, 1, 3, 0, 2, 1, 1, 3, 3, 1, 2, 0, 1, 3, 1]
@@ -347,7 +347,7 @@ fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// import numpy as np
 ///
 /// # Define an entropy model over the (implied) alphabet {0, 1, 2, 3}:
-/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float64)
+/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float32)
 ///
 /// # Encode some example message, using the same model for each symbol here:
 /// message = [1, 3, 2, 3, 0, 1, 3, 0, 2, 1, 1, 3, 3, 1, 2, 0, 1, 3, 1]
@@ -373,7 +373,7 @@ fn init_stream(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// ```
 #[pymodule]
 #[pyo3(name = "symbol")]
-fn init_symbol(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_symbol(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     symbol::init_module(py, module)
 }
 
@@ -387,13 +387,12 @@ pub type PyReadonlyFloatArray1<'py> = PyReadonlyFloatArray<'py, numpy::Ix1>;
 pub type PyReadonlyFloatArray2<'py> = PyReadonlyFloatArray<'py, numpy::Ix2>;
 
 impl<'py, D: ndarray::Dimension> FromPyObject<'py> for PyReadonlyFloatArray<'py, D> {
-    fn extract(ob: &'py PyAny) -> PyResult<Self> {
-        if let Ok(x) = ob.extract::<PyReadonlyArray<'_, f32, D>>() {
-            Ok(PyReadonlyFloatArray::F32(x))
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(x) = PyReadonlyArray::<'py, f64, D>::extract_bound(ob) {
+            Ok(PyReadonlyFloatArray::F64(x))
         } else {
             // This should also return a well crafted error in case it fails.
-            ob.extract::<PyReadonlyArray<'_, f64, D>>()
-                .map(PyReadonlyFloatArray::F64)
+            PyReadonlyArray::<'py, f32, D>::extract_bound(ob).map(PyReadonlyFloatArray::F32)
         }
     }
 }

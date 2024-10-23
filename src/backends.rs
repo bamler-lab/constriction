@@ -170,8 +170,11 @@
 //!     std::fs::remove_file("backend_queue_example.tmp").unwrap();
 //! }
 //!
+//! # #[cfg(not(all(target_os = "windows", miri)))]
+//! # {
 //! encode_to_file_on_the_fly(1000);
 //! decode_from_file_on_the_fly(1000);
+//! # }
 //! ```
 //!
 //! [`BitArray`]: crate::BitArray

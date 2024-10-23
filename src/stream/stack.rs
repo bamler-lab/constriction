@@ -516,7 +516,7 @@ where
     ///
     /// [`get_compressed`]: #method.get_compressed
     /// [`into_compressed`]: #method.into_compressed
-    pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = Word> + '_
+    pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = Word> + 'a
     where
         &'a Backend: IntoIterator<Item = &'a Word>,
     {

@@ -3,7 +3,7 @@ use std::prelude::v1::*;
 
 use alloc::{borrow::Cow, vec};
 use num_traits::{float::FloatCore, AsPrimitive};
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use probability::distribution::{Distribution, Inverse};
 use pyo3::{prelude::*, types::PyTuple};
 
@@ -100,7 +100,7 @@ pub trait Model: Send + Sync {
     fn parameterize(
         &self,
         _py: Python<'_>,
-        _params: &PyTuple,
+        _params: &Bound<'_, PyTuple>,
         _reverse: bool,
         _callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
@@ -109,7 +109,7 @@ pub trait Model: Send + Sync {
         ))
     }
 
-    fn len(&self, _param0: &PyAny) -> PyResult<usize> {
+    fn len(&self, _param0: &Bound<'_, PyAny>) -> PyResult<usize> {
         Err(pyo3::exceptions::PyValueError::new_err(
             "Model parameters were specified but the model is already fully parameterized.",
         ))
@@ -188,7 +188,7 @@ macro_rules! impl_model_for_parameterizable_model {
             fn parameterize(
                 &self,
                 _py: Python<'_>,
-                params: &PyTuple,
+                params: &Bound<'_, PyTuple>,
                 reverse: bool,
                 callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
             ) -> PyResult<()> {
@@ -200,17 +200,16 @@ macro_rules! impl_model_for_parameterizable_model {
                     )));
                 }
 
-                let $p0 = params[0].extract::<<ParameterExtractor<$ty0> as ParameterExtract<'_, $ty0>>::Extracted>()?;
+                let mut params = params.iter();
+                let $p0 = params.next().expect("len checked above").extract::<<ParameterExtractor<$ty0> as ParameterExtract<'_, $ty0>>::Extracted>()?;
                 let $p0 = <ParameterExtractor<$ty0> as ParameterExtract<'_, $ty0>>::cast(&$p0)?;
                 let $p0 = $p0.as_array();
 
                 #[allow(unused_variables)] // (`len` remains unused when macro is invoked with only one parameter.)
                 let len = $p0.len();
                 #[allow(unused_variables)] // (`i` remains unused when macro is invoked with only one parameter.)
-                let i = 0;
                 $(
-                    let i = i + 1;
-                    let $ps = params[i].extract::<<ParameterExtractor<$tys> as ParameterExtract<'_, $tys>>::Extracted>()?;
+                    let $ps = params.next().expect("len checked above").extract::<<ParameterExtractor<$tys> as ParameterExtract<'_, $tys>>::Extracted>()?;
                     let $ps = <ParameterExtractor<$tys> as ParameterExtract<'_, $tys>>::cast(&$ps)?;
                     let $ps = $ps.as_array();
 
@@ -246,7 +245,7 @@ macro_rules! impl_model_for_parameterizable_model {
                 Ok(())
             }
 
-            fn len(&self, $p0: &PyAny) -> PyResult<usize> {
+            fn len(&self, $p0: &Bound<'_, PyAny>) -> PyResult<usize> {
                 $p0.len()
             }
         }
@@ -297,7 +296,7 @@ impl Model for UnspecializedPythonModel {
     fn parameterize(
         &self,
         py: Python<'_>,
-        params: &PyTuple,
+        params: &Bound<'_, PyTuple>,
         reverse: bool,
         callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
@@ -348,7 +347,7 @@ impl Model for UnspecializedPythonModel {
         Ok(())
     }
 
-    fn len(&self, param0: &PyAny) -> PyResult<usize> {
+    fn len(&self, param0: &Bound<'_, PyAny>) -> PyResult<usize> {
         Ok(param0.extract::<PyReadonlyFloatArray1<'_>>()?.len())
     }
 }
@@ -368,7 +367,7 @@ impl<'py, 'p> Distribution for SpecializedPythonDistribution<'py, 'p> {
         self.cdf
             .call1(
                 self.py,
-                PyTuple::new(self.py, &**self.value_and_params.borrow()),
+                PyTuple::new_bound(self.py, &**self.value_and_params.borrow()),
             )
             .expect("Calling the provided cdf raised an exception.")
             .extract::<f64>(self.py)
@@ -382,7 +381,7 @@ impl<'py, 'p> Inverse for SpecializedPythonDistribution<'py, 'p> {
         self.approximate_inverse_cdf
             .call1(
                 self.py,
-                PyTuple::new(self.py, &**self.value_and_params.borrow()),
+                PyTuple::new_bound(self.py, &**self.value_and_params.borrow()),
             )
             .expect("Calling the provided ppf raised an exception.")
             .extract::<f64>(self.py)
@@ -479,7 +478,7 @@ impl Model for UnparameterizedCategoricalDistribution {
     fn parameterize(
         &self,
         _py: Python<'_>,
-        params: &PyTuple,
+        params: &Bound<'_, PyTuple>,
         reverse: bool,
         callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
@@ -496,7 +495,11 @@ impl Model for UnparameterizedCategoricalDistribution {
             )));
         }
 
-        let probabilities = params[0].extract::<PyReadonlyFloatArray2<'_>>()?;
+        let probabilities = params
+            .iter()
+            .next()
+            .expect("len checked above")
+            .extract::<PyReadonlyFloatArray2<'_>>()?;
 
         match probabilities {
             PyReadonlyFloatArray::F32(probabilities) => {
@@ -508,7 +511,7 @@ impl Model for UnparameterizedCategoricalDistribution {
         }
     }
 
-    fn len(&self, param0: &PyAny) -> PyResult<usize> {
+    fn len(&self, param0: &Bound<'_, PyAny>) -> PyResult<usize> {
         Ok(param0.extract::<PyReadonlyFloatArray2<'_>>()?.shape()[0])
     }
 }

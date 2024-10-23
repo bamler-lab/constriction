@@ -18,6 +18,7 @@ def test_module_example1():
     compressed = encoder.get_compressed()
     print(f"compressed representation: {compressed}")
     print(f"(in binary: {[bin(word) for word in compressed]})")
+    assert np.all(compressed == np.array([3114258274, 357938615], dtype=np.uint32))
 
     decoder = constriction.stream.stack.AnsCoder(compressed)
     decoded = decoder.decode(entropy_model, 9)  # (decodes 9 symbols)
@@ -38,6 +39,7 @@ def test_module_example2():
     compressed = encoder.get_compressed()
     print(f"compressed representation: {compressed}")
     print(f"(in binary: {[bin(word) for word in compressed]})")
+    assert np.all(compressed == np.array([2682585243, 513522013], dtype=np.uint32))
 
     decoder = constriction.stream.queue.RangeDecoder(
         compressed)  # <--CHANGED LINE
@@ -108,6 +110,7 @@ def test_module_example3():
     compressed = encoder.get_compressed()
     print(f"compressed representation: {compressed}")
     print(f"(in binary: {[bin(word) for word in compressed]})")
+    assert np.all(compressed == np.array([3176507206], dtype=np.uint32))
 
     decoder = constriction.stream.queue.RangeDecoder(compressed)
     decoded_part1 = decoder.decode(entropy_model1, means, stds)
@@ -1007,6 +1010,8 @@ def test_huffman1():
     compressed, bitrate = encoder.get_compressed()
     print(compressed, bitrate)  # (prints: [3756389791, 61358], 48)
     print(f"(in binary: {[bin(word) for word in compressed]}")
+    assert np.all(compressed == np.array([3756389791, 61358], dtype=np.uint32))
+    assert bitrate == 48
 
     # Decode the message
     decoder = constriction.symbol.QueueDecoder(compressed)
@@ -1035,6 +1040,8 @@ def test_huffman2():
     compressed, bitrate = coder.get_compressed()
     print(compressed, bitrate)  # (prints: [[2818274807, 129455] 48)
     print(f"(in binary: {[bin(word) for word in compressed]}")
+    assert np.all(compressed == np.array([2818274807, 129455], dtype=np.uint32))
+    assert bitrate == 48
 
     # Decode the message (we could explicitly construct a decoder:
     # `decoder = constritcion.symbol.StackCoder(compressed)`

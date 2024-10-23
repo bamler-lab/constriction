@@ -9,7 +9,7 @@ use std::prelude::v1::*;
 
 use crate::{stream::TryCodingError, CoderError, DefaultEncoderFrontendError};
 
-pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(init_model))?;
     module.add_wrapped(wrap_pymodule!(init_queue))?;
     module.add_wrapped(wrap_pymodule!(init_stack))?;
@@ -100,7 +100,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///
 #[pymodule]
 #[pyo3(name = "model")]
-fn init_model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_model(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     model::init_module(py, module)
 }
 
@@ -179,7 +179,7 @@ fn init_model(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// and development 23.2 (1979): 149-162.
 #[pymodule]
 #[pyo3(name = "queue")]
-fn init_queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_queue(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     queue::init_module(py, module)
 }
 
@@ -273,7 +273,7 @@ fn init_queue(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
 #[pymodule]
 #[pyo3(name = "stack")]
-fn init_stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_stack(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     stack::init_module(py, module)
 }
 
@@ -517,7 +517,7 @@ fn init_stack(py: Python<'_>, module: &PyModule) -> PyResult<()> {
 ///   (ANS): a Statistician's Perspective." arXiv preprint arXiv:2201.01741 (2022).
 #[pymodule]
 #[pyo3(name = "chain")]
-fn init_chain(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_chain(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     chain::init_module(py, module)
 }
 

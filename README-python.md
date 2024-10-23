@@ -29,7 +29,7 @@ into a web app by using `constriction` in a WebAssembly module).
 ### Installing `constriction` for Python
 
 ```bash
-pip install constriction~=0.3.5
+pip install constriction~=0.4.1
 ```
 
 ### Hello, World
@@ -105,8 +105,8 @@ import numpy as np
 
 # Same message as above, but a complex entropy model consisting of two parts:
 message = np.array([6,   10,   -4,   2,   5,    2, 1, 0, 2], dtype=np.int32)
-means   = np.array([2.3,  6.1, -8.5, 4.1, 1.3], dtype=np.float64)
-stds    = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float64)
+means   = np.array([2.3,  6.1, -8.5, 4.1, 1.3], dtype=np.float32)
+stds    = np.array([6.2,  5.3,  3.8, 3.2, 4.7], dtype=np.float32)
 entropy_model1 = constriction.stream.model.QuantizedGaussian(-50, 50)
 entropy_model2 = constriction.stream.model.Categorical(
     np.array([0.2, 0.5, 0.3], dtype=np.float32), # Probabilities of the symbols 0,1,2.

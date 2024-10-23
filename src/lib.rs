@@ -74,7 +74,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! constriction = "0.3.5"
+//! constriction = "0.4.1"
 //! ```
 //!
 //! ## System Requirements
@@ -689,7 +689,7 @@ macro_rules! unsafe_impl_bit_array {
                     unsafe {
                         // SAFETY: This is trivially safe because `non_zero` came from a
                         // `NonZero` type. We really shouldn't have to give the compiler
-                        // this hint it turns out the compiler would otherwise emit an
+                        // this hint but it turns out the compiler would otherwise emit an
                         // unnecessary check for div by zero. The unnecessary check used to
                         // have a significant impact on performance, but it doesn't seem to
                         // anymore as of rust version 1.58.0 (although the check itself is

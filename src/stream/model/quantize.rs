@@ -326,7 +326,7 @@ where
 
     /// Returns the exact range of symbols that have nonzero probability.
     ///
-    /// The returned inclusive range is the same as the one that was passed in to the
+    /// The returned inclusive range is the same as the one that was passed to the
     /// constructor [`new`](Self::new). All entropy models created by the method
     /// [`quantize`](Self::quantize) will assign a nonzero probability to all elements in
     /// the `support`, and they will assign a zero probability to all elements outside of
