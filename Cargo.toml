@@ -1,17 +1,17 @@
 [package]
-authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"] 
-categories = ["compression", "science", "no-std"] 
-description = "Entropy coders for research and production (Rust and Python)." 
-documentation = "https://docs.rs/constriction/" 
-edition = "2018" 
-homepage = "https://bamler-lab.github.io/constriction/" 
-keywords = ["compression", "entropy-coding", "range-coding", "python", "machine-learning"] 
-license = "MIT OR Apache-2.0 OR BSL-1.0" 
-name = "constriction" 
-readme = "README-rust.md" 
-repository = "https://github.com/bamler-lab/constriction/" 
+authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
+categories = ["compression", "science", "no-std"]
+description = "Entropy coders for research and production (Rust and Python)."
+documentation = "https://docs.rs/constriction/"
+edition = "2018"
+homepage = "https://bamler-lab.github.io/constriction/"
+keywords = ["compression", "entropy-coding", "range-coding", "python", "machine-learning"]
+license = "MIT OR Apache-2.0 OR BSL-1.0"
+name = "constriction"
+readme = "README-rust.md"
+repository = "https://github.com/bamler-lab/constriction/"
 rust-version = "1.75" # for feature `return_position_impl_trait_in_traits`
-version = "0.4.1" 
+version = "0.4.1"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -20,6 +20,7 @@ crate-type = ["rlib", "cdylib"]
 name = "constriction"
 
 [features]
+benchmark-internals = []
 default = ["std"]
 std = []
 
@@ -27,18 +28,19 @@ std = []
 # access to this library from python. This feature is turned off by default
 # because it causes problems with `cargo test` on Mac OS. To turn it on, run:
 #   cargo build --release --features pybindings
-pybindings = ["numpy", "pyo3"]
+pybindings = ["ndarray", "numpy", "pyo3", "rayon"]
 
 [dependencies]
 hashbrown = "0.15.0"
+libm = "0.2.6"
 num-traits = {version = "0.2.15", default-features = false, features = ["libm"]}
+probability = "0.20"
 smallvec = "1.6.1"
 
-libm = "0.2.6"
-probability = "0.20"
-
+ndarray = {version = "0.16.1", features = ["rayon"], optional = true}
 numpy = {version = "0.22", optional = true}
 pyo3 = {version = "0.22.5", features = ["extension-module"], optional = true}
+rayon = {version = "1.10.0", optional = true}
 
 [dev-dependencies]
 byteorder = "1.4.2"
@@ -49,5 +51,6 @@ rand_xoshiro = "0.6"
 
 [[bench]]
 harness = false
-name = "lookup"
+name = "bench"
+required-features = ["benchmark-internals"]
 test = true
