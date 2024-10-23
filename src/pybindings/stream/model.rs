@@ -1,10 +1,8 @@
 pub mod internals;
 
-use core::{
-    iter::Sum,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::{cell::Cell, iter::Sum};
 use std::prelude::v1::*;
+use std::sync::Mutex;
 
 use alloc::sync::Arc;
 use num_traits::{float::FloatCore, AsPrimitive};
@@ -172,7 +170,7 @@ impl CustomModel {
 /// This is similar to `CustomModel` but easier to use if your model's cumulative
 /// distribution function and percent point function are already implemented in the popular
 /// `scipy` python package. Just provide either a fully parameterized scipy-model or a scipy
-/// model-class to the constructor. The adapter can be used both with both discrete models
+/// model-class to the constructor. The adapter can be used with both discrete models
 /// (over a continuous integer domain) and continuous models. Continuous models will be
 /// quantized to bins of width 1 centered at integers, analogous to the procedure described
 /// in the documentation of
@@ -310,7 +308,7 @@ impl ScipyModel {
 ///   invertible). If set to `False` (recommended in most cases and implied if `lazy=True`)
 ///   then the constructor will run faster but might find a *very slightly* worse
 ///   approximation of the provided probability distribution, thus leading to marginally
-///   lower bit rates. Note that encoder and decoder have to use the same setting for
+///   higher bit rates. Note that encoder and decoder have to use the same setting for
 ///   `perfect`. Most new code should set `perfect=False` as the differences in bit rate are
 ///   usually hardly noticeable. However, if neither `lazy` nor `perfect` are explicitly set
 ///   to any value, then `perfect` currently defaults to `True` for binary backward
@@ -420,11 +418,15 @@ impl Categorical {
         lazy: Option<bool>,
         perfect: Option<bool>,
     ) -> PyResult<(Self, Model)> {
-        static WARNED: AtomicBool = AtomicBool::new(false);
+        // It might be tempting to use an `AtomicBool` here, but rust considers "memory created by
+        // [...] static items without interior mutability" to be read-only memory, and "all atomic
+        // accesses on read-only memory are Undefined Behavior".
+        // (source: https://doc.rust-lang.org/stable/std/sync/atomic/index.html).
+        static WARNED: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
 
         let (lazy, perfect) = match (lazy, perfect) {
             (None, None) => {
-                if !WARNED.swap(true, Ordering::AcqRel) {
+                if !WARNED.lock().unwrap().replace(true) {
                     let _ = py.run_bound(
                         "print('WARNING: Neither argument `perfect` nor `lazy` were specified for `Categorical` entropy model.\\n\
                              \x20        In this case, `perfect` currently defaults to `True` for backward compatibility, but\\n\
@@ -905,9 +907,10 @@ impl Bernoulli {
     #[new]
     #[pyo3(signature = (p=None, perfect=None))]
     pub fn new(py: Python<'_>, p: Option<f64>, perfect: Option<bool>) -> PyResult<(Self, Model)> {
-        static WARNED: AtomicBool = AtomicBool::new(false);
+        // See comment in `Categorical::new` for why we don't use an `AtomicBool` here.
+        static WARNED: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
 
-        if perfect.is_none() && !WARNED.swap(true, Ordering::AcqRel) {
+        if perfect.is_none() && !WARNED.lock().unwrap().replace(true) {
             let _ = py.run_bound(
                 "print('WARNING: Argument `perfect` was not specified for `Bernoulli` distribution.\\n\
                      \x20        It currently defaults to `perfect=True` for backward compatibility, but this default\\n\
