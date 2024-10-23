@@ -40,7 +40,7 @@ use crate::NanError;
 /// ### Installing `constriction` for Python
 ///
 /// ```bash
-/// pip install constriction~=0.4.0
+/// pip install constriction~=0.4.1
 /// ```
 ///
 /// ### Hello, World
