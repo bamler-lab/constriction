@@ -249,7 +249,7 @@ International Conference on Computing and Information. Springer, Berlin, Heidelb
 <dl>
 <dt id="constriction.stream.chain.ChainCoder"><code class="flex name class">
 <span>class <span class="ident">ChainCoder</span></span>
-<span>(</span><span>self, compressed, is_remainders=False, seal=False)</span>
+<span>(</span><span>data, is_remainders=False, seal=False)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>See module level documentation.</p>
@@ -269,7 +269,7 @@ constructor arguments.</p></div>
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.stream.chain.ChainCoder.clone"><code class="name flex">
-<span>def <span class="ident">clone</span></span>(<span>self)</span>
+<span>def <span class="ident">clone</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Creates a deep copy of the coder and returns it.</p>
@@ -278,7 +278,7 @@ remainders as the original coder, but the two coders can be used independently
 without influencing other.</p></div>
 </dd>
 <dt id="constriction.stream.chain.ChainCoder.decode"><code class="name flex">
-<span>def <span class="ident">decode</span></span>(<span>self, model, *optional_amt_or_model_params)</span>
+<span>def <span class="ident">decode</span></span>(<span>self, /, model, *optional_amt_or_model_params)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Decodes one or more symbols.</p>
@@ -290,7 +290,7 @@ bits - inf_content) per symbol to the internal "remainders" buffer (where
 entropy model).</p></div>
 </dd>
 <dt id="constriction.stream.chain.ChainCoder.encode_reverse"><code class="name flex">
-<span>def <span class="ident">encode_reverse</span></span>(<span>self, symbols, model, *optional_model_params)</span>
+<span>def <span class="ident">encode_reverse</span></span>(<span>self, /, symbols, model, *optional_model_params)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Encodes one or more symbols.</p>
@@ -301,7 +301,7 @@ per symbol from the internal "remainders" buffer (where "inf_content" is the inf
 content of the encoded symbol under the employed entropy model).</p></div>
 </dd>
 <dt id="constriction.stream.chain.ChainCoder.get_data"><code class="name flex">
-<span>def <span class="ident">get_data</span></span>(<span>self, unseal=False)</span>
+<span>def <span class="ident">get_data</span></span>(<span>self, /, unseal=False)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns a copy of the compressed data after re-encoding symbols, split into two
@@ -309,7 +309,7 @@ arrays that you may want to concatenate.</p>
 <p>See <a href="#usage-for-bits-back-coding">above usage instructions</a> for further explanation.</p></div>
 </dd>
 <dt id="constriction.stream.chain.ChainCoder.get_remainders"><code class="name flex">
-<span>def <span class="ident">get_remainders</span></span>(<span>self)</span>
+<span>def <span class="ident">get_remainders</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns a copy of the remainders after decoding some symbols, split into two arrays

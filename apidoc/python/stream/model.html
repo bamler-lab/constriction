@@ -108,7 +108,7 @@ assert np.all(reconstructed == symbols) # (verify correctness)
 <dl>
 <dt id="constriction.stream.model.Bernoulli"><code class="flex name class">
 <span>class <span class="ident">Bernoulli</span></span>
-<span>(</span><span>...)</span>
+<span>(</span><span>p=None, perfect=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A Bernoulli distribution over the alphabet {0, 1}.</p>
@@ -132,7 +132,7 @@ bitrate.</li>
 </dd>
 <dt id="constriction.stream.model.Binomial"><code class="flex name class">
 <span>class <span class="ident">Binomial</span></span>
-<span>(</span><span>self, n=None, p=None)</span>
+<span>(</span><span>n=None, p=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A Binomial distribution over the alphabet {0, 1, &hellip;, n}.</p>
@@ -162,7 +162,7 @@ encoded, albeit possibly at a high bitrate.</li>
 </dd>
 <dt id="constriction.stream.model.Categorical"><code class="flex name class">
 <span>class <span class="ident">Categorical</span></span>
-<span>(</span><span>self, probabilities=None, lazy=None, perfect=None)</span>
+<span>(</span><span>probabilities=None, lazy=None, perfect=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A categorical distribution with explicitly provided probabilities.</p>
@@ -204,7 +204,7 @@ the limitations of fixed-point precision required to make the model exactly
 invertible). If set to <code>False</code> (recommended in most cases and implied if <code>lazy=True</code>)
 then the constructor will run faster but might find a <em>very slightly</em> worse
 approximation of the provided probability distribution, thus leading to marginally
-lower bit rates. Note that encoder and decoder have to use the same setting for
+higher bit rates. Note that encoder and decoder have to use the same setting for
 <code>perfect</code>. Most new code should set <code>perfect=False</code> as the differences in bit rate are
 usually hardly noticeable. However, if neither <code>lazy</code> nor <code>perfect</code> are explicitly set
 to any value, then <code>perfect</code> currently defaults to <code>True</code> for binary backward
@@ -267,7 +267,7 @@ assert np.all(reconstructed == symbols) # (verify correctness)
 </dd>
 <dt id="constriction.stream.model.CustomModel"><code class="flex name class">
 <span>class <span class="ident">CustomModel</span></span>
-<span>(</span><span>self, cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)</span>
+<span>(</span><span>cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Wrapper for a model (or model family) defined via custom callback functions</p>
@@ -386,7 +386,7 @@ everywhere.</p></div>
 </dd>
 <dt id="constriction.stream.model.QuantizedCauchy"><code class="flex name class">
 <span>class <span class="ident">QuantizedCauchy</span></span>
-<span>(</span><span>self, min_symbol_inclusive, max_symbol_inclusive, loc=None, scale=None)</span>
+<span>(</span><span>min_symbol_inclusive, max_symbol_inclusive, loc=None, scale=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A Cauchy distribution, quantized over bins of size 1 centered at integer values.</p>
@@ -423,7 +423,7 @@ has to be consistent between encoder and decoder side).</li>
 </dd>
 <dt id="constriction.stream.model.QuantizedGaussian"><code class="flex name class">
 <span>class <span class="ident">QuantizedGaussian</span></span>
-<span>(</span><span>self, min_symbol_inclusive, max_symbol_inclusive, mean=None, std=None)</span>
+<span>(</span><span>min_symbol_inclusive, max_symbol_inclusive, mean=None, std=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A Gaussian distribution, quantized over bins of size 1 centered at integer values.</p>
@@ -470,7 +470,7 @@ entropy model, regularization has to be consistent between encoder and decoder s
 </dd>
 <dt id="constriction.stream.model.QuantizedLaplace"><code class="flex name class">
 <span>class <span class="ident">QuantizedLaplace</span></span>
-<span>(</span><span>self, min_symbol_inclusive, max_symbol_inclusive, mean=None, scale=None)</span>
+<span>(</span><span>min_symbol_inclusive, max_symbol_inclusive, mean=None, scale=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A Laplace distribution, quantized over bins of size 1 centered at integer values.</p>
@@ -503,14 +503,14 @@ encoder and decoder side).</li>
 </dd>
 <dt id="constriction.stream.model.ScipyModel"><code class="flex name class">
 <span>class <span class="ident">ScipyModel</span></span>
-<span>(</span><span>self, scipy_model, min_symbol_inclusive, max_symbol_inclusive)</span>
+<span>(</span><span>scipy_model, min_symbol_inclusive, max_symbol_inclusive)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Adapter for models and model families from the <code>scipy</code> python package.</p>
 <p>This is similar to <code><a title="constriction.stream.model.CustomModel" href="#constriction.stream.model.CustomModel">CustomModel</a></code> but easier to use if your model's cumulative
 distribution function and percent point function are already implemented in the popular
 <code>scipy</code> python package. Just provide either a fully parameterized scipy-model or a scipy
-model-class to the constructor. The adapter can be used both with both discrete models
+model-class to the constructor. The adapter can be used with both discrete models
 (over a continuous integer domain) and continuous models. Continuous models will be
 quantized to bins of width 1 centered at integers, analogous to the procedure described
 in the documentation of
@@ -579,7 +579,7 @@ Requirements" below.</li>
 </dd>
 <dt id="constriction.stream.model.Uniform"><code class="flex name class">
 <span>class <span class="ident">Uniform</span></span>
-<span>(</span><span>self, size=None)</span>
+<span>(</span><span>size=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A uniform distribution over the alphabet <code>{0, 1, ..., size-1}</code>, where <code>size</code> is an

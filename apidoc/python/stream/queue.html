@@ -101,7 +101,7 @@ and development 23.2 (1979): 149-162.</p>
 <dl>
 <dt id="constriction.stream.queue.RangeDecoder"><code class="flex name class">
 <span>class <span class="ident">RangeDecoder</span></span>
-<span>(</span><span>self, compressed)</span>
+<span>(</span><span>compressed)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A decoder of data that was previously encoded with a <code><a title="constriction.stream.queue.RangeEncoder" href="#constriction.stream.queue.RangeEncoder">RangeEncoder</a></code>.</p>
@@ -118,7 +118,7 @@ buffer.</p>
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.stream.queue.RangeDecoder.clone"><code class="name flex">
-<span>def <span class="ident">clone</span></span>(<span>self)</span>
+<span>def <span class="ident">clone</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Creates a deep copy of the coder and returns it.</p>
@@ -127,7 +127,7 @@ original coder, but the two coders can be used independently without influencing
 other.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeDecoder.decode"><code class="name flex">
-<span>def <span class="ident">decode</span></span>(<span>self, model, *optional_amt_or_model_params)</span>
+<span>def <span class="ident">decode</span></span>(<span>self, /, model, *optional_amt_or_model_params)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Decodes one or more symbols, consuming them from the encapsulated compressed data.</p>
@@ -208,7 +208,7 @@ print(symbols) # (prints: [3, 1])
 </code></pre></div>
 </dd>
 <dt id="constriction.stream.queue.RangeDecoder.maybe_exhausted"><code class="name flex">
-<span>def <span class="ident">maybe_exhausted</span></span>(<span>self)</span>
+<span>def <span class="ident">maybe_exhausted</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns <code>True</code> if all compressed data <em>may</em> have already been decoded and <code>False</code> if there
@@ -220,7 +220,7 @@ can introduce an "end of stream" sentinel symbol, which you append to all messag
 encoding them.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeDecoder.seek"><code class="name flex">
-<span>def <span class="ident">seek</span></span>(<span>self, position, state)</span>
+<span>def <span class="ident">seek</span></span>(<span>self, /, position, state)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Jumps to a checkpoint recorded with method
@@ -255,7 +255,6 @@ assert np.all(decoded_part2 == message_part2)
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder"><code class="flex name class">
 <span>class <span class="ident">RangeEncoder</span></span>
-<span>(</span><span>self)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>An encoder that uses the range coding algorithm.</p>
@@ -273,7 +272,7 @@ documentation of the method
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.stream.queue.RangeEncoder.clear"><code class="name flex">
-<span>def <span class="ident">clear</span></span>(<span>self)</span>
+<span>def <span class="ident">clear</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Resets the encoder to an empty state.</p>
@@ -281,7 +280,7 @@ documentation of the method
 coder with a new one but slightly more efficient.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.clone"><code class="name flex">
-<span>def <span class="ident">clone</span></span>(<span>self)</span>
+<span>def <span class="ident">clone</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Creates a deep copy of the coder and returns it.</p>
@@ -290,7 +289,7 @@ original coder, but the two coders can be used independently without influencing
 other.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.encode"><code class="name flex">
-<span>def <span class="ident">encode</span></span>(<span>self, symbols, model, *optional_model_params)</span>
+<span>def <span class="ident">encode</span></span>(<span>self, /, symbols, model, *optional_model_params)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Encodes one or more symbols, appending them to the encapsulated compressed data.</p>
@@ -366,7 +365,7 @@ print(encoder.get_compressed()) # (prints: [2705829510])
 </code></pre></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.get_compressed"><code class="name flex">
-<span>def <span class="ident">get_compressed</span></span>(<span>self)</span>
+<span>def <span class="ident">get_compressed</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns a copy of the compressed data accumulated so far, as a rank-1 numpy array of
@@ -403,7 +402,7 @@ decoder = constriction.stream.queue.RangeDecoder(compressed)
 </code></pre></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.get_decoder"><code class="name flex">
-<span>def <span class="ident">get_decoder</span></span>(<span>self)</span>
+<span>def <span class="ident">get_decoder</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns a <code><a title="constriction.stream.queue.RangeDecoder" href="#constriction.stream.queue.RangeDecoder">RangeDecoder</a></code> that is initialized with a copy of the compressed data currently on
@@ -419,7 +418,7 @@ decoder = constriction.stream.stack.RangeDecoder(compressed)
 whereas the longhand version copies the data twice.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.is_empty"><code class="name flex">
-<span>def <span class="ident">is_empty</span></span>(<span>self)</span>
+<span>def <span class="ident">is_empty</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns <code>True</code> iff the coder is in its default initial state.</p>
@@ -428,7 +427,7 @@ called without arguments, or the state to which the coder is set when
 calling <code>clear</code>.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.num_bits"><code class="name flex">
-<span>def <span class="ident">num_bits</span></span>(<span>self)</span>
+<span>def <span class="ident">num_bits</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns the current size of the compressed data, in bits, rounded up to full words.</p>
@@ -436,7 +435,7 @@ calling <code>clear</code>.</p></div>
 would return.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.num_words"><code class="name flex">
-<span>def <span class="ident">num_words</span></span>(<span>self)</span>
+<span>def <span class="ident">num_words</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns the current size of the encapsulated compressed data, in <code>np.uint32</code> words.</p>
@@ -444,7 +443,7 @@ would return.</p></div>
 you called <a href="#constriction.stream.queue.RangeEncoder.get_compressed"><code>get_compressed</code></a>.</p></div>
 </dd>
 <dt id="constriction.stream.queue.RangeEncoder.pos"><code class="name flex">
-<span>def <span class="ident">pos</span></span>(<span>self)</span>
+<span>def <span class="ident">pos</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Records a checkpoint to which you can jump during decoding using

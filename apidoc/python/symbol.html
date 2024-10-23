@@ -127,7 +127,7 @@ assert decoded == message # (verifies correctness)
 <dl>
 <dt id="constriction.symbol.QueueDecoder"><code class="flex name class">
 <span>class <span class="ident">QueueDecoder</span></span>
-<span>(</span><span>self, compressed)</span>
+<span>(</span><span>compressed)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A container of compressed bits that can be read from front to back for decoding.</p>
@@ -140,7 +140,7 @@ is returned by `QueueEncoder.get_compressed()</p>
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.symbol.QueueDecoder.decode_symbol"><code class="name flex">
-<span>def <span class="ident">decode_symbol</span></span>(<span>self, codebook)</span>
+<span>def <span class="ident">decode_symbol</span></span>(<span>self, /, codebook)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Reads more bits from the current encapsulated compressed data and tries to match
@@ -157,14 +157,13 @@ is the only implemented decoder code book.</li>
 </dd>
 <dt id="constriction.symbol.QueueEncoder"><code class="flex name class">
 <span>class <span class="ident">QueueEncoder</span></span>
-<span>(</span><span>self, compressed)</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.symbol.QueueEncoder.encode_symbol"><code class="name flex">
-<span>def <span class="ident">encode_symbol</span></span>(<span>self, symbol, codebook)</span>
+<span>def <span class="ident">encode_symbol</span></span>(<span>self, /, symbol, codebook)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Looks up the provided symbol in the provided codebook and appends its bits to the
@@ -180,7 +179,7 @@ is the only implemented encoder code book.</li>
 </ul></div>
 </dd>
 <dt id="constriction.symbol.QueueEncoder.get_compressed"><code class="name flex">
-<span>def <span class="ident">get_compressed</span></span>(<span>self)</span>
+<span>def <span class="ident">get_compressed</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Deprecated method. Please use <code>get_compressed_and_bitrate</code> instead.</p>
@@ -188,7 +187,7 @@ is the only implemented encoder code book.</li>
 0.4.0 to avoid confusion about the return type.)</p></div>
 </dd>
 <dt id="constriction.symbol.QueueEncoder.get_compressed_and_bitrate"><code class="name flex">
-<span>def <span class="ident">get_compressed_and_bitrate</span></span>(<span>self)</span>
+<span>def <span class="ident">get_compressed_and_bitrate</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns a tuple <code>(compressed, bitrate)</code>, where <code>compressed</code> is a copy of the
@@ -199,7 +198,7 @@ multiple of 32 bits), and <code>bitrate</code> is the number of information-carr
 <code>compressed = np.fromfile("filename")</code>) and then construct a <code><a title="constriction.symbol.QueueDecoder" href="#constriction.symbol.QueueDecoder">QueueDecoder</a></code> from.</p></div>
 </dd>
 <dt id="constriction.symbol.QueueEncoder.get_decoder"><code class="name flex">
-<span>def <span class="ident">get_decoder</span></span>(<span>self)</span>
+<span>def <span class="ident">get_decoder</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Shortcut for <code><a title="constriction.symbol.QueueDecoder" href="#constriction.symbol.QueueDecoder">QueueDecoder</a>(encoder.get_compressed())</code> where <code>encoder</code> is a
@@ -212,7 +211,7 @@ decoder.</p></div>
 </dd>
 <dt id="constriction.symbol.StackCoder"><code class="flex name class">
 <span>class <span class="ident">StackCoder</span></span>
-<span>(</span><span>self, compressed)</span>
+<span>(</span><span>compressed=None)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>A container of compressed bits that allows appending and consuming bits from the same
@@ -234,7 +233,7 @@ initialized empty (useful for encoding).</p>
 <h3>Methods</h3>
 <dl>
 <dt id="constriction.symbol.StackCoder.decode_symbol"><code class="name flex">
-<span>def <span class="ident">decode_symbol</span></span>(<span>self, codebook)</span>
+<span>def <span class="ident">decode_symbol</span></span>(<span>self, /, codebook)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Consumes bits from the end of the encapsulated compressed data and tries to match
@@ -248,7 +247,7 @@ is the only implemented decoder code book.</li>
 </ul></div>
 </dd>
 <dt id="constriction.symbol.StackCoder.encode_symbol"><code class="name flex">
-<span>def <span class="ident">encode_symbol</span></span>(<span>self, symbol, codebook)</span>
+<span>def <span class="ident">encode_symbol</span></span>(<span>self, /, symbol, codebook)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Looks up the provided symbol in the provided codebook and appends its bits to the
@@ -264,7 +263,7 @@ is the only implemented encoder code book.</li>
 </ul></div>
 </dd>
 <dt id="constriction.symbol.StackCoder.get_compressed"><code class="name flex">
-<span>def <span class="ident">get_compressed</span></span>(<span>self)</span>
+<span>def <span class="ident">get_compressed</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Deprecated method. Please use <code>get_compressed_and_bitrate</code> instead.</p>
@@ -272,7 +271,7 @@ is the only implemented encoder code book.</li>
 0.4.0 to avoid confusion about the return type.)</p></div>
 </dd>
 <dt id="constriction.symbol.StackCoder.get_compressed_and_bitrate"><code class="name flex">
-<span>def <span class="ident">get_compressed_and_bitrate</span></span>(<span>self)</span>
+<span>def <span class="ident">get_compressed_and_bitrate</span></span>(<span>self, /)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Returns a tuple <code>(compressed, bitrate)</code>, where <code>compressed</code> is a copy of the
