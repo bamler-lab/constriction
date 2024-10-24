@@ -409,11 +409,11 @@ impl AnsCoder {
     /// Note that calling `.get_compressed(unseal=True)` fails if the coder is not in a "sealed"
     /// state.
     #[pyo3(signature = (unseal=false))]
-    pub fn get_compressed<'p>(
+    pub fn get_compressed<'py>(
         &mut self,
-        py: Python<'p>,
+        py: Python<'py>,
         unseal: bool,
-    ) -> PyResult<Bound<'p, PyArray1<u32>>> {
+    ) -> PyResult<Bound<'py, PyArray1<u32>>> {
         if unseal {
             let binary = self.inner.get_binary().map_err(|_|
                 pyo3::exceptions::PyAssertionError::new_err(

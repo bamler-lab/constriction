@@ -318,11 +318,11 @@ impl ChainCoder {
     /// See [above usage instructions](#usage-for-bits-back-coding) for further explanation.
     #[allow(clippy::type_complexity)]
     #[pyo3(signature = (unseal=false))]
-    pub fn get_data<'p>(
+    pub fn get_data<'py>(
         &self,
         unseal: bool,
-        py: Python<'p>,
-    ) -> PyResult<(Bound<'p, PyArray1<u32>>, Bound<'p, PyArray1<u32>>)> {
+        py: Python<'py>,
+    ) -> PyResult<(Bound<'py, PyArray1<u32>>, Bound<'py, PyArray1<u32>>)> {
         let cloned = self.inner.clone();
         let data = if unseal {
             cloned.into_binary()
@@ -346,10 +346,10 @@ impl ChainCoder {
     /// See [above usage instructions](#usage-for-bits-back-coding) for further explanation.
     #[allow(clippy::type_complexity)]
     #[pyo3(signature = ())]
-    pub fn get_remainders<'p>(
+    pub fn get_remainders<'py>(
         &self,
-        py: Python<'p>,
-    ) -> PyResult<(Bound<'p, PyArray1<u32>>, Bound<'p, PyArray1<u32>>)> {
+        py: Python<'py>,
+    ) -> PyResult<(Bound<'py, PyArray1<u32>>, Bound<'py, PyArray1<u32>>)> {
         let (compressed, remainders) = self.inner.clone().into_remainders().unwrap_infallible();
         let remainders = PyArray1::from_vec_bound(py, remainders);
         let compressed = PyArray1::from_vec_bound(py, compressed);

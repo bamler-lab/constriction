@@ -222,7 +222,7 @@ impl RangeEncoder {
     /// # ... decode the message (skipped here) ...
     /// ```
     #[pyo3(signature = ())]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> Bound<'p, PyArray1<u32>> {
+    pub fn get_compressed<'py>(&mut self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
         PyArray1::from_slice_bound(py, &self.inner.get_compressed())
     }
 

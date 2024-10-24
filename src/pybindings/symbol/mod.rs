@@ -205,10 +205,10 @@ impl StackCoder {
     /// `compressed = np.fromfile("filename")`) and then reconstruct a coder (for decoding)
     /// py passing `compressed` to the constructor of `StackCoder`.
     #[pyo3(signature = ())]
-    pub fn get_compressed_and_bitrate<'p>(
+    pub fn get_compressed_and_bitrate<'py>(
         &mut self,
-        py: Python<'p>,
-    ) -> (Bound<'p, PyArray1<u32>>, usize) {
+        py: Python<'py>,
+    ) -> (Bound<'py, PyArray1<u32>>, usize) {
         let len = self.inner.len();
         (
             PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
@@ -221,7 +221,7 @@ impl StackCoder {
     /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
     /// 0.4.0 to avoid confusion about the return type.)
     #[pyo3(signature = ())]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (Bound<'p, PyArray1<u32>>, usize) {
+    pub fn get_compressed<'py>(&mut self, py: Python<'py>) -> (Bound<'py, PyArray1<u32>>, usize) {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::AcqRel) {
             let _ = py.run_bound(
@@ -295,10 +295,10 @@ impl QueueEncoder {
     /// `compressed.tofile("filename")`), read it back in at a later point (with
     /// `compressed = np.fromfile("filename")`) and then construct a `QueueDecoder` from.
     #[pyo3(signature = ())]
-    pub fn get_compressed_and_bitrate<'p>(
+    pub fn get_compressed_and_bitrate<'py>(
         &mut self,
-        py: Python<'p>,
-    ) -> (Bound<'p, PyArray1<u32>>, usize) {
+        py: Python<'py>,
+    ) -> (Bound<'py, PyArray1<u32>>, usize) {
         let len = self.inner.len();
         (
             PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
@@ -311,7 +311,7 @@ impl QueueEncoder {
     /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
     /// 0.4.0 to avoid confusion about the return type.)
     #[pyo3(signature = ())]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (Bound<'p, PyArray1<u32>>, usize) {
+    pub fn get_compressed<'py>(&mut self, py: Python<'py>) -> (Bound<'py, PyArray1<u32>>, usize) {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::AcqRel) {
             let _ = py.run_bound(
