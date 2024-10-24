@@ -4,7 +4,7 @@ pub mod symbol;
 use std::prelude::v1::*;
 
 use alloc::borrow::Cow;
-use numpy::{ndarray, PyArrayMethods, PyReadonlyArray, PyUntypedArrayMethods};
+use numpy::{ndarray, PyArrayMethods, PyReadonlyArray, PyReadonlyArray1, PyUntypedArrayMethods};
 use pyo3::{prelude::*, wrap_pymodule};
 
 use crate::NanError;
@@ -231,6 +231,11 @@ impl<'py, D: ndarray::Dimension> PyReadonlyFloatArray<'py, D> {
             PyReadonlyFloatArray::F64(x) => x.get(index).copied(),
         }
     }
+}
+
+fn array1_to_vec<T: numpy::Element + Clone>(x: PyReadonlyArray1<'_, T>) -> Vec<T> {
+    x.to_vec()
+        .unwrap_or_else(|_| x.as_array().iter().cloned().collect())
 }
 
 impl From<NanError> for PyErr {

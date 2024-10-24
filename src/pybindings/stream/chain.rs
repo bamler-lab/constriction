@@ -1,10 +1,10 @@
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
-    pybindings::stream::model::Model,
+    pybindings::{array1_to_vec, stream::model::Model},
     stream::{
         chain::{BackendError, DecoderFrontendError, EncoderFrontendError},
         Decode, Encode,
@@ -13,7 +13,6 @@ use crate::{
 };
 
 use super::model::internals::EncoderDecoderModel;
-
 
 /// Experimental entropy coding algorithm for advanced variants of bits-back coding.
 ///
@@ -286,7 +285,7 @@ impl ChainCoder {
     #[new]
     #[pyo3(signature = (data, is_remainders=false, seal=false))]
     pub fn new(data: PyReadonlyArray1<'_, u32>, is_remainders: bool, seal: bool) -> PyResult<Self> {
-        let data = data.to_vec()?;
+        let data = array1_to_vec(data);
         let inner = if is_remainders {
             if seal {
                 return Err(pyo3::exceptions::PyAssertionError::new_err(

@@ -1,9 +1,10 @@
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
+    pybindings::array1_to_vec,
     stream::{Decode, Encode},
     Pos, Seek, UnwrapInfallible,
 };
@@ -222,7 +223,7 @@ impl AnsCoder {
             ));
         }
         let inner = if let Some(compressed) = compressed {
-            let compressed = compressed.to_vec()?;
+            let compressed = array1_to_vec(compressed);
             if seal {
                 crate::stream::stack::AnsCoder::from_binary(compressed).unwrap_infallible()
             } else {

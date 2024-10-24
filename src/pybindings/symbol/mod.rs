@@ -6,7 +6,7 @@ use core::{
 };
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{prelude::*, wrap_pymodule};
 
 use crate::{
@@ -16,6 +16,8 @@ use crate::{
         SymbolCodeError, WriteBitStream,
     },
 };
+
+use super::array1_to_vec;
 
 /// Symbol codes. Mainly provided for teaching purpose. You'll probably want to use a
 /// [stream code](stream.html) instead.
@@ -149,13 +151,12 @@ impl StackCoder {
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = match compressed {
             None => DefaultStackCoder::new(),
-            Some(compressed) => {
-                DefaultStackCoder::from_compressed(compressed.to_vec()?).map_err(|_| {
+            Some(compressed) => DefaultStackCoder::from_compressed(array1_to_vec(compressed))
+                .map_err(|_| {
                     pyo3::exceptions::PyValueError::new_err(
                         "Compressed data for a stack must not end in a zero word.",
                     )
-                })?
-            }
+                })?,
         };
 
         Ok(Self { inner })
@@ -357,7 +358,7 @@ impl QueueDecoder {
     #[new]
     #[pyo3(signature = (compressed))]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
-        Ok(Self::from_vec(compressed.to_vec()?))
+        Ok(Self::from_vec(array1_to_vec(compressed)))
     }
 
     /// Reads more bits from the current encapsulated compressed data and tries to match

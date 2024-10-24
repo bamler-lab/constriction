@@ -1,9 +1,10 @@
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
+    pybindings::array1_to_vec,
     stream::{
         queue::{DecoderFrontendError, RangeCoderState},
         Decode, Encode,
@@ -443,7 +444,7 @@ impl RangeDecoder {
     #[new]
     #[pyo3(signature = (compressed))]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
-        Ok(Self::from_vec(compressed.to_vec()?))
+        Ok(Self::from_vec(array1_to_vec(compressed)))
     }
 
     /// Jumps to a checkpoint recorded with method
