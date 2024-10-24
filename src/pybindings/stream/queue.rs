@@ -627,7 +627,7 @@ impl RangeDecoder {
                         }
                         Ok(())
                     })?;
-                    return Ok(PyArray1::from_iter_bound(py, symbols).to_object(py));
+                    return Ok(PyArray1::from_iter_bound(py, symbols).into_any().unbind());
                 }
             }
             _ => {} // Fall through to code below.
@@ -648,7 +648,7 @@ impl RangeDecoder {
                 Ok(())
             })?;
 
-        Ok(PyArray1::from_vec_bound(py, symbols).to_object(py))
+        Ok(PyArray1::from_vec_bound(py, symbols).into_any().unbind())
     }
 
     /// Creates a deep copy of the coder and returns it.
