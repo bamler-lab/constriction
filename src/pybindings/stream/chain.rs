@@ -405,9 +405,8 @@ impl ChainCoder {
         } else {
             if symbols.len()
                 != model.0.len(
-                    &optional_model_params
-                        .iter()
-                        .next()
+                    optional_model_params
+                        .get_borrowed_item(0)
                         .expect("len checked above"),
                 )?
             {
@@ -458,12 +457,11 @@ impl ChainCoder {
                 return Ok(symbol.to_object(py));
             }
             1 => {
-                if let Ok(amt) = usize::extract_bound(
-                    &optional_amt_or_model_params
-                        .iter()
-                        .next()
-                        .expect("len checked above"),
-                ) {
+                if let Ok(amt) = optional_amt_or_model_params
+                    .get_borrowed_item(0)
+                    .expect("len checked above")
+                    .extract::<usize>()
+                {
                     let mut symbols = Vec::with_capacity(amt);
                     model.0.as_parameterized(py, &mut |model| {
                         for symbol in self
@@ -483,9 +481,8 @@ impl ChainCoder {
 
         let mut symbols = Vec::with_capacity(
             model.0.len(
-                &optional_amt_or_model_params
-                    .iter()
-                    .next()
+                optional_amt_or_model_params
+                    .get_borrowed_item(0)
                     .expect("len checked above"),
             )?,
         );
