@@ -7,7 +7,26 @@ use crate::{
     symbol::huffman,
 };
 
-pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Codebooks for Huffman coding [1].
+///
+/// The Huffman algorithm constructs an optimal code book for a given categorical
+/// probability distribution. Note however, that even an optimal code book is limited to
+/// assigning an *integer* number of bits to each symbol, which results in an overhead of up
+/// to 1 bit per symbol in the regime of low entropy per symbol. Stream codes, as provided
+/// by the module [`constriction.stream`](../stream.html) remove most of this overhead by
+/// amortizing compressed bits over several symbols.
+///
+/// Our implementation of Huffman trees uses the order in of provided symbols to break ties
+/// if two subtrees have the same weight. Thus, reordering probabilities can affect the
+/// shape of a Huffman tree in a nontrivial way in edge cases.
+///
+/// ## References
+///
+/// [1] Huffman, David A. "A method for the construction of minimum-redundancy codes."
+/// Proceedings of the IRE 40.9 (1952): 1098-1101.
+#[pymodule]
+#[pyo3(name = "huffman")]
+pub fn init_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<EncoderHuffmanTree>()?;
     module.add_class::<DecoderHuffmanTree>()?;
     Ok(())
