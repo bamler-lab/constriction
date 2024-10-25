@@ -6,7 +6,7 @@ use core::{
 };
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{prelude::*, wrap_pymodule};
 
 use crate::{
@@ -17,35 +17,104 @@ use crate::{
     },
 };
 
-pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_wrapped(wrap_pymodule!(init_huffman))?;
+use super::array1_to_vec;
+
+/// Symbol codes. Mainly provided for teaching purpose. You'll probably want to use a
+/// [stream code](stream.html) instead.
+///
+/// Symbol codes encode messages (= sequences of symbols) by compressing each symbol
+/// individually and then concatenating the compressed representations of the symbols
+/// (called code words). This has the advantage of being conceptually simple, but the
+/// disadvantage of incurring an overhead of up to almost 1 bit *per symbol*. The overhead
+/// is most significant in the regime of low entropy per symbol (often the regime of novel
+/// machine-learning based compression methods), since each (nontrivial) symbol in a symbol
+/// code contributes at least 1 bit to the total bitrate of the message, even if its
+/// information content is only marginally above zero.
+///
+/// This module defines the types `QueueEncoder`, `QueueDecoder`, and `StackCoder`, which
+/// are essentially just efficient containers for of growable bit strings. The interesting
+/// part happens in the so-called code book, which defines how symbols map to code words. We
+/// provide the Huffman Coding algorithm in the submodule [`huffman`](symbol/huffman.html),
+/// which calculates an optimal code book for a given probability distribution.
+///
+/// ## Examples
+///
+/// The following two examples both encode and then decode a sequence of symbols using the
+/// same entropy model for each symbol. We could as well use a different entropy model for
+/// each symbol, but it would make the examples more lengthy.
+///
+/// - Example 1: Encoding and decoding with "queue" semantics ("first in first out", i.e.,
+///   we'll decode symbols in the same order in which we encode them):
+///
+/// ```python
+/// import constriction
+/// import numpy as np
+///
+/// # Define an entropy model over the (implied) alphabet {0, 1, 2, 3}:
+/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float32)
+///
+/// # Encode some example message, using the same model for each symbol here:
+/// message = [1, 3, 2, 3, 0, 1, 3, 0, 2, 1, 1, 3, 3, 1, 2, 0, 1, 3, 1]
+/// encoder = constriction.symbol.QueueEncoder()
+/// encoder_codebook = constriction.symbol.huffman.EncoderHuffmanTree(probabils)
+/// for symbol in message:
+///     encoder.encode_symbol(symbol, encoder_codebook)
+///
+/// # Obtain the compressed representation and the bitrate:
+/// compressed, bitrate = encoder.get_compressed()
+/// print(compressed, bitrate) # (prints: [3756389791, 61358], 48)
+/// print(f"(in binary: {[bin(word) for word in compressed]}")
+///
+/// # Decode the message
+/// decoder = constriction.symbol.QueueDecoder(compressed)
+/// decoded = []
+/// decoder_codebook = constriction.symbol.huffman.DecoderHuffmanTree(probabils)
+/// for symbol in range(19):
+///     decoded.append(decoder.decode_symbol(decoder_codebook))
+///
+/// assert decoded == message # (verifies correctness)
+/// ```
+///
+/// - Example 2: Encoding and decoding with "stack" semantics ("last in first out", i.e.,
+///   we'll encode symbols from back to front and then decode them from front to back):
+///
+/// ```python
+/// import constriction
+/// import numpy as np
+///
+/// # Define an entropy model over the (implied) alphabet {0, 1, 2, 3}:
+/// probabils = np.array([0.3, 0.2, 0.4, 0.1], dtype=np.float32)
+///
+/// # Encode some example message, using the same model for each symbol here:
+/// message = [1, 3, 2, 3, 0, 1, 3, 0, 2, 1, 1, 3, 3, 1, 2, 0, 1, 3, 1]
+/// coder = constriction.symbol.StackCoder()
+/// encoder_codebook = constriction.symbol.huffman.EncoderHuffmanTree(probabils)
+/// for symbol in reversed(message): # Note: reversed
+///     coder.encode_symbol(symbol, encoder_codebook)
+///
+/// # Obtain the compressed representation and the bitrate:
+/// compressed, bitrate = coder.get_compressed()
+/// print(compressed, bitrate) # (prints: [[2818274807, 129455] 48)
+/// print(f"(in binary: {[bin(word) for word in compressed]}")
+///
+/// # Decode the message (we could explicitly construct a decoder:
+/// # `decoder = constriction.symbol.StackCoder(compressed)`
+/// # but we can also also reuse our existing `coder` for decoding):
+/// decoded = []
+/// decoder_codebook = constriction.symbol.huffman.DecoderHuffmanTree(probabils)
+/// for symbol in range(19):
+///     decoded.append(coder.decode_symbol(decoder_codebook))
+///
+/// assert decoded == message # (verifies correctness)
+/// ```
+#[pymodule]
+#[pyo3(name = "symbol")]
+pub fn init_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_wrapped(wrap_pymodule!(huffman::init_module))?;
     module.add_class::<StackCoder>()?;
     module.add_class::<QueueEncoder>()?;
     module.add_class::<QueueDecoder>()?;
     Ok(())
-}
-
-/// Codebooks for Huffman coding [1].
-///
-/// The Huffman algorithm constructs an optimal code book for a given categorical
-/// probability distribution. Note however, that even an optimal code book is limited to
-/// assigning an *integer* number of bits to each symbol, which results in an overhead of up
-/// to 1 bit per symbol in the regime of low entropy per symbol. Stream codes, as provided
-/// by the module [`constriction.stream`](../stream.html) remove most of this overhead by
-/// amortizing compressed bits over several symbols.
-///
-/// Our implementation of Huffman trees uses the order in of provided symbols to break ties
-/// if two subtrees have the same weight. Thus, reordering probabilities can affect the
-/// shape of a Huffman tree in a nontrivial way in edge cases.
-///
-/// ## References
-///
-/// [1] Huffman, David A. "A method for the construction of minimum-redundancy codes."
-/// Proceedings of the IRE 40.9 (1952): 1098-1101.
-#[pymodule]
-#[pyo3(name = "huffman")]
-fn init_huffman(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
-    huffman::init_module(py, module)
 }
 
 /// A container of compressed bits that allows appending and consuming bits from the same
@@ -82,13 +151,12 @@ impl StackCoder {
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = match compressed {
             None => DefaultStackCoder::new(),
-            Some(compressed) => {
-                DefaultStackCoder::from_compressed(compressed.to_vec()?).map_err(|_| {
+            Some(compressed) => DefaultStackCoder::from_compressed(array1_to_vec(compressed))
+                .map_err(|_| {
                     pyo3::exceptions::PyValueError::new_err(
                         "Compressed data for a stack must not end in a zero word.",
                     )
-                })?
-            }
+                })?,
         };
 
         Ok(Self { inner })
@@ -137,10 +205,10 @@ impl StackCoder {
     /// `compressed = np.fromfile("filename")`) and then reconstruct a coder (for decoding)
     /// py passing `compressed` to the constructor of `StackCoder`.
     #[pyo3(signature = ())]
-    pub fn get_compressed_and_bitrate<'p>(
+    pub fn get_compressed_and_bitrate<'py>(
         &mut self,
-        py: Python<'p>,
-    ) -> (Bound<'p, PyArray1<u32>>, usize) {
+        py: Python<'py>,
+    ) -> (Bound<'py, PyArray1<u32>>, usize) {
         let len = self.inner.len();
         (
             PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
@@ -153,7 +221,7 @@ impl StackCoder {
     /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
     /// 0.4.0 to avoid confusion about the return type.)
     #[pyo3(signature = ())]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (Bound<'p, PyArray1<u32>>, usize) {
+    pub fn get_compressed<'py>(&mut self, py: Python<'py>) -> (Bound<'py, PyArray1<u32>>, usize) {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::AcqRel) {
             let _ = py.run_bound(
@@ -227,10 +295,10 @@ impl QueueEncoder {
     /// `compressed.tofile("filename")`), read it back in at a later point (with
     /// `compressed = np.fromfile("filename")`) and then construct a `QueueDecoder` from.
     #[pyo3(signature = ())]
-    pub fn get_compressed_and_bitrate<'p>(
+    pub fn get_compressed_and_bitrate<'py>(
         &mut self,
-        py: Python<'p>,
-    ) -> (Bound<'p, PyArray1<u32>>, usize) {
+        py: Python<'py>,
+    ) -> (Bound<'py, PyArray1<u32>>, usize) {
         let len = self.inner.len();
         (
             PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
@@ -243,7 +311,7 @@ impl QueueEncoder {
     /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
     /// 0.4.0 to avoid confusion about the return type.)
     #[pyo3(signature = ())]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (Bound<'p, PyArray1<u32>>, usize) {
+    pub fn get_compressed<'py>(&mut self, py: Python<'py>) -> (Bound<'py, PyArray1<u32>>, usize) {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::AcqRel) {
             let _ = py.run_bound(
@@ -290,7 +358,7 @@ impl QueueDecoder {
     #[new]
     #[pyo3(signature = (compressed))]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
-        Ok(Self::from_vec(compressed.to_vec()?))
+        Ok(Self::from_vec(array1_to_vec(compressed)))
     }
 
     /// Reads more bits from the current encapsulated compressed data and tries to match
