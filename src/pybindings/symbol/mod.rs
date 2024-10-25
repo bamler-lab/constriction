@@ -1,9 +1,12 @@
 pub mod huffman;
 
-use core::convert::Infallible;
+use core::{
+    convert::Infallible,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
 use pyo3::{prelude::*, wrap_pymodule};
 
 use crate::{
@@ -14,7 +17,7 @@ use crate::{
     },
 };
 
-pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_wrapped(wrap_pymodule!(init_huffman))?;
     module.add_class::<StackCoder>()?;
     module.add_class::<QueueEncoder>()?;
@@ -41,7 +44,7 @@ pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
 /// Proceedings of the IRE 40.9 (1952): 1098-1101.
 #[pymodule]
 #[pyo3(name = "huffman")]
-fn init_huffman(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_huffman(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     huffman::init_module(py, module)
 }
 
@@ -75,7 +78,7 @@ pub struct StackCoder {
 #[pymethods]
 impl StackCoder {
     #[new]
-    #[pyo3(text_signature = "(self, compressed)")]
+    #[pyo3(signature = (compressed=None))]
     pub fn new(compressed: Option<PyReadonlyArray1<'_, u32>>) -> PyResult<Self> {
         let inner = match compressed {
             None => DefaultStackCoder::new(),
@@ -102,7 +105,7 @@ impl StackCoder {
     /// - **codebook** --- an encoder code book for a symbol code. Currently,
     ///   [`EncoderHuffmanTree`](symbol/huffman.html#constriction.symbol.huffman.EncoderHuffmanTree)
     ///   is the only implemented encoder code book.
-    #[pyo3(text_signature = "(self, symbol, codebook)")]
+    #[pyo3(signature = (symbol, codebook))]
     pub fn encode_symbol(
         &mut self,
         symbol: usize,
@@ -120,7 +123,7 @@ impl StackCoder {
     /// - **codebook** --- a decoder code book for a symbol code. Currently,
     ///   [`DecoderHuffmanTree`](symbol/huffman.html#constriction.symbol.huffman.DecoderHuffmanTree)
     ///   is the only implemented decoder code book.
-    #[pyo3(text_signature = "(self, codebook)")]
+    #[pyo3(signature = (codebook))]
     pub fn decode_symbol(&mut self, codebook: &huffman::DecoderHuffmanTree) -> PyResult<usize> {
         Ok(self.inner.decode_symbol(&codebook.inner)?)
     }
@@ -133,10 +136,35 @@ impl StackCoder {
     /// `compressed.tofile("filename")`), read it back in at a later point (with
     /// `compressed = np.fromfile("filename")`) and then reconstruct a coder (for decoding)
     /// py passing `compressed` to the constructor of `StackCoder`.
-    #[pyo3(text_signature = "(self)")]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+    #[pyo3(signature = ())]
+    pub fn get_compressed_and_bitrate<'p>(
+        &mut self,
+        py: Python<'p>,
+    ) -> (Bound<'p, PyArray1<u32>>, usize) {
         let len = self.inner.len();
-        (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
+        (
+            PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
+            len,
+        )
+    }
+
+    /// Deprecated method. Please use `get_compressed_and_bitrate` instead.
+    ///
+    /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
+    /// 0.4.0 to avoid confusion about the return type.)
+    #[pyo3(signature = ())]
+    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (Bound<'p, PyArray1<u32>>, usize) {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::AcqRel) {
+            let _ = py.run_bound(
+                "print('WARNING: `StackCoder.get_compressed` has been renamed to\\n\
+                     \x20        `StackCoder.get_compressed_and_bitrate` to avoid confusion.",
+                None,
+                None,
+            );
+        }
+
+        self.get_compressed_and_bitrate(py)
     }
 }
 
@@ -164,7 +192,7 @@ pub struct QueueEncoder {
 #[pymethods]
 impl QueueEncoder {
     #[new]
-    #[pyo3(text_signature = "(self, compressed)")]
+    #[pyo3(signature = ())]
     pub fn new() -> Self {
         Self {
             inner: DefaultQueueEncoder::new(),
@@ -182,7 +210,7 @@ impl QueueEncoder {
     /// - **codebook** --- an encoder code book for a symbol code. Currently,
     ///   [`EncoderHuffmanTree`](symbol/huffman.html#constriction.symbol.huffman.EncoderHuffmanTree)
     ///   is the only implemented encoder code book.
-    #[pyo3(text_signature = "(self, symbol, codebook)")]
+    #[pyo3(signature = (symbol, codebook))]
     pub fn encode_symbol(
         &mut self,
         symbol: usize,
@@ -198,10 +226,35 @@ impl QueueEncoder {
     /// You can write the compressed data to a file (by calling
     /// `compressed.tofile("filename")`), read it back in at a later point (with
     /// `compressed = np.fromfile("filename")`) and then construct a `QueueDecoder` from.
-    #[pyo3(text_signature = "(self)")]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (&'p PyArray1<u32>, usize) {
+    #[pyo3(signature = ())]
+    pub fn get_compressed_and_bitrate<'p>(
+        &mut self,
+        py: Python<'p>,
+    ) -> (Bound<'p, PyArray1<u32>>, usize) {
         let len = self.inner.len();
-        (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
+        (
+            PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
+            len,
+        )
+    }
+
+    /// Deprecated method. Please use `get_compressed_and_bitrate` instead.
+    ///
+    /// (The method was renamed to `get_compressed_and_bitrate` in `constriction` version
+    /// 0.4.0 to avoid confusion about the return type.)
+    #[pyo3(signature = ())]
+    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> (Bound<'p, PyArray1<u32>>, usize) {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::AcqRel) {
+            let _ = py.run_bound(
+                "print('WARNING: `QueueEncoder.get_compressed` has been renamed to\\n\
+                     \x20        `QueueEncoder.get_compressed_and_bitrate` to avoid confusion.",
+                None,
+                None,
+            );
+        }
+
+        self.get_compressed_and_bitrate(py)
     }
 
     /// Shortcut for `QueueDecoder(encoder.get_compressed())` where `encoder` is a
@@ -210,7 +263,7 @@ impl QueueEncoder {
     /// Copies the compressed data out of the encoder. Thus, if you continue to encode
     /// symbols on the encoder, those won't affect what you will be able to decode on the
     /// decoder.
-    #[pyo3(text_signature = "(self)")]
+    #[pyo3(signature = ())]
     pub fn get_decoder(&mut self) -> QueueDecoder {
         let compressed = self.inner.get_compressed().to_vec();
         QueueDecoder::from_vec(compressed)
@@ -235,7 +288,7 @@ pub struct QueueDecoder {
 #[pymethods]
 impl QueueDecoder {
     #[new]
-    #[pyo3(text_signature = "(self, compressed)")]
+    #[pyo3(signature = (compressed))]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
         Ok(Self::from_vec(compressed.to_vec()?))
     }
@@ -249,7 +302,7 @@ impl QueueDecoder {
     /// - **codebook** --- a decoder code book for a symbol code. Currently,
     ///   [`DecoderHuffmanTree`](symbol/huffman.html#constriction.symbol.huffman.DecoderHuffmanTree)
     ///   is the only implemented decoder code book.
-    #[pyo3(text_signature = "(self, codebook)")]
+    #[pyo3(signature = (codebook))]
     pub fn decode_symbol(&mut self, codebook: &huffman::DecoderHuffmanTree) -> PyResult<usize> {
         Ok(self.inner.decode_symbol(&codebook.inner)?)
     }

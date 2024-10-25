@@ -1,10 +1,8 @@
 pub mod internals;
 
-use core::{
-    iter::Sum,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::{cell::Cell, iter::Sum};
 use std::prelude::v1::*;
+use std::sync::Mutex;
 
 use alloc::sync::Arc;
 use num_traits::{float::FloatCore, AsPrimitive};
@@ -20,7 +18,7 @@ use crate::{
 
 use self::internals::DefaultEntropyModel;
 
-pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Model>()?;
     module.add_class::<CustomModel>()?;
     module.add_class::<ScipyModel>()?;
@@ -149,7 +147,7 @@ pub struct CustomModel;
 impl CustomModel {
     #[new]
     #[pyo3(
-        text_signature = "(self, cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)"
+        signature = (cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)
     )]
     pub fn new(
         cdf: PyObject,
@@ -172,7 +170,7 @@ impl CustomModel {
 /// This is similar to `CustomModel` but easier to use if your model's cumulative
 /// distribution function and percent point function are already implemented in the popular
 /// `scipy` python package. Just provide either a fully parameterized scipy-model or a scipy
-/// model-class to the constructor. The adapter can be used both with both discrete models
+/// model-class to the constructor. The adapter can be used with both discrete models
 /// (over a continuous integer domain) and continuous models. Continuous models will be
 /// quantized to bins of width 1 centered at integers, analogous to the procedure described
 /// in the documentation of
@@ -250,16 +248,16 @@ pub struct ScipyModel;
 #[pymethods]
 impl ScipyModel {
     #[new]
-    #[pyo3(text_signature = "(self, scipy_model, min_symbol_inclusive, max_symbol_inclusive)")]
+    #[pyo3(signature = (scipy_model, min_symbol_inclusive, max_symbol_inclusive))]
     pub fn new(
         py: Python<'_>,
-        model: PyObject,
+        scipy_model: PyObject,
         min_symbol_inclusive: i32,
         max_symbol_inclusive: i32,
     ) -> PyResult<PyClassInitializer<Self>> {
         let custom_model = CustomModel::new(
-            model.getattr(py, "cdf")?,
-            model.getattr(py, "ppf")?,
+            scipy_model.getattr(py, "cdf")?,
+            scipy_model.getattr(py, "ppf")?,
             min_symbol_inclusive,
             max_symbol_inclusive,
         );
@@ -272,6 +270,24 @@ impl ScipyModel {
 /// Allows you to define any probability distribution over the alphabet `{0, 1, ... n-1}` by
 /// explicitly providing the probability of each symbol in the alphabet.
 ///
+/// ## Model Parameters
+///
+/// - **probabilities** --- the probability table, as a numpy array. You can specify the
+///   probabilities either directly when constructing the model by passing a rank-1 numpy
+///   array with a float `dtype` and length `n` to the constructor; or you can call the
+///   constructor with no `probabilities` argument and instead provide a rank-2 tensor of
+///   shape `(m, n)` when encoding or decoding an array of `m` symbols, as in the second
+///   example below.
+///
+/// The probability table for each symbol must be normalizable (i.e., all probabilities must
+/// be nonnegative and finite), but the probabilities don't necessarily have to sum to one.
+/// They will automatically be rescaled to an exactly normalized distribution. Further,
+/// `constriction` guarantees to assign at least the smallest representable nonzero
+/// probability to all symbols from the range `{0, 1, ..., n-1}` (where `n` is the number of
+/// provided probabilities), even if the provided probability for some symbol is smaller
+/// than the smallest representable probability (including if it is exactly `0.0`). This
+/// ensures that all symbols from this range can in principle be encoded.
+///
 /// ## Fixed Arguments
 ///
 /// The following arguments have to be provided directly to the constructor of the model.
@@ -283,33 +299,36 @@ impl ScipyModel {
 ///   that setting `lazy=True` implies `perfect=False`, see below. If you explicitly set
 ///   `perfect=False` anyway then the value of `lazy` only affects run time but has no
 ///   effect on the compression semantics. Thus, encoder and decoder may set `lazy`
-///   differently as long as both set `perfect=False`. Ignored if `perfect=False` and
+///   differently as long as they both set `perfect=False`. Ignored if `perfect=False` and
 ///   `probabilities` is not given (in this case, lazy model construction is always used as
-///   it is always faster without changing semantics).
+///   it is always faster and doesn't change semantics if `perfect=False`).
 /// - **perfect** -- whether the constructor should accept a potentially long run time to
-///   find the best possible approximation of the provided probability distribution. If set
-///   to `False` (recommended in most cases) then the constructor will run faster but might
-///   find a *very slightly* worse approximation of the provided probability distribution,
-///   thus leading to marginally lower bit rates. Note that encoder and decoder have to use
-///   the same setting for `perfect`. Most new code should set `perfect=False` as the
-///   differences in bit rate are usually hardly noticeable. However, if neither `lazy` nor
-///   `perfect` are explicitly set to any value then `perfect` currently defaults to `True`
-///   for binary backward compatibility with `constriction` version <= 0.3.5, which
-///   supported only `perfect=True` (see discussion of defaults below).
+///   find the best possible approximation of the provided probability distribution (within
+///   the limitations of fixed-point precision required to make the model exactly
+///   invertible). If set to `False` (recommended in most cases and implied if `lazy=True`)
+///   then the constructor will run faster but might find a *very slightly* worse
+///   approximation of the provided probability distribution, thus leading to marginally
+///   higher bit rates. Note that encoder and decoder have to use the same setting for
+///   `perfect`. Most new code should set `perfect=False` as the differences in bit rate are
+///   usually hardly noticeable. However, if neither `lazy` nor `perfect` are explicitly set
+///   to any value, then `perfect` currently defaults to `True` for binary backward
+///   compatibility with `constriction` version <= 0.3.5, which supported only
+///   `perfect=True` (this default will change in the future, see discussion of defaults
+///   below).
 ///
-/// **Defaults:**
+/// ## Default values of fixed arguments
 ///
 /// - If neither `lazy` nor `perfect` are set, then `constriction` currently defaults to
 ///   `perfect=True` (and therefore `lazy=False`) to provide binary backward compatibility
 ///   with `constriction` version <= 0.3.5. If you don't need to exchange binary compressed
 ///   data with code that uses `constriction` version <= 0.3.5 then it is recommended to set
-///   `perfect=True` to improve runtime performance. **Warning:** this default will change
-///   in `constriction` version 0.5, which will default to `perfect=False`.
-/// - If either one of `lazy` or `perfect` is specified but the other isn't, then the
-///   unspecified argument defaults to `False` with the following exception:
+///   `perfect=False` to improve runtime performance.<br> **Warning:** this default will
+///   change in `constriction` version 0.5, which will default to `perfect=False`.
+/// - If one of `lazy` or `perfect` is specified but the other isn't, then the unspecified
+///   argument defaults to `False` with the following exception:
 /// - If `perfect=False` and `probabilities` is not specified (i.e., if you're constructing
 ///   a model *family*) then `lazy` is automatically always `True` since, in this case, lazy
-///   model construction is always faster without changing semantics.
+///   model construction is always faster and doesn't change semantics if `perfect=False`.
 ///
 /// ## Examples
 ///
@@ -351,23 +370,6 @@ impl ScipyModel {
 /// reconstructed = coder.decode(model_family, probabilities)
 /// assert np.all(reconstructed == symbols) # (verify correctness)
 /// ```
-///
-/// ## Model Parameters
-///
-/// - **probabilities** --- the probability table, as a numpy array. You can specify the
-///   probabilities either directly when constructing the model by passing a rank-1 numpy
-///   array with a float `dtype` and length `n` to the constructor; or you can call the
-///   constructor with no arguments and instead provide a rank-2 tensor of shape `(m, n)`
-///   when encoding or decoding an array of `m` symbols, as in the second example above.
-///
-/// The probability table for each symbol must be normalizable (i.e., all probabilities must
-/// be nonnegative and finite), but the probabilities don't necessarily have to sum to one.
-/// They will automatically be rescaled to an exactly normalized distribution. Further,
-/// `constriction` guarantees to assign at least the smallest representable nonzero
-/// probability to all symbols from the range `{0, 1, ..., n-1}` (where `n` is the number of
-/// provided probabilities), even if the provided probability for some symbol is smaller
-/// than the smallest representable probability (including if it is exactly `0.0`). This
-/// ensures that all symbols from this range can in principle be encoded.
 #[pyclass(extends=Model)]
 #[derive(Debug)]
 struct Categorical;
@@ -409,19 +411,23 @@ where
 #[pymethods]
 impl Categorical {
     #[new]
-    #[pyo3(text_signature = "(self, probabilities=None, lazy=None, perfect=None)")]
+    #[pyo3(signature = (probabilities=None, lazy=None, perfect=None))]
     pub fn new(
         py: Python<'_>,
         probabilities: Option<PyReadonlyFloatArray1<'_>>,
         lazy: Option<bool>,
         perfect: Option<bool>,
     ) -> PyResult<(Self, Model)> {
-        static WARNED: AtomicBool = AtomicBool::new(false);
+        // It might be tempting to use an `AtomicBool` here, but rust considers "memory created by
+        // [...] static items without interior mutability" to be read-only memory, and "all atomic
+        // accesses on read-only memory are Undefined Behavior".
+        // (source: https://doc.rust-lang.org/stable/std/sync/atomic/index.html).
+        static WARNED: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
 
         let (lazy, perfect) = match (lazy, perfect) {
             (None, None) => {
-                if !WARNED.swap(true, Ordering::AcqRel) {
-                    let _ = py.run(
+                if !WARNED.lock().unwrap().replace(true) {
+                    let _ = py.run_bound(
                         "print('WARNING: Neither argument `perfect` nor `lazy` were specified for `Categorical` entropy model.\\n\
                              \x20        In this case, `perfect` currently defaults to `True` for backward compatibility, but\\n\
                              \x20        this default will change to `perfect=False` in constriction version 0.5.\\n\
@@ -495,7 +501,7 @@ struct Uniform;
 #[pymethods]
 impl Uniform {
     #[new]
-    #[pyo3(text_signature = "(self, size=None)")]
+    #[pyo3(signature = (size=None))]
     pub fn new(size: Option<i32>) -> PyResult<(Self, Model)> {
         let model = match size {
             None => {
@@ -575,7 +581,7 @@ fn quantized_gaussian(
 impl QuantizedGaussian {
     #[new]
     #[pyo3(
-        text_signature = "(self, min_symbol_inclusive, max_symbol_inclusive, mean=None, std=None)"
+        signature = (min_symbol_inclusive, max_symbol_inclusive, mean=None, std=None)
     )]
     pub fn new(
         min_symbol_inclusive: i32,
@@ -666,7 +672,7 @@ fn quantized_laplace(
 impl QuantizedLaplace {
     #[new]
     #[pyo3(
-        text_signature = "(self, min_symbol_inclusive, max_symbol_inclusive, mean=None, scale=None)"
+        signature = (min_symbol_inclusive, max_symbol_inclusive, mean=None, scale=None)
     )]
     pub fn new(
         min_symbol_inclusive: i32,
@@ -766,7 +772,7 @@ fn quantized_cauchy(
 impl QuantizedCauchy {
     #[new]
     #[pyo3(
-        text_signature = "(self, min_symbol_inclusive, max_symbol_inclusive, loc=None, scale=None)"
+        signature = (min_symbol_inclusive, max_symbol_inclusive, loc=None, scale=None)
     )]
     pub fn new(
         min_symbol_inclusive: i32,
@@ -839,7 +845,7 @@ struct Binomial;
 #[pymethods]
 impl Binomial {
     #[new]
-    #[pyo3(text_signature = "(self, n=None, p=None)")]
+    #[pyo3(signature = (n=None, p=None))]
     pub fn new(n: Option<i32>, p: Option<f64>) -> PyResult<(Self, Model)> {
         let model = match (n, p) {
             (None, None) => {
@@ -899,12 +905,13 @@ struct Bernoulli;
 #[pymethods]
 impl Bernoulli {
     #[new]
-    #[pyo3(text_signature = "(self, p=None, perfect)")]
+    #[pyo3(signature = (p=None, perfect=None))]
     pub fn new(py: Python<'_>, p: Option<f64>, perfect: Option<bool>) -> PyResult<(Self, Model)> {
-        static WARNED: AtomicBool = AtomicBool::new(false);
+        // See comment in `Categorical::new` for why we don't use an `AtomicBool` here.
+        static WARNED: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
 
-        if perfect.is_none() && !WARNED.swap(true, Ordering::AcqRel) {
-            let _ = py.run(
+        if perfect.is_none() && !WARNED.lock().unwrap().replace(true) {
+            let _ = py.run_bound(
                 "print('WARNING: Argument `perfect` was not specified for `Bernoulli` distribution.\\n\
                      \x20        It currently defaults to `perfect=True` for backward compatibility, but this default\\n\
                      \x20        will change to `perfect=False` in constriction version 0.5. To suppress this warning,\\n\
