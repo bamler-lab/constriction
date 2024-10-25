@@ -7,7 +7,9 @@ use pyo3::types::PyList;
 
 use ndarray::parallel::prelude::*;
 use ndarray::{ArrayBase, Axis, Dimension, IxDyn};
-use numpy::{PyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArrayDyn};
+use numpy::{
+    PyArray, PyArrayDyn, PyArrayMethods, PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArrayDyn,
+};
 use pyo3::prelude::*;
 
 use crate::quant::{
@@ -16,7 +18,7 @@ use crate::quant::{
 };
 use crate::F32;
 
-pub fn init_module(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<EmpiricalDistribution>()?;
     module.add_class::<RatedGrid>()?;
     module.add_function(wrap_pyfunction!(vbq, module)?)?;
@@ -214,8 +216,8 @@ enum MaybeMultiplexed<T> {
 
 impl<T> MaybeMultiplexed<T> {
     pub fn new(
-        points: &PyAny,
-        counts: Option<&PyAny>,
+        points: &Bound<'_, PyAny>,
+        counts: Option<&Bound<'_, PyAny>>,
         specialize_along_axis: Option<usize>,
     ) -> PyResult<Self>
     where
@@ -223,8 +225,8 @@ impl<T> MaybeMultiplexed<T> {
     {
         let result = if let Some(counts) = counts {
             if let Some(axis) = specialize_along_axis {
-                let points = points.extract::<&PyList>()?;
-                let counts = counts.extract::<&PyList>()?;
+                let points = points.downcast::<PyList>()?;
+                let counts = counts.downcast::<PyList>()?;
                 if points.len() != counts.len() {
                     return Err(pyo3::exceptions::PyAssertionError::new_err(
                         "Lists `points` and `counts` must have the same length.",
@@ -322,16 +324,16 @@ impl<T> MaybeMultiplexed<T> {
                 let (points, counts): (Vec<_>, Vec<_>) = into_iter(distribution)
                     .map(|(value, count)| (value.get(), count))
                     .unzip();
-                let points = PyArray::from_vec(py, points).to_object(py);
-                let counts = PyArray::from_vec(py, counts).to_object(py);
+                let points = PyArray::from_vec_bound(py, points).into_any().unbind();
+                let counts = PyArray::from_vec_bound(py, counts).into_any().unbind();
                 Ok((points, counts))
             }
             (None, MaybeMultiplexed::Single(distribution)) => {
                 let (points, counts): (Vec<_>, Vec<_>) = into_iter(distribution)
                     .map(|(value, count)| (value.get(), count))
                     .unzip();
-                let points = PyArray::from_vec(py, points).to_object(py);
-                let counts = PyArray::from_vec(py, counts).to_object(py);
+                let points = PyArray::from_vec_bound(py, points).into_any().unbind();
+                let counts = PyArray::from_vec_bound(py, counts).into_any().unbind();
                 Ok((points, counts))
             }
             (
@@ -352,13 +354,13 @@ impl<T> MaybeMultiplexed<T> {
                 let (points, counts): (Vec<_>, Vec<_>) = vecs
                     .into_iter()
                     .map(|(points, counts)| {
-                        let points = PyArray::from_vec(py, points).to_object(py);
-                        let counts = PyArray::from_vec(py, counts).to_object(py);
+                        let points = PyArray::from_vec_bound(py, points).into_any().unbind();
+                        let counts = PyArray::from_vec_bound(py, counts).into_any().unbind();
                         (points, counts)
                     })
                     .unzip();
-                let points = PyList::new(py, points).to_object(py);
-                let counts = PyList::new(py, counts).to_object(py);
+                let points = PyList::new_bound(py, points).into_any().unbind();
+                let counts = PyList::new_bound(py, counts).into_any().unbind();
                 Ok((points, counts))
             }
         }
@@ -400,7 +402,7 @@ impl<T> MaybeMultiplexed<T> {
                 },
             ) => {
                 let entropies = distributions.iter().map(get_entropy).collect::<Vec<_>>();
-                Ok(PyArray::from_vec(py, entropies).to_object(py))
+                Ok(PyArray::from_vec_bound(py, entropies).into_any().unbind())
             }
         }
     }
@@ -409,20 +411,17 @@ impl<T> MaybeMultiplexed<T> {
 #[pymethods]
 impl EmpiricalDistribution {
     #[new]
+    #[pyo3(signature = (points, counts=None, specialize_along_axis=None))]
     pub fn new(
-        py: Python<'_>,
-        points: &PyAny,
-        counts: Option<&PyAny>,
+        points: &Bound<'_, PyAny>,
+        counts: Option<&Bound<'_, PyAny>>,
         specialize_along_axis: Option<usize>,
-    ) -> PyResult<Py<Self>> {
-        Py::new(
-            py,
-            Self(MaybeMultiplexed::new(
-                points,
-                counts,
-                specialize_along_axis,
-            )?),
-        )
+    ) -> PyResult<Self> {
+        Ok(Self(MaybeMultiplexed::new(
+            points,
+            counts,
+            specialize_along_axis,
+        )?))
     }
 
     /// Add one or more values to the distribution.
@@ -521,6 +520,7 @@ impl EmpiricalDistribution {
     /// Rows 1 of matrix1 and 2 contain: 2.0 (4x), 3.0 (2x), 4.0 (2x), 5.0 (2x).
     /// Rows 2 of matrix1 and 2 contain: 0.0 (1x), 2.0 (2x), 3.0 (3x), 4.0 (4x), 5.0 (1x).
     /// ```
+    #[pyo3(signature = (new, index=None))]
     pub fn insert(
         &mut self,
         new: PyReadonlyF32ArrayOrScalar<'_>,
@@ -545,6 +545,7 @@ impl EmpiricalDistribution {
     ///
     /// For code examples, see documentation of the method
     /// [`insert`](#constriction.quant.EmpiricalDistribution.insert), which has an analogous API.
+    #[pyo3(signature = (old, index=None))]
     pub fn remove(
         &mut self,
         old: PyReadonlyF32ArrayOrScalar<'_>,
@@ -572,6 +573,7 @@ impl EmpiricalDistribution {
     ///
     /// For code examples, see documentation of the method
     /// [`insert`](#constriction.quant.EmpiricalDistribution.insert), which has an analogous API.
+    #[pyo3(signature = (old, new, index=None))]
     pub fn update(
         &mut self,
         old: PyReadonlyF32ArrayOrScalar<'_>,
@@ -717,7 +719,13 @@ impl EmpiricalDistribution {
     /// points after shifting: [[1.  2.1 4. ], [2. 4. 5.], [2. 3. 4.], [ 2.   4.4  5.  30. ]]
     /// counts after shifting: [[1 3 1], [1 2 2], [1 2 2], [1 1 1 2]]
     /// ```
-    pub fn shift(&mut self, old: &PyAny, new: &PyAny, index: Option<usize>) -> PyResult<()> {
+    #[pyo3(signature = (old, new, index=None))]
+    pub fn shift(
+        &mut self,
+        old: &Bound<'_, PyAny>,
+        new: &Bound<'_, PyAny>,
+        index: Option<usize>,
+    ) -> PyResult<()> {
         shift(&mut self.0, old, new, index)
     }
 
@@ -762,6 +770,7 @@ impl EmpiricalDistribution {
     /// specialized_distribution.total() = [5 5 6 5]
     /// specialized_distribution.total(2) = 6
     /// ```
+    #[pyo3(signature = (index=None))]
     pub fn total(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
         match (index, &self.0) {
             (Some(_), MaybeMultiplexed::Single { .. }) => {
@@ -793,7 +802,7 @@ impl EmpiricalDistribution {
                 },
             ) => {
                 let totals = distributions.iter().map(|d| d.total()).collect::<Vec<_>>();
-                Ok(PyArray::from_vec(py, totals).to_object(py))
+                Ok(PyArray::from_vec_bound(py, totals).into_any().unbind())
             }
         }
     }
@@ -831,6 +840,7 @@ impl EmpiricalDistribution {
     /// specialized_distribution.entropy_base2() = [1.3709505 1.5219281 1.5219281 1.921928 ]
     /// specialized_distribution.entropy_base2(2) = 1.521928071975708
     /// ```
+    #[pyo3(signature = (index=None))]
     pub fn entropy_base2(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
         self.0
             .entropy_base2(py, index, |distribution| distribution.entropy_base2())
@@ -916,6 +926,7 @@ impl EmpiricalDistribution {
     ///
     /// Note that the reconstructed distribution has the same per-row entropies as the original
     /// distribution because it's the same distribution.
+    #[pyo3(signature = (index=None))]
     pub fn points_and_counts(
         &self,
         py: Python<'_>,
@@ -958,20 +969,17 @@ impl EmpiricalDistribution {
 #[pymethods]
 impl RatedGrid {
     #[new]
+    #[pyo3(signature = (points, counts=None, specialize_along_axis=None))]
     pub fn new(
-        py: Python<'_>,
-        points: &PyAny,
-        counts: Option<&PyAny>,
+        points: &Bound<'_, PyAny>,
+        counts: Option<&Bound<'_, PyAny>>,
         specialize_along_axis: Option<usize>,
-    ) -> PyResult<Py<Self>> {
-        Py::new(
-            py,
-            Self(MaybeMultiplexed::new(
-                points,
-                counts,
-                specialize_along_axis,
-            )?),
-        )
+    ) -> PyResult<Self> {
+        Ok(Self(MaybeMultiplexed::new(
+            points,
+            counts,
+            specialize_along_axis,
+        )?))
     }
 
     /// Add one or more values to existing grid points, thus changing the rates.
@@ -1087,6 +1095,7 @@ impl RatedGrid {
     /// Row 1 contains: 5.0 (rate 1.222), 4.0 (rate 1.222), 2.0 (rate 2.807).
     /// Row 2 contains: 2.0 (rate 1.222), 3.0 (rate 1.807), 4.0 (rate 1.807).
     /// ```
+    #[pyo3(signature = (new, index=None))]
     pub fn insert(
         &mut self,
         new: PyReadonlyF32ArrayOrScalar<'_>,
@@ -1116,6 +1125,7 @@ impl RatedGrid {
     ///
     /// For code examples, see documentation of the method
     /// [`insert`](#constriction.quant.RatedGrid.insert), which has an analogous API.
+    #[pyo3(signature = (old, index=None))]
     pub fn remove(
         &mut self,
         old: PyReadonlyF32ArrayOrScalar<'_>,
@@ -1143,6 +1153,7 @@ impl RatedGrid {
     ///
     /// For code examples, see documentation of the method
     /// [`insert`](#constriction.quant.RatedGrid.insert), which has an analogous API.
+    #[pyo3(signature = (old, new, index=None))]
     pub fn update(
         &mut self,
         old: PyReadonlyF32ArrayOrScalar<'_>,
@@ -1185,6 +1196,7 @@ impl RatedGrid {
     /// specialized_grid.entropy_base2() = [1.3709505 1.5219281 1.5219281 1.921928 ]
     /// specialized_grid.entropy_base2(2) = 1.521928071975708
     /// ```
+    #[pyo3(signature = (index=None))]
     pub fn entropy_base2(&self, py: Python<'_>, index: Option<usize>) -> PyResult<PyObject> {
         self.0.entropy_base2(py, index, |grid| grid.entropy_base2())
     }
@@ -1247,6 +1259,7 @@ impl RatedGrid {
     ///     [1.321928 2.321928 2.321928 2.321928]
     /// ]
     /// ```
+    #[pyo3(signature = (index=None))]
     pub fn points_and_rates(
         &self,
         py: Python<'_>,
@@ -1539,8 +1552,8 @@ where
 
 fn shift<D>(
     distribution: &mut MaybeMultiplexed<D>,
-    old: &PyAny,
-    new: &PyAny,
+    old: &Bound<'_, PyAny>,
+    new: &Bound<'_, PyAny>,
     index: Option<usize>,
 ) -> PyResult<()>
 where
@@ -1576,8 +1589,8 @@ where
                 });
             }
             MaybeMultiplexed::Multiple { distributions, .. } => {
-                if let Ok(old) = old.extract::<&PyList>() {
-                    if let Ok(new) = new.extract::<&PyList>() {
+                if let Ok(old) = old.downcast::<PyList>() {
+                    if let Ok(new) = new.downcast::<PyList>() {
                         if old.len() != distributions.len() || new.len() != distributions.len() {
                             return Err(pyo3::exceptions::PyAssertionError::new_err(format!(
                                 "Lists `old` and `new` must both have length {} but they have \
@@ -1592,7 +1605,7 @@ where
                         let mut buf = Vec::new();
                         return old.iter().zip(new).zip(distributions).try_for_each(
                             |((old, new), distribution)| {
-                                shift_single(old, new, &mut buf, distribution, || {
+                                shift_single(&old, &new, &mut buf, distribution, || {
                                     pyo3::exceptions::PyAssertionError::new_err(
                                         "Each element of the lists `old` and `new` must be a \
                                         scalar or a rank-1 array, and dimensions of \
@@ -1612,8 +1625,8 @@ where
     }
 
     fn shift_single<D>(
-        old: &PyAny,
-        new: &PyAny,
+        old: &Bound<'_, PyAny>,
+        new: &Bound<'_, PyAny>,
         buf: &mut Vec<u32>,
         distribution: &mut D,
         mk_err: impl Fn() -> PyErr,
@@ -1725,7 +1738,7 @@ where
 ///   `coarseness` to a value different from `1.0` has the same effect as multiplying all entries of
 ///   `posterior_variance` by `coarseness`.
 /// - `update_prior`: optional boolean that decides whether the provided `prior` will be updated
-///   after quantizing each entry of `unquantized`. Defaults to `false` if now `reference` is
+///   after quantizing each entry of `unquantized`. Defaults to `false` if no `reference` is
 ///   provided. Providing a `reverence` implies `update_prior=True.`
 ///   Setting `update_prior=True` has two effects:
 ///   (i) once `vbq` terminates, all `unquantized` (or `reference`) points are removed from `prior`
@@ -1887,15 +1900,16 @@ where
 /// [Tan and Bamler, Deploy & Monitor ML Workshop @ NeurIPS 2022]:
 ///   https://raw.githubusercontent.com/dmml-workshop/dmml-neurips-2022/main/accepted-papers/paper_21.pdf
 #[pyfunction]
-fn vbq<'p>(
-    py: Python<'p>,
-    unquantized: PyReadonlyArrayDyn<'p, f32>,
+#[pyo3(signature = (unquantized, prior, posterior_variance, coarseness, update_prior=None, reference=None))]
+fn vbq<'py>(
+    py: Python<'py>,
+    unquantized: PyReadonlyArrayDyn<'py, f32>,
     prior: Py<EmpiricalDistribution>,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'p>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'py>,
     coarseness: f32,
     update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
-) -> PyResult<&'p PyArrayDyn<f32>> {
+    reference: Option<PyReadwriteArrayDyn<'py, f32>>,
+) -> PyResult<Bound<'py, PyArrayDyn<f32>>> {
     quantize_out_of_place(
         Vbq,
         py,
@@ -1924,6 +1938,7 @@ fn vbq<'p>(
 /// The use of a trailing underscore in the function name to indicate in-place operation follows the
 /// convention used by the pytorch machine-learning framework.
 #[pyfunction]
+#[pyo3(signature = (unquantized, prior, posterior_variance, coarseness, update_prior=None, reference=None))]
 fn vbq_(
     py: Python<'_>,
     unquantized: PyReadwriteArrayDyn<'_, f32>,
@@ -2147,14 +2162,15 @@ fn vbq_(
 /// along an axis only makes sense if the original data still contains lots of elements along the
 /// remaining axes
 #[pyfunction]
-fn rate_distortion_quantization<'p>(
-    py: Python<'p>,
-    unquantized: PyReadonlyArrayDyn<'p, f32>,
+#[pyo3(signature = (unquantized, grid, posterior_variance, rate_penalty, reference=None))]
+fn rate_distortion_quantization<'py>(
+    py: Python<'py>,
+    unquantized: PyReadonlyArrayDyn<'py, f32>,
     grid: Py<RatedGrid>,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'p>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'py>,
     rate_penalty: f32,
-    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
-) -> PyResult<&'p PyArrayDyn<f32>> {
+    reference: Option<PyReadwriteArrayDyn<'py, f32>>,
+) -> PyResult<Bound<'py, PyArrayDyn<f32>>> {
     quantize_out_of_place(
         RateDistortionQuantization,
         py,
@@ -2184,6 +2200,7 @@ fn rate_distortion_quantization<'p>(
 /// The use of a trailing underscore in the function name to indicate in-place operation follows the
 /// convention used by the pytorch machine-learning framework.
 #[pyfunction]
+#[pyo3(signature = (unquantized, grid, posterior_variance, rate_penalty, reference=None))]
 fn rate_distortion_quantization_(
     py: Python<'_>,
     unquantized: PyReadwriteArrayDyn<'_, f32>,
@@ -2210,17 +2227,17 @@ fn rate_distortion_quantization_(
     )
 }
 
-fn quantize_out_of_place<'p, Grid: Send + Sync>(
+fn quantize_out_of_place<'py, Grid: Send + Sync>(
     qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
-    py: Python<'p>,
-    unquantized: PyReadonlyArrayDyn<'p, f32>,
+    py: Python<'py>,
+    unquantized: PyReadonlyArrayDyn<'py, f32>,
     grid: &mut MaybeMultiplexed<Grid>,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'p>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'py>,
     coarseness: f32,
     update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
+    reference: Option<PyReadwriteArrayDyn<'py, f32>>,
     grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
-) -> PyResult<&'p PyArrayDyn<f32>> {
+) -> PyResult<Bound<'py, PyArrayDyn<f32>>> {
     match grid {
         MaybeMultiplexed::Single(distribution) => quantize_single(
             qm,
@@ -2251,18 +2268,18 @@ fn quantize_out_of_place<'p, Grid: Send + Sync>(
     }
 }
 
-fn quantize_single<'p, Grid: Send + Sync>(
+fn quantize_single<'py, Grid: Send + Sync>(
     qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
-    py: Python<'p>,
-    unquantized: PyReadonlyArrayDyn<'p, f32>,
+    py: Python<'py>,
+    unquantized: PyReadonlyArrayDyn<'py, f32>,
     grid: &mut Grid,
     posterior_variance: PyReadonlyF32ArrayOrScalar<'_>,
     coarseness: f32,
     update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
+    reference: Option<PyReadwriteArrayDyn<'py, f32>>,
     grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
-) -> PyResult<&'p PyArrayDyn<f32>> {
-    let len = unquantized.len();
+) -> PyResult<Bound<'py, PyArrayDyn<f32>>> {
+    let len = unquantized.as_array().len();
     let mut quantized: Vec<f32> = Vec::with_capacity(len);
     let unquantized = unquantized.as_array();
     let dim = unquantized.raw_dim();
@@ -2349,25 +2366,25 @@ fn quantize_single<'p, Grid: Send + Sync>(
     }
     let quantized = ArrayBase::from_shape_vec(unquantized.dim(), quantized)
         .expect("Vec should have correct len");
-    Ok(PyArray::from_owned_array(py, quantized))
+    Ok(PyArray::from_owned_array_bound(py, quantized))
 }
 
-fn quantize_multiplexed<'p, Grid: Send + Sync>(
+fn quantize_multiplexed<'py, Grid: Send + Sync>(
     qm: impl QuantizationMethod<Grid, F32, f32> + Send + Sync,
-    py: Python<'p>,
-    unquantized: PyReadonlyArrayDyn<'p, f32>,
+    py: Python<'py>,
+    unquantized: PyReadonlyArrayDyn<'py, f32>,
     grids: &mut [Grid],
     axis: usize,
-    posterior_variance: PyReadonlyF32ArrayOrScalar<'p>,
+    posterior_variance: PyReadonlyF32ArrayOrScalar<'py>,
     coarseness: f32,
     update_prior: Option<bool>,
-    reference: Option<PyReadwriteArrayDyn<'p, f32>>,
+    reference: Option<PyReadwriteArrayDyn<'py, f32>>,
     grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
-) -> PyResult<&'p PyArrayDyn<f32>> {
-    let len = unquantized.len();
+) -> PyResult<Bound<'py, PyArrayDyn<f32>>> {
+    let len = unquantized.as_array().len();
 
-    let shape = unquantized.shape();
     let unquantized = unquantized.as_array();
+    let shape = unquantized.shape();
     let unquantized = unquantized.axis_iter(Axis(axis));
     if unquantized.len() != grids.len() {
         return Err(pyo3::exceptions::PyIndexError::new_err(alloc::format!(
@@ -2415,7 +2432,7 @@ fn quantize_multiplexed<'p, Grid: Send + Sync>(
     }
     let quantized =
         ArrayBase::from_shape_vec(shape, quantized).expect("Vec should have correct len");
-    Ok(PyArray::from_owned_array(py, quantized))
+    Ok(PyArray::from_owned_array_bound(py, quantized))
 }
 
 fn quantize_multiplexed_inplace<Grid: Send + Sync>(
@@ -2429,7 +2446,7 @@ fn quantize_multiplexed_inplace<Grid: Send + Sync>(
     reference: Option<PyReadwriteArrayDyn<'_, f32>>,
     grid_update: impl Fn(&mut Grid, F32, F32) -> Result<(), NotFoundError> + Send + Sync,
 ) -> PyResult<()> {
-    let shape = unquantized.shape().to_vec();
+    let shape = unquantized.as_array().shape().to_vec();
     let mut unquantized = unquantized.as_array_mut();
     let unquantized = unquantized.axis_iter_mut(Axis(axis));
     if unquantized.len() != grids.len() {
@@ -2513,7 +2530,7 @@ where
     {
         match posterior_variance {
             Array(posterior_variance) => {
-                if posterior_variance.shape() != shape {
+                if posterior_variance.as_array().shape() != shape {
                     return Err(pyo3::exceptions::PyAssertionError::new_err(
                         "`posterior_variance` must have the same shape as `unquantized`.",
                     ));
@@ -2609,7 +2626,7 @@ where
         }
         (None | Some(true), Some(mut reference)) => {
             // The caller provided a reference for prior updates.
-            if reference.shape() != shape {
+            if reference.as_array().shape() != shape {
                 return Err(pyo3::exceptions::PyAssertionError::new_err(
                     "`reference` must have the same shape as `unquantized`.",
                 ));

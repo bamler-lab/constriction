@@ -235,7 +235,7 @@ fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
 /// [Variational Bayesian Quantization (VBQ)]: http://proceedings.mlr.press/v119/yang20a/yang20a.pdf
 #[pymodule]
 #[pyo3(name = "quant")]
-fn init_quant(py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn init_quant(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     quant::init_module(py, module)
 }
 
