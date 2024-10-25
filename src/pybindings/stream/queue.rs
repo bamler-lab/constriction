@@ -1,9 +1,10 @@
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
+    pybindings::array1_to_vec,
     stream::{
         queue::{DecoderFrontendError, RangeCoderState},
         Decode, Encode,
@@ -13,7 +14,82 @@ use crate::{
 
 use super::model::{internals::EncoderDecoderModel, Model};
 
-pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Range Coding: a stream code with queue semantics (i.e., "first in first out") [1, 2].
+///
+/// The Range Coding algorithm is a variation on Arithmetic Coding [1, 3] that runs more efficiently
+/// on standard computing hardware.
+///
+/// ## Example
+///
+/// The following example shows a full round trip that encodes a message, prints its compressed
+/// representation, and then decodes the message again. The message is a sequence of 11 integers
+/// (referred to as "symbols") and comprised of two parts: the first 7 symbols are encoded with an
+/// i.i.d. entropy model, i.e., using the same distribution for each symbol, which happens to be a
+/// [`Categorical`](model.html#constriction.stream.model.Categorical) distribution; and the remaining
+/// 4 symbols are each encoded with a different entropy model, but all of these 4 models are from
+/// the same family of [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian)s,
+/// just with different model parameters (means and standard deviations) for each of the 4 symbols.
+///
+/// ```python
+/// import constriction
+/// import numpy as np
+///
+/// # Define the two parts of the message and their respective entropy models:
+/// message_part1       = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
+/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float32)
+/// model_part1       = constriction.stream.model.Categorical(probabilities_part1, perfect=False)
+/// # `model_part1` is a categorical distribution over the (implied) alphabet
+/// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
+/// # we will use it below to encode each of the 7 symbols in `message_part1`.
+///
+/// message_part2       = np.array([6,   10,   -4,    2  ], dtype=np.int32)
+/// means_part2         = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float32)
+/// stds_part2          = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float32)
+/// model_family_part2  = constriction.stream.model.QuantizedGaussian(-100, 100)
+/// # `model_family_part2` is a *family* of Gaussian distributions, quantized to
+/// # bins of width 1 centered at the integers -100, -99, ..., 100. We could
+/// # have provided a fixed mean and standard deviation to the constructor of
+/// # `QuantizedGaussian` but we'll instead provide individual means and standard
+/// # deviations for each symbol when we encode and decode `message_part2` below.
+///
+/// print(f"Original message: {np.concatenate([message_part1, message_part2])}")
+///
+/// # Encode both parts of the message in sequence:
+/// encoder = constriction.stream.queue.RangeEncoder()
+/// encoder.encode(message_part1, model_part1)
+/// encoder.encode(message_part2, model_family_part2, means_part2, stds_part2)
+///
+/// # Get and print the compressed representation:
+/// compressed = encoder.get_compressed()
+/// print(f"compressed representation: {compressed}")
+/// print(f"(in binary: {[bin(word) for word in compressed]})")
+///
+/// # You could save `compressed` to a file using `compressed.tofile("filename")`
+/// # and read it back in: `compressed = np.fromfile("filename", dtype=np.uint32).
+///
+/// # Decode the message:
+/// decoder = constriction.stream.queue.RangeDecoder(compressed)
+/// decoded_part1 = decoder.decode(model_part1, 7) # (decodes 7 symbols)
+/// decoded_part2 = decoder.decode(model_family_part2, means_part2, stds_part2)
+/// print(f"Decoded message: {np.concatenate([decoded_part1, decoded_part2])}")
+/// assert np.all(decoded_part1 == message_part1)
+/// assert np.all(decoded_part2 == message_part2)
+/// ```
+///
+/// ## References
+///
+/// [1] Pasco, Richard Clark. Source coding algorithms for fast data compression. Diss.
+/// Stanford University, 1976.
+///
+/// [2] Martin, G. Nigel N. "Range encoding: an algorithm for removing redundancy from a
+/// digitised message." Proc. Institution of Electronic and Radio Engineers International
+/// Conference on Video and Data Recording. 1979.
+///
+/// [3] Rissanen, Jorma, and Glen G. Langdon. "Arithmetic coding." IBM Journal of research
+/// and development 23.2 (1979): 149-162.
+#[pymodule]
+#[pyo3(name = "queue")]
+pub fn init_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<RangeEncoder>()?;
     module.add_class::<RangeDecoder>()?;
     Ok(())
@@ -146,7 +222,7 @@ impl RangeEncoder {
     /// # ... decode the message (skipped here) ...
     /// ```
     #[pyo3(signature = ())]
-    pub fn get_compressed<'p>(&mut self, py: Python<'p>) -> Bound<'p, PyArray1<u32>> {
+    pub fn get_compressed<'py>(&mut self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
         PyArray1::from_slice_bound(py, &self.inner.get_compressed())
     }
 
@@ -307,9 +383,8 @@ impl RangeEncoder {
         } else {
             if symbols.len()
                 != model.0.len(
-                    &optional_model_params
-                        .iter()
-                        .next()
+                    optional_model_params
+                        .get_borrowed_item(0)
                         .expect("len checked above"),
                 )?
             {
@@ -368,7 +443,7 @@ impl RangeDecoder {
     #[new]
     #[pyo3(signature = (compressed))]
     pub fn new(compressed: PyReadonlyArray1<'_, u32>) -> PyResult<Self> {
-        Ok(Self::from_vec(compressed.to_vec()?))
+        Ok(Self::from_vec(array1_to_vec(compressed)))
     }
 
     /// Jumps to a checkpoint recorded with method
@@ -537,12 +612,11 @@ impl RangeDecoder {
                 return Ok(symbol.to_object(py));
             }
             1 => {
-                if let Ok(amt) = usize::extract_bound(
-                    &optional_amt_or_model_params
-                        .iter()
-                        .next()
-                        .expect("len checked above"),
-                ) {
+                if let Ok(amt) = optional_amt_or_model_params
+                    .get_borrowed_item(0)
+                    .expect("len checked above")
+                    .extract::<usize>()
+                {
                     let mut symbols = Vec::with_capacity(amt);
                     model.0.as_parameterized(py, &mut |model| {
                         for symbol in self
@@ -553,7 +627,7 @@ impl RangeDecoder {
                         }
                         Ok(())
                     })?;
-                    return Ok(PyArray1::from_iter_bound(py, symbols).to_object(py));
+                    return Ok(PyArray1::from_iter_bound(py, symbols).into_any().unbind());
                 }
             }
             _ => {} // Fall through to code below.
@@ -561,9 +635,8 @@ impl RangeDecoder {
 
         let mut symbols = Vec::with_capacity(
             model.0.len(
-                &optional_amt_or_model_params
-                    .iter()
-                    .next()
+                optional_amt_or_model_params
+                    .get_borrowed_item(0)
                     .expect("len checked above"),
             )?,
         );
@@ -575,7 +648,7 @@ impl RangeDecoder {
                 Ok(())
             })?;
 
-        Ok(PyArray1::from_vec_bound(py, symbols).to_object(py))
+        Ok(PyArray1::from_vec_bound(py, symbols).into_any().unbind())
     }
 
     /// Creates a deep copy of the coder and returns it.

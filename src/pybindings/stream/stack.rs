@@ -1,16 +1,107 @@
 use std::prelude::v1::*;
 
-use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
+    pybindings::array1_to_vec,
     stream::{Decode, Encode},
     Pos, Seek, UnwrapInfallible,
 };
 
 use super::model::{internals::EncoderDecoderModel, Model};
 
-pub fn init_module(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Asymmetric Numeral Systems (ANS): a stream code with stack semantics
+/// (i.e., "last in first out") [1].
+///
+/// The ANS entropy coding algorithm is a popular choice for bits-back coding with latent variable
+/// models. It uses only a single data structure, `AnsCoder`, which operates as both encoder and
+/// decoder. This allows you to easily switch back and forth between encoding and decoding
+/// operations. A further, more subtle property that distinguishes `constrictions` ANS
+/// implementation from its Range Coding implementation in the sister module `queue`) is that
+/// encoding with an `AnsCoder` is *surjective* and therefore decoding is injective. This means that
+/// you can decode some symbols from any bitstring, regardless of its origin, and then re-encode the
+/// symbols to exactly reconstruct the original bitstring (e.g., for bits-back coding).
+///
+/// ## Stack Semantics
+///
+/// ANS operates as a *stack*: encoding *pushes* (i.e., appends) data onto the top of the stack and
+/// decoding *pops*  data from the top of the stack (i.e., it consumes data from the *same* end).
+/// This means that encoding and  decoding operate in opposite directions to each other. When using
+/// an `AnsCoder`, we recommend to encode sequences of symbols in reverse order so that you can
+/// later decode them in their original order. The method `encode_reverse` does this automatically
+/// when given an array of symbols. If you call `encode_reverse` several times to encode several
+/// parts of a message, then start with the last part of your message and work your way back, as in
+/// the example below.
+///
+/// ## Example
+///
+/// The following example shows a full round trip that encodes a message, prints its compressed
+/// representation, and then decodes the message again. The message is a sequence of 11 integers
+/// (referred to as "symbols") and comprised of two parts: the first 7 symbols are encoded with an
+/// i.i.d. entropy model, i.e., using the same distribution for each symbol, which happens to be a
+/// [`Categorical`](model.html#constriction.stream.model.Categorical) distribution; and the remaining
+/// 4 symbols are each encoded with a different entropy model, but all of these 4 models are from
+/// the same family of [`QuantizedGaussian`](model.html#constriction.stream.model.QuantizedGaussian)s,
+/// just with different model parameters (means and standard deviations) for each of the 4 symbols.
+///
+/// Notice that we encode part 2 before part 1, but when we decode, we first obtain part 1 and then
+/// part 2. This is because of the `AnsCoder`'s [stack semantics](#stack-semantics).
+///
+/// ```python
+/// import constriction
+/// import numpy as np
+///
+/// # Define the two parts of the message and their respective entropy models:
+/// message_part1       = np.array([1, 2, 0, 3, 2, 3, 0], dtype=np.int32)
+/// probabilities_part1 = np.array([0.2, 0.4, 0.1, 0.3], dtype=np.float32)
+/// model_part1       = constriction.stream.model.Categorical(probabilities_part1, perfect=False)
+/// # `model_part1` is a categorical distribution over the (implied) alphabet
+/// # {0,1,2,3} with P(X=0) = 0.2, P(X=1) = 0.4, P(X=2) = 0.1, and P(X=3) = 0.3;
+/// # we will use it below to encode each of the 7 symbols in `message_part1`.
+///
+/// message_part2       = np.array([6,   10,   -4,    2  ], dtype=np.int32)
+/// means_part2         = np.array([2.5, 13.1, -1.1, -3.0], dtype=np.float32)
+/// stds_part2          = np.array([4.1,  8.7,  6.2,  5.4], dtype=np.float32)
+/// model_family_part2  = constriction.stream.model.QuantizedGaussian(-100, 100)
+/// # `model_family_part2` is a *family* of Gaussian distributions, quantized to
+/// # bins of width 1 centered at the integers -100, -99, ..., 100. We could
+/// # have provided a fixed mean and standard deviation to the constructor of
+/// # `QuantizedGaussian` but we'll instead provide individual means and standard
+/// # deviations for each symbol when we encode and decode `message_part2` below.
+///
+/// print(f"Original message: {np.concatenate([message_part1, message_part2])}")
+///
+/// # Encode both parts of the message in sequence (in reverse order):
+/// coder = constriction.stream.stack.AnsCoder()
+/// coder.encode_reverse(
+///     message_part2, model_family_part2, means_part2, stds_part2)
+/// coder.encode_reverse(message_part1, model_part1)
+///
+/// # Get and print the compressed representation:
+/// compressed = coder.get_compressed()
+/// print(f"compressed representation: {compressed}")
+/// print(f"(in binary: {[bin(word) for word in compressed]})")
+///
+/// # You could save `compressed` to a file using `compressed.tofile("filename")`,
+/// # read it back in: `compressed = np.fromfile("filename", dtype=np.uint32) and
+/// # then re-create `coder = constriction.stream.stack.AnsCoder(compressed)`.
+///
+/// # Decode the message:
+/// decoded_part1 = coder.decode(model_part1, 7) # (decodes 7 symbols)
+/// decoded_part2 = coder.decode(model_family_part2, means_part2, stds_part2)
+/// print(f"Decoded message: {np.concatenate([decoded_part1, decoded_part2])}")
+/// assert np.all(decoded_part1 == message_part1)
+/// assert np.all(decoded_part2 == message_part2)
+/// ```
+///
+/// ## References
+///
+/// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
+/// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
+#[pymodule]
+#[pyo3(name = "stack")]
+pub fn init_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<AnsCoder>()?;
     Ok(())
 }
@@ -132,7 +223,7 @@ impl AnsCoder {
             ));
         }
         let inner = if let Some(compressed) = compressed {
-            let compressed = compressed.to_vec()?;
+            let compressed = array1_to_vec(compressed);
             if seal {
                 crate::stream::stack::AnsCoder::from_binary(compressed).unwrap_infallible()
             } else {
@@ -318,11 +409,11 @@ impl AnsCoder {
     /// Note that calling `.get_compressed(unseal=True)` fails if the coder is not in a "sealed"
     /// state.
     #[pyo3(signature = (unseal=false))]
-    pub fn get_compressed<'p>(
+    pub fn get_compressed<'py>(
         &mut self,
-        py: Python<'p>,
+        py: Python<'py>,
         unseal: bool,
-    ) -> PyResult<Bound<'p, PyArray1<u32>>> {
+    ) -> PyResult<Bound<'py, PyArray1<u32>>> {
         if unseal {
             let binary = self.inner.get_binary().map_err(|_|
                 pyo3::exceptions::PyAssertionError::new_err(
@@ -476,9 +567,8 @@ impl AnsCoder {
         } else {
             if symbols.len()
                 != model.0.len(
-                    &optional_model_params
-                        .iter()
-                        .next()
+                    optional_model_params
+                        .get_borrowed_item(0)
                         .expect("len checked above"),
                 )?
             {
@@ -615,12 +705,11 @@ impl AnsCoder {
                 return Ok(symbol.to_object(py));
             }
             1 => {
-                if let Ok(amt) = usize::extract_bound(
-                    &optional_amt_or_model_params
-                        .iter()
-                        .next()
-                        .expect("len checked above"),
-                ) {
+                if let Ok(amt) = optional_amt_or_model_params
+                    .get_borrowed_item(0)
+                    .expect("len checked above")
+                    .extract::<usize>()
+                {
                     let mut symbols = Vec::with_capacity(amt);
                     model.0.as_parameterized(py, &mut |model| {
                         for symbol in self
@@ -631,7 +720,7 @@ impl AnsCoder {
                         }
                         Ok(())
                     })?;
-                    return Ok(PyArray1::from_iter_bound(py, symbols).to_object(py));
+                    return Ok(PyArray1::from_iter_bound(py, symbols).into_any().unbind());
                 }
             }
             _ => {} // Fall through to code below.
@@ -639,9 +728,8 @@ impl AnsCoder {
 
         let mut symbols = Vec::with_capacity(
             model.0.len(
-                &optional_amt_or_model_params
-                    .iter()
-                    .next()
+                optional_amt_or_model_params
+                    .get_borrowed_item(0)
                     .expect("len checked above"),
             )?,
         );
@@ -656,7 +744,7 @@ impl AnsCoder {
                 Ok(())
             })?;
 
-        Ok(PyArray1::from_vec_bound(py, symbols).to_object(py))
+        Ok(PyArray1::from_vec_bound(py, symbols).into_any().unbind())
     }
 
     /// Creates a deep copy of the coder and returns it.

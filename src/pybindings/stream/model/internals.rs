@@ -109,7 +109,7 @@ pub trait Model: Send + Sync {
         ))
     }
 
-    fn len(&self, _param0: &Bound<'_, PyAny>) -> PyResult<usize> {
+    fn len(&self, _param0: Borrowed<'_, '_, PyAny>) -> PyResult<usize> {
         Err(pyo3::exceptions::PyValueError::new_err(
             "Model parameters were specified but the model is already fully parameterized.",
         ))
@@ -200,13 +200,16 @@ macro_rules! impl_model_for_parameterizable_model {
                     )));
                 }
 
-                let mut params = params.iter();
+                let mut params = params.iter_borrowed();
                 let $p0 = params.next().expect("len checked above").extract::<<ParameterExtractor<$ty0> as ParameterExtract<'_, $ty0>>::Extracted>()?;
                 let $p0 = <ParameterExtractor<$ty0> as ParameterExtract<'_, $ty0>>::cast(&$p0)?;
                 let $p0 = $p0.as_array();
 
                 #[allow(unused_variables)] // (`len` remains unused when macro is invoked with only one parameter.)
                 let len = $p0.len();
+                // `.len()` returns the *total* number of entries, but that's OK here since this macro only
+                // implements parameterization with rank-1 arrays.
+
                 #[allow(unused_variables)] // (`i` remains unused when macro is invoked with only one parameter.)
                 $(
                     let $ps = params.next().expect("len checked above").extract::<<ParameterExtractor<$tys> as ParameterExtract<'_, $tys>>::Extracted>()?;
@@ -245,7 +248,7 @@ macro_rules! impl_model_for_parameterizable_model {
                 Ok(())
             }
 
-            fn len(&self, $p0: &Bound<'_, PyAny>) -> PyResult<usize> {
+            fn len(&self, $p0: Borrowed<'_, '_, PyAny>) -> PyResult<usize> {
                 $p0.len()
             }
         }
@@ -300,9 +303,8 @@ impl Model for UnspecializedPythonModel {
         reverse: bool,
         callback: &mut dyn FnMut(&dyn DefaultEntropyModel) -> PyResult<()>,
     ) -> PyResult<()> {
-        let params = params.as_slice();
         let params = params
-            .iter()
+            .iter_borrowed()
             .map(|param| param.extract::<PyReadonlyFloatArray1<'_>>())
             .collect::<Result<Vec<_>, _>>()?;
         let len = params[0].len();
@@ -347,7 +349,7 @@ impl Model for UnspecializedPythonModel {
         Ok(())
     }
 
-    fn len(&self, param0: &Bound<'_, PyAny>) -> PyResult<usize> {
+    fn len(&self, param0: Borrowed<'_, '_, PyAny>) -> PyResult<usize> {
         Ok(param0.extract::<PyReadonlyFloatArray1<'_>>()?.len())
     }
 }
@@ -363,12 +365,10 @@ impl<'py, 'p> Distribution for SpecializedPythonDistribution<'py, 'p> {
     type Value = f64;
 
     fn distribution(&self, x: f64) -> f64 {
-        self.value_and_params.borrow_mut()[0] = x;
+        let mut value_and_params = self.value_and_params.borrow_mut();
+        value_and_params[0] = x;
         self.cdf
-            .call1(
-                self.py,
-                PyTuple::new_bound(self.py, &**self.value_and_params.borrow()),
-            )
+            .call1(self.py, PyTuple::new_bound(self.py, &**value_and_params))
             .expect("Calling the provided cdf raised an exception.")
             .extract::<f64>(self.py)
             .expect("The provided cdf did not return a number.")
@@ -377,12 +377,10 @@ impl<'py, 'p> Distribution for SpecializedPythonDistribution<'py, 'p> {
 
 impl<'py, 'p> Inverse for SpecializedPythonDistribution<'py, 'p> {
     fn inverse(&self, xi: f64) -> f64 {
-        self.value_and_params.borrow_mut()[0] = xi;
+        let mut value_and_params = self.value_and_params.borrow_mut();
+        value_and_params[0] = xi;
         self.approximate_inverse_cdf
-            .call1(
-                self.py,
-                PyTuple::new_bound(self.py, &**self.value_and_params.borrow()),
-            )
+            .call1(self.py, PyTuple::new_bound(self.py, &**value_and_params))
             .expect("Calling the provided ppf raised an exception.")
             .extract::<f64>(self.py)
             .expect("The provided ppf did not return a number.")
@@ -496,8 +494,7 @@ impl Model for UnparameterizedCategoricalDistribution {
         }
 
         let probabilities = params
-            .iter()
-            .next()
+            .get_borrowed_item(0)
             .expect("len checked above")
             .extract::<PyReadonlyFloatArray2<'_>>()?;
 
@@ -511,7 +508,7 @@ impl Model for UnparameterizedCategoricalDistribution {
         }
     }
 
-    fn len(&self, param0: &Bound<'_, PyAny>) -> PyResult<usize> {
+    fn len(&self, param0: Borrowed<'_, '_, PyAny>) -> PyResult<usize> {
         Ok(param0.extract::<PyReadonlyFloatArray2<'_>>()?.shape()[0])
     }
 }
