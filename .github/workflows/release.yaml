@@ -66,6 +66,9 @@ jobs:
         if: matrix.os != 'windows-latest' # work around https://github.com/foresterre/cargo-msrv/issues/1036
         run: cargo msrv verify -- cargo check --all-features
 
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+
       - name: Test `no_std` compatibility
         shell: bash
         working-directory: ensure_no_std
