@@ -15,18 +15,13 @@ use rand::{RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 
 criterion_group!(
-    benches,
+    lookup,
     round_trip_u32_u64_u16_12,
     round_trip_u32_u64_u16_16,
     round_trip_u16_u32_u8_8,
     round_trip_u16_u32_u16_8,
     round_trip_u16_u32_u16_12
 );
-
-#[cfg(not(miri))]
-criterion::criterion_main!(benches);
-#[cfg(miri)]
-fn main() {} // miri currently doesn't seem to be able to run criterion benchmarks as tests.
 
 fn round_trip_u32_u64_u16_12(c: &mut Criterion) {
     round_trip::<u32, u64, u16, 12>(c);

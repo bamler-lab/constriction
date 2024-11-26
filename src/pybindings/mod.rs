@@ -1,3 +1,4 @@
+pub mod quant;
 pub mod stream;
 pub mod symbol;
 
@@ -178,6 +179,7 @@ use crate::NanError;
 #[pymodule]
 #[pyo3(name = "constriction")]
 fn init_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_wrapped(wrap_pymodule!(quant::init_module))?;
     module.add_wrapped(wrap_pymodule!(stream::init_module))?;
     module.add_wrapped(wrap_pymodule!(symbol::init_module))?;
     Ok(())

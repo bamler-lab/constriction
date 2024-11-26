@@ -49,12 +49,12 @@ jobs:
       - name: Test in development mode
         env:
           RUSTFLAGS: "-D warnings"
-        run: cargo test
+        run: cargo test --features benchmark-internals
 
       - name: Test in release mode
         env:
           RUSTFLAGS: "-D warnings"
-        run: cargo test --release
+        run: cargo test --release --features benchmark-internals
 
       - name: "Install cargo-msrv"
         uses: taiki-e/install-action@v2
@@ -118,7 +118,7 @@ jobs:
         env:
           RUSTFLAGS: "-Zrandomize-layout"
           MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-disable-isolation"
-        run: cargo +${{ steps.rust-version.outputs.rustc }} miri test --no-fail-fast
+        run: cargo +${{ steps.rust-version.outputs.rustc }} miri test --no-fail-fast --features benchmark-internals
 
   python-test:
     runs-on: ${{ matrix.os }}

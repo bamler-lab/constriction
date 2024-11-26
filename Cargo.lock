@@ -119,6 +119,7 @@ dependencies = [
  "criterion",
  "hashbrown",
  "libm",
+ "ndarray",
  "num-traits",
  "numpy",
  "probability",
@@ -126,6 +127,7 @@ dependencies = [
  "rand",
  "rand_pcg",
  "rand_xoshiro",
+ "rayon",
  "smallvec",
 ]
 
@@ -355,6 +357,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "rawpointer",
+ "rayon",
 ]
 
 [[package]]

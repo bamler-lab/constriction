@@ -11,7 +11,9 @@ use alloc::{collections::BinaryHeap, vec, vec::Vec};
 use core::{borrow::Borrow, cmp::Reverse, convert::Infallible, fmt::Debug, ops::Add};
 
 use super::{Codebook, DecoderCodebook, EncoderCodebook, SymbolCodeError};
-use crate::{CoderError, DefaultEncoderError, DefaultEncoderFrontendError, UnwrapInfallible};
+use crate::{
+    CoderError, DefaultEncoderError, DefaultEncoderFrontendError, NonNanFloat, UnwrapInfallible,
+};
 
 #[deprecated(since = "0.4.0", note = "Please use `constriction::NanError` instead.")]
 pub use crate::NanError;
@@ -55,7 +57,7 @@ impl EncoderHuffmanTree {
         Self::try_from_probabilities(
             probabilities
                 .into_iter()
-                .map(|p| NonNanFloatCore::new(*p.borrow())),
+                .map(|p| NonNanFloat::new(*p.borrow())),
         )
     }
 
@@ -193,7 +195,7 @@ impl DecoderHuffmanTree {
         Self::try_from_probabilities(
             probabilities
                 .into_iter()
-                .map(|p| NonNanFloatCore::new(*p.borrow())),
+                .map(|p| NonNanFloat::new(*p.borrow())),
         )
     }
 
@@ -270,48 +272,6 @@ impl DecoderCodebook for DecoderHuffmanTree {
         }
 
         Ok(node_index)
-    }
-}
-
-#[derive(PartialOrd, Clone, Copy)]
-struct NonNanFloatCore<F: FloatCore> {
-    inner: F,
-}
-
-impl<F: FloatCore> NonNanFloatCore<F> {
-    fn new(x: F) -> Result<Self, NanError> {
-        if x.is_nan() {
-            Err(NanError)
-        } else {
-            Ok(Self { inner: x })
-        }
-    }
-}
-
-impl<F: FloatCore> PartialEq for NonNanFloatCore<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner.eq(&other.inner)
-    }
-}
-
-impl<F: FloatCore> Eq for NonNanFloatCore<F> {}
-
-#[allow(clippy::derive_ord_xor_partial_ord)]
-impl<F: FloatCore> Ord for NonNanFloatCore<F> {
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.inner
-            .partial_cmp(&other.inner)
-            .expect("NonNanFloatCore::inner is not NaN.")
-    }
-}
-
-impl<F: FloatCore> Add for NonNanFloatCore<F> {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        NonNanFloatCore {
-            inner: self.inner + rhs.inner,
-        }
     }
 }
 
