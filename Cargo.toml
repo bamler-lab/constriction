@@ -30,7 +30,7 @@ std = []
 pybindings = ["numpy", "pyo3"]
 
 [dependencies]
-hashbrown = "0.15.0"
+hashbrown = "0.15.1"
 num-traits = {version = "0.2.15", default-features = false, features = ["libm"]}
 smallvec = "1.6.1"
 
