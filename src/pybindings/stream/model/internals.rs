@@ -40,7 +40,7 @@ where
 
 pub struct EncoderDecoderModel<M>(pub M);
 
-impl<'m, M> Clone for EncoderDecoderModel<&'m M>
+impl<M> Clone for EncoderDecoderModel<&M>
 where
     M: DefaultEntropyModel + ?Sized,
 {
@@ -50,9 +50,9 @@ where
     }
 }
 
-impl<'m, M> Copy for EncoderDecoderModel<&'m M> where M: DefaultEntropyModel + ?Sized {}
+impl<M> Copy for EncoderDecoderModel<&M> where M: DefaultEntropyModel + ?Sized {}
 
-impl<'m, M> EntropyModel<24> for EncoderDecoderModel<&'m M>
+impl<M> EntropyModel<24> for EncoderDecoderModel<&M>
 where
     M: DefaultEntropyModel + ?Sized,
 {
@@ -60,7 +60,7 @@ where
     type Probability = u32;
 }
 
-impl<'m, M> EncoderModel<24> for EncoderDecoderModel<&'m M>
+impl<M> EncoderModel<24> for EncoderDecoderModel<&M>
 where
     M: DefaultEntropyModel + ?Sized,
 {
@@ -73,7 +73,7 @@ where
     }
 }
 
-impl<'m, M> DecoderModel<24> for EncoderDecoderModel<&'m M>
+impl<M> DecoderModel<24> for EncoderDecoderModel<&M>
 where
     M: DefaultEntropyModel + ?Sized,
 {
@@ -361,7 +361,7 @@ struct SpecializedPythonDistribution<'py, 'p> {
     py: Python<'py>,
 }
 
-impl<'py, 'p> Distribution for SpecializedPythonDistribution<'py, 'p> {
+impl Distribution for SpecializedPythonDistribution<'_, '_> {
     type Value = f64;
 
     fn distribution(&self, x: f64) -> f64 {
@@ -375,7 +375,7 @@ impl<'py, 'p> Distribution for SpecializedPythonDistribution<'py, 'p> {
     }
 }
 
-impl<'py, 'p> Inverse for SpecializedPythonDistribution<'py, 'p> {
+impl Inverse for SpecializedPythonDistribution<'_, '_> {
     fn inverse(&self, xi: f64) -> f64 {
         let mut value_and_params = self.value_and_params.borrow_mut();
         value_and_params[0] = xi;

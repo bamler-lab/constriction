@@ -815,11 +815,11 @@ struct LeakilyQuantizedDistributionIter<Symbol, Probability, M, const PRECISION:
     left_sided_cumulative: Probability,
 }
 
-impl<'m, Symbol, Probability, D, const PRECISION: usize> Iterator
+impl<Symbol, Probability, D, const PRECISION: usize> Iterator
     for LeakilyQuantizedDistributionIter<
         Symbol,
         Probability,
-        &'m LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>,
+        &LeakilyQuantizedDistribution<f64, Symbol, Probability, D, PRECISION>,
         PRECISION,
     >
 where

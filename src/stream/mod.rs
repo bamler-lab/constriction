@@ -1178,8 +1178,7 @@ pub struct DecodeSymbols<'a, Decoder: ?Sized, I, const PRECISION: usize> {
     models: I,
 }
 
-impl<'a, Decoder, I, D, const PRECISION: usize> Iterator
-    for DecodeSymbols<'a, Decoder, I, PRECISION>
+impl<Decoder, I, D, const PRECISION: usize> Iterator for DecodeSymbols<'_, Decoder, I, PRECISION>
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = D>,
@@ -1205,8 +1204,8 @@ where
     }
 }
 
-impl<'a, Decoder, I, D, const PRECISION: usize> ExactSizeIterator
-    for DecodeSymbols<'a, Decoder, I, PRECISION>
+impl<Decoder, I, D, const PRECISION: usize> ExactSizeIterator
+    for DecodeSymbols<'_, Decoder, I, PRECISION>
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = D> + ExactSizeIterator,
@@ -1223,8 +1222,8 @@ pub struct TryDecodeSymbols<'a, Decoder: ?Sized, I, const PRECISION: usize> {
     models: I,
 }
 
-impl<'a, Decoder, I, D, E, const PRECISION: usize> Iterator
-    for TryDecodeSymbols<'a, Decoder, I, PRECISION>
+impl<Decoder, I, D, E, const PRECISION: usize> Iterator
+    for TryDecodeSymbols<'_, Decoder, I, PRECISION>
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>>,
@@ -1253,8 +1252,8 @@ where
     }
 }
 
-impl<'a, Decoder, I, D, E, const PRECISION: usize> ExactSizeIterator
-    for TryDecodeSymbols<'a, Decoder, I, PRECISION>
+impl<Decoder, I, D, E, const PRECISION: usize> ExactSizeIterator
+    for TryDecodeSymbols<'_, Decoder, I, PRECISION>
 where
     Decoder: Decode<PRECISION>,
     I: Iterator<Item = Result<D, E>> + ExactSizeIterator,
@@ -1272,8 +1271,7 @@ pub struct DecodeIidSymbols<'a, Decoder: ?Sized, M, const PRECISION: usize> {
     amt: usize,
 }
 
-impl<'a, Decoder, M, const PRECISION: usize> Iterator
-    for DecodeIidSymbols<'a, Decoder, M, PRECISION>
+impl<Decoder, M, const PRECISION: usize> Iterator for DecodeIidSymbols<'_, Decoder, M, PRECISION>
 where
     Decoder: Decode<PRECISION>,
     M: DecoderModel<PRECISION> + Copy,
@@ -1298,8 +1296,8 @@ where
     }
 }
 
-impl<'a, Decoder, M, const PRECISION: usize> ExactSizeIterator
-    for DecodeIidSymbols<'a, Decoder, M, PRECISION>
+impl<Decoder, M, const PRECISION: usize> ExactSizeIterator
+    for DecodeIidSymbols<'_, Decoder, M, PRECISION>
 where
     Decoder: Decode<PRECISION>,
     M: DecoderModel<PRECISION> + Copy,
