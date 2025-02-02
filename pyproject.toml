@@ -16,6 +16,7 @@ classifiers = [
 dependencies = [
   "numpy>=1.16,<3.0",
 ]
+dynamic = ["version"]
 license = {text = "various (see LICENSE.html)"}
 maintainers = [
   {name = "Robert Bamler", email = "robert.bamler@uni-tuebingen.de"},

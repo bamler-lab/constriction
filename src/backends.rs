@@ -1072,8 +1072,8 @@ pub struct Cursor<Word, Buf> {
 /// of bounds without bounds checks.
 pub unsafe trait SafeBuf<Word>: AsRef<[Word]> {}
 
-unsafe impl<'a, Word> SafeBuf<Word> for &'a [Word] {}
-unsafe impl<'a, Word> SafeBuf<Word> for &'a mut [Word] {}
+unsafe impl<Word> SafeBuf<Word> for &[Word] {}
+unsafe impl<Word> SafeBuf<Word> for &mut [Word] {}
 unsafe impl<Word> SafeBuf<Word> for Vec<Word> {}
 unsafe impl<Word> SafeBuf<Word> for Box<[Word]> {}
 

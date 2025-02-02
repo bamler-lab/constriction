@@ -1115,8 +1115,7 @@ where
     }
 }
 
-impl<'a, Word, State, Backend, const SEALED: bool> Drop
-    for CoderGuard<'a, Word, State, Backend, SEALED>
+impl<Word, State, Backend, const SEALED: bool> Drop for CoderGuard<'_, Word, State, Backend, SEALED>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -1134,8 +1133,8 @@ where
     }
 }
 
-impl<'a, Word, State, Backend, const SEALED: bool> Deref
-    for CoderGuard<'a, Word, State, Backend, SEALED>
+impl<Word, State, Backend, const SEALED: bool> Deref
+    for CoderGuard<'_, Word, State, Backend, SEALED>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,

@@ -1023,7 +1023,7 @@ where
     }
 }
 
-impl<'a, Word, State> Drop for EncoderGuard<'a, Word, State>
+impl<Word, State> Drop for EncoderGuard<'_, Word, State>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -1033,7 +1033,7 @@ where
     }
 }
 
-impl<'a, Word, State> Deref for EncoderGuard<'a, Word, State>
+impl<Word, State> Deref for EncoderGuard<'_, Word, State>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
@@ -1045,7 +1045,7 @@ where
     }
 }
 
-impl<'a, Word, State> AsRef<[Word]> for EncoderGuard<'a, Word, State>
+impl<Word, State> AsRef<[Word]> for EncoderGuard<'_, Word, State>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,

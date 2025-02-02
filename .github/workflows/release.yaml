@@ -125,7 +125,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - name: Checkout
@@ -179,7 +179,7 @@ jobs:
           fi
 
       - name: pytest with numpy version 2.x
-        if: matrix.python-version != '3.8' && matrix.python-version != '3.9'
+        if: matrix.python-version != '3.9'
         shell: bash
         run: |
           poetry run python -m pip install numpy~=2.1
@@ -195,7 +195,7 @@ jobs:
           exit ${PIPESTATUS[0]}
 
       - name: Verify that pytest used correct python version
-        if: matrix.python-version != '3.8' && matrix.python-version != '3.9'
+        if: matrix.python-version != '3.9'
         shell: bash
         run: |
           USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest-numpy2.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
@@ -302,12 +302,6 @@ jobs:
       - name: Install latest stable Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Python 3.8
-        id: setup-python-3-8
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.8
-
       - name: Set up Python 3.9
         id: setup-python-3-9
         uses: actions/setup-python@v5
@@ -354,14 +348,14 @@ jobs:
         with:
           command: build
           manylinux: 2014
-          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
+          args: --release --strip --features pybindings -i python3.9 python3.10 python3.11 python3.12 python3.13
 
       - name: Build wheels (windows)
         if: matrix.os == 'windows-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-8.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-13.outputs.python-version }}\x64\python3.exe
+          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-13.outputs.python-version }}\x64\python3.exe
 
       - name: Build wheels for old Apple chips (macos)
         if: matrix.os == 'macos-latest'
@@ -369,7 +363,7 @@ jobs:
         with:
           target: x86_64-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
+          args: --release --strip --features pybindings -i python3.9 python3.10 python3.11 python3.12 python3.13
 
       - name: Cross-build wheels for new Apple chips (macos)
         if: matrix.os == 'macos-latest'
@@ -377,7 +371,7 @@ jobs:
         with:
           target: aarch64-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
+          args: --release --strip --features pybindings -i python3.9 python3.10 python3.11 python3.12 python3.13
 
       - name: Build universal2 wheels (macos)
         if: matrix.os == 'macos-latest'
@@ -385,7 +379,7 @@ jobs:
         with:
           target: universal2-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.8 python3.9 python3.10 python3.11 python3.12 python3.13
+          args: --release --strip --features pybindings -i python3.9 python3.10 python3.11 python3.12 python3.13
 
       - name: List wheels
         shell: bash

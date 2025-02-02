@@ -111,7 +111,7 @@ pub struct DecodeSymbols<'a, Stream: ?Sized, I, S: Semantics> {
     semantics: PhantomData<S>,
 }
 
-impl<'a, Stream, I, C, S> Iterator for DecodeSymbols<'a, Stream, I, S>
+impl<Stream, I, C, S> Iterator for DecodeSymbols<'_, Stream, I, S>
 where
     S: Semantics,
     Stream: ReadBitStream<S>,
@@ -132,7 +132,7 @@ where
     }
 }
 
-impl<'a, Stream, I, C, S> ExactSizeIterator for DecodeSymbols<'a, Stream, I, S>
+impl<Stream, I, C, S> ExactSizeIterator for DecodeSymbols<'_, Stream, I, S>
 where
     S: Semantics,
     Stream: ReadBitStream<S>,
@@ -247,7 +247,7 @@ impl<Word: BitArray> StackCoder<Word, Vec<Word>> {
 impl<Word: BitArray> QueueEncoder<Word, Vec<Word>> {
     pub fn with_bit_capacity(bit_capacity: usize) -> Self {
         Self {
-            backend: Vec::with_capacity((bit_capacity + Word::BITS - 1) / Word::BITS),
+            backend: Vec::with_capacity(bit_capacity.div_ceil(Word::BITS)),
             ..Default::default()
         }
     }
@@ -273,7 +273,7 @@ impl<'a, Word: BitArray> StackCoderGuard<'a, Word> {
     }
 }
 
-impl<'a, Word: BitArray> Drop for StackCoderGuard<'a, Word> {
+impl<Word: BitArray> Drop for StackCoderGuard<'_, Word> {
     fn drop(&mut self) {
         if self.inner.mask_last_written != Word::zero() {
             self.inner.backend.pop();
@@ -282,7 +282,7 @@ impl<'a, Word: BitArray> Drop for StackCoderGuard<'a, Word> {
     }
 }
 
-impl<'a, Word: BitArray> Deref for StackCoderGuard<'a, Word> {
+impl<Word: BitArray> Deref for StackCoderGuard<'_, Word> {
     type Target = [Word];
 
     fn deref(&self) -> &Self::Target {
@@ -307,7 +307,7 @@ impl<'a, Word: BitArray> QueueEncoderGuard<'a, Word> {
     }
 }
 
-impl<'a, Word: BitArray> Drop for QueueEncoderGuard<'a, Word> {
+impl<Word: BitArray> Drop for QueueEncoderGuard<'_, Word> {
     fn drop(&mut self) {
         if self.inner.mask_last_written != Word::zero() {
             self.inner.backend.pop();
@@ -315,7 +315,7 @@ impl<'a, Word: BitArray> Drop for QueueEncoderGuard<'a, Word> {
     }
 }
 
-impl<'a, Word: BitArray> Deref for QueueEncoderGuard<'a, Word> {
+impl<Word: BitArray> Deref for QueueEncoderGuard<'_, Word> {
     type Target = [Word];
 
     fn deref(&self) -> &Self::Target {
