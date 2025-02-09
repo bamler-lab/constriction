@@ -898,21 +898,6 @@ where
 
     type BackendError = Backend::ReadError;
 
-    /// Decodes a single symbol and pops it off the compressed data.
-    ///
-    /// This is a low level method. You usually probably want to call a batch method
-    /// like [`decode_symbols`](#method.decode_symbols) or
-    /// [`decode_iid_symbols`](#method.decode_iid_symbols) instead.
-    ///
-    /// This method is called `decode_symbol` rather than `decode_symbol` to stress the
-    /// fact that the `Coder` is a stack: `decode_symbol` will return the *last* symbol
-    /// that was previously encoded via [`encode_symbol`](#method.encode_symbol).
-    ///
-    /// Note that this method cannot fail. It will still produce symbols in a
-    /// deterministic way even if the coder is empty, but such symbols will not
-    /// recover any previously encoded data and will generally have low entropy.
-    /// Still, being able to pop off an arbitrary number of symbols can sometimes be
-    /// useful in edge cases of, e.g., the bits-back algorithm.
     fn decode_symbol<D>(
         &mut self,
         model: D,
