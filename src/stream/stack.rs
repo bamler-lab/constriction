@@ -705,6 +705,17 @@ where
     State: BitArray + AsPrimitive<Word>,
     Backend: WriteWords<Word>,
 {
+    /// Recommended way to encode a heterogeneously distributed sequence of
+    /// symbols onto an `AnsCoder`.
+    ///
+    /// This method is similar to the trait method [`Encode::encode_symbols`],
+    /// but it encodes the symbols in *reverse* order (and therefore requires
+    /// the provided iterator to implement [`DoubleEndedIterator`]). Encoding
+    /// in reverse order is the recommended way to encode onto an `AnsCoder`
+    /// because an `AnsCoder` is a *stack*, i.e., the last symbol you encode
+    /// onto an `AnsCoder` is the first symbol that you will decode from it.
+    /// Thus, encoding a sequence of symbols in reverse order will allow you to
+    /// decode them in normal order.
     pub fn encode_symbols_reverse<S, M, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
@@ -720,6 +731,16 @@ where
         self.encode_symbols(symbols_and_models.into_iter().rev())
     }
 
+    /// Recommended way to encode onto an `AnsCoder` from a fallible iterator.
+    ///
+    /// This method is similar to the trait method
+    /// [`Encode::try_encode_symbols`], but it encodes the symbols in *reverse*
+    /// order (and therefore requires the provided iterator to implement
+    /// [`DoubleEndedIterator`]). Encoding in reverse order is the recommended
+    /// way to encode onto an `AnsCoder` because an `AnsCoder` is a *stack*,
+    /// i.e., the last symbol you encode  onto an `AnsCoder` is the first symbol
+    /// that you will decode from it. Thus, encoding a sequence of symbols in
+    /// reverse order will allow you to decode them in normal order.
     pub fn try_encode_symbols_reverse<S, M, E, I, const PRECISION: usize>(
         &mut self,
         symbols_and_models: I,
@@ -735,6 +756,17 @@ where
         self.try_encode_symbols(symbols_and_models.into_iter().rev())
     }
 
+    /// Recommended way to encode a sequence of i.i.d. symbols onto an
+    /// `AnsCoder`.
+    ///
+    /// This method is similar to the trait method
+    /// [`Encode::encode_iid_symbols`], but it encodes the symbols in *reverse*
+    /// order (and therefore requires the provided iterator to implement
+    /// [`DoubleEndedIterator`]). Encoding in reverse order is the recommended
+    /// way to encode onto an `AnsCoder` because an `AnsCoder` is a *stack*,
+    /// i.e., the last symbol you encode onto an `AnsCoder` is the first symbol
+    /// that you will decode from it. Thus, encoding a sequence of symbols in
+    /// reverse order will allow you to decode them in normal order.
     pub fn encode_iid_symbols_reverse<S, M, I, const PRECISION: usize>(
         &mut self,
         symbols: I,
@@ -984,26 +1016,12 @@ where
     Backend: ReadWords<Word, Stack>,
 {
     /// ANS coding is surjective, and we (deliberately) allow decoding past EOF (in a
-    /// deterministic way) for consistency. Therefore, decoding cannot fail.    
+    /// deterministic way) for consistency. Therefore, decoding cannot fail in the front
+    /// end.
     type FrontendError = Infallible;
 
     type BackendError = Backend::ReadError;
 
-    /// Decodes a single symbol and pops it off the compressed data.
-    ///
-    /// This is a low level method. You usually probably want to call a batch method
-    /// like [`decode_symbols`](#method.decode_symbols) or
-    /// [`decode_iid_symbols`](#method.decode_iid_symbols) instead.
-    ///
-    /// This method is called `decode_symbol` rather than `decode_symbol` to stress the
-    /// fact that the `AnsCoder` is a stack: `decode_symbol` will return the *last* symbol
-    /// that was previously encoded via [`encode_symbol`](#method.encode_symbol).
-    ///
-    /// Note that this method cannot fail. It will still produce symbols in a
-    /// deterministic way even if the stack is empty, but such symbols will not
-    /// recover any previously encoded data and will generally have low entropy.
-    /// Still, being able to pop off an arbitrary number of symbols can sometimes be
-    /// useful in edge cases of, e.g., the bits-back algorithm.
     #[inline(always)]
     fn decode_symbol<M>(
         &mut self,
