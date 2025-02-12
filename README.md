@@ -1,6 +1,6 @@
 # Entropy Coders for Research and Production
 
-![test status](https://github.com/bamler-lab/constriction/workflows/test/badge.svg?branch=main)
+![test status](https://github.com/bamler-lab/constriction/actions/workflows/test.yaml/badge.svg?branch=main)
 
 The `constriction` library provides a set of composable entropy coding algorithms with a
 focus on correctness, versatility, ease of use, compression performance, and

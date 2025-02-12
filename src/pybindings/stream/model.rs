@@ -254,7 +254,7 @@ impl CustomModel {
 /// distribution function and percent point function are already implemented in the popular
 /// `scipy` python package. Just provide either a fully parameterized scipy-model or a scipy
 /// model-class to the constructor. The adapter can be used with both discrete models
-/// (over a continuous integer domain) and continuous models. Continuous models will be
+/// (over a contiguous integer domain) and continuous models. Continuous models will be
 /// quantized to bins of width 1 centered at integers, analogous to the procedure described
 /// in the documentation of
 /// [`QuantizedGaussian`](#constriction.stream.model.QuantizedGaussian)
@@ -318,7 +318,7 @@ impl CustomModel {
 /// The following arguments always have to be provided directly to the constructor of the
 /// model. They cannot be delayed until encoding or decoding. However, the encapsulated
 /// scipy model may expect additional model parameters, which you can pass in at encoding or
-/// decoding time as in the second example below.
+/// decoding time as in the second example above.
 ///
 /// - **model** --- a `scipy` model or model class as in the examples above.
 /// - **min_symbol_inclusive** and **max_symbol_inclusive** --- define the range of integer
