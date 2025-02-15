@@ -578,7 +578,6 @@
         color: #ecd1b9;
       }
     }
-
   </style>
   <script>
     function toggleTab(event) {
@@ -679,18 +678,26 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
   <h3>Demos</h3>
   <ul>
     <li>
-      <strong>Python Demo:</strong>
-      Try out our jupyter notebooks with <a
+      <strong>Python demo:</strong>
+      try out our jupyter notebooks with <a
         href="https://github.com/bamler-lab/constriction/blob/main/examples/python/01-hello-world.ipynb">a
         simple encoding-decoding round trip</a> or with a more elaborate <a
         href="https://github.com/bamler-lab/constriction/blob/main/examples/python/03-tutorial-autoregressive-nlp-compression.ipynb">text
         compression method using an autoregressive machine learning model</a>.
     </li>
     <li>
-      <strong>Rust Demo:</strong>
-      Try out <a href="https://robamler.github.io/linguistic-flux-capacitor/" target="_blank">this web app</a>, which
+      <strong>Rust demo:</strong>
+      try out <a href="https://robamler.github.io/linguistic-flux-capacitor/" target="_blank">this web app</a>, which
       uses <code class="constriction">constriction</code> in a WebAssembly module to run a custom compression codec
       directly in your web browser, i.e., on the client side (no installation required).
+    </li>
+    <li>
+      <strong>Fun demo:</strong>
+      yet another <a href="https://drive.google.com/file/d/1QF2mtcpIA3y-SbBjJWfsxrHqO0Zrd-0J"
+        target="_blank">compression method for text</a>, but this one uses a large language model (GPT-2) as its entropy
+      model.
+      It's not really practical because of the large model size, but it might provide a very intuitive introduction to
+      entropy coding for a general machine-learning audience.
     </li>
   </ul>
   <h3>Documentation</h3>
@@ -733,8 +740,12 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
           example&nbsp;2</a>
         <!-- TODO -->
       </li>
-      <li>Compressing natural language with an autoregressive machine learning model: <a
+      <li>Compressing natural language with a simple autoregressive machine learning model: <a
           href="https://github.com/bamler-lab/constriction/blob/main/examples/python/03-tutorial-autoregressive-nlp-compression.ipynb">Python&nbsp;tutorial</a>
+      </li>
+      <li>Compressing natural language with a large language model (GPT-2) as entropy model: <a
+          href="https://drive.google.com/file/d/1QF2mtcpIA3y-SbBjJWfsxrHqO0Zrd-0J">Python&nbsp;tutorial</a> | <a
+          href="https://bamler-lab.github.io/bootcamp24/handout-with-notes.pdf">accompanying lecture notes</a>
       </li>
       <li>Bits-back coding with a latent variable model: <a
           href="https://robamler.github.io/teaching/compress22/problem-set-07.zip">Python&nbsp;Problem&nbsp;Set</a> | <a
@@ -745,14 +756,16 @@ constriction = "<!-- CONSTRICTION_VERSION -->"</pre>
           href="https://github.com/robamler/linguistic-flux-capacitor">source&nbsp;code</a></li>
     </ul>
     <ul id="background">
-      <li><a href="https://robamler.github.io/teaching/compress22/">Lecture notes</a> from a university course on data
+      <li><a href="https://robamler.github.io/teaching/compress23/">Lecture notes</a> from a university course on data
         compression with and
         without deep probabilistic models (includes problem sets with solutions).</li>
-      <li><a href="https://www.youtube.com/playlist?list=PL05umP7R6ij0Mp1dW2HuXlb-UQIYnv8xK">YouTube playlist</a> of
-        the above university course.</li>
-      <li>Paper with benchmark results of <code class="constriction">constriction</code>'s entropy coders (in
-        Section&nbsp;5.2), and with an explanation of internals of the ANS and "Chain" entropy coders: <a
-          href="https://arxiv.org/pdf/2201.01741">arXiv:2201.01741</a>
+      <li><a href="https://www.youtube.com/playlist?list=PL05umP7R6ij0KTBVxk00MKoQRMLTWUJh-">YouTube playlist</a> with a
+        few videos for the above university course.</li>
+      <li><a href="https://bamler-lab.github.io/bootcamp24/handout-with-notes.pdf">Lecture notes</a> from a tutorial
+        that is essentially a highly condensed variant of the above lecture.</li>
+      <li><a href="https://arxiv.org/pdf/2201.01741">Paper</a> with benchmark results of <code
+          class="constriction">constriction</code>'s entropy coders (in Section&nbsp;5.2), and with an explanation of
+        internals of the ANS and "Chain" entropy coders: <a href="https://arxiv.org/pdf/2201.01741">arXiv:2201.01741</a>
       </li>
     </ul>
   </div>
