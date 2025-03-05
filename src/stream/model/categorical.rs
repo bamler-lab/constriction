@@ -72,8 +72,8 @@ where
         return Err(());
     }
 
-    // Start by assigning each symbol weight 1 and then distributing no more than
-    // the remaining weight approximately evenly across all symbols.
+    // Start by assigning each symbol weight 1 and then distributing at most the
+    // remaining weight approximately proportionally to the symbol probabilities.
     let mut remaining_free_weight =
         wrapping_pow2::<Probability>(PRECISION).wrapping_sub(&probabilities.len().as_());
     let normalization = probabilities.iter().map(|&x| x.into()).sum::<f64>();
@@ -156,7 +156,8 @@ where
         // Setting `seller.win = -infinity` and `buyer.loss = infinity` below ensures that the
         // iteration converges even in the presence of rounding errors because each weight can
         // only be continuously increased or continuously decreased, and the range of allowed
-        // weights is bounded from both above and below. See unit test `categorical_converges`.
+        // weights is bounded from both above and below. See unit test `perfect_converges` in
+        // `categorical/contiguous.rs`.
         seller.weight = seller.weight - Probability::one();
         seller.win = f64::neg_infinity(); // Once a weight gets reduced it may never be increased again.
         seller.loss = if seller.weight == Probability::one() {
