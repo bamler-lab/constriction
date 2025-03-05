@@ -49,7 +49,7 @@ numpy = [
 ]
 python = "^3.9.2,<3.14"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 autopep8 = "*"
 flake8 = {version = "^7.1.1", python = ">=3.9"}
 maturin = "^1.7.1"
