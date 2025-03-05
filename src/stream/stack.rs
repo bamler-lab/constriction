@@ -342,7 +342,7 @@ where
 
             let mut state = first_word.into();
             while let Some(word) = read_word().map_err(|_| ())? {
-                state = state << Word::BITS | word.into();
+                state = (state << Word::BITS) | word.into();
                 if state >= State::one() << (State::BITS - Word::BITS) {
                     break;
                 }
@@ -382,7 +382,7 @@ where
 
         while state < State::one() << (State::BITS - Word::BITS) {
             if let Some(word) = data.read()? {
-                state = state << Word::BITS | word.into();
+                state = (state << Word::BITS) | word.into();
             } else {
                 break;
             }
@@ -998,7 +998,7 @@ where
         let remainder = (self.state % probability.get().into().into()).as_().as_();
         let prefix = self.state / probability.get().into().into();
         let quantile = left_sided_cumulative + remainder;
-        self.state = prefix << PRECISION | quantile.into().into();
+        self.state = (prefix << PRECISION) | quantile.into().into();
 
         Ok(())
     }

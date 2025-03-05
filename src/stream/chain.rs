@@ -291,7 +291,7 @@ impl<Word: BitArray, State: BitArray, const PRECISION: usize>
             }
         };
         while remainders_head < threshold {
-            remainders_head = remainders_head << Word::BITS
+            remainders_head = (remainders_head << Word::BITS)
                 | source.read()?.ok_or(CoderError::Frontend(()))?.into();
         }
 
@@ -1057,42 +1057,42 @@ where
             STATE_MUST_SUPPORT_PRECISION: State::BITS >= Word::BITS + PRECISION;
         );
 
-        let word = if PRECISION == Word::BITS
-            || self.heads.compressed.get() < Word::one() << PRECISION
-        {
-            let word = self
-                .compressed
-                .read()
-                .map_err(BackendError::Compressed)?
-                .ok_or(CoderError::Frontend(
-                    DecoderFrontendError::OutOfCompressedData,
-                ))?;
-            if PRECISION != Word::BITS {
+        let word =
+            if PRECISION == Word::BITS || self.heads.compressed.get() < Word::one() << PRECISION {
+                let word = self
+                    .compressed
+                    .read()
+                    .map_err(BackendError::Compressed)?
+                    .ok_or(CoderError::Frontend(
+                        DecoderFrontendError::OutOfCompressedData,
+                    ))?;
+                if PRECISION != Word::BITS {
+                    self.heads.compressed = unsafe {
+                        // SAFETY:
+                        // - `0 < PRECISION < Word::BITS` as per our assertion and the above check,
+                        //   therefore `Word::BITS - PRECISION > 0` and both the left-shift and
+                        //   the right-shift are valid;
+                        // - `heads.compressed.get() != 0` since `heads.compressed` is a `NonZero`.
+                        // - `heads.compressed.get() < 1 << PRECISION`, so all its "one" bits are
+                        //   in the `PRECISION` lowest significant bits; since it we have
+                        //   `Word::BITS` bits available, shifting left by `Word::BITS - PRECISION`
+                        //   doesn't truncate, and thus the result is also nonzero.
+                        Word::NonZero::new_unchecked(
+                            (self.heads.compressed.get() << (Word::BITS - PRECISION))
+                                | (word >> PRECISION),
+                        )
+                    };
+                }
+                word
+            } else {
+                let word = self.heads.compressed.get();
                 self.heads.compressed = unsafe {
-                    // SAFETY:
-                    // - `0 < PRECISION < Word::BITS` as per our assertion and the above check,
-                    //   therefore `Word::BITS - PRECISION > 0` and both the left-shift and
-                    //   the right-shift are valid;
-                    // - `heads.compressed.get() != 0` since `heads.compressed` is a `NonZero`.
-                    // - `heads.compressed.get() < 1 << PRECISION`, so all its "one" bits are
-                    //   in the `PRECISION` lowest significant bits; since it we have
-                    //   `Word::BITS` bits available, shifting left by `Word::BITS - PRECISION`
-                    //   doesn't truncate, and thus the result is also nonzero.
-                    Word::NonZero::new_unchecked(
-                        self.heads.compressed.get() << (Word::BITS - PRECISION) | word >> PRECISION,
-                    )
+                    // SAFETY: `heads.compressed.get() >= 1 << PRECISION`, so shifting right by
+                    // `PRECISION` doesn't result in zero.
+                    Word::NonZero::new_unchecked(self.heads.compressed.get() >> PRECISION)
                 };
-            }
-            word
-        } else {
-            let word = self.heads.compressed.get();
-            self.heads.compressed = unsafe {
-                // SAFETY: `heads.compressed.get() >= 1 << PRECISION`, so shifting right by
-                // `PRECISION` doesn't result in zero.
-                Word::NonZero::new_unchecked(self.heads.compressed.get() >> PRECISION)
+                word
             };
-            word
-        };
 
         let quantile = if PRECISION == Word::BITS {
             word
@@ -1183,14 +1183,14 @@ where
                 //   bits are within theleast significant `Word::BITS - PRECISION` bits. Thus, the
                 //   most significant `PRECISION` bits are 0 and the left-shift doesn't truncate.
                 // Thus, the result of the left-shift is also noznero.
-                self.heads.compressed =
-                    (self.heads.compressed.get() << PRECISION | quantile).into_nonzero_unchecked();
+                self.heads.compressed = ((self.heads.compressed.get() << PRECISION) | quantile)
+                    .into_nonzero_unchecked();
             }
         } else {
             let word = if PRECISION == Word::BITS {
                 quantile
             } else {
-                let word = self.heads.compressed.get() << PRECISION | quantile;
+                let word = (self.heads.compressed.get() << PRECISION) | quantile;
                 unsafe {
                     // SAFETY: if we're here then `heads.compressed >= 1 << (Word::BITS - PRECISION).
                     // Thus, shifting right by this amount of bits leaves at least one 1 bit.
@@ -1329,8 +1329,8 @@ mod tests {
         // we test various filling levels.
         let leading_zeros = (rng.next_u32() % (Word::BITS as u32 - 1)) as usize;
         let last_word = compressed.last_mut().unwrap();
-        *last_word = *last_word | Word::one() << (Word::BITS - leading_zeros - 1);
-        *last_word = *last_word & Word::max_value() >> leading_zeros;
+        *last_word = *last_word | (Word::one() << (Word::BITS - leading_zeros - 1));
+        *last_word = *last_word & (Word::max_value() >> leading_zeros);
 
         let distributions = (0..amt_symbols)
             .map(|_| {
