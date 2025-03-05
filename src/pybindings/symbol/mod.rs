@@ -210,10 +210,7 @@ impl StackCoder {
         py: Python<'py>,
     ) -> (Bound<'py, PyArray1<u32>>, usize) {
         let len = self.inner.len();
-        (
-            PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
-            len,
-        )
+        (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
     }
 
     /// Deprecated method. Please use `get_compressed_and_bitrate` instead.
@@ -224,9 +221,11 @@ impl StackCoder {
     pub fn get_compressed<'py>(&mut self, py: Python<'py>) -> (Bound<'py, PyArray1<u32>>, usize) {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::AcqRel) {
-            let _ = py.run_bound(
-                "print('WARNING: `StackCoder.get_compressed` has been renamed to\\n\
-                     \x20        `StackCoder.get_compressed_and_bitrate` to avoid confusion.",
+            let _ = py.run(
+                pyo3::ffi::c_str!(
+                    "print('WARNING: `StackCoder.get_compressed` has been renamed to\\n\
+                     \x20        `StackCoder.get_compressed_and_bitrate` to avoid confusion."
+                ),
                 None,
                 None,
             );
@@ -300,10 +299,7 @@ impl QueueEncoder {
         py: Python<'py>,
     ) -> (Bound<'py, PyArray1<u32>>, usize) {
         let len = self.inner.len();
-        (
-            PyArray1::from_slice_bound(py, &self.inner.get_compressed()),
-            len,
-        )
+        (PyArray1::from_slice(py, &self.inner.get_compressed()), len)
     }
 
     /// Deprecated method. Please use `get_compressed_and_bitrate` instead.
@@ -314,9 +310,11 @@ impl QueueEncoder {
     pub fn get_compressed<'py>(&mut self, py: Python<'py>) -> (Bound<'py, PyArray1<u32>>, usize) {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::AcqRel) {
-            let _ = py.run_bound(
-                "print('WARNING: `QueueEncoder.get_compressed` has been renamed to\\n\
-                     \x20        `QueueEncoder.get_compressed_and_bitrate` to avoid confusion.",
+            let _ = py.run(
+                pyo3::ffi::c_str!(
+                    "print('WARNING: `QueueEncoder.get_compressed` has been renamed to\\n\
+                     \x20        `QueueEncoder.get_compressed_and_bitrate` to avoid confusion."
+                ),
                 None,
                 None,
             );

@@ -157,7 +157,7 @@ impl<N: Unsigned + PrimInt + WrappingAdd + WrappingSub> DecoderCodebook for ExpG
         let mut n_plus1 = N::one();
         for _ in 0..len {
             if let Some(bit) = source.next().transpose()? {
-                n_plus1 = n_plus1 << 1 | if bit { N::one() } else { N::zero() };
+                n_plus1 = (n_plus1 << 1) | if bit { N::one() } else { N::zero() };
             } else {
                 return Err(SymbolCodeError::InvalidCodeword(InvalidCodeword).into_coder_error());
             }

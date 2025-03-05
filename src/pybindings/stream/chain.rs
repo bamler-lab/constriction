@@ -335,8 +335,8 @@ impl ChainCoder {
             )
         })?;
 
-        let remainders = PyArray1::from_vec_bound(py, remainders);
-        let compressed = PyArray1::from_vec_bound(py, compressed);
+        let remainders = PyArray1::from_vec(py, remainders);
+        let compressed = PyArray1::from_vec(py, compressed);
         Ok((remainders, compressed))
     }
 
@@ -351,8 +351,8 @@ impl ChainCoder {
         py: Python<'py>,
     ) -> PyResult<(Bound<'py, PyArray1<u32>>, Bound<'py, PyArray1<u32>>)> {
         let (compressed, remainders) = self.inner.clone().into_remainders().unwrap_infallible();
-        let remainders = PyArray1::from_vec_bound(py, remainders);
-        let compressed = PyArray1::from_vec_bound(py, compressed);
+        let remainders = PyArray1::from_vec(py, remainders);
+        let compressed = PyArray1::from_vec(py, compressed);
         Ok((compressed, remainders))
     }
 
@@ -454,7 +454,11 @@ impl ChainCoder {
                         .expect("We use constant `PRECISION`.");
                     Ok(())
                 })?;
-                return Ok(symbol.to_object(py));
+                return Ok(symbol
+                    .into_pyobject(py)
+                    .unwrap_infallible()
+                    .into_any()
+                    .unbind());
             }
             1 => {
                 if let Ok(amt) = optional_amt_or_model_params
@@ -473,7 +477,7 @@ impl ChainCoder {
                         }
                         Ok(())
                     })?;
-                    return Ok(PyArray1::from_iter_bound(py, symbols).into_any().unbind());
+                    return Ok(PyArray1::from_iter(py, symbols).into_any().unbind());
                 }
             }
             _ => {} // Fall through to code below.
@@ -497,7 +501,7 @@ impl ChainCoder {
                 Ok(())
             })?;
 
-        Ok(PyArray1::from_vec_bound(py, symbols).into_any().unbind())
+        Ok(PyArray1::from_vec(py, symbols).into_any().unbind())
     }
 
     /// Creates a deep copy of the coder and returns it.

@@ -368,7 +368,11 @@ impl Distribution for SpecializedPythonDistribution<'_, '_> {
         let mut value_and_params = self.value_and_params.borrow_mut();
         value_and_params[0] = x;
         self.cdf
-            .call1(self.py, PyTuple::new_bound(self.py, &**value_and_params))
+            .call1(
+                self.py,
+                PyTuple::new(self.py, &**value_and_params)
+                    .expect("tuple construction from slice can't fail"),
+            )
             .expect("Calling the provided cdf raised an exception.")
             .extract::<f64>(self.py)
             .expect("The provided cdf did not return a number.")
@@ -380,7 +384,11 @@ impl Inverse for SpecializedPythonDistribution<'_, '_> {
         let mut value_and_params = self.value_and_params.borrow_mut();
         value_and_params[0] = xi;
         self.approximate_inverse_cdf
-            .call1(self.py, PyTuple::new_bound(self.py, &**value_and_params))
+            .call1(
+                self.py,
+                PyTuple::new(self.py, &**value_and_params)
+                    .expect("tuple construction from slice can't fail"),
+            )
             .expect("Calling the provided ppf raised an exception.")
             .extract::<f64>(self.py)
             .expect("The provided ppf did not return a number.")

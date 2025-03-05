@@ -419,9 +419,9 @@ impl AnsCoder {
                 pyo3::exceptions::PyAssertionError::new_err(
                     "Cannot unseal compressed data because it doesn't fit into integer number of words. Did you create the encoder with `seal=True` and restore its original state?",
                 ))?;
-            Ok(PyArray1::from_slice_bound(py, &binary))
+            Ok(PyArray1::from_slice(py, &binary))
         } else {
-            Ok(PyArray1::from_slice_bound(
+            Ok(PyArray1::from_slice(
                 py,
                 &self.inner.get_compressed().unwrap_infallible(),
             ))
@@ -702,7 +702,11 @@ impl AnsCoder {
                         .unwrap_infallible();
                     Ok(())
                 })?;
-                return Ok(symbol.to_object(py));
+                return Ok(symbol
+                    .into_pyobject(py)
+                    .unwrap_infallible()
+                    .into_any()
+                    .unbind());
             }
             1 => {
                 if let Ok(amt) = optional_amt_or_model_params
@@ -720,7 +724,7 @@ impl AnsCoder {
                         }
                         Ok(())
                     })?;
-                    return Ok(PyArray1::from_iter_bound(py, symbols).into_any().unbind());
+                    return Ok(PyArray1::from_iter(py, symbols).into_any().unbind());
                 }
             }
             _ => {} // Fall through to code below.
@@ -744,7 +748,7 @@ impl AnsCoder {
                 Ok(())
             })?;
 
-        Ok(PyArray1::from_vec_bound(py, symbols).into_any().unbind())
+        Ok(PyArray1::from_vec(py, symbols).into_any().unbind())
     }
 
     /// Creates a deep copy of the coder and returns it.

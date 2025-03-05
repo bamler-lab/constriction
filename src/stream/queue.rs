@@ -780,7 +780,7 @@ where
         let mut num_read = 0;
         let mut point = State::zero();
         while let Some(word) = bulk.read()? {
-            point = point << Word::BITS | word.into();
+            point = (point << Word::BITS) | word.into();
             num_read += 1;
             if num_read == State::BITS / Word::BITS {
                 break;

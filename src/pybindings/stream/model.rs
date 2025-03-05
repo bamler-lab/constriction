@@ -510,13 +510,13 @@ impl Categorical {
         let (lazy, perfect) = match (lazy, perfect) {
             (None, None) => {
                 if !WARNED.lock().unwrap().replace(true) {
-                    let _ = py.run_bound(
-                        "print('WARNING: Neither argument `perfect` nor `lazy` were specified for `Categorical` entropy model.\\n\
+                    let _ = py.run(
+                        pyo3::ffi::c_str!("print('WARNING: Neither argument `perfect` nor `lazy` were specified for `Categorical` entropy model.\\n\
                              \x20        In this case, `perfect` currently defaults to `True` for backward compatibility, but\\n\
                              \x20        this default will change to `perfect=False` in constriction version 0.5.\\n\
                              \x20        To suppress this warning, explicitly set:\\n\
                              \x20        - `perfect=False`: recommended for most new use cases; or\\n\
-                             \x20        - `perfect=True`: if you need backward compatibility with constriction <= 0.3.5.')",
+                             \x20        - `perfect=True`: if you need backward compatibility with constriction <= 0.3.5.')"),
                         None,
                         None
                     );
@@ -994,12 +994,12 @@ impl Bernoulli {
         static WARNED: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
 
         if perfect.is_none() && !WARNED.lock().unwrap().replace(true) {
-            let _ = py.run_bound(
-                "print('WARNING: Argument `perfect` was not specified for `Bernoulli` distribution.\\n\
+            let _ = py.run(
+                pyo3::ffi::c_str!("print('WARNING: Argument `perfect` was not specified for `Bernoulli` distribution.\\n\
                      \x20        It currently defaults to `perfect=True` for backward compatibility, but this default\\n\
                      \x20        will change to `perfect=False` in constriction version 0.5. To suppress this warning,\\n\
                      \x20        explicitly set `perfect=False` (recommended for most new use cases) or explicitly set\\n\
-                     \x20        `perfect=True` (if you need backward compatibility with constriction <= 0.3.5).')",
+                     \x20        `perfect=True` (if you need backward compatibility with constriction <= 0.3.5).')"),
                 None,
                 None
             );

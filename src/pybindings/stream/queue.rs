@@ -223,7 +223,7 @@ impl RangeEncoder {
     /// ```
     #[pyo3(signature = ())]
     pub fn get_compressed<'py>(&mut self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
-        PyArray1::from_slice_bound(py, &self.inner.get_compressed())
+        PyArray1::from_slice(py, &self.inner.get_compressed())
     }
 
     /// Returns a `RangeDecoder` that is initialized with a copy of the compressed data currently on
@@ -609,7 +609,11 @@ impl RangeDecoder {
                     symbol = self.inner.decode_symbol(EncoderDecoderModel(model))?;
                     Ok(())
                 })?;
-                return Ok(symbol.to_object(py));
+                return Ok(symbol
+                    .into_pyobject(py)
+                    .unwrap_infallible()
+                    .into_any()
+                    .unbind());
             }
             1 => {
                 if let Ok(amt) = optional_amt_or_model_params
@@ -627,7 +631,7 @@ impl RangeDecoder {
                         }
                         Ok(())
                     })?;
-                    return Ok(PyArray1::from_iter_bound(py, symbols).into_any().unbind());
+                    return Ok(PyArray1::from_iter(py, symbols).into_any().unbind());
                 }
             }
             _ => {} // Fall through to code below.
@@ -648,7 +652,7 @@ impl RangeDecoder {
                 Ok(())
             })?;
 
-        Ok(PyArray1::from_vec_bound(py, symbols).into_any().unbind())
+        Ok(PyArray1::from_vec(py, symbols).into_any().unbind())
     }
 
     /// Creates a deep copy of the coder and returns it.
