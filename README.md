@@ -236,7 +236,7 @@ Contributors can compile `constriction` manually as follows:
 
 1. Prepare your system:
    - If you don't have a Rust toolchain, install one as described on <https://rustup.rs>
-   - If you already have a Rust toolchain, make sure it's on version 1.51 or later. Run
+   - If you already have a Rust toolchain, make sure it's on version 1.75 or later. Run
      `rustc --version` to find out and `rustup update stable` if you need to update.
 2. `git clone` the repository and `cd` into it.
 3. To compile the Rust library:
