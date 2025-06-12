@@ -129,9 +129,6 @@ pub type SmallContiguousCategoricalEntropyModel<Cdf = Vec<u16>> =
 ///   - memory footprint: no heap allocations, constant stack space.
 ///
 /// [`EntropyModel`]: trait.EntropyModel.html
-/// [`Encode`]: crate::Encode
-/// [`Decode`]: crate::Decode
-/// [`HashMap`]: std::hash::HashMap
 /// [`NonContiguousCategoricalEncoderModel`]:
 ///     crate::stream::model::NonContiguousCategoricalEncoderModel
 /// [`NonContiguousCategoricalDecoderModel`]:

@@ -123,9 +123,6 @@ pub type SmallNonContiguousCategoricalDecoderModel<Symbol, Cdf = Vec<(u16, Symbo
 ///   - memory footprint: no heap allocations, constant stack space.
 ///
 /// [`EntropyModel`]: trait.EntropyModel.html
-/// [`Encode`]: crate::Encode
-/// [`Decode`]: crate::Decode
-/// [`HashMap`]: std::hash::HashMap
 /// [`ContiguousCategoricalEntropyModel`]:
 ///     crate::stream::model::ContiguousCategoricalEntropyModel
 /// [`NonContiguousLookupDecoderModel`]:
@@ -344,7 +341,6 @@ where
     /// [`ContiguousCategoricalEntropyModel::from_nonzero_fixed_point_probabilities`].
     ///
     /// [`symbol_table`]: IterableEntropyModel::symbol_table
-    /// [`fixed_point_probabilities`]: Self::fixed_point_probabilities
     /// [`from_symbols_and_floating_point_probabilities_fast`]:
     ///     Self::from_symbols_and_floating_point_probabilities_fast
     /// [`ContiguousCategoricalEntropyModel::from_nonzero_fixed_point_probabilities`]:
@@ -757,7 +753,7 @@ where
 ///   computational efficiency and it is easier to use since it supports both encoding and
 ///   decoding with a single type.
 /// - If you want to encode only a few symbols with a given probability model, then use a
-///   [`LazyContiguousCategoricalEntropyModel`], which will be faster (use `HashMap` to
+///   [`LazyContiguousCategoricalEntropyModel`], which will be faster (use a [`HashMap`] to
 ///   first map from your noncontiguous support to indices in a contiguous range `0..N`,
 ///   where `N` is the size of your support). This use case occurs, e.g., in autoregressive
 ///   models, where each individual model is often used for only exactly one symbol.
@@ -777,9 +773,6 @@ where
 /// - decoding a symbol: not supported; use a [`NonContiguousCategoricalDecoderModel`].
 ///
 /// [`EntropyModel`]: trait.EntropyModel.html
-/// [`Encode`]: crate::Encode
-/// [`Decode`]: crate::Decode
-/// [`HashMap`]: std::hash::HashMap
 /// [`ContiguousCategoricalEntropyModel`]: crate::stream::model::ContiguousCategoricalEntropyModel
 /// [`LeakyQuantizer`]: crate::stream::model::LeakyQuantizer
 /// [`..._fast` constructor]: Self::from_symbols_and_floating_point_probabilities_fast

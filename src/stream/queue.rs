@@ -154,7 +154,6 @@ pub type DefaultRangeEncoder<Backend = Vec<u32>> = RangeEncoder<u32, u64, Backen
 /// coder, see [`SmallRangeDecoder`], as well as [`ContiguousLookupDecoderModel`] and
 /// [`NonContiguousLookupDecoderModel`].
 ///
-/// [lookup models]: crate::stream::model::lookup
 /// [`ContiguousLookupDecoderModel`]: crate::stream::model::ContiguousLookupDecoderModel
 /// [`NonContiguousLookupDecoderModel`]: crate::stream::model::NonContiguousLookupDecoderModel
 pub type SmallRangeEncoder<Backend = Vec<u16>> = RangeEncoder<u16, u32, Backend>;
