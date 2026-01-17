@@ -69,7 +69,7 @@ impl EncoderHuffmanTree {
         let heap = probabilities
             .into_iter()
             .enumerate()
-            .map(|(i, s)| s.map(|s| (Reverse((s, i)))))
+            .map(|(i, s)| s.map(|s| Reverse((s, i))))
             .collect::<Result<Vec<_>, E>>()?;
         let mut heap = BinaryHeap::from(heap);
 
@@ -207,7 +207,7 @@ impl DecoderHuffmanTree {
         let heap = probabilities
             .into_iter()
             .enumerate()
-            .map(|(i, s)| s.map(|s| (Reverse((s, i)))))
+            .map(|(i, s)| s.map(|s| Reverse((s, i))))
             .collect::<Result<Vec<_>, E>>()?;
         let mut heap = BinaryHeap::from(heap);
 
@@ -273,6 +273,7 @@ impl DecoderCodebook for DecoderHuffmanTree {
     }
 }
 
+#[allow(clippy::derive_ord_xor_partial_ord)]
 #[derive(PartialOrd, Clone, Copy)]
 struct NonNanFloatCore<F: FloatCore> {
     inner: F,
