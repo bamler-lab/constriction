@@ -30,22 +30,22 @@ std = []
 pybindings = ["numpy", "pyo3"]
 
 [dependencies]
-hashbrown = "0.15.1"
+hashbrown = "0.16.1"
 num-traits = {version = "0.2.15", default-features = false, features = ["libm"]}
-smallvec = "1.6.1"
+smallvec = "1.15.1"
 
 libm = "0.2.6"
 probability = "0.20"
 
-numpy = {version = "0.23", optional = true}
-pyo3 = {version = "0.23.5", features = ["extension-module"], optional = true}
+numpy = {version = "0.27", optional = true}
+pyo3 = {version = "0.27.2", features = ["extension-module"], optional = true}
 
 [dev-dependencies]
 byteorder = "1.4.2"
 criterion = "0.5.1"
-rand = "0.8.3"
-rand_pcg = "0.3"
-rand_xoshiro = "0.6"
+rand = "0.9.2"
+rand_pcg = "0.9"
+rand_xoshiro = "0.7"
 
 [[bench]]
 harness = false
