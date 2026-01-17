@@ -78,6 +78,13 @@ jobs:
         if: matrix.os != 'windows-latest' # work around https://github.com/foresterre/cargo-msrv/issues/1036
         run: cargo msrv verify -- cargo check --all-features
 
+      # On MacOS, the "Check Semver" action below needs a python version that works with
+      # the PyO3 library of both the current and the previous version of constriction.
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.13
+
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
 

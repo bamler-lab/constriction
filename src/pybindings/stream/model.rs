@@ -233,8 +233,8 @@ impl CustomModel {
         signature = (cdf, approximate_inverse_cdf, min_symbol_inclusive, max_symbol_inclusive)
     )]
     pub fn new(
-        cdf: PyObject,
-        approximate_inverse_cdf: PyObject,
+        cdf: Py<PyAny>,
+        approximate_inverse_cdf: Py<PyAny>,
         min_symbol_inclusive: i32,
         max_symbol_inclusive: i32,
     ) -> (Self, Model) {
@@ -334,7 +334,7 @@ impl ScipyModel {
     #[pyo3(signature = (scipy_model, min_symbol_inclusive, max_symbol_inclusive))]
     pub fn new(
         py: Python<'_>,
-        scipy_model: PyObject,
+        scipy_model: Py<PyAny>,
         min_symbol_inclusive: i32,
         max_symbol_inclusive: i32,
     ) -> PyResult<PyClassInitializer<Self>> {

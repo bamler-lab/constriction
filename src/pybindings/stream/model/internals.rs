@@ -151,23 +151,23 @@ where
     }
 }
 
-trait ParameterExtract<'source, Target: numpy::Element + 'source> {
-    type Extracted: pyo3::FromPyObject<'source> + 'source;
+trait ParameterExtract<'source, 'py, Target: numpy::Element + 'source> {
+    type Extracted: pyo3::FromPyObject<'source, 'py>;
     fn cast(param: &Self::Extracted) -> PyResult<Cow<'_, PyReadonlyArray1<'_, Target>>>;
 }
 
 struct ParameterExtractor<Target>(PhantomData<Target>);
 
-impl<'source> ParameterExtract<'source, i32> for ParameterExtractor<i32> {
-    type Extracted = PyReadonlyArray1<'source, i32>;
+impl<'source, 'py> ParameterExtract<'source, 'py, i32> for ParameterExtractor<i32> {
+    type Extracted = PyReadonlyArray1<'py, i32>;
 
     fn cast(param: &Self::Extracted) -> PyResult<Cow<'_, PyReadonlyArray1<'_, i32>>> {
         Ok(Cow::Borrowed(param))
     }
 }
 
-impl<'source> ParameterExtract<'source, f64> for ParameterExtractor<f64> {
-    type Extracted = PyReadonlyFloatArray1<'source>;
+impl<'source, 'py> ParameterExtract<'source, 'py, f64> for ParameterExtractor<f64> {
+    type Extracted = PyReadonlyFloatArray1<'py>;
 
     fn cast(param: &Self::Extracted) -> PyResult<Cow<'_, PyReadonlyArray1<'_, f64>>> {
         param.cast_f64()
@@ -180,8 +180,8 @@ macro_rules! impl_model_for_parameterizable_model {
         where
             $ty0: numpy::Element + Copy + Send + Sync,
             $($tys: numpy::Element + Copy + Send + Sync,)*
-            for<'py> ParameterExtractor<$ty0>: ParameterExtract<'py, $ty0>,
-            $(for<'py> ParameterExtractor<$tys>: ParameterExtract<'py, $tys>,)*
+            for<'source, 'py> ParameterExtractor<$ty0>: ParameterExtract<'source, 'py, $ty0>,
+            $(for<'source, 'py> ParameterExtractor<$tys>: ParameterExtract<'source, 'py, $tys>,)*
             M: DefaultEntropyModel,
             F: Fn(($ty0, $($tys,)*)) -> M + Send + Sync,
         {
@@ -201,8 +201,8 @@ macro_rules! impl_model_for_parameterizable_model {
                 }
 
                 let mut params = params.iter_borrowed();
-                let $p0 = params.next().expect("len checked above").extract::<<ParameterExtractor<$ty0> as ParameterExtract<'_, $ty0>>::Extracted>()?;
-                let $p0 = <ParameterExtractor<$ty0> as ParameterExtract<'_, $ty0>>::cast(&$p0)?;
+                let $p0 = params.next().expect("len checked above").extract::<<ParameterExtractor<$ty0> as ParameterExtract<'_, '_, $ty0>>::Extracted>().map_err(|e| e.into())?;
+                let $p0 = <ParameterExtractor<$ty0> as ParameterExtract<'_, '_, $ty0>>::cast(&$p0)?;
                 let $p0 = $p0.as_array();
 
                 #[allow(unused_variables)] // (`len` remains unused when macro is invoked with only one parameter.)
@@ -212,8 +212,8 @@ macro_rules! impl_model_for_parameterizable_model {
 
                 #[allow(unused_variables)] // (`i` remains unused when macro is invoked with only one parameter.)
                 $(
-                    let $ps = params.next().expect("len checked above").extract::<<ParameterExtractor<$tys> as ParameterExtract<'_, $tys>>::Extracted>()?;
-                    let $ps = <ParameterExtractor<$tys> as ParameterExtract<'_, $tys>>::cast(&$ps)?;
+                    let $ps = params.next().expect("len checked above").extract::<<ParameterExtractor<$tys> as ParameterExtract<'_, '_, $tys>>::Extracted>().map_err(|e| e.into())?;
+                    let $ps = <ParameterExtractor<$tys> as ParameterExtract<'_, '_, $tys>>::cast(&$ps)?;
                     let $ps = $ps.as_array();
 
                     if $ps.len() != len {
@@ -260,15 +260,15 @@ impl_model_for_parameterizable_model! {2, p0: P0, p1: P1}
 
 #[derive(Debug)]
 pub struct UnspecializedPythonModel {
-    cdf: PyObject,
-    approximate_inverse_cdf: PyObject,
+    cdf: Py<PyAny>,
+    approximate_inverse_cdf: Py<PyAny>,
     quantizer: LeakyQuantizer<f64, i32, u32, 24>,
 }
 
 impl UnspecializedPythonModel {
     pub fn new(
-        cdf: PyObject,
-        approximate_inverse_cdf: PyObject,
+        cdf: Py<PyAny>,
+        approximate_inverse_cdf: Py<PyAny>,
         min_symbol_inclusive: i32,
         max_symbol_inclusive: i32,
     ) -> Self {
@@ -355,8 +355,8 @@ impl Model for UnspecializedPythonModel {
 }
 
 struct SpecializedPythonDistribution<'py, 'p> {
-    cdf: &'py PyObject,
-    approximate_inverse_cdf: &'py PyObject,
+    cdf: &'py Py<PyAny>,
+    approximate_inverse_cdf: &'py Py<PyAny>,
     value_and_params: RefCell<&'p mut [f64]>,
     py: Python<'py>,
 }
