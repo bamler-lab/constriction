@@ -192,13 +192,17 @@ pub enum PyReadonlyFloatArray<'py, D: ndarray::Dimension> {
 pub type PyReadonlyFloatArray1<'py> = PyReadonlyFloatArray<'py, numpy::Ix1>;
 pub type PyReadonlyFloatArray2<'py> = PyReadonlyFloatArray<'py, numpy::Ix2>;
 
-impl<'py, D: ndarray::Dimension> FromPyObject<'py> for PyReadonlyFloatArray<'py, D> {
-    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if let Ok(x) = PyReadonlyArray::<'py, f64, D>::extract_bound(ob) {
+impl<'a, 'py, D: ndarray::Dimension> FromPyObject<'a, 'py> for PyReadonlyFloatArray<'py, D> {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if let Ok(x) = PyReadonlyArray::<'py, f64, D>::extract(ob) {
             Ok(PyReadonlyFloatArray::F64(x))
         } else {
             // This should also return a well crafted error in case it fails.
-            PyReadonlyArray::<'py, f32, D>::extract_bound(ob).map(PyReadonlyFloatArray::F32)
+            PyReadonlyArray::<'py, f32, D>::extract(ob)
+                .map(PyReadonlyFloatArray::F32)
+                .map_err(|e| e.into())
         }
     }
 }
@@ -206,7 +210,7 @@ impl<'py, D: ndarray::Dimension> FromPyObject<'py> for PyReadonlyFloatArray<'py,
 impl<'py, D: ndarray::Dimension> PyReadonlyFloatArray<'py, D> {
     fn cast_f64(&'py self) -> PyResult<Cow<'py, PyReadonlyArray<'py, f64, D>>> {
         match self {
-            PyReadonlyFloatArray::F32(x) => Ok(Cow::Owned(x.cast::<f64>(false)?.readonly())),
+            PyReadonlyFloatArray::F32(x) => Ok(Cow::Owned(x.cast_array::<f64>(false)?.readonly())),
             PyReadonlyFloatArray::F64(x) => Ok(Cow::Borrowed(x)),
         }
     }

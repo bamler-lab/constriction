@@ -120,11 +120,12 @@ where
 ///
 /// This type is mostly for internal use. It is only expsed via
 /// [`RangeEncoder::into_raw_parts`] and [`RangeEncoder::from_raw_parts`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum EncoderSituation<Word> {
     /// In the `Normal` situation, all full `Words` of compressed data have been written to
     /// the backend (or "bulk"), and the internal coder state holds less than one word of
     /// additional information content.
+    #[default]
     Normal,
 
     /// The `Inverted` situation occurs only rarely. In this situation, some full words of
@@ -136,12 +137,6 @@ pub enum EncoderSituation<Word> {
     /// held-back words can become either `first_word + 1` followed by `num_subsequent` zero
     /// words, or `first_word` followed by `num_subsequent` words that have all bits set.
     Inverted(NonZeroUsize, Word),
-}
-
-impl<Word> Default for EncoderSituation<Word> {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Type alias for an [`RangeEncoder`] with sane parameters for typical use cases.

@@ -601,7 +601,7 @@ impl RangeDecoder {
         py: Python<'_>,
         model: &Model,
         optional_amt_or_model_params: &Bound<'_, PyTuple>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         match optional_amt_or_model_params.len() {
             0 => {
                 let mut symbol = 0;

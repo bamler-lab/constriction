@@ -78,6 +78,13 @@ jobs:
         if: matrix.os != 'windows-latest' # work around https://github.com/foresterre/cargo-msrv/issues/1036
         run: cargo msrv verify -- cargo check --all-features
 
+      # On MacOS, the "Check Semver" action below needs a python version that works with
+      # the PyO3 library of both the current and the previous version of constriction.
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.13
+
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
 
@@ -151,7 +158,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
@@ -188,7 +195,7 @@ jobs:
         run: poetry run maturin develop --release --features pybindings
 
       - name: pytest with numpy version 1.x
-        if: matrix.python-version != '3.13'
+        if: matrix.python-version != '3.13' && matrix.python-version != '3.14'
         shell: bash
         run: |
           poetry run python -m pip install numpy~=1.16
@@ -204,7 +211,7 @@ jobs:
           exit ${PIPESTATUS[0]}
 
       - name: Verify that pytest used correct python version
-        if: matrix.python-version != '3.13'
+        if: matrix.python-version != '3.13' && matrix.python-version != '3.14'
         shell: bash
         run: |
           USED_PYTHON_VERSION=$(grep -A1 -iE '^=+ test session starts =+$' pytest-numpy1.out | perl -ne 'if ($_ =~ / -- Python (\d+\.\d+)\.\d+/i) { print "$1"; }')
@@ -221,7 +228,11 @@ jobs:
         if: matrix.python-version != '3.9'
         shell: bash
         run: |
-          poetry run python -m pip install numpy~=2.1
+          if [ "${{ matrix.python-version }}" == "3.10" ]; then
+            poetry run python -m pip install numpy~=2.1
+          else
+            poetry run python -m pip install numpy~=2.4
+          fi
           INSTALLED_NUMPY_VERSION=$(poetry run python -c 'import numpy; print(numpy.__version__)')
           echo "Installed numpy version: $INSTALLED_NUMPY_VERSION"
           if [ "x${INSTALLED_NUMPY_VERSION:0:2}y" == "x2.y" ]; then
