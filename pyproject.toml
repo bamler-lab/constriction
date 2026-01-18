@@ -17,7 +17,7 @@ dependencies = [
   "numpy>=1.16,<3.0",
 ]
 dynamic = ["version"]
-license = {text = "various (see LICENSE.html)"}
+license = {text = "MIT OR Apache-2.0 OR BSL-1.0"}
 maintainers = [
   {name = "Robert Bamler", email = "robert.bamler@uni-tuebingen.de"},
 ]
@@ -66,7 +66,7 @@ scipy = [
 toml = "^0.10.2"
 wheel = "*"
 
-twine = "^5.1.1"
+twine = "^6.2.0"
 
 [build-system]
 authors = ["Robert Bamler <robert.bamler@uni-tuebingen.de>"]
