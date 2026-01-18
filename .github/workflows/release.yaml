@@ -391,9 +391,11 @@ jobs:
           command: build
           args: --release --strip --features pybindings -i python3.9 python3.10 python3.11 python3.12 python3.13 python3.14
 
-      - name: List wheels
+      - name: List wheels and verify metadata
         shell: bash
-        run: ls -l ./target/wheels/
+        run: |
+          ls -l target/wheels/
+          poetry run twine check target/wheels/*.whl
 
       - name: Save artifact with wheels for ${{ matrix.os }}
         uses: actions/upload-artifact@v4

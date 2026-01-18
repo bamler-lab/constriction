@@ -192,7 +192,17 @@ jobs:
             ${{ runner.os }}-pybindings-rust-${{ steps.install-rust.outputs.cachekey }}-
 
       - name: Build Python package
-        run: poetry run maturin develop --release --features pybindings
+        run: poetry run maturin build --release --features pybindings
+
+      - name: List wheel and verify metadata
+        shell: bash
+        run: |
+          ls -l target/wheels/
+          poetry run twine check target/wheels/*.whl
+
+      - name: Install Python package
+        shell: bash
+        run: poetry run pip install --force-reinstall target/wheels/*.whl
 
       - name: pytest with numpy version 1.x
         if: matrix.python-version != '3.13' && matrix.python-version != '3.14'
