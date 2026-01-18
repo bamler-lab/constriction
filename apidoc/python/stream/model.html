@@ -378,7 +378,6 @@ everywhere.</p></div>
 </dd>
 <dt id="constriction.stream.model.Model"><code class="flex name class">
 <span>class <span class="ident">Model</span></span>
-<span>(</span><span>...)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Abstract base class for all entropy models.</p>
@@ -522,7 +521,7 @@ encoder and decoder side).</li>
 distribution function and percent point function are already implemented in the popular
 <code>scipy</code> python package. Just provide either a fully parameterized scipy-model or a scipy
 model-class to the constructor. The adapter can be used with both discrete models
-(over a continuous integer domain) and continuous models. Continuous models will be
+(over a contiguous integer domain) and continuous models. Continuous models will be
 quantized to bins of width 1 centered at integers, analogous to the procedure described
 in the documentation of
 <a href="#constriction.stream.model.QuantizedGaussian"><code>QuantizedGaussian</code></a></p>
@@ -575,7 +574,7 @@ assert np.all(reconstructed == symbols) # (verify correctness)
 <p>The following arguments always have to be provided directly to the constructor of the
 model. They cannot be delayed until encoding or decoding. However, the encapsulated
 scipy model may expect additional model parameters, which you can pass in at encoding or
-decoding time as in the second example below.</p>
+decoding time as in the second example above.</p>
 <ul>
 <li><strong>model</strong> &mdash; a <code>scipy</code> model or model class as in the examples above.</li>
 <li><strong>min_symbol_inclusive</strong> and <strong>max_symbol_inclusive</strong> &mdash; define the range of integer
