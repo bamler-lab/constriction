@@ -36,6 +36,7 @@ jobs:
         with:
           path: |
             target
+            !target/wheels
             .cargo_home
             .cargo
           key: ${{ runner.os }}-no_pybindings-rust-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
@@ -133,6 +134,7 @@ jobs:
         with:
           path: |
             target
+            !target/wheels
             .cargo_home
             .cargo
           key: ${{ runner.os }}-no_pybindings-miri-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
@@ -185,6 +187,7 @@ jobs:
         with:
           path: |
             target
+            !target/wheels
             .cargo_home
             .cargo
           key: ${{ runner.os }}-pybindings-rust-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
@@ -192,7 +195,10 @@ jobs:
             ${{ runner.os }}-pybindings-rust-${{ steps.install-rust.outputs.cachekey }}-
 
       - name: Build Python package
-        run: poetry run maturin build --release --features pybindings
+        shell: bash
+        run: |
+          rm -rf target/wheels || true
+          poetry run maturin build --release --features pybindings
 
       - name: List wheel and verify metadata
         shell: bash
