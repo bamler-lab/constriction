@@ -148,6 +148,11 @@ jobs:
           toolchain: ${{ steps.rust-version.outputs.rustc }}
           components: miri, rust-src
 
+      # libm 0.2.12 introduced inline assembly, which is not supported by miri.
+      - name: Downgrade `libm` to latest version compatible with miri
+        shell: bash
+        run: cargo update -p libm --precise 0.2.11
+
       - name: Run tests in miri
         env:
           RUSTFLAGS: "-Zrandomize-layout"

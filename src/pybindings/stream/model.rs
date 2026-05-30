@@ -1,7 +1,6 @@
 pub mod internals;
 
 use core::{cell::Cell, iter::Sum};
-use std::prelude::v1::*;
 use std::sync::Mutex;
 
 use alloc::sync::Arc;
