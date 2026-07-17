@@ -110,7 +110,7 @@ pub fn init_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
 /// ## Example
 ///
 /// See [module level example](#example).
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Debug, Default, Clone)]
 pub struct RangeEncoder {
     inner: crate::stream::queue::DefaultRangeEncoder,
@@ -432,7 +432,7 @@ impl RangeEncoder {
 /// ## Example
 ///
 /// See [module level example](#example).
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct RangeDecoder {
     inner: crate::stream::queue::DefaultRangeDecoder,

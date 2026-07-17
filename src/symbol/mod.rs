@@ -14,7 +14,6 @@ use core::{
     borrow::Borrow,
     convert::Infallible,
     fmt::{Debug, Display},
-    iter::{Repeat, Take},
     marker::PhantomData,
     ops::Deref,
 };
@@ -54,11 +53,11 @@ pub trait ReadBitStream<S: Semantics> {
         &'a mut self,
         amt: usize,
         codebook: &'a C,
-    ) -> DecodeSymbols<'a, Self, Take<Repeat<&'a C>>, S>
+    ) -> DecodeSymbols<'a, Self, impl ExactSizeIterator<Item = &'a C>, S>
     where
         C: DecoderCodebook,
     {
-        self.decode_symbols(core::iter::repeat(codebook).take(amt))
+        self.decode_symbols(core::iter::repeat_n(codebook, amt))
     }
 }
 
@@ -803,10 +802,8 @@ mod tests {
         *,
     };
 
-    use rand_xoshiro::{
-        rand_core::{RngCore, SeedableRng},
-        Xoshiro256StarStar,
-    };
+    use rand::Rng;
+    use rand_xoshiro::{rand_core::SeedableRng, Xoshiro256StarStar};
 
     #[test]
     fn bit_queue() {

@@ -32,7 +32,7 @@ turned into a web app by using `constriction` in a WebAssembly module).
 ### Installing `constriction` for Python
 
 ```bash
-pip install constriction~=0.4.2
+pip install constriction~=0.5.0
 ```
 
 ### Hello, World

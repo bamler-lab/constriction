@@ -28,7 +28,7 @@ jobs:
         id: install-rust
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             target

@@ -192,7 +192,7 @@ pub fn init_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
 ///
 /// [1] Duda, Jarek, et al. "The use of asymmetric numeral systems as an accurate
 /// replacement for Huffman coding." 2015 Picture Coding Symposium (PCS). IEEE, 2015.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct AnsCoder {
     inner: crate::stream::stack::DefaultAnsCoder,

@@ -81,7 +81,7 @@ use crate::{
 ///
 /// // Obtain temporary shared access to the compressed bit string. If you want ownership of the
 /// // compressed bit string, call `.into_compressed()` instead of `.get_compressed()`.
-/// println!("Encoded into {} bits: {:?}", ans.num_bits(), &*ans.get_compressed().unwrap());
+/// println!("Encoded into {} bits: {:?}", ans.num_bits(), ans.get_compressed().unwrap());
 ///
 /// // Decode the symbols and verify correctness.
 /// let reconstructed = ans
@@ -1188,10 +1188,8 @@ mod tests {
     use std::dbg;
 
     use probability::distribution::{Gaussian, Inverse};
-    use rand_xoshiro::{
-        rand_core::{RngCore, SeedableRng},
-        Xoshiro256StarStar,
-    };
+    use rand::Rng;
+    use rand_xoshiro::{rand_core::SeedableRng, Xoshiro256StarStar};
 
     #[test]
     fn compress_none() {

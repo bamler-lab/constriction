@@ -1045,10 +1045,8 @@ mod tests {
     use super::*;
 
     use probability::distribution::{Gaussian, Inverse};
-    use rand_xoshiro::{
-        rand_core::{RngCore, SeedableRng},
-        Xoshiro256StarStar,
-    };
+    use rand::Rng;
+    use rand_xoshiro::{rand_core::SeedableRng, Xoshiro256StarStar};
 
     #[test]
     fn compress_none() {

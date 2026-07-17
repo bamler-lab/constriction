@@ -1219,10 +1219,8 @@ mod tests {
     use super::*;
 
     use probability::distribution::Gaussian;
-    use rand_xoshiro::{
-        rand_core::{RngCore, SeedableRng},
-        Xoshiro256StarStar,
-    };
+    use rand::Rng;
+    use rand_xoshiro::{rand_core::SeedableRng, Xoshiro256StarStar};
 
     use alloc::vec;
 

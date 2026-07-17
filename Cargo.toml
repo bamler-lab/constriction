@@ -10,8 +10,8 @@ license = "MIT OR Apache-2.0 OR BSL-1.0"
 name = "constriction" 
 readme = "README-rust.md" 
 repository = "https://github.com/bamler-lab/constriction/" 
-rust-version = "1.75" # for feature `return_position_impl_trait_in_traits`
-version = "0.4.2" 
+rust-version = "1.85" # for edition2024 (required by hashbrown >= 0.17)
+version = "0.5.0" 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -30,22 +30,22 @@ std = []
 pybindings = ["numpy", "pyo3"]
 
 [dependencies]
-hashbrown = "0.16.1"
+hashbrown = "0.17.1"
 num-traits = {version = "0.2.15", default-features = false, features = ["libm"]}
 smallvec = "1.15.1"
 
 libm = "0.2.6"
 probability = "0.20"
 
-numpy = {version = "0.27", optional = true}
-pyo3 = {version = "0.27.2", features = ["extension-module"], optional = true}
+numpy = {version = "0.29", optional = true}
+pyo3 = {version = "0.29.0", features = ["extension-module"], optional = true}
 
 [dev-dependencies]
 byteorder = "1.4.2"
-criterion = "0.5.1"
-rand = "0.9.3"
-rand_pcg = "0.9"
-rand_xoshiro = "0.7"
+criterion = "0.8.2"
+rand = "0.10.2"
+rand_pcg = "0.10.2"
+rand_xoshiro = "0.8.1"
 
 [[bench]]
 harness = false
