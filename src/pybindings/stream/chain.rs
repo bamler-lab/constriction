@@ -274,7 +274,7 @@ pub fn init_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
 ///
 /// See [above usage example](#usage-example) for a more elaborate explanation of the
 /// constructor arguments.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct ChainCoder {
     inner: crate::stream::chain::DefaultChainCoder,

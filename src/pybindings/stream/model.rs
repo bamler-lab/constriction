@@ -236,14 +236,14 @@ impl CustomModel {
         approximate_inverse_cdf: Py<PyAny>,
         min_symbol_inclusive: i32,
         max_symbol_inclusive: i32,
-    ) -> (Self, Model) {
+    ) -> PyClassInitializer<Self> {
         let model = internals::UnspecializedPythonModel::new(
             cdf,
             approximate_inverse_cdf,
             min_symbol_inclusive,
             max_symbol_inclusive,
         );
-        (Self, Model(Arc::new(model)))
+        PyClassInitializer::from(Model(Arc::new(model))).add_subclass(Self)
     }
 }
 
@@ -343,7 +343,7 @@ impl ScipyModel {
             min_symbol_inclusive,
             max_symbol_inclusive,
         );
-        Ok(PyClassInitializer::from(custom_model).add_subclass(ScipyModel))
+        Ok(custom_model.add_subclass(ScipyModel))
     }
 }
 
@@ -499,7 +499,7 @@ impl Categorical {
         probabilities: Option<PyReadonlyFloatArray1<'_>>,
         lazy: Option<bool>,
         perfect: Option<bool>,
-    ) -> PyResult<(Self, Model)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         // It might be tempting to use an `AtomicBool` here, but rust considers "memory created by
         // [...] static items without interior mutability" to be read-only memory, and "all atomic
         // accesses on read-only memory are Undefined Behavior".
@@ -555,7 +555,7 @@ impl Categorical {
             }
         };
 
-        Ok((Self, Model(model)))
+        Ok(PyClassInitializer::from(Model(model)).add_subclass(Self))
     }
 }
 
@@ -584,7 +584,7 @@ struct Uniform;
 impl Uniform {
     #[new]
     #[pyo3(signature = (size=None))]
-    pub fn new(size: Option<i32>) -> PyResult<(Self, Model)> {
+    pub fn new(size: Option<i32>) -> PyResult<PyClassInitializer<Self>> {
         let model = match size {
             None => {
                 let model = internals::ParameterizableModel::new(|(size,): (i32,)| {
@@ -595,7 +595,7 @@ impl Uniform {
             Some(size) => Arc::new(UniformModel::new(size as usize)) as Arc<dyn internals::Model>,
         };
 
-        Ok((Self, Model(model)))
+        Ok(PyClassInitializer::from(Model(model)).add_subclass(Self))
     }
 }
 
@@ -670,7 +670,7 @@ impl QuantizedGaussian {
         max_symbol_inclusive: i32,
         mean: Option<f64>,
         std: Option<f64>,
-    ) -> PyResult<(Self, Model)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let model = match (mean, std) {
             (None, None) => {
                 let quantizer =
@@ -703,7 +703,7 @@ impl QuantizedGaussian {
             }
         };
 
-        Ok((Self, Model(model)))
+        Ok(PyClassInitializer::from(Model(model)).add_subclass(Self))
     }
 }
 
@@ -761,7 +761,7 @@ impl QuantizedLaplace {
         max_symbol_inclusive: i32,
         mean: Option<f64>,
         scale: Option<f64>,
-    ) -> PyResult<(Self, Model)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let model = match (mean, scale) {
             (None, None) => {
                 let quantizer =
@@ -796,7 +796,7 @@ impl QuantizedLaplace {
             }
         };
 
-        Ok((Self, Model(model)))
+        Ok(PyClassInitializer::from(Model(model)).add_subclass(Self))
     }
 }
 
@@ -861,7 +861,7 @@ impl QuantizedCauchy {
         max_symbol_inclusive: i32,
         loc: Option<f64>,
         scale: Option<f64>,
-    ) -> PyResult<(Self, Model)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let model = match (loc, scale) {
             (None, None) => {
                 let quantizer =
@@ -895,7 +895,7 @@ impl QuantizedCauchy {
             }
         };
 
-        Ok((Self, Model(model)))
+        Ok(PyClassInitializer::from(Model(model)).add_subclass(Self))
     }
 }
 
@@ -928,7 +928,7 @@ struct Binomial;
 impl Binomial {
     #[new]
     #[pyo3(signature = (n=None, p=None))]
-    pub fn new(n: Option<i32>, p: Option<f64>) -> PyResult<(Self, Model)> {
+    pub fn new(n: Option<i32>, p: Option<f64>) -> PyResult<PyClassInitializer<Self>> {
         let model = match (n, p) {
             (None, None) => {
                 let model = internals::ParameterizableModel::new(move |(n, p): (i32, f64)| {
@@ -961,7 +961,7 @@ impl Binomial {
             }
         };
 
-        Ok((Self, Model(model)))
+        Ok(PyClassInitializer::from(Model(model)).add_subclass(Self))
     }
 }
 
@@ -988,7 +988,11 @@ struct Bernoulli;
 impl Bernoulli {
     #[new]
     #[pyo3(signature = (p=None, perfect=None))]
-    pub fn new(py: Python<'_>, p: Option<f64>, perfect: Option<bool>) -> PyResult<(Self, Model)> {
+    pub fn new(
+        py: Python<'_>,
+        p: Option<f64>,
+        perfect: Option<bool>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         // See comment in `Categorical::new` for why we don't use an `AtomicBool` here.
         static WARNED: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
 
@@ -1046,6 +1050,6 @@ impl Bernoulli {
                 Arc::new(model) as Arc<dyn internals::Model>
             }
         };
-        Ok((Self, Model(model)))
+        Ok(PyClassInitializer::from(Model(model)).add_subclass(Self))
     }
 }
