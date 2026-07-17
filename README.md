@@ -152,7 +152,7 @@ coder.encode_symbols_reverse(symbols.iter().zip(models.clone())).unwrap();
 
 // Obtain temporary shared access to the compressed bit string. If you want ownership of the
 // compressed bit string, call `.into_compressed()` instead of `.get_compressed()`.
-println!("Encoded into {} bits: {:?}", coder.num_bits(), &*coder.get_compressed().unwrap());
+println!("Encoded into {} bits: {:?}", coder.num_bits(), coder.get_compressed().unwrap());
 
 // Decode the symbols and verify correctness.
 let reconstructed = coder.decode_symbols(models).collect::<Result<Vec<_>, _>>().unwrap();

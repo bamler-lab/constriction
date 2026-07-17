@@ -28,7 +28,7 @@ fn example() {
     println!(
         "Encoded into {} bits: {:?}",
         coder.num_bits(),
-        &*coder.get_compressed().unwrap()
+        coder.get_compressed().unwrap()
     );
 
     // Decode the symbols and verify correctness.
