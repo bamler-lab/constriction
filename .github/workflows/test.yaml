@@ -32,7 +32,7 @@ jobs:
           targets: x86_64-unknown-none
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             target
@@ -130,7 +130,7 @@ jobs:
           echo "rustc=$version" >> $GITHUB_OUTPUT
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             target
@@ -188,7 +188,7 @@ jobs:
         id: install-rust
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             target
