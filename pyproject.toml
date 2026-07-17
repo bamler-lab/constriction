@@ -4,7 +4,6 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -23,7 +22,7 @@ maintainers = [
 ]
 name = "constriction"
 readme = "README-python.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10,<3.15"
 
 [project.urls]
 changelog = "https://github.com/bamler-lab/constriction/releases"
@@ -48,18 +47,18 @@ numpy = [
   {version = "^1.26.1", python = ">=3.12,<3.13"},
   {version = "^2.1.2", python = ">=3.13"},
 ]
-python = "^3.9.2,<3.15"
+python = "^3.10,<3.15"
 
 [tool.poetry.group.dev.dependencies]
 autopep8 = "*"
-flake8 = {version = "^7.1.1", python = ">=3.9"}
+flake8 = "^7.1.1"
 maturin = "^1.7.1"
-pdoc3 = {version = "^0.11.1", python = ">=3.9"}
+pdoc3 = "^0.11.1"
 pylint = "^3.2.7"
 pytest = "^8.3.2"
 pytest-runner = "*"
 scipy = [
-  {version = "^1.8", python = ">=3.9,<3.12"},
+  {version = "^1.8", python = ">=3.10,<3.12"},
   {version = "^1.11.3", python = ">=3.12,<3.14"},
   {version = "^1.17.0", python = ">=3.14"},
 ]
