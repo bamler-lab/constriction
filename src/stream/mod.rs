@@ -467,7 +467,7 @@ pub trait Encode<const PRECISION: usize>: Code {
     ///
     /// This is the most basic encoding method. If you want to encode more than a single
     /// symbol then you may want to call [`encode_symbols`], [`try_encode_symbols`], or
-    /// [`encode_iid_symbols`] instead.
+    /// [`encode_iid_symbols`] instead. See examples there.
     ///
     /// Note that:
     /// - the `symbol` can be passed either by value or by reference;

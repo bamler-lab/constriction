@@ -753,16 +753,17 @@ impl<T> UnwrapInfallible<T> for Result<T, Infallible> {
     }
 }
 
-impl<T> UnwrapInfallible<T> for Result<T, CoderError<Infallible, Infallible>> {
+impl<T, FrontendError, BackendError> UnwrapInfallible<T>
+    for Result<T, CoderError<FrontendError, BackendError>>
+where
+    Result<T, FrontendError>: UnwrapInfallible<T>,
+    Result<T, BackendError>: UnwrapInfallible<T>,
+{
     fn unwrap_infallible(self) -> T {
-        #[allow(unreachable_patterns)]
         match self {
             Ok(x) => x,
-            #[allow(unreachable_patterns)]
-            Err(infallible) => match infallible {
-                CoderError::Backend(infallible) => match infallible {},
-                CoderError::Frontend(infallible) => match infallible {},
-            },
+            Err(CoderError::Frontend(infallible)) => Err(infallible).unwrap_infallible(),
+            Err(CoderError::Backend(infallible)) => Err(infallible).unwrap_infallible(),
         }
     }
 }

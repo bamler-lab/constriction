@@ -247,6 +247,11 @@ where
     /// `AnsCoder`s with a `Vec` backend. To create an empty coder with a different backend,
     /// call [`Default::default`] instead.
     pub fn new() -> Self {
+        generic_static_asserts!(
+            (Word: BitArray, State: BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
+
         Self::default()
     }
 }
@@ -259,7 +264,7 @@ where
 {
     fn default() -> Self {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray);
+            (Word: BitArray, State: BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
         );
 
@@ -276,23 +281,6 @@ where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
-    /// Low-level constructor that assembles an `AnsCoder` from its internal components.
-    ///
-    /// The arguments `bulk` and `state` correspond to the two return values of the method
-    /// [`into_raw_parts`](Self::into_raw_parts).
-    ///
-    /// The caller must ensure that `state >= State::one() << (State::BITS - Word::BITS)`
-    /// unless `bulk` is empty. This cannot be checked by the method since not all
-    /// `Backend`s have an `is_empty` method. Violating this invariant is not a memory
-    /// safety issue but it will lead to incorrect behavior.
-    pub fn from_raw_parts(bulk: Backend, state: State) -> Self {
-        Self {
-            bulk,
-            state,
-            phantom: PhantomData,
-        }
-    }
-
     /// Creates an ANS stack with some initial compressed data.
     ///
     /// This is usually the starting point if you want to *decompress* data previously
@@ -313,7 +301,7 @@ where
         Backend: ReadWords<Word, Stack>,
     {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray);
+            (Word: BitArray, State: BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
         );
 
@@ -327,30 +315,6 @@ where
             state,
             phantom: PhantomData,
         })
-    }
-
-    fn read_initial_state<Error>(
-        mut read_word: impl FnMut() -> Result<Option<Word>, Error>,
-    ) -> Result<State, ()>
-    where
-        Backend: ReadWords<Word, Stack>,
-    {
-        if let Some(first_word) = read_word().map_err(|_| ())? {
-            if first_word == Word::zero() {
-                return Err(());
-            }
-
-            let mut state = first_word.into();
-            while let Some(word) = read_word().map_err(|_| ())? {
-                state = (state << Word::BITS) | word.into();
-                if state >= State::one() << (State::BITS - Word::BITS) {
-                    break;
-                }
-            }
-            Ok(state)
-        } else {
-            Ok(State::zero())
-        }
     }
 
     /// Like [`from_compressed`] but works on any binary data.
@@ -393,6 +357,108 @@ where
             state,
             phantom: PhantomData,
         })
+    }
+
+    /// Creates a new ANS entropy coder meant for encoding to a given `backend`.
+    ///
+    /// Assumes that the `backend` is in a state where the encoder can start writing as if
+    /// it was an empty backend. If there's already some compressed data on `backend`, then
+    /// this method will just concatenate the new sequence of `Word`s to the existing
+    /// sequence of `Word`s without introducing any delimiter.
+    ///
+    /// The corresponding constructor for decoding is [`from_compressed`], which accepts a
+    /// generic backend that implements [`ReadWords`], and which reads the initial internal
+    /// state from that backend.
+    ///
+    /// # Example
+    ///
+    /// In this example, we construct an ANS coder that encodes to a fixed-size buffer on
+    /// the process stack. The same technique could be used to encode, e.g., directly to a
+    /// file or to a network socket.
+    ///
+    /// ```
+    /// use constriction::stream::{model::DefaultLeakyQuantizer, stack::DefaultAnsCoder};
+    ///
+    /// let mut buf = [0u32; 16]; // Fixed-size buffer on the stack.
+    /// let cursor = constriction::backends::Cursor::new_at_write_beginning(&mut buf);
+    /// let mut coder = DefaultAnsCoder::with_write_backend(cursor);
+    ///
+    /// // Encode some message.
+    /// let symbols = vec![8, -12, 0, 7];
+    /// let quantizer = DefaultLeakyQuantizer::new(-100..=100);
+    /// let model =
+    ///     quantizer.quantize(probability::distribution::Gaussian::new(0.0, 10.0));
+    /// coder.encode_iid_symbols_reverse(&symbols, &model).unwrap();
+    ///
+    /// // Verify that the compressed data was indeed written to the beginning of `buf`.
+    /// let compressed_copied_to_heap = coder.into_compressed().unwrap().written().to_vec();
+    /// let len = compressed_copied_to_heap.len();
+    /// assert!(len != 0);
+    /// assert_eq!(&compressed_copied_to_heap, &buf[..len]);
+    /// assert_eq!(&buf[len..], &[0u32; 16][len..]); // The rest of `buf` has not been touched.
+    /// ```
+    ///
+    /// [`from_compressed`]: Self::from_compressed
+    pub fn with_write_backend(backend: Backend) -> Self
+    where
+        Backend: WriteWords<Word>,
+    {
+        generic_static_asserts!(
+            (Word: BitArray, State: BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
+
+        Self {
+            bulk: backend,
+            state: Default::default(),
+            phantom: PhantomData,
+        }
+    }
+
+    /// Low-level constructor that assembles an `AnsCoder` from its internal components.
+    ///
+    /// The arguments `bulk` and `state` correspond to the two return values of the method
+    /// [`into_raw_parts`](Self::into_raw_parts).
+    ///
+    /// The caller must ensure that `state >= State::one() << (State::BITS - Word::BITS)`
+    /// unless `bulk` is empty. This cannot be checked by the method since not all
+    /// `Backend`s have an `is_empty` method. Violating this invariant is not a memory
+    /// safety issue but it will lead to incorrect behavior.
+    pub fn from_raw_parts(bulk: Backend, state: State) -> Self {
+        generic_static_asserts!(
+            (Word: BitArray, State: BitArray);
+            STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
+        );
+
+        Self {
+            bulk,
+            state,
+            phantom: PhantomData,
+        }
+    }
+
+    fn read_initial_state<Error>(
+        mut read_word: impl FnMut() -> Result<Option<Word>, Error>,
+    ) -> Result<State, ()>
+    where
+        Backend: ReadWords<Word, Stack>,
+    {
+        if let Some(first_word) = read_word().map_err(|_| ())? {
+            if first_word == Word::zero() {
+                return Err(());
+            }
+
+            let mut state = first_word.into();
+            while let Some(word) = read_word().map_err(|_| ())? {
+                state = (state << Word::BITS) | word.into();
+                if state >= State::one() << (State::BITS - Word::BITS) {
+                    break;
+                }
+            }
+            Ok(state)
+        } else {
+            Ok(State::zero())
+        }
     }
 
     #[inline(always)]
@@ -618,10 +684,8 @@ where
     ///
     /// # Limitations
     ///
-    /// TODO: this text is outdated.
-    ///
     /// This method is only implemented for `AnsCoder`s whose backing store of compressed
-    /// data (`Backend`) implements `AsRef<[Word]>`. This includes the default
+    /// data (the `Backend`) implements `AsSeekReadWords`. This includes the default
     /// backing data store `Backend = Vec<Word>`.
     ///
     /// [`into_seekable_decoder`]: Self::into_seekable_decoder
@@ -655,10 +719,11 @@ where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
 {
-    // TODO: proper error type (also for `from_compressed`)
-    #[allow(clippy::result_unit_err)]
-    pub fn from_compressed_slice(compressed: &'bulk [Word]) -> Result<Self, ()> {
-        Self::from_compressed(backends::Cursor::new_at_write_end(compressed)).map_err(|_| ())
+    pub fn from_compressed_slice(
+        compressed: &'bulk [Word],
+    ) -> Result<Self, CompressedDataEndsWithZeroWord> {
+        Self::from_compressed(backends::Cursor::new_at_write_end(compressed))
+            .map_err(|_| CompressedDataEndsWithZeroWord)
     }
 
     pub fn from_binary_slice(data: &'bulk [Word]) -> Self {
@@ -946,27 +1011,6 @@ where
     type FrontendError = DefaultEncoderFrontendError;
     type BackendError = Backend::WriteError;
 
-    /// Encodes a single symbol and appends it to the compressed data.
-    ///
-    /// This is a low level method. You probably usually want to call a batch method
-    /// like [`encode_symbols`](#method.encode_symbols) or
-    /// [`encode_iid_symbols`](#method.encode_iid_symbols) instead. See examples there.
-    ///
-    /// The bound `impl Borrow<M::Symbol>` on argument `symbol` essentially means that
-    /// you can provide the symbol either by value or by reference, at your choice.
-    ///
-    /// Returns [`Err(ImpossibleSymbol)`] if `symbol` has zero probability under the
-    /// entropy model `model`. This error can usually be avoided by using a
-    /// "leaky" distribution as the entropy model, i.e., a distribution that assigns a
-    /// nonzero probability to all symbols within a finite domain. Leaky distributions
-    /// can be constructed with, e.g., a
-    /// [`LeakyQuantizer`](models/struct.LeakyQuantizer.html) or with
-    /// [`LeakyCategorical::from_floating_point_probabilities`](
-    /// models/struct.LeakyCategorical.html#method.from_floating_point_probabilities).
-    ///
-    /// TODO: move this and similar doc comments to the trait definition.
-    ///
-    /// [`Err(ImpossibleSymbol)`]: enum.EncodingError.html#variant.ImpossibleSymbol
     fn encode_symbol<M>(
         &mut self,
         symbol: impl Borrow<M::Symbol>,
@@ -978,7 +1022,7 @@ where
         Self::Word: AsPrimitive<M::Probability>,
     {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            (Word: BitArray, State: BitArray; const PRECISION: usize);
             PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
             NON_ZERO_PRECISION: PRECISION > 0;
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
@@ -1033,7 +1077,7 @@ where
         Self::Word: AsPrimitive<M::Probability>,
     {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            (Word: BitArray, State: BitArray; const PRECISION: usize);
             PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
             NON_ZERO_PRECISION: PRECISION > 0;
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
@@ -1503,3 +1547,21 @@ mod tests {
         }
     }
 }
+
+#[derive(Debug)]
+/// Error type when trying to initialize an ANS coder from compressed data that ends in a
+/// zero word, which is invalid for an ANS coder. See [`AnsCoder::from_compressed`] and
+/// [`AnsCoder::from_binary`] for details.
+pub struct CompressedDataEndsWithZeroWord;
+
+impl core::fmt::Display for CompressedDataEndsWithZeroWord {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "Tried to decode from compressed data that ends with a zero word, which is invalid for an ANS coder."
+        )
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for CompressedDataEndsWithZeroWord {}

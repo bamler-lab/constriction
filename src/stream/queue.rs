@@ -47,7 +47,9 @@ use super::{
     Code, Decode, Encode, IntoDecoder,
 };
 use crate::{
-    backends::{AsReadWords, BoundedReadWords, Cursor, IntoReadWords, ReadWords, WriteWords},
+    backends::{
+        AsReadWords, BoundedReadWords, Cursor, IntoReadWords, ReadWords, ReadWriteError, WriteWords,
+    },
     generic_static_asserts, BitArray, CoderError, DefaultEncoderError, DefaultEncoderFrontendError,
     NonZeroBitArray, Pos, PosSeek, Queue, Seek, UnwrapInfallible,
 };
@@ -202,7 +204,7 @@ where
     /// This is essentially the same as `#[derive(Default)]`, except for the assertions on
     /// `State::BITS` and `Word::BITS`.
     fn default() -> Self {
-        Self::with_backend(Backend::default())
+        Self::with_write_backend(Backend::default())
     }
 }
 
@@ -214,7 +216,7 @@ where
     /// Creates an empty encoder for range coding.
     pub fn new() -> Self {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray);
+            (Word: BitArray, State: BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
         );
@@ -245,9 +247,9 @@ where
 {
     /// Assumes that the `backend` is in a state where the encoder can start writing as if
     /// it was an empty backend. If there's already some compressed data on `backend`, then
-    /// this method will just concatanate the new sequence of `Word`s to the existing
-    /// sequence of `Word`s without gluing them together. This is likely not what you want
-    /// since you won't be able to decode the data in one go (however, it is Ok to
+    /// this method will just concatenate the new sequence of `Word`s to the existing
+    /// sequence of `Word`s without introducing any delimiter. This is likely not what you
+    /// want since you won't be able to decode the data in one go (however, it is Ok to
     /// concatenate arbitrary data to the output of a `RangeEncoder`; it won't invalidate
     /// the existing data).
     ///
@@ -256,19 +258,45 @@ where
     /// a sequence of `Words`, load the `Words` back in at a later point and then encode
     /// some more symbols), then consider using an [`AnsCoder`].
     ///
-    /// TODO: rename to `with_write_backend` and then add the same method to `AnsCoder`
+    /// # Example
+    ///
+    /// In this example, we construct a `RangeEncoder` that encodes to a fixed-size buffer
+    /// on the process stack. The same technique could be used to encode, e.g., directly to
+    /// a file or to a network socket.
+    ///
+    /// ```
+    /// use constriction::stream::{Encode, model::DefaultLeakyQuantizer, queue::DefaultRangeEncoder};
+    ///
+    /// let mut buf = [0u32; 16]; // Fixed-size buffer on the stack.
+    /// let cursor = constriction::backends::Cursor::new_at_write_beginning(&mut buf);
+    /// let mut coder = DefaultRangeEncoder::with_write_backend(cursor);
+    ///
+    /// // Encode some message.
+    /// let symbols = vec![8, -12, 0, 7];
+    /// let quantizer = DefaultLeakyQuantizer::new(-100..=100);
+    /// let model =
+    ///     quantizer.quantize(probability::distribution::Gaussian::new(0.0, 10.0));
+    /// coder.encode_iid_symbols(&symbols, &model).unwrap();
+    ///
+    /// // Verify that the compressed data was indeed written to the beginning of `buf`.
+    /// let compressed_copied_to_heap = coder.into_compressed().unwrap().written().to_vec();
+    /// let len = compressed_copied_to_heap.len();
+    /// assert!(len != 0);
+    /// assert_eq!(&compressed_copied_to_heap, &buf[..len]);
+    /// assert_eq!(&buf[len..], &[0u32; 16][len..]); // The rest of `buf` has not been touched.
+    /// ```
     ///
     /// [`AnsCoder`]: super::stack::AnsCoder
-    pub fn with_backend(backend: Backend) -> Self {
+    pub fn with_write_backend(backend: Backend) -> Self {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray);
+            (Word: BitArray, State: BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
         );
 
         Self {
             bulk: backend,
-            state: RangeCoderState::default(),
+            state: Default::default(),
             situation: EncoderSituation::Normal,
         }
     }
@@ -293,12 +321,17 @@ where
     ///
     /// TODO: there should also be a `decoder()` method that takes `&mut self`
     #[allow(clippy::result_unit_err)]
-    pub fn into_decoder(self) -> Result<RangeDecoder<Word, State, Backend::IntoReadWords>, ()>
+    pub fn into_decoder(
+        self,
+    ) -> Result<
+        RangeDecoder<Word, State, Backend::IntoReadWords>,
+        ReadWriteError<<<Backend as IntoReadWords<Word, Queue>>::IntoReadWords as ReadWords<Word, Queue>>::ReadError, Backend::WriteError>,
+    >
     where
         Backend: IntoReadWords<Word, Queue>,
     {
-        // TODO: return proper error (or just box it up).
-        RangeDecoder::from_compressed(self.into_compressed().map_err(|_| ())?).map_err(|_| ())
+        RangeDecoder::from_compressed(self.into_compressed().map_err(ReadWriteError::Write)?)
+            .map_err(ReadWriteError::Read)
     }
 
     pub fn into_compressed(mut self) -> Result<Backend, Backend::WriteError> {
@@ -314,43 +347,8 @@ where
     /// Doesn't change `self.state` or `self.situation` so that this operation can be
     /// reversed if the backend supports removing words (see method `unseal`);
     fn seal(&mut self) -> Result<(), Backend::WriteError> {
-        if self.state.range.get() == State::max_value() {
-            // This condition only holds upon initialization because encoding a symbol first
-            // reduces `range` and then only (possibly) right-shifts it, which introduces
-            // some zero bits. We treat this case special and don't emit any words, so that
-            // an empty sequence of symbols gets encoded to an empty sequence of words.
-            return Ok(());
-        }
-
-        let point = self
-            .state
-            .lower
-            .wrapping_add(&((State::one() << (State::BITS - Word::BITS)) - State::one()));
-
-        if let EncoderSituation::Inverted(num_inverted, first_inverted_lower_word) = self.situation
-        {
-            let (first_word, consecutive_words) = if point < self.state.lower {
-                // Unlikely case (addition has wrapped).
-                (first_inverted_lower_word + Word::one(), Word::zero())
-            } else {
-                // Likely case.
-                (first_inverted_lower_word, Word::max_value())
-            };
-
-            self.bulk.write(first_word)?;
-            for _ in 1..num_inverted.get() {
-                self.bulk.write(consecutive_words)?;
-            }
-        }
-
-        let point_word = (point >> (State::BITS - Word::BITS)).as_();
-        self.bulk.write(point_word)?;
-
-        let upper_word = (self.state.lower.wrapping_add(&self.state.range.get())
-            >> (State::BITS - Word::BITS))
-            .as_();
-        if upper_word == point_word {
-            self.bulk.write(Word::zero())?;
+        for word in iter_seal(self.state, self.situation) {
+            self.bulk.write(word)?;
         }
 
         Ok(())
@@ -429,7 +427,7 @@ where
         situation: EncoderSituation<Word>,
     ) -> Self {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray);
+            (Word: BitArray, State: BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
         );
@@ -455,6 +453,73 @@ where
     ) {
         (self.bulk, self.state, self.situation)
     }
+}
+
+fn iter_seal<Word, State>(
+    state: RangeCoderState<Word, State>,
+    situation: EncoderSituation<Word>,
+) -> impl Iterator<Item = Word>
+where
+    Word: BitArray,
+    State: BitArray + AsPrimitive<Word>,
+{
+    seal_words(state, situation)
+        .into_iter()
+        .flat_map(|(preamble, point_word, trailing_zero)| {
+            preamble
+                .into_iter()
+                .flat_map(|(first_word, consecutive_words, num_inverted)| {
+                    core::iter::once(first_word).chain(core::iter::repeat_n(
+                        consecutive_words,
+                        num_inverted.get() - 1,
+                    ))
+                })
+                .chain(core::iter::once(point_word))
+                .chain(core::iter::repeat_n(Word::zero(), trailing_zero as usize))
+        })
+}
+
+fn seal_words<Word, State>(
+    state: RangeCoderState<Word, State>,
+    situation: EncoderSituation<Word>,
+) -> Option<(Option<(Word, Word, NonZeroUsize)>, Word, bool)>
+where
+    Word: BitArray,
+    State: BitArray + AsPrimitive<Word>,
+{
+    if state.range.get() == State::max_value() {
+        // This condition only holds upon initialization because encoding a symbol first
+        // reduces `range` and then only (possibly) right-shifts it, which introduces
+        // some zero bits. We treat this case special and don't emit any words, so that
+        // an empty sequence of symbols gets encoded to an empty sequence of words.
+        return None;
+    }
+
+    let point = state
+        .lower
+        .wrapping_add(&((State::one() << (State::BITS - Word::BITS)) - State::one()));
+
+    let preamble = match situation {
+        EncoderSituation::Normal => {
+            // Most likely case.
+            None
+        }
+        EncoderSituation::Inverted(num_inverted, first_inverted) if point >= state.lower => {
+            Some((first_inverted, Word::max_value(), num_inverted))
+        }
+        EncoderSituation::Inverted(num_inverted, first_inverted) => {
+            // Most unlikely case (addition has wrapped).
+            Some((first_inverted + Word::one(), Word::zero(), num_inverted))
+        }
+    };
+
+    let point_word = (point >> (State::BITS - Word::BITS)).as_();
+
+    let upper_word =
+        (state.lower.wrapping_add(&state.range.get()) >> (State::BITS - Word::BITS)).as_();
+    let trailing_zero = upper_word == point_word;
+
+    Some((preamble, point_word, trailing_zero))
 }
 
 impl<Word, State> RangeEncoder<Word, State>
@@ -483,7 +548,12 @@ where
         EncoderGuard::new(self)
     }
 
-    // TODO: implement `iter_compressed`
+    pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = Word> + 'a {
+        self.bulk
+            .iter()
+            .copied()
+            .chain(iter_seal(self.state, self.situation))
+    }
 
     /// A decoder for temporary use.
     ///
@@ -517,11 +587,15 @@ where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
     Backend: WriteWords<Word> + IntoReadWords<Word, Queue>,
+    Result<
+        RangeDecoder<Word, State, Backend::IntoReadWords>,
+        ReadWriteError<<<Backend as IntoReadWords<Word, Queue>>::IntoReadWords as ReadWords<Word, Queue>>::ReadError, Backend::WriteError>,
+    >: UnwrapInfallible<RangeDecoder<Word, State, Backend::IntoReadWords>>,
 {
     type IntoDecoder = RangeDecoder<Word, State, Backend::IntoReadWords>;
 
     fn into_decoder(self) -> Self::IntoDecoder {
-        self.into()
+        self.into_decoder().unwrap_infallible()
     }
 }
 
@@ -546,7 +620,7 @@ where
         Self::Word: AsPrimitive<D::Probability>,
     {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            (Word: BitArray, State: BitArray; const PRECISION: usize);
             PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
             NON_ZERO_PRECISION: PRECISION > 0;
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
@@ -683,7 +757,7 @@ where
         Buf: IntoReadWords<Word, Queue, IntoReadWords = Backend>,
     {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray);
+            (Word: BitArray, State: BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
         );
@@ -700,7 +774,7 @@ where
 
     pub fn with_backend(backend: Backend) -> Result<Self, Backend::ReadError> {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray);
+            (Word: BitArray, State: BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
         );
@@ -720,7 +794,7 @@ where
         Buf: AsReadWords<'a, Word, Queue, AsReadWords = Backend>,
     {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray);
+            (Word: BitArray, State: BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
         );
@@ -749,7 +823,7 @@ where
         point: State,
     ) -> Result<Self, Backend> {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray);
+            (Word: BitArray, State: BitArray);
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
             STATE_SIZE_IS_MULTIPLE_OF_WORD_SIZE: State::BITS % Word::BITS == 0;
         );
@@ -853,18 +927,17 @@ where
     }
 }
 
-impl<Word, State, Backend> From<RangeEncoder<Word, State, Backend>>
+impl<Word, State, Backend> core::convert::TryFrom<RangeEncoder<Word, State, Backend>>
     for RangeDecoder<Word, State, Backend::IntoReadWords>
 where
     Word: BitArray + Into<State>,
     State: BitArray + AsPrimitive<Word>,
     Backend: WriteWords<Word> + IntoReadWords<Word, Queue>,
 {
-    fn from(encoder: RangeEncoder<Word, State, Backend>) -> Self {
-        // TODO: implement a `try_into_decoder` or something instead. Or specialize this
-        // method to the case where both read and write error are Infallible, which is
-        // probably the only place where this will be used anyway.
-        encoder.into_decoder().unwrap()
+    type Error = ReadWriteError<<<Backend as IntoReadWords<Word, Queue>>::IntoReadWords as ReadWords<Word, Queue>>::ReadError, Backend::WriteError>;
+
+    fn try_from(encoder: RangeEncoder<Word, State, Backend>) -> Result<Self, Self::Error> {
+        encoder.into_decoder()
     }
 }
 
@@ -902,7 +975,7 @@ where
         Self::Word: AsPrimitive<D::Probability>,
     {
         generic_static_asserts!(
-            (Word: BitArray, State:BitArray; const PRECISION: usize);
+            (Word: BitArray, State: BitArray; const PRECISION: usize);
             PROBABILITY_SUPPORTS_PRECISION: State::BITS >= Word::BITS + PRECISION;
             NON_ZERO_PRECISION: PRECISION > 0;
             STATE_SUPPORTS_AT_LEAST_TWO_WORDS: State::BITS >= 2 * Word::BITS;
@@ -995,9 +1068,7 @@ where
 {
     fn new(encoder: &'a mut RangeEncoder<Word, State>) -> Self {
         // Append state. Will be undone in `<Self as Drop>::drop`.
-        if !encoder.is_empty() {
-            encoder.seal().unwrap_infallible();
-        }
+        encoder.seal().unwrap_infallible();
         Self { inner: encoder }
     }
 }

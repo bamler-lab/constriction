@@ -120,7 +120,7 @@
 //!         FallibleCallbackWriteWords::new(move |word| file.write_u32::<LittleEndian>(word));
 //!
 //!     // Wrap the backend in a `RangeEncoder` and encode (i.e., compress) the symbols.
-//!     let mut encoder = DefaultRangeEncoder::with_backend(backend);
+//!     let mut encoder = DefaultRangeEncoder::with_write_backend(backend);
 //!     encoder.encode_iid_symbols(symbols, &model).unwrap();
 //!
 //!     // Dropping the encoder doesn't automatically seal the compressed bit string because that
@@ -189,7 +189,7 @@ use core::{
 };
 use smallvec::SmallVec;
 
-use crate::{Pos, PosSeek, Queue, Seek, Semantics, Stack};
+use crate::{Pos, PosSeek, Queue, Seek, Semantics, Stack, UnwrapInfallible};
 
 // MAIN TRAITS FOR CAPABILITIES OF BACKENDS ===================================
 
@@ -295,6 +295,28 @@ pub trait WriteWords<Word> {
     #[inline(always)]
     fn maybe_full(&self) -> bool {
         true
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadWriteError<ReadError, WriteError> {
+    Read(ReadError),
+    Write(WriteError),
+}
+
+impl<T, ReadError, WriteError> UnwrapInfallible<T>
+    for Result<T, ReadWriteError<ReadError, WriteError>>
+where
+    Result<T, ReadError>: UnwrapInfallible<T>,
+    Result<T, WriteError>: UnwrapInfallible<T>,
+{
+    #[inline(always)]
+    fn unwrap_infallible(self) -> T {
+        match self {
+            Ok(x) => x,
+            Err(ReadWriteError::Read(infallible)) => Err(infallible).unwrap_infallible(),
+            Err(ReadWriteError::Write(infallible)) => Err(infallible).unwrap_infallible(),
+        }
     }
 }
 
@@ -1074,6 +1096,8 @@ pub unsafe trait SafeBuf<Word>: AsRef<[Word]> {}
 
 unsafe impl<Word> SafeBuf<Word> for &[Word] {}
 unsafe impl<Word> SafeBuf<Word> for &mut [Word] {}
+unsafe impl<Word, const N: usize> SafeBuf<Word> for &[Word; N] {}
+unsafe impl<Word, const N: usize> SafeBuf<Word> for &mut [Word; N] {}
 unsafe impl<Word> SafeBuf<Word> for Vec<Word> {}
 unsafe impl<Word> SafeBuf<Word> for Box<[Word]> {}
 
@@ -1336,6 +1360,46 @@ impl<Word, Buf> Cursor<Word, Buf> {
     /// implements `AsMut`).
     pub fn buf_mut(&mut self) -> &mut Buf {
         &mut self.buf
+    }
+
+    /// Returns the slice of the buffer that has been written to so far.
+    ///
+    /// More precisely, this returns the data that has been written to the buffer or read
+    /// from the buffer with `Queue` semantics minus the data that has been read from the
+    /// buffer with `Stack` semantics.
+    ///
+    /// See also [`remainder`](Self::unwritten).
+    pub fn written(&self) -> &[Word]
+    where
+        Buf: AsRef<[Word]>,
+    {
+        &self.buf.as_ref()[..self.pos]
+    }
+
+    /// Mutable variant of [`written`](Self::written).
+    pub fn written_mut(&mut self) -> &mut [Word]
+    where
+        Buf: AsMut<[Word]>,
+    {
+        &mut self.buf.as_mut()[..self.pos]
+    }
+
+    /// Returns the slice of the buffer that has not been written to so far.
+    ///
+    /// This is the part of the buffer that [`written`](Self::written) doesn't return.
+    pub fn unwritten(&self) -> &[Word]
+    where
+        Buf: AsRef<[Word]>,
+    {
+        &self.buf.as_ref()[self.pos..]
+    }
+
+    /// Mutable variant of [`unwritten`](Self::unwritten).
+    pub fn unwritten_mut(&mut self) -> &mut [Word]
+    where
+        Buf: AsMut<[Word]>,
+    {
+        &mut self.buf.as_mut()[self.pos..]
     }
 
     /// Consumes the `Cursor` and returns the buffer and the current position.

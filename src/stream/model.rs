@@ -1045,14 +1045,7 @@ mod tests {
 
         // Check that sorting by weight is compatible with sorting by hist.
         weights_and_hist.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-        // TODO: replace the following with
-        // `assert!(weights_and_hist.iter().map(|&(_, x)| x).is_sorted())`
-        // when `is_sorted` becomes stable.
-        let mut previous = P::zero();
-        for (_, hist) in weights_and_hist {
-            assert!(hist >= previous);
-            previous = hist;
-        }
+        assert!(weights_and_hist.iter().map(|&(_, hist)| hist).is_sorted());
 
         let normalization = hist.iter().map(|&x| x.into()).sum::<f64>();
         let normalized_hist = hist
