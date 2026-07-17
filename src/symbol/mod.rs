@@ -803,10 +803,8 @@ mod tests {
         *,
     };
 
-    use rand_xoshiro::{
-        rand_core::{RngCore, SeedableRng},
-        Xoshiro256StarStar,
-    };
+    use rand::Rng;
+    use rand_xoshiro::{rand_core::SeedableRng, Xoshiro256StarStar};
 
     #[test]
     fn bit_queue() {

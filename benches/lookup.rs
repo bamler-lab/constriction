@@ -9,10 +9,11 @@ use constriction::{
     },
     BitArray, Pos, Seek,
 };
-use criterion::{black_box, criterion_group, Criterion};
+use criterion::{criterion_group, Criterion};
 use num_traits::AsPrimitive;
-use rand::{RngCore, SeedableRng};
+use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
+use std::hint::black_box;
 
 criterion_group!(
     benches,
