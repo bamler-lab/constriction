@@ -151,7 +151,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build Python package
-        run: poetry run maturin build --release --features pybindings
+        run: poetry run maturin build --release --strip --features pybindings
 
       - name: List wheel and verify metadata
         shell: bash
@@ -363,14 +363,14 @@ jobs:
         with:
           command: build
           manylinux: 2014
-          args: --release --strip --features pybindings -i python3.9 python3.10 python3.11 python3.12 python3.13 python3.14
+          args: --release --strip --features pybindings -i python3.10 python3.11 python3.12 python3.13 python3.14
 
       - name: Build wheels (windows)
         if: matrix.os == 'windows-latest'
         uses: messense/maturin-action@v1
         with:
           command: build
-          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-9.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-13.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-14.outputs.python-version }}\x64\python3.exe
+          args: --release --strip --features pybindings -i C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-10.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-11.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-12.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-13.outputs.python-version }}\x64\python3.exe C:\hostedtoolcache\windows\Python\${{ steps.setup-python-3-14.outputs.python-version }}\x64\python3.exe
 
       - name: Build wheels for old Apple chips (macos)
         if: matrix.os == 'macos-latest'
@@ -378,7 +378,7 @@ jobs:
         with:
           target: x86_64-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.9 python3.10 python3.11 python3.12 python3.13 python3.14
+          args: --release --strip --features pybindings -i python3.10 python3.11 python3.12 python3.13 python3.14
 
       - name: Cross-build wheels for new Apple chips (macos)
         if: matrix.os == 'macos-latest'
@@ -386,7 +386,7 @@ jobs:
         with:
           target: aarch64-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.9 python3.10 python3.11 python3.12 python3.13 python3.14
+          args: --release --strip --features pybindings -i python3.10 python3.11 python3.12 python3.13 python3.14
 
       - name: Build universal2 wheels (macos)
         if: matrix.os == 'macos-latest'
@@ -394,7 +394,7 @@ jobs:
         with:
           target: universal2-apple-darwin
           command: build
-          args: --release --strip --features pybindings -i python3.9 python3.10 python3.11 python3.12 python3.13 python3.14
+          args: --release --strip --features pybindings -i python3.10 python3.11 python3.12 python3.13 python3.14
 
       - name: Save artifact with wheels for ${{ matrix.os }}
         uses: actions/upload-artifact@v4

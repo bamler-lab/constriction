@@ -74,7 +74,7 @@ jobs:
         if: matrix.os != 'windows-latest' # work around https://github.com/foresterre/cargo-msrv/issues/1036
         with:
           tool: cargo-msrv
-      
+
       - name: "Verify minimum supported rust version (MSRV)"
         if: matrix.os != 'windows-latest' # work around https://github.com/foresterre/cargo-msrv/issues/1036
         run: cargo msrv verify -- cargo check --all-features
@@ -203,7 +203,7 @@ jobs:
         shell: bash
         run: |
           rm -rf target/wheels || true
-          poetry run maturin build --release --features pybindings
+          poetry run maturin build --release --strip --features pybindings
 
       - name: List wheel and verify metadata
         shell: bash
