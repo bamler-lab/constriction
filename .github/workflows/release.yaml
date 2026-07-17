@@ -263,8 +263,7 @@ jobs:
 
       - name: generate license file
         run: |
-          cargo install cargo-quickinstall
-          cargo quickinstall cargo-about
+          cargo install cargo-about --features cli
           cargo about generate --features=pybindings about.hbs > website/license.html
           wc -l website/license.html
 
@@ -353,8 +352,7 @@ jobs:
         shell: bash
         run: |
           rm LICENSE.*
-          cargo install cargo-quickinstall
-          cargo quickinstall cargo-about
+          cargo install cargo-about --features cli
           cargo about generate --features=pybindings about.hbs > LICENSE.html
           ls -l LICENSE*
           wc -l LICENSE*
